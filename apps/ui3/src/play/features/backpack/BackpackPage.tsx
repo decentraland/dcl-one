@@ -33,6 +33,9 @@ import marketplaceIcon from '../../assets/backpack/icon-marketplace.webp'
 import hiddenIcon from '../../assets/backpack/icon-hidden.webp'
 import visibleIcon from '../../assets/backpack/icon-visible.webp'
 import leftClickIcon from '../../assets/backpack/icon-left-click.webp'
+import randomizeIcon from '../../assets/backpack/icon-randomize-outfit.png'
+import undoIcon from '../../assets/backpack/icon-undo.png'
+import redoIcon from '../../assets/backpack/icon-redo.png'
 import { COLOR_LABEL, COLOR_PRESETS, COLOR_TARGET } from './avatarColors'
 import { isCompatible } from '../../engine/bodyShape'
 import { hiddenBy } from '../../engine/avatarHides'
@@ -45,7 +48,7 @@ import { EngineViewport } from '../engine/EngineViewport'
 import { MainMenuShell } from '../menu/MainMenuShell'
 import { BackpackModal } from './BackpackModal'
 import type { AvatarColorTarget, Emote, Outfit, Wearable } from '../../engine/protocol'
-import type { BackpackState, EmotesState, ProfileState } from '../session/useEngineSession'
+import type { BackpackState, EmotesState, OutfitHistory, ProfileState } from '../session/useEngineSession'
 import styles from './BackpackPage.module.css'
 import { withUtm } from '../../lib/utm'
 import { siteUrl } from '../../lib/baseDomain'
@@ -334,6 +337,42 @@ function NameBanner(): React.JSX.Element {
   )
 }
 
+// Under the avatar preview: undo and redo share one container, RANDOMIZE has its own (Unity's
+// RandomizeOutfitView). A locked button fades its content and keeps its container.
+function RandomizeBar({
+  history,
+  locked,
+  onUndo,
+  onRandomize,
+  onRedo
+}: {
+  history: OutfitHistory
+  /** Another tab is shown, or the avatar hasn't loaded. */
+  locked: boolean
+  onUndo: () => void
+  onRandomize: () => void
+  onRedo: () => void
+}): React.JSX.Element {
+  const busy = locked || history.rolling
+  return (
+    <div className={styles.randomizeBar}>
+      <div className={styles.historyGroup}>
+        <button type="button" className={styles.historyBtn} aria-label="Undo outfit" disabled={busy || !history.canUndo} onClick={onUndo}>
+          <MaskIcon src={undoIcon} size={20} />
+        </button>
+        <span className={styles.historyDivider} aria-hidden="true" />
+        <button type="button" className={styles.historyBtn} aria-label="Redo outfit" disabled={busy || !history.canRedo} onClick={onRedo}>
+          <MaskIcon src={redoIcon} size={20} />
+        </button>
+      </div>
+      <button type="button" className={styles.randomizeBtn} disabled={busy} onClick={onRandomize}>
+        <MaskIcon src={randomizeIcon} size={20} />
+        <span>RANDOMIZE</span>
+      </button>
+    </div>
+  )
+}
+
 export function BackpackPage({
   backpack,
   emotes,
@@ -567,6 +606,13 @@ export function BackpackPage({
               <EngineViewport region="avatarPreview" report={setEngineViewport} />
             </div>
             <HintsButton className={styles.hints} hints={HINTS} />
+            <RandomizeBar
+              history={backpack.outfitHistory}
+              locked={tab !== 'wearables' || backpack.bodyShape == null}
+              onUndo={backpack.undoOutfit}
+              onRandomize={backpack.randomizeOutfit}
+              onRedo={backpack.redoOutfit}
+            />
           <section className={`${styles.card} ${tab === 'emotes' ? styles.cardEmotes : ''}`.trim()}>
             {tab === 'wearables' && (
               <div className={styles.contentHead}>
