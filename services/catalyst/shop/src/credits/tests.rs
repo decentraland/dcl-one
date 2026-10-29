@@ -3683,7 +3683,16 @@ async fn an_unpaid_checkout_completion_grants_nothing_until_the_payment_settles(
         );
     }
     assert_eq!(purchase_grants(&pool, &addr).await, 0);
-    assert_eq!(session_order_row(&pool, &session).await.0, "pending");
+    let expected_payment_intent = format!("pi_{session}");
+    assert_eq!(
+        session_order_row(&pool, &session).await,
+        (
+            "pending".to_string(),
+            None,
+            Some(expected_payment_intent.clone())
+        ),
+        "the unpaid completion marks the order processing"
+    );
     let (_, v) = call(
         &app,
         &wallet,
@@ -3756,7 +3765,6 @@ async fn an_unpaid_checkout_completion_grants_nothing_until_the_payment_settles(
     assert_eq!(purchase_grants(&pool, &addr).await, 1);
     let (status, _, payment_intent) = session_order_row(&pool, &session).await;
     assert_eq!(status, "paid");
-    let expected_payment_intent = format!("pi_{session}");
     assert_eq!(
         payment_intent.as_deref(),
         Some(expected_payment_intent.as_str()),
@@ -3920,6 +3928,13 @@ async fn a_settlement_delivered_before_the_completion_credits_once() {
     assert_eq!(out["detail"], "processed");
     assert_eq!(session_order_row(&pool, &session).await.0, "paid");
     assert_eq!(available(&pool, &addr).await, "50");
+
+    // A failure delivered late conflicts with the settled payment: it is
+    // logged for verification, never acted on by revoking the credits.
+    let (_, out) = deliver(&app, &async_payment_failed(&unique("evt_order"), &session)).await;
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(session_order_row(&pool, &session).await.0, "paid");
+    assert_eq!(available(&pool, &addr).await, "50");
     assert_eq!(purchase_grants(&pool, &addr).await, 1);
     assert_reconciles(&pool, &addr, "after an out-of-order settlement").await;
     assert_purchases_match_grants(&pool, &addr).await;
@@ -3928,90 +3943,115 @@ async fn a_settlement_delivered_before_the_completion_credits_once() {
     delete_events(&pool, "evt_order").await;
 }
 
+fn async_payment_failed(event_id: &str, session: &str) -> String {
+    json!({
+        "id": event_id,
+        "type": "checkout.session.async_payment_failed",
+        "data": { "object": { "id": session, "payment_status": "unpaid" } },
+    })
+    .to_string()
+}
+
 #[tokio::test]
-async fn a_delayed_payment_settling_after_the_order_was_retired_still_credits() {
-    let Some(pool) = pool().await else { return };
+async fn a_processing_payment_outlives_the_sweep_and_a_late_settlement_still_credits() {
+    // The sweep walks every order, so this runs on a database of its own.
+    let Some(own) = OwnDatabase::create("processing").await else {
+        return;
+    };
+    let pool = own.pool.clone();
     let state = webhook_state(&pool);
     let app = app(state.clone());
     let wallet = scratch_wallet();
     let addr = wallet.address.clone();
-    let (order_id, session) = session_order_fixture(&state, &addr).await;
-    let (_, failed_session) = session_order_fixture(&state, &addr).await;
-
-    for session in [&session, &failed_session] {
-        deliver(
-            &app,
-            &session_event(
-                &unique("evt_retired"),
-                "checkout.session.completed",
-                session,
-                Some("unpaid"),
-                500,
-                "usd",
-            ),
+    // Its bank debit is in flight when the sweep runs.
+    let (processing_order, processing) = session_order_fixture(&state, &addr).await;
+    // Nothing heard from Stripe before the sweep; then its payment settles.
+    let (_, unseen) = session_order_fixture(&state, &addr).await;
+    // Its completion arrives after the sweep; then its debit fails.
+    let (_, late) = session_order_fixture(&state, &addr).await;
+    let event = |kind: &str, session: &str, payment_status: &str| {
+        session_event(
+            &unique("evt_proc"),
+            kind,
+            session,
+            Some(payment_status),
+            500,
+            "usd",
         )
-        .await;
-        // The buyer's cancel (or the stale-order sweep) retires the order
-        // while the bank debit is still in flight.
-        assert!(
-            state
-                .credits
-                .mark_order_status_by_session(session, "abandoned", Some("cancelled by the buyer"))
-                .await
-                .unwrap()
-        );
-    }
+    };
 
-    let settled = session_event(
-        &unique("evt_retired"),
-        "checkout.session.async_payment_succeeded",
-        &session,
-        Some("paid"),
-        500,
-        "usd",
-    );
-    let (_, out) = deliver(&app, &settled).await;
-    assert_eq!(out["detail"], "processed");
-    let (status, failure_reason, _) = session_order_row(&pool, &session).await;
+    deliver(
+        &app,
+        &event("checkout.session.completed", &processing, "unpaid"),
+    )
+    .await;
+    sqlx::query(
+        "UPDATE credits.purchases SET created_at = created_at - interval '27 hours' WHERE address = $1",
+    )
+    .bind(&addr)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let retired = state
+        .credits
+        .abandon_stale_pack_orders(super::orders::ABANDON_AFTER)
+        .await
+        .unwrap();
+    assert_eq!(retired, 2, "only the orders with no payment in flight");
+    assert_eq!(session_order_row(&pool, &processing).await.0, "pending");
+    assert_eq!(session_order_row(&pool, &unseen).await.0, "abandoned");
+
+    // The buyer's cancel cannot retire it either: the money is on its way.
+    let (status, v) = call(
+        &app,
+        &wallet,
+        "post",
+        &format!("/credits/credits/orders/{processing_order}/cancel"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["status"], "processing", "{v}");
+
+    deliver(
+        &app,
+        &event(
+            "checkout.session.async_payment_succeeded",
+            &processing,
+            "paid",
+        ),
+    )
+    .await;
+    assert_eq!(session_order_row(&pool, &processing).await.0, "paid");
+    assert_eq!(available(&pool, &addr).await, "50");
+
+    // A verified settlement (signed, paid, the order's currency and
+    // amount) recovers an order the sweep had retired.
+    deliver(&app, &event("checkout.session.completed", &unseen, "paid")).await;
+    let (status, failure_reason, _) = session_order_row(&pool, &unseen).await;
     assert_eq!(
         (status.as_str(), failure_reason),
         ("paid", None),
         "the money arrived, so the retired order is credited"
     );
-    assert_eq!(available(&pool, &addr).await, "50");
-    let (_, v) = call(
-        &app,
-        &wallet,
-        "get",
-        &format!("/credits/credits/orders/{order_id}"),
-        &[],
-        None,
-    )
-    .await;
-    assert_eq!(
-        v,
-        json!({ "status": "credited", "creditsGranted": 50, "newBalance": 50, "error": "" })
-    );
+    assert_eq!(available(&pool, &addr).await, "100");
 
-    let failed = json!({
-        "id": unique("evt_retired"),
-        "type": "checkout.session.async_payment_failed",
-        "data": { "object": { "id": failed_session, "payment_status": "unpaid" } },
-    })
-    .to_string();
-    let (_, out) = deliver(&app, &failed).await;
-    assert_eq!(out["detail"], "processed");
+    // A completion after the sweep shows the payment is in flight after
+    // all; when it fails, the order fails and grants nothing.
+    deliver(&app, &event("checkout.session.completed", &late, "unpaid")).await;
     assert_eq!(
-        session_order_row(&pool, &failed_session).await.0,
-        "abandoned"
+        session_order_row(&pool, &late).await,
+        ("pending".to_string(), None, Some(format!("pi_{late}")))
     );
-    assert_eq!(available(&pool, &addr).await, "50");
-    assert_eq!(purchase_grants(&pool, &addr).await, 1);
-    assert_reconciles(&pool, &addr, "after settling a retired order").await;
+    deliver(&app, &async_payment_failed(&unique("evt_proc"), &late)).await;
+    assert_eq!(session_order_row(&pool, &late).await.0, "failed");
+    assert_eq!(available(&pool, &addr).await, "100");
+    assert_eq!(purchase_grants(&pool, &addr).await, 2);
+    assert_reconciles(&pool, &addr, "after the sweep and late settlements").await;
     assert_purchases_match_grants(&pool, &addr).await;
 
-    cleanup(&pool, &addr).await;
-    delete_events(&pool, "evt_retired").await;
+    own.drop().await;
 }
 
 #[tokio::test]

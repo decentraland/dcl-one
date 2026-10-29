@@ -188,8 +188,9 @@ pub(crate) fn session_payment_settled(session: &JsonValue) -> bool {
 }
 
 /// `checkout.session.completed` / `async_payment_succeeded`: the order is
-/// marked paid and credited only once the session is settled, so an
-/// unpaid completion leaves it pending for the async outcome. Whichever
+/// marked paid and credited only once the session is settled. An unpaid
+/// completion marks it processing instead (pending, with the session's
+/// payment intent), so nothing but the async outcome retires it. Whichever
 /// settled event lands first flips it; any later one finds it paid.
 async fn settle_session(
     state: &SharedState,
@@ -202,18 +203,24 @@ async fn settle_session(
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| ApiError::bad_request("checkout.session missing id"))?;
+    let payment_intent = object.get("payment_intent").and_then(|v| v.as_str());
     if !session_payment_settled(object) {
         let payment_status = object.get("payment_status").and_then(|v| v.as_str());
-        if payment_status == Some("unpaid") {
-            tracing::info!(event_id = %event_id, event_type = %event_type, checkout_session = %session_id, "checkout.session payment still processing; no grant until it settles");
-        } else {
-            tracing::warn!(event_id = %event_id, event_type = %event_type, checkout_session = %session_id, payment_status = payment_status.unwrap_or("absent"), "checkout.session not paid; NOT granting credits");
+        match (payment_status, payment_intent) {
+            (Some("unpaid"), Some(payment_intent)) => {
+                let marked =
+                    Credits::mark_order_processing_by_session_in_tx(tx, session_id, payment_intent)
+                        .await?;
+                tracing::info!(event_id = %event_id, event_type = %event_type, checkout_session = %session_id, marked, "checkout.session payment still processing; no grant until it settles");
+            }
+            _ => {
+                tracing::warn!(event_id = %event_id, event_type = %event_type, checkout_session = %session_id, payment_status = payment_status.unwrap_or("absent"), "checkout.session not paid; NOT granting credits");
+            }
         }
         return Ok(());
     }
     let charged = charge(object, "amount_total", "checkout.session")?;
 
-    let payment_intent = object.get("payment_intent").and_then(|v| v.as_str());
     match state
         .credits
         .mark_order_paid_by_session_in_tx(tx, session_id, event_id, charged, payment_intent)
@@ -259,6 +266,9 @@ async fn settle_session(
     Ok(())
 }
 
+/// Retires a pending order only. Stripe does not order deliveries, so a
+/// failure reaching an order already credited is a conflict to verify
+/// against the session at Stripe, never a reason to revoke on its own.
 async fn mark_session_terminal(
     tx: &mut Tx<'_>,
     object: &JsonValue,
@@ -274,7 +284,13 @@ async fn mark_session_terminal(
         Credits::mark_order_status_by_session_on(&mut **tx, session_id, status, failure_reason)
             .await?;
     if !changed {
-        tracing::info!(event_id = %event_id, checkout_session = %session_id, status = %status, "checkout.session terminal event matched no pending order");
+        let current = Credits::order_status_by_session_on(&mut **tx, session_id).await?;
+        let credited = matches!(current.as_deref(), Some("paid" | "refunded" | "disputed"));
+        if status == "failed" && credited {
+            tracing::error!(event_id = %event_id, checkout_session = %session_id, order_status = current.as_deref().unwrap_or("none"), "checkout.session payment failure for an order already credited; credits NOT revoked: verify the session at Stripe");
+        } else {
+            tracing::info!(event_id = %event_id, checkout_session = %session_id, status = %status, order_status = current.as_deref().unwrap_or("none"), "checkout.session terminal event matched no pending order");
+        }
     }
     Ok(())
 }

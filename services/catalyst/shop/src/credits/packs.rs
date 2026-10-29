@@ -364,6 +364,10 @@ impl Credits {
         Self::mark_order_status_by_session_on(&self.pool, session_id, status, failure_reason).await
     }
 
+    /// Retires a pending order. One whose payment is processing (see
+    /// [`Self::mark_order_processing_by_session_in_tx`]) is only ever retired
+    /// as `failed`, by its own payment's outcome; a cancel, an expiry or a
+    /// resume leaves it pending.
     pub(crate) async fn mark_order_status_by_session_on<'e, E>(
         executor: E,
         session_id: &str,
@@ -376,7 +380,8 @@ impl Credits {
         let res = sqlx::query(
             "UPDATE credits.purchases \
              SET status = $2, failure_reason = COALESCE($3, failure_reason), updated_at = timezone('UTC', now()) \
-             WHERE stripe_checkout_session = $1 AND status = 'pending'",
+             WHERE stripe_checkout_session = $1 AND status = 'pending' \
+               AND (stripe_payment_intent IS NULL OR $2 = 'failed')",
         )
         .bind(session_id)
         .bind(status)
@@ -384,6 +389,47 @@ impl Credits {
         .execute(executor)
         .await?;
         Ok(res.rows_affected() > 0)
+    }
+
+    /// The session completed but its payment is still processing (a bank
+    /// debit takes days): the order records the session's payment intent,
+    /// which marks it as awaiting that payment's outcome, and stays (or, if
+    /// a sweep or cancel retired it meanwhile, is again) `pending`, shown as
+    /// `processing`. Nothing but the outcome moves it from there.
+    pub(crate) async fn mark_order_processing_by_session_in_tx(
+        tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        session_id: &str,
+        payment_intent: &str,
+    ) -> Result<bool, ApiError> {
+        let res = sqlx::query(
+            "UPDATE credits.purchases \
+             SET status = 'pending', failure_reason = NULL, \
+                 stripe_payment_intent = COALESCE(stripe_payment_intent, $2), \
+                 updated_at = timezone('UTC', now()) \
+             WHERE stripe_checkout_session = $1 AND status = ANY($3::text[])",
+        )
+        .bind(session_id)
+        .bind(payment_intent)
+        .bind(&SETTLEABLE_STATUSES[..])
+        .execute(&mut **tx)
+        .await?;
+        Ok(res.rows_affected() > 0)
+    }
+
+    /// The current status of a session's order, for the webhook's logs.
+    pub(crate) async fn order_status_by_session_on<'e, E>(
+        executor: E,
+        session_id: &str,
+    ) -> Result<Option<String>, ApiError>
+    where
+        E: sqlx::PgExecutor<'e>,
+    {
+        Ok(sqlx::query_scalar(
+            "SELECT status FROM credits.purchases WHERE stripe_checkout_session = $1",
+        )
+        .bind(session_id)
+        .fetch_optional(executor)
+        .await?)
     }
 
     pub async fn mark_purchase_paid(
@@ -661,10 +707,11 @@ impl Credits {
     }
 }
 
-/// The statuses a settled payment may still flip to `paid`. `abandoned`
-/// is one because the stale-order sweep (`orders::ABANDON_AFTER`) or a
-/// cancel can retire an order whose payment settles later (a bank debit
-/// takes days); the money arrived, so the order is credited. `failed`,
+/// The statuses a payment may still move: a settled one flips them to
+/// `paid`, a processing one back to `pending`. `abandoned` is one because
+/// the stale-order sweep (`orders::ABANDON_AFTER`) or a cancel can retire
+/// an order before Stripe's events for it arrive; a verified settled
+/// payment means the money arrived, so the order is credited. `failed`,
 /// `refunded` and `disputed` never come back.
 pub const SETTLEABLE_STATUSES: [&str; 2] = ["pending", "abandoned"];
 
