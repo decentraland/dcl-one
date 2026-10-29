@@ -1,0 +1,31 @@
+{
+  "method": "GET",
+  "url": "https://notifications.decentraland.org/notifications",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*",
+    "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+    "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/notifications:1790364280819:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x3788486b861fae1de87671d02d5b25b107c6d9bfdf47eb3460a97def13c6d7680257d0853a88cc4a140c08dcef68d3d4be94b84845a01700ef099b465c96524a1b\"}",
+    "x-identity-timestamp": "1790364280819",
+    "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+  },
+  "request_body": null,
+  "status": 200,
+  "status_text": "OK",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c69159cf24ae6-TXL",
+    "connection": "keep-alive",
+    "content-length": "20",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:41 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:41Z",
+  "elapsed_ms": 152,
+  "body_bytes": 20,
+  "body_file": "notifications-signed.raw.body",
+  "redacted": false
+}

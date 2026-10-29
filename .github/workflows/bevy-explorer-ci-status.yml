@@ -1,0 +1,172 @@
+# The build and tests sections of a pull request's CI status comment, from its Bevy Explorer / CI
+# runs. Only a pull request that changes the explorer gets the comment: a run whose *Changes* job
+# selected no explorer job (a backend-only or sites-only change, which CI runs for its image jobs)
+# writes nothing. The performance section is Bevy Explorer / Benchmark's. The sections are written
+# with .github/actions/bevy-explorer-ci-status, which keeps the one comment per pull request.
+#
+# `requested`: once *Changes* has selected an explorer job, both sections go to pending, so the
+# previous run's links never linger as current. `completed`: both sections are filled from the
+# run's jobs and artifacts (the trusted Actions API; the run's own code reaches the comment only as
+# job and artifact names, rendered inside table cells). A cancelled run of a commit the pull request
+# has moved past says nothing: the newer commit's run already reset the sections.
+#
+# This runs in the base context with write permission after the CI run, which has none, and
+# checks out only the action, at the workflow's own commit (the default branch's).
+name: Bevy Explorer / CI status
+'on':
+  workflow_run:
+    workflows: ['Bevy Explorer / CI']
+    types: [requested, completed]
+permissions: {}
+jobs:
+  resolve:
+    name: Resolve
+    runs-on: ubuntu-24.04
+    # The `requested` probe waits for *Changes*, which runs after the integration guards.
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.pr.outputs.pr-number }}
+      head_sha: ${{ steps.pr.outputs.head-sha }}
+      selected: ${{ steps.selected.outputs.selected }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Resolve the pull request this run reports into
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          WORKFLOW_RUN_EVENT_OBJ: ${{ toJSON(github.event.workflow_run) }}
+        run: |
+          bash .github/actions/bevy-explorer-ci-status/resolve-comment-pr.sh > resolved.txt
+          cat resolved.txt
+          cat resolved.txt >> "$GITHUB_OUTPUT"
+      - name: Check whether the run selected an explorer job
+        id: selected
+        if: steps.pr.outputs.pr-number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          WAIT_SECONDS: ${{ github.event.action == 'requested' && '600' || '0' }}
+        run: |
+          selected=$(bash .github/actions/bevy-explorer-ci-status/explorer-run-selected.sh)
+          echo "selected=$selected"
+          echo "selected=$selected" >> "$GITHUB_OUTPUT"
+  pending:
+    name: Pending
+    needs: resolve
+    if: github.event.action == 'requested' && needs.resolve.outputs.pr != '' && needs.resolve.outputs.selected == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      RUN_URL: ${{ github.event.workflow_run.html_url }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Set the build section to pending
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ needs.resolve.outputs.pr }}
+          section: build
+          github-token: ${{ github.token }}
+          body: |-
+            [![Build](https://img.shields.io/badge/Build-Pending!-yellow?logo=webassembly&logoColor=white&style=for-the-badge)](${{ env.RUN_URL }})
+
+            A new [run](${{ env.RUN_URL }}) is building the explorer; its products land here when it ends.
+      - name: Set the tests section to pending
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ needs.resolve.outputs.pr }}
+          section: tests
+          github-token: ${{ github.token }}
+          body: |-
+            [![Tests](https://img.shields.io/badge/Tests-Pending!-yellow?logo=rust&logoColor=white&style=for-the-badge)](${{ env.RUN_URL }})
+
+            A new [run](${{ env.RUN_URL }}) is testing the explorer; its results land here when it ends.
+  report:
+    name: Report
+    needs: resolve
+    if: github.event.action == 'completed' && needs.resolve.outputs.pr != '' && needs.resolve.outputs.selected == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ needs.resolve.outputs.pr }}
+      HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+      RUN_ID: ${{ github.event.workflow_run.id }}
+      RUN_URL: ${{ github.event.workflow_run.html_url }}
+      CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      # A newer commit's run cancels this one (CI's concurrency group), and its own `requested`
+      # event has already reset the sections to pending: writing "cancelled" over that would be
+      # wrong. A cancelled run of the pull request's head is reported: nothing else will.
+      - name: Skip a cancelled run of a commit the pull request moved past
+        id: current
+        run: |
+          if [ "$CONCLUSION" = cancelled ]; then
+            live=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json headRefOid --jq '.headRefOid')
+            if [ "$live" != "$HEAD_SHA" ]; then
+              echo "::notice::The cancelled run of ${HEAD_SHA:0:7} is not of #$PR_NUMBER's head ${live:0:7}; its sections stay as the newer run left them."
+              echo "write=false" >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          fi
+          echo "write=true" >> "$GITHUB_OUTPUT"
+      - name: Compose the sections from the run's jobs and artifacts
+        if: steps.current.outputs.write == 'true'
+        env:
+          JOBS_FILE: jobs.json
+          ARTIFACTS_FILE: artifacts.json
+          OUT_DIR: sections
+        run: |
+          # The PR preview, when this run published it: pr-<n> points at 0.1.0-<run id>.commit-<sha>.
+          v=$(npm view "@dcl-regenesislabs/bevy-explorer-web@pr-$PR_NUMBER" version 2>/dev/null || true)
+          if [[ "$v" =~ ^0\.1\.0-$RUN_ID\.commit-[0-9a-f]+$ ]]; then export PREVIEW_VERSION="$v"; fi
+          gh api "repos/$REPO/actions/runs/$RUN_ID/jobs?per_page=100" > jobs.json
+          gh api "repos/$REPO/actions/runs/$RUN_ID/artifacts?per_page=100" > artifacts.json
+          mkdir -p sections
+          bash .github/actions/bevy-explorer-ci-status/explorer-ci-sections.sh
+          cat sections/build.md sections/tests.md
+      - name: Update the build section
+        if: steps.current.outputs.write == 'true'
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ needs.resolve.outputs.pr }}
+          section: build
+          github-token: ${{ github.token }}
+          body-file: sections/build.md
+      - name: Update the tests section
+        if: steps.current.outputs.write == 'true'
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ needs.resolve.outputs.pr }}
+          section: tests
+          github-token: ${{ github.token }}
+          body-file: sections/tests.md

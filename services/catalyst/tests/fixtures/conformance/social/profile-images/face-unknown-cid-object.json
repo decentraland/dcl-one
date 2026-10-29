@@ -1,0 +1,20 @@
+{
+  "description": "The bucket answer behind face-unknown-cid: the not-found shape a client following the 301 sees. Captured GET https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/face.png -> 404.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/face.png",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/xml"
+    },
+    "body_bytes_b64": "PD94bWwgdmVyc2lvbj0iMS4wIiBlbmNvZGluZz0iVVRGLTgiPz4KPEVycm9yPjxDb2RlPk5vU3VjaEtleTwvQ29kZT48TWVzc2FnZT5UaGUgc3BlY2lmaWVkIGtleSBkb2VzIG5vdCBleGlzdC48L01lc3NhZ2U+PEtleT52MS9lbnRpdGllcy9iYWZrcmVpYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhL2ZhY2UucG5nPC9LZXk+PFJlcXVlc3RJZD5CMVE2N0gzVFRKUlZaSEowPC9SZXF1ZXN0SWQ+PEhvc3RJZD5GME9TdC9GL0RrOWtKbmE3enBmSHhPQnNXT29OTGh3dXdLZnNLUEpuTjNjQWMxV0tDdlRPV0lZaUpwVlRFb1hlQlJIL3l5d3dDbU09PC9Ib3N0SWQ+PC9FcnJvcj4="
+  },
+  "captured_from": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/face.png",
+  "captured_at": "2026-09-25T19:29:41Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,29 @@
+{
+  "method": "GET",
+  "url": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreig3xwydxjwphcz4yjyqlvicvstrrsfs3dix6q7jyv4qfnfge2d22i/body.png",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 200,
+  "status_text": "OK",
+  "response_headers": {
+    "accept-ranges": "bytes",
+    "content-length": "91439",
+    "content-type": "image/png",
+    "date": "Fri, 25 Sep 2026 19:29:42 GMT",
+    "etag": "\"47982de0fdbce576f4a459b05e8f77a6\"",
+    "last-modified": "Tue, 22 Sep 2026 20:33:41 GMT",
+    "server": "AmazonS3",
+    "x-amz-id-2": "6G8xnTg+QyQOYI8HxtIDrsdkEBwhNwmyvZwxPdRiciI9S/4AVrBgGZVysY79GuDPsNul3W78c1k=",
+    "x-amz-meta-avatar-hash": "08c2708d524c36a9921c0a7f24e5ec13bd24148f6d40435f9f0d2aa85ab26871",
+    "x-amz-request-id": "B1QEAF57NWVWP8GD",
+    "x-amz-server-side-encryption": "AES256"
+  },
+  "captured_at": "2026-09-25T19:29:41Z",
+  "elapsed_ms": 187,
+  "body_bytes": 91439,
+  "body_file": "body-profile-2-object.raw.body",
+  "redacted": false
+}

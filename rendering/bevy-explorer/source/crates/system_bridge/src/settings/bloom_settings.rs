@@ -1,0 +1,72 @@
+use super::SettingCategory;
+use bevy::{core_pipeline::bloom::Bloom, ecs::system::SystemParamItem, prelude::*};
+use common::structs::{AppConfig, BloomSetting};
+
+use super::{AppSetting, EnumAppSetting};
+
+impl EnumAppSetting for BloomSetting {
+    fn variants() -> Vec<Self> {
+        vec![Self::Off, Self::Low, Self::High]
+    }
+
+    fn name(&self) -> String {
+        match self {
+            BloomSetting::Off => "Off",
+            BloomSetting::Low => "Low",
+            BloomSetting::High => "High",
+        }
+        .to_owned()
+    }
+}
+
+impl AppSetting for BloomSetting {
+    type Param = ();
+
+    fn title() -> String {
+        "Bloom".to_owned()
+    }
+
+    fn category() -> SettingCategory {
+        SettingCategory::Graphics
+    }
+
+    fn description(&self) -> String {
+        format!("Bloom is a post-processing effect used to reproduce an imaging artifact of real-world cameras. The effect produces fringes (or feathers) of light extending from the borders of bright areas in an image, contributing to the illusion of an extremely bright light overwhelming the camera capturing the scene.\n\n{}", 
+        match self {
+            BloomSetting::Off => "Off: No bloom.",
+            BloomSetting::Low => "Low: A subtle bloom effect is applied.",
+            BloomSetting::High => "High: The bloom effect smacks you in the face and makes it hard to see.",
+        })
+    }
+
+    fn save(&self, config: &mut AppConfig) {
+        config.graphics.bloom = *self;
+    }
+
+    fn load(config: &AppConfig) -> Self {
+        config.graphics.bloom
+    }
+
+    fn apply_to_camera(
+        &self,
+        _: &SystemParamItem<Self::Param>,
+        mut commands: Commands,
+        camera_entity: Entity,
+    ) {
+        let Ok(mut cmds) = commands.get_entity(camera_entity) else {
+            return;
+        };
+
+        match self {
+            BloomSetting::Off => cmds.remove::<Bloom>(),
+            BloomSetting::Low => cmds.try_insert(Bloom {
+                intensity: 0.10,
+                ..Bloom::NATURAL
+            }),
+            BloomSetting::High => cmds.try_insert(Bloom {
+                intensity: 0.10,
+                ..Bloom::OLD_SCHOOL
+            }),
+        };
+    }
+}

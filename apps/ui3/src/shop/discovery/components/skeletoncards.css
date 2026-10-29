@@ -1,0 +1,35 @@
+/* from: shop@94584a5c:app/src/components/SkeletonCards/SkeletonCards.styles.ts */
+.shop-skel-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 12px;
+  border-radius: var(--ui-card-radius, 14px);
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  overflow: hidden;
+}
+.shop-skel-card__media {
+  aspect-ratio: 1 / 1;
+  background: var(--fill-2, rgba(255, 255, 255, 0.06));
+}
+.shop-skel-card__line {
+  height: 12px;
+  margin: 0 12px;
+  border-radius: 6px;
+  background: var(--fill-3, rgba(255, 255, 255, 0.08));
+}
+.shop-skel-card__line--short {
+  width: 45%;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .shop-skel-card__media,
+  .shop-skel-card__line {
+    animation: shop-skel-pulse 1.4s ease-in-out infinite;
+  }
+}
+@keyframes shop-skel-pulse {
+  50% {
+    opacity: 0.55;
+  }
+}

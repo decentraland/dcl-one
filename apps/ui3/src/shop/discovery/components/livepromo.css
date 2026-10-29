@@ -1,0 +1,129 @@
+/* from: shop@2d3bf62:app/src/components/LivePromo/LivePromo.styles.ts */
+.shop-chrome .shop-promo {
+  --lp-crest: 0%;
+  position: relative;
+  display: block;
+  aspect-ratio: 867 / 386;
+  color: #fff;
+  text-decoration: none;
+}
+.shop-chrome .shop-promo[data-crest] {
+  --lp-crest: 9%;
+}
+.shop-chrome .shop-promo__card {
+  position: absolute;
+  top: var(--lp-crest);
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 24px;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 45%, #bf00ff 0%, #510884 78%);
+  box-shadow: 0 2.5px 6.875px rgba(0, 0, 0, 0.25);
+}
+.shop-chrome .shop-promo__fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+.shop-chrome .shop-promo__fallback[data-hidden] {
+  opacity: 0;
+}
+.shop-chrome .shop-promo__avatar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 55%;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+.shop-chrome .shop-promo__avatar[data-ready] {
+  opacity: 1;
+}
+.shop-chrome .shop-promo__avatar > * {
+  width: 100%;
+  height: 100%;
+}
+.shop-chrome .shop-promo__inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 24px;
+  padding: 0 48px;
+  opacity: 0;
+  transition: opacity 0.4s ease;
+  pointer-events: none;
+}
+.shop-chrome .shop-promo__inner[data-ready] {
+  opacity: 1;
+}
+.shop-chrome .shop-promo__title {
+  margin: 0;
+  max-width: 55%;
+  color: #fff;
+  font-size: clamp(20px, 2.2vw, 34px);
+  font-weight: 800;
+  line-height: 1.15;
+  text-transform: uppercase;
+  white-space: pre-line;
+}
+.shop-chrome .shop-promo__cta {
+  pointer-events: auto;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 18px;
+  border-radius: var(--shop-radius-btn, 8px);
+  background: var(--shop-buy-btn, linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%));
+  color: var(--shop-soft-white, #fcfcfc);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.046em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  transition: filter 0.15s ease;
+}
+.shop-chrome .shop-promo__cta::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: calc(var(--shop-radius-btn, 8px) + 6px);
+  padding: 2px;
+  background: var(--shop-buy-btn, linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+.shop-chrome .shop-promo__cta:hover {
+  filter: brightness(1.08);
+}
+.shop-chrome .shop-promo__cta:hover::before {
+  opacity: 1;
+}
+.shop-chrome .shop-promo:focus-visible {
+  outline: 2px solid var(--shop-dcl-red, #ff2d55);
+  outline-offset: 4px;
+  border-radius: 24px;
+}
+@media (max-width: 768px) {
+  .shop-chrome .shop-promo__inner {
+    padding: 0 24px;
+    gap: 14px;
+  }
+}

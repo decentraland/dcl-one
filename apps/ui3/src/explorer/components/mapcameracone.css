@@ -1,0 +1,4 @@
+.map-camera-cone {
+  position: absolute; left: 50%; top: 50%; width: 76px; height: 76px;
+  pointer-events: none; overflow: visible; transform-origin: center;
+}

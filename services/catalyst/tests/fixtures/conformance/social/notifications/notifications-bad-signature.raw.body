@@ -1,0 +1,1 @@
+{"error":"Invalid signature: ERROR. Link type: ECDSA_SIGNED_ENTITY. Point is not on curve: Cannot find square root.","message":"This endpoint requires a signed fetch request. See ADR-44."}

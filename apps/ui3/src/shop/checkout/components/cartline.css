@@ -1,0 +1,335 @@
+/* from: shop@2d3bf62:app/src/pages/Cart.styles.ts (Card, Thumb, ThumbCheck, Info, Desc, Name, Creator,
+   CreatorTag, Foot, Stepper, Step, Qty, Price, PriceWas, Actions, Fav, Remove, Unavailable). Scoped to
+   .shop-cartline. Breakpoints are the cart's own (1080 two-column, 880 mobile), not the app's. */
+.shop-cartline {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  border: 1px solid var(--shop-card-line, rgba(160, 155, 168, 0.25));
+  border-radius: var(--shop-radius-card, 12px);
+  overflow: hidden;
+  color: #fcfcfc;
+}
+
+.shop-cartline[data-unavailable] [data-thumb] {
+  opacity: 0.5;
+}
+
+.shop-cartline[data-unavailable] [data-check] {
+  display: none;
+}
+
+.shop-cartline[data-unavailable] [data-desc] {
+  opacity: 0.7;
+}
+
+.shop-cartline__thumb {
+  position: relative;
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 172px;
+  height: 171px;
+  overflow: hidden;
+  border-radius: var(--shop-radius-card, 12px);
+  background: var(--shop-media, #ecebed);
+}
+
+.shop-cartline__thumb img {
+  width: 83%;
+  height: 83%;
+  object-fit: contain;
+  filter: drop-shadow(0.56px 2.25px 2.8px rgba(0, 0, 0, 0.1));
+}
+
+.shop-cartline__thumb-link {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.shop-cartline__check {
+  position: absolute;
+  top: 7.5px;
+  left: 7.5px;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #34ce77;
+}
+
+.shop-cartline__main {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 16px 8px;
+}
+
+.shop-cartline__desc {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  padding-right: 64px;
+}
+
+.shop-cartline__name {
+  display: block;
+  overflow: hidden;
+  color: #fcfcfc;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-decoration: none;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+a.shop-cartline__name:hover {
+  text-decoration: underline;
+}
+
+.shop-cartline__creator .shop-badge {
+  display: inline-flex;
+  color: var(--shop-gray-4, #cfcdd4);
+  font-size: 10px;
+  line-height: 1.43;
+  text-decoration: none;
+}
+
+.shop-cartline__creator .shop-badge__avatar {
+  display: none;
+}
+
+.shop-cartline__creator .shop-badge__name {
+  color: inherit;
+  font-size: 10px;
+  line-height: 1.43;
+}
+
+.shop-cartline__creator a.shop-badge:hover .shop-badge__name {
+  color: #fcfcfc;
+}
+
+.shop-cartline__tag {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: var(--shop-glass, rgba(255, 255, 255, 0.2));
+  color: #fcfcfc;
+  font-size: 10px;
+  font-weight: 400;
+  line-height: 14px;
+}
+
+.shop-cartline__tag-ico {
+  width: 11.31px;
+  height: 10.94px;
+}
+
+.shop-cartline__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-right: 8px;
+}
+
+.shop-cartline__qty {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px;
+  border: 0.5px solid var(--shop-card-line, rgba(160, 155, 168, 0.25));
+  border-radius: var(--shop-radius-pill, 50px);
+}
+
+.shop-cartline__qty button {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #fcfcfc;
+  cursor: pointer;
+}
+
+.shop-cartline__qty button svg {
+  width: 16px;
+  height: 16px;
+}
+
+.shop-cartline__qty button:disabled {
+  color: var(--shop-gray-4, #cfcdd4);
+  cursor: default;
+}
+
+.shop-cartline__qty output {
+  min-width: 12px;
+  color: #fcfcfc;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-cartline__price {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  color: #fcfcfc;
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.shop-cartline__price .shop-amount {
+  gap: 4px;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.shop-cartline__was {
+  margin-left: 6px;
+  color: var(--shop-gray-4, #cfcdd4);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.shop-cartline__unavailable {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #fcfcfc;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.shop-cartline__warn {
+  color: #f48221;
+}
+
+.shop-cartline__actions {
+  position: absolute;
+  top: 9px;
+  right: 7px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.shop-cartline__icon-btn {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--shop-gray-4, #cfcdd4);
+  cursor: pointer;
+  transition: color 0.12s ease;
+}
+
+.shop-cartline__icon-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.shop-cartline__fav:hover:not(:disabled) {
+  color: #fcfcfc;
+}
+
+.shop-cartline__fav[data-on] {
+  color: var(--shop-dcl-red, #ff2d55);
+}
+
+.shop-cartline__remove:hover:not(:disabled) {
+  color: var(--shop-dcl-red, #ff2d55);
+}
+
+.shop-cartline__stock {
+  color: var(--shop-gray-4, #cfcdd4);
+  font-size: 12px;
+}
+
+.shop-cartline__change,
+.shop-cartline__pending {
+  margin: 0;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #ffb86b;
+  font-size: 12px;
+}
+
+.shop-cartline__pending {
+  margin-left: auto;
+  padding: 0;
+  background: none;
+  color: var(--shop-gray-4, #cfcdd4);
+  font-size: 13px;
+}
+
+.shop-cartline__toggle {
+  justify-self: start;
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: #fcfcfc;
+  font: inherit;
+  font-size: 13px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.shop-cartline__guidance {
+  display: grid;
+  gap: 8px;
+}
+
+@media (min-width: 1081px) and (max-width: 1180px) {
+  .shop-cartline__thumb {
+    width: 120px;
+    height: 120px;
+  }
+}
+
+@media (max-width: 880px) {
+  .shop-cartline__thumb {
+    width: 120px;
+    height: 120px;
+  }
+
+  .shop-cartline__main {
+    padding: 12px 4px 12px 0;
+  }
+
+  .shop-cartline__name {
+    display: -webkit-box;
+    white-space: normal;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .shop-cartline__price {
+    font-size: 20px;
+  }
+}

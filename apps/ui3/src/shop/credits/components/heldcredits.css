@@ -1,0 +1,48 @@
+.shop-held {
+  position: relative;
+  display: inline-flex;
+}
+
+.shop-held__trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-pill);
+  background: var(--fill-2);
+  color: var(--ink-85);
+  font: inherit;
+  font-size: var(--fs-12);
+  cursor: help;
+}
+
+.shop-held__panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: var(--z-overlay);
+  display: grid;
+  gap: 6px;
+  width: min(300px, 80vw);
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--panel-2);
+  box-shadow: var(--shadow-panel);
+  color: var(--text);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+}
+
+.shop-held__panel p {
+  margin: 0;
+}
+
+.shop-held__title {
+  font-weight: 700;
+}
+
+.shop-held__caveat {
+  color: var(--ink-6);
+}

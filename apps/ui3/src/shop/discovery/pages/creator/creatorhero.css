@@ -1,0 +1,165 @@
+/* from: shop@2d3bf62:app/src/components/CreatorHero/CreatorHero.styles.ts */
+.shop-creatorhero,
+.shop-creatorhero * { box-sizing: border-box; }
+.shop-creatorhero {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  margin-bottom: 24px;
+  min-height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--shop-sans, Inter, system-ui, sans-serif);
+}
+.shop-creatorhero__cover {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+}
+.shop-creatorhero__cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.shop-creatorhero__scrim {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.7) 0%, rgba(0, 0, 0, 0.5) 100%);
+}
+.shop-creatorhero__links {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shop-creatorhero__link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  transition: opacity 0.15s linear;
+}
+.shop-creatorhero__link:hover { opacity: 0.8; }
+.shop-creatorhero__ico {
+  display: block;
+  width: 36px;
+  height: 36px;
+  background: currentColor;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.shop-creatorhero__edit {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  transition: background-color 0.15s linear;
+}
+.shop-creatorhero__edit:hover { opacity: 1; background: rgba(255, 255, 255, 0.24); }
+.shop-creatorhero__edit .shop-creatorhero__ico { width: 16px; height: 16px; }
+.shop-creatorhero__body {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 24px;
+  padding: 40px 20px;
+}
+.shop-creatorhero__ava {
+  display: block;
+  box-sizing: border-box;
+  width: 112px;
+  height: 112px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 4px solid #fff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.3);
+  background: #ff4bed;
+}
+.shop-creatorhero__name {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.6;
+}
+.shop-creatorhero__desc {
+  margin: 0;
+  font-size: 15px;
+  color: #fff;
+  line-height: 1.6;
+  max-width: 520px;
+}
+.shop-creatorhero__actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.shop-creatorhero__view {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 40px;
+  padding: 0 28px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.046em;
+  text-decoration: none;
+  transition: background 0.15s ease;
+}
+.shop-creatorhero__view:hover { background: #242129; color: #fff; }
+
+@media (max-width: 768px) {
+  .shop-creatorhero { min-height: 260px; }
+  .shop-creatorhero__links { top: 12px; right: 12px; gap: 6px; }
+  .shop-creatorhero__ico { width: 30px; height: 30px; }
+  .shop-creatorhero__edit { width: 28px; height: 28px; }
+  .shop-creatorhero__edit .shop-creatorhero__ico { width: 14px; height: 14px; }
+  .shop-creatorhero__body { padding: 56px 16px 24px; }
+  .shop-creatorhero__ava { width: 88px; height: 88px; }
+  .shop-creatorhero__name { font-size: 16px; }
+  .shop-creatorhero__desc { font-size: 14px; }
+}
+
+.shop-creator__collbar {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  margin-bottom: 16px;
+}
+.shop-creator__count {
+  color: #fcfcfc;
+  font-weight: 600;
+}
+.shop-creator__count .shop-creator__countskel {
+  display: inline-block;
+  width: 72px;
+  height: 1em;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.14);
+  vertical-align: middle;
+}
+.shop-grid[data-variant="collections"] {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+@media (max-width: 720px) {
+  .shop-grid[data-variant="collections"] { grid-template-columns: 1fr 1fr; }
+}
+.shop-creator__empty-illus { width: 120px; height: auto; display: block; }

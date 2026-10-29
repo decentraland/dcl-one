@@ -1,0 +1,27 @@
+{
+  "description": "GET /v1/members/{address}/invites for another address, signed by the throwaway wallet. Signed fetch with the run's throwaway key 0xf7e07d862ddbe561a63ebb5dd809cf0542269587 (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://social-api.decentraland.org/v1/members/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/invites -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/members/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/invites",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xf7e07d862ddbe561a63ebb5dd809cf0542269587\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/members/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/invites:1790364572975:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x9aae1b91e4f8ee5c177d3d6a6f30eba8ed17df2642cc0fd3571ebd53a2d0e4a537cac31e39d560dc4a2fd02d6d1c69e8caa6f9e5a35739cfc098bb6f450ac3881c\"}",
+      "x-identity-timestamp": "1790364572975",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": []
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/members/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/invites",
+  "captured_at": "2026-09-25T19:29:32Z",
+  "volatile_paths": []
+}

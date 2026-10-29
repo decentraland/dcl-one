@@ -1,0 +1,21 @@
+{
+  "description": "GET /api/images/{id}: a redirect to the public bucket object (the id as the gallery lists it). Captured GET https://camera-reel-service.decentraland.org/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051 -> 307.",
+  "request": {
+    "method": "GET",
+    "path": "/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 307,
+    "headers": {
+      "location": "https://camera-reel-s3-bucket.decentraland.org/e9659dd5-0f87-4169-a9a6-1ec0d5faf051",
+      "content-length": "0"
+    },
+    "body_bytes_b64": ""
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051",
+  "captured_at": "2026-09-25T19:29:41Z",
+  "volatile_paths": []
+}

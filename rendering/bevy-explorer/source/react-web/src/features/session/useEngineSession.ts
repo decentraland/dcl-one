@@ -1,0 +1,3306 @@
+// Top-level session orchestration: login → entering (scene loading) → world.
+// Owns the driver and exposes the login flow + scene-loading state + phase.
+
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { clearLogins, getLogin, redirectToAuth, returnedFromAuth, rootAddress, type StoredLogin } from '../auth/sso'
+import { hoverKey, proximityKey } from '../../engine/pointerKeys'
+import type { LoginDriver, NewAccountPick } from '../../engine/driver'
+import type { LaunchHostOptions } from '../../engine/engineRpc'
+import { recordVisit } from '../lobby/lobbyApi'
+import type { SatelliteView } from '../../engine/generated'
+import type { AvatarLook } from '../../engine/avatarEquip'
+import type { PreviewFocus } from '../../engine/protocol'
+import { clickButton, screenViewed, sessionId, track } from '../../lib/analytics'
+import { randomDefaultLook } from '../../lib/guestName'
+import { fetchStoredProfile, useStoredProfile, type StoredProfile } from '../login/useStoredProfile'
+import { inShell, postToShell } from '../../lib/shell'
+import { storedLoginType, type LoginType } from './sessionAnalytics'
+import type { InteractableArea } from '../../lib/hudInset'
+import type { FatalError } from '../error/fatalError'
+import { createLoadingProgress } from './loadingProgress'
+import { DEFAULT_REALM } from '../../lib/baseDomain'
+import { checkRealm, realmCheckMessage } from '../../lib/realmCheck'
+import { entryRealm } from '../../lib/entryParams'
+import { color3ToHex, hexToColor3 } from '../../lib/color'
+import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
+import { emitFriendEvent } from '../friends/friendEvents'
+import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
+import { bootMode } from '../../lib/bootMode'
+import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
+import { dispatchCancelLayer } from '../../lib/cancelLayers'
+import { isInputLocked, subscribeInputLock } from '../../lib/inputLock'
+import { applyProfileEdit } from '../../engine/profileEdit'
+import { peekProfile, profileChanged, receiveProfile, seedProfiles, setProfileRequester, updateProfile } from './profileStore'
+import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
+import { getCursor } from '../pointer/cursorStore'
+import { openProfileCard } from '../profileCard/ProfileCard'
+import { formatConsoleReply, parseChatCommand } from '../chat/chatCommands'
+import { PARCEL_METERS, isGenesisSatelliteView } from '../map/atlas'
+import { EDITOR_BUILD } from '../editorHost/config'
+import { editorEntry } from '../editorHost/source'
+import { hudActsOn, type EditorHudMode } from '../editorHost/hudMode'
+import type {
+  AvatarColorTarget,
+  AppNotification,
+  BindingEntry,
+  ChangeRealmRequest,
+  ChatMessage,
+  ChatReaction,
+  MessageReaction,
+  Community,
+  DmUserState,
+  CommunityAction,
+  CommunityDetailMessage,
+  Emote,
+  BlockedUser,
+  Friend,
+  FriendAction,
+  FriendRequest,
+  GalleryPhoto,
+  GalleryPhotoMeta,
+  HoverAction,
+  MinimapRotation,
+  MinimapStyle,
+  NavAction,
+  NearbyMember,
+  OutfitSlot,
+  OutfitsMetadata,
+  PermissionLevelChoice,
+  PermissionRequestMessage,
+  PermissionRuleLevel,
+  PermissionRulesMessage,
+  PermissionRuleValue,
+  PermissionUsedMessage,
+  WorldPasswordRequestMessage,
+  ProximityTip,
+  Profile,
+  ProfileEdit,
+  SceneLoadingState,
+  Setting,
+  TeleportRequest,
+  Wearable
+} from '../../engine/protocol'
+
+// Set by the wasm via boot.js __setEngineTextFocus (web) / the CEF relay (native): true while
+// an engine-rendered text field (e.g. a scene textinput) holds keyboard focus. Those fields
+// live on the canvas, so document.activeElement can't see them.
+type EngineFocusWindow = Window & { __engineTextFocus?: boolean }
+
+// Unity's wording (CommunityCardController *_ERROR_MESSAGE); the raw HTTP error only goes to the log.
+const COMMUNITY_ERROR: Record<CommunityAction, string> = {
+  join: 'There was an error joining the community. Please try again.',
+  requestToJoin: 'There was an error requesting to join community. Please try again.',
+  cancelJoinRequest: 'There was an error cancelling join request. Please try again.',
+  leave: 'There was an error leaving the community. Please try again.'
+}
+
+// The engine's clock starts at 10:00 and runs at 12× (crates/visuals/src/day_night.rs start_clock).
+// Fallbacks only: the menu reads the live clock with `/time` when it opens.
+const SKYBOX_START_HOURS = 10
+const SKYBOX_DAY_SPEED = 12
+
+// The engine's `/time` reply (day_night.rs timeofday_console_command) ends with
+// "speed <S> (elapsed: <seconds since midnight>)".
+function parseTimeReply(reply: string): { hours: number; speed: number } | null {
+  const m = /speed (-?[\d.]+) \(elapsed: ([\d.]+)\)/.exec(reply)
+  return m ? { hours: Number(m[2]) / 3600, speed: Number(m[1]) } : null
+}
+
+// Unity's wording (BackpackEquipStatusController's in-world warning) when a profile deploy fails.
+export const SAVE_FAILED_MESSAGE = 'There was an error updating your avatar profile. Please try again.'
+
+/** A server-side catalog page request (backpack grid). Filters/sort are applied by the catalyst. */
+export interface CatalogQuery {
+  page: number
+  pageSize: number
+  category?: string
+  search?: string
+  orderBy?: 'date' | 'rarity' | 'name'
+  direction?: 'asc' | 'desc'
+  collectiblesOnly?: boolean
+  smartOnly?: boolean
+}
+
+export interface BackpackState {
+  /** The current catalog page (server-side paginated; drives the grid). */
+  list: Wearable[]
+  /** Total matching items for the active filters (drives the pager). */
+  total: number
+  /** True while a catalog page is in flight. */
+  loading: boolean
+  /** Request a catalog page (page + filters); the newest response wins (stale ones are dropped). */
+  query: (q: CatalogQuery) => void
+  equipped: Wearable[]
+  open: boolean
+  toggle: () => void
+  /** Put a full equipped set on the Backpack's look (the explicit Equip action); deployed on close. */
+  equip: (urns: string[]) => void
+  /** The avatar's current body shape urn (items without a representation for it can't render). */
+  bodyShape?: string
+  /** Why deploying the look failed, or null (until Retry or Revert). */
+  saveError: string | null
+  /** Deploy the look again now. */
+  retrySave: () => void
+  /** Drop the look and go back to the last one that deployed. */
+  revertSave: () => void
+  /** The avatar's skin/hair/eye colors as hex; each present once the bridge has reported it. */
+  colors?: { skin?: string; hair?: string; eyes?: string }
+  /** Change one color: shown at once, deployed with the look when the Backpack closes. */
+  setColor: (target: AvatarColorTarget, hex: string) => void
+  /** Preview a set on the avatar without equipping it (selecting); null reverts to the look. */
+  preview: (urns: string[] | null) => void
+  /** Frame part of the preview avatar (follows the selected category). */
+  focus: (focus: PreviewFocus) => void
+  /** Categories shown even though an equipped item hides them. */
+  forceRender: string[]
+  /** Replace the force-render list (shown at once, deployed with the look on close). */
+  setForceRender: (categories: string[]) => void
+  /** Saved outfits (Outfits tab), by slot index. */
+  outfits: OutfitSlot[]
+  /** Number of outfit slots available (5 free + 1 per owned DCL name, capped at 10). */
+  outfitSlots: number
+  /** Save the current look into a slot. */
+  saveOutfit: (slot: number) => void
+  /** Delete a saved outfit slot. */
+  deleteOutfit: (slot: number) => void
+  /** Equip a saved outfit (applies its body shape, colors and wearables). */
+  equipOutfit: (slot: number) => void
+}
+
+export interface CommunitiesState {
+  list: Community[]
+  open: boolean
+  toggle: () => void
+  /** Create a community (name + description + Public/Private + discoverable). */
+  create: (input: { name: string; description: string; privacy: 'public' | 'private'; discoverable: boolean }) => void
+  join: (id: string) => void
+  /** Ask to join a private community. */
+  requestToJoin: (id: string) => void
+  cancelRequest: (id: string, requestId: string) => void
+  leave: (id: string) => void
+  /** The last community action the social-api rejected, for that community's modal. */
+  error: { id: string; message: string } | null
+  /** Per-community detail (members/posts/places/events) for the open modal. */
+  detail: CommunityDetailMessage | null
+  /** Request a community's detail (call when its modal opens). */
+  loadDetail: (id: string) => void
+}
+
+export interface MapState {
+  /** Local player's current parcel. */
+  x: number
+  y: number
+  open: boolean
+  toggle: () => void
+  teleport: (x: number, y: number) => void
+  /** Teleport to a Genesis City place: from outside Genesis the parcel carries the Genesis realm,
+   *  so the engine changes realm first. In Genesis already it is a plain teleport — a realm-carrying
+   *  teleport is a full realm reconnect, like changeRealm, even to the realm the player is in. */
+  teleportToPlace: (x: number, y: number) => void
+  /** Travel to a world/realm by name (e.g. `boedo.dcl.eth`). */
+  changeRealm: (realm: string) => void
+}
+
+/** Live player pose for the minimap: position in world metres, yaws in degrees. */
+export interface PlayerPose {
+  x: number
+  z: number
+  /** Avatar heading — drives the map arrow. */
+  yaw: number
+  /** Camera heading — drives the "rotate with camera" mode. */
+  camYaw: number
+}
+
+export interface MinimapState {
+  /** The pose stream, arriving ~20/s. Deliberately a ref rather than state: the minimap
+   *  animates it from a RAF loop, and routing 20 updates/s through React state would
+   *  re-render the whole HUD tree for a transform the DOM can apply directly. */
+  pose: { current: PlayerPose }
+  /** The satellite map the realm advertises, null when it has none. Only Genesis City
+   *  advertises GENESIS_SATELLITE_VIEW; anywhere else (Worlds, local scenes) the minimap forces
+   *  the engine-rendered Camera style and hides the style picker. */
+  satelliteView: SatelliteView | null
+  /** Title of the scene the player is standing in, for the header. Empty on an undeployed
+   *  parcel (the header falls back to "Empty parcel"). Updates as the player crosses into
+   *  another scene — unlike the entry overlay's title, which never does. */
+  sceneTitle: string
+  /** Relay the current style/rotation/zoom to the scene. Only the Camera style needs the
+   *  engine; on the DOM styles the scene disposes its TextureCamera. */
+  setConfig: (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => void
+}
+
+// Places browses the places API over HTTP (no bridge data) — it only needs open/close.
+export interface PlacesState {
+  open: boolean
+  toggle: () => void
+}
+
+// Events browses the public events API over HTTP, like Places.
+export interface EventsState {
+  open: boolean
+  toggle: () => void
+}
+
+// The Shop browses the public marketplace catalog over HTTP, like Places and Events.
+export interface ShopState {
+  open: boolean
+  toggle: () => void
+}
+
+// Unity's sidebar Skybox menu: time of day, driven through the engine's `/time <hours> <speed>`.
+export interface SkyboxState {
+  open: boolean
+  toggle: () => void
+  /** Hour of day shown on the slider, 0–24. */
+  hours: number
+  /** The sky follows the engine's day cycle; the slider is locked while on. */
+  progressing: boolean
+  setHours: (hours: number) => void
+  setProgressing: (on: boolean) => void
+}
+
+export interface GalleryState {
+  /** The local player's camera-reel photos (newest first by dateTime). */
+  list: GalleryPhoto[]
+  /** Storage usage — `current` of `max` photos (0 until the gallery first loads). */
+  current: number
+  max: number
+  /** False until the first gallery response arrives (spinner vs empty state). */
+  loaded: boolean
+  open: boolean
+  toggle: () => void
+  /** Per-photo metadata cache (place + people), filled lazily when a detail view opens. */
+  metas: Record<string, GalleryPhotoMeta | null | undefined>
+  /** Fetch one photo's full metadata (populates `metas`). */
+  loadPhoto: (id: string) => void
+  /** Delete one of the player's photos (re-emits the gallery). */
+  remove: (id: string) => void
+}
+
+export interface EmotesState {
+  list: Emote[]
+  open: boolean
+  toggle: () => void
+  play: (urn: string) => void
+  /** Assign an owned emote to a wheel slot (0–9); urn:'' clears the slot. */
+  equip: (slot: number, urn: string) => void
+}
+
+export interface NotificationsState {
+  list: AppNotification[]
+  unread: number
+  open: boolean
+  toggle: () => void
+  markAllRead: () => void
+}
+
+export interface SettingsState {
+  list: Setting[]
+  open: boolean
+  toggle: () => void
+  set: (name: string, value: number) => void
+  /** Fetch the settings without opening the page (once per session). */
+  load: () => void
+}
+
+export interface BindingsState {
+  /** The engine's binding table (empty until the first `bindings` message lands). */
+  list: BindingEntry[]
+  /** Whole-table replace: pass the full edited table (see SetBindingsRequest). */
+  set: (bindings: BindingEntry[]) => void
+  /** Reset the whole table to engine defaults. */
+  reset: () => void
+  /** Press-a-key capture. `input` resolves with the InputIdentifier string; `cancel` abandons
+   *  the capture (the engine still resolves it on the next input, but the result is dropped). */
+  capture: () => { input: Promise<string>; cancel: () => void }
+}
+
+export interface ProfileState {
+  data: Profile | null
+  open: boolean
+  toggle: () => void
+  /** Claimed (NFT) names this account owns — the display-name picker's options. */
+  ownedNames: string[]
+  /** A save is in flight: the engine acks it only once the new profile version has deployed. */
+  saving: boolean
+  /** Why the last save failed, or null. */
+  saveError: string | null
+  /** Apply a partial edit to your own profile. Omitted fields are left alone. */
+  save: (edit: ProfileEdit) => void
+  requestOwnedNames: () => void
+  dismissSaveError: () => void
+}
+
+export interface FriendsState {
+  /** false for guests / before the relationship snapshot is seeded. */
+  available: boolean
+  list: Friend[]
+  received: FriendRequest[]
+  sent: FriendRequest[]
+  blocked: string[]
+  /** The blocked accounts with their profiles (display); `blocked` stays the address set. */
+  blockedUsers: BlockedUser[]
+  /** Signed in, social service still starting. */
+  loading: boolean
+  open: boolean
+  toggle: () => void
+  /* TODO: split domain data (queries) from commands — act/toggle don't belong in "State".
+   Expose commands as an imperative service/context (like the popup service), not prop-drilled. (#18) */
+  /** accept/reject/cancel/delete/block/unblock a user (guest-disabled in-engine). */
+  act: (op: FriendAction, address: string, message?: string) => void
+  /** In-flight actions as `op:address` (lowercase). */
+  pending: ReadonlySet<string>
+  /** Mutual friends by lowercase address, filled by loadMutuals. */
+  mutuals: Record<string, MutualFriend[]>
+  loadMutuals: (address: string) => void
+}
+
+export interface MutualFriend {
+  address: string
+  name: string
+  picture?: string
+}
+
+/** The stored rules for the scene the player stands in: its hash, the realm url they were read
+ *  under (what a rule row's subject carries), and the rules at each level. */
+export type PermissionRules = Omit<PermissionRulesMessage, 'kind'>
+
+/** A "This visit" answer the player gave for `ty` in `scene` (a prompt, or the review). */
+export type VisitAnswer = Omit<PermissionUsedMessage, 'kind'>
+
+/** The engine's latest outcome for a permission the scene used this visit. */
+export interface TriggeredPermission {
+  ty: string
+  allowed: boolean
+}
+
+/** What the review dialog is about: a visit answer ('visit') or a stored rule at its level; `value`
+ *  what the answer or the rule says. */
+export interface PermissionSubject {
+  ty: string
+  sceneName: string
+  scene: string
+  realm: string
+  scope: 'visit' | 'scene' | 'realm' | 'global'
+  value: PermissionRuleValue
+}
+
+export interface PermissionsState {
+  /** Outstanding scene permission prompts, oldest first (the HUD shows one at a time). A request
+   *  the player already answered for 'visit' (same scene + type) is answered again without
+   *  being queued, until the player leaves the scene or reloads it. */
+  pending: PermissionRequestMessage[]
+  /** The player's "This visit" answers for the scene they stand in, in order. A scene's answers
+   *  are forgotten when the player leaves it or reloads it. */
+  visit: VisitAnswer[]
+  /** Permissions the scene used this visit, by type, with the engine's latest outcome. The list
+   *  highlights the row that decided each: a visit answer, or the stored rule in force. */
+  triggered: TriggeredPermission[]
+  /** Refusals the player did not click themselves — the HUD answering from a visit deny, or a stored
+   *  rule — by type, that the player has not opened the list for yet: the rail badge. */
+  unseenDenied: number
+  /** The list was opened: the badge clears until the next refused use. */
+  markSeen: () => void
+  /** The stored rules for the current scene, the realm and global, once `loadRules` answered. */
+  rules: PermissionRules | null
+  /** Ask the engine for the stored rules (the list is open). */
+  loadRules: () => void
+  /** Rewrite the rule for one permission and drop its uses from `used` — the next use reports the
+   *  new outcome. 'visit' forgets the engine's stored rule and answers here from now on. */
+  setRule: (subject: PermissionSubject, allow: boolean, level: PermissionRuleLevel) => void
+  /** Clear one stored rule (the subject's level) and this visit's answer for the type. */
+  clearRule: (subject: PermissionSubject) => void
+  /** Forget every stored answer at every level, and this visit's: scenes ask again. */
+  resetDefaults: () => void
+  /** Allow/deny the request `id` at the chosen scope, then drop it from the queue. */
+  resolve: (id: number, allow: boolean, level: PermissionLevelChoice) => void
+}
+
+export interface WorldPasswordState {
+  /** The engine's open password prompt for the world being travelled to, if any. */
+  pending: WorldPasswordRequestMessage | null
+  /** Answer the prompt: the password, or null to give up (the travel is refused). */
+  resolve: (password: string | null) => void
+}
+
+export type ChatLine = ChatMessage & {
+  id: number
+  ts: number
+  /** In the order each emoji was first used. */
+  reactions?: MessageReaction[]
+}
+
+/** `reactions` with one wallet's reaction added or removed. */
+export function applyReaction(reactions: MessageReaction[], reaction: Pick<ChatReaction, 'emoji' | 'from' | 'remove'>): MessageReaction[] {
+  const from = reaction.from.toLowerCase()
+  const i = reactions.findIndex((r) => r.emoji === reaction.emoji)
+  if (reaction.remove) {
+    if (i < 0 || !reactions[i].from.includes(from)) return reactions
+    const rest = reactions[i].from.filter((f) => f !== from)
+    return rest.length > 0 ? reactions.map((r, j) => (j === i ? { ...r, from: rest } : r)) : reactions.filter((_, j) => j !== i)
+  }
+  if (i < 0) return [...reactions, { emoji: reaction.emoji, from: [from] }]
+  if (reactions[i].from.includes(from)) return reactions
+  return reactions.map((r, j) => (j === i ? { ...r, from: [...r.from, from] } : r))
+}
+
+/** An open DM tab. Tabs are HUD state only: nothing opens on boot, a tab appears when a DM
+ *  arrives or is sent, or from Message on a profile, and closing it is local. */
+export interface Conversation {
+  /** Partner wallet, lowercase. */
+  address: string
+  /** DMs received on this tab while it was not the one shown (or chat was closed). */
+  unread: number
+  /** From the engine's per-tab state stream; null until the first report. */
+  state: DmUserState | null
+  online: boolean
+}
+
+/** A chat line's tab: 'Nearby', or the partner wallet in lowercase. */
+export function channelKey(channel: string): string {
+  return channel === 'Nearby' ? channel : channel.toLowerCase()
+}
+
+/** A DM rides a wallet-named channel; anything else (Nearby, System) belongs to the Nearby list. */
+export function isDmChannel(channel: string): boolean {
+  return /^0x[0-9a-f]{40}$/i.test(channel)
+}
+
+export interface ChatState {
+  /** The lines of the channel shown (`channel`). */
+  messages: ChatLine[]
+  /** Sends to the channel shown: Nearby, or the open DM. */
+  send: (text: string) => void
+  /** Adds or removes the local user's reaction to a message on the channel shown. */
+  react: (messageId: string, emoji: string, remove: boolean) => void
+  /** The Nearby lines, whichever channel is shown. */
+  nearby: ChatLine[]
+  /** Redraws the bubble over a Nearby sender's head with other words, while it is still that message's. */
+  bubbleText: (sender: string, messageId: string, message: string) => void
+  /** 'Nearby' or a partner wallet (lowercase). */
+  channel: string
+  select: (channel: string) => void
+  /** Open DM tabs, in the order they appeared. */
+  conversations: Conversation[]
+  /** Show a DM tab for `address` (adding it if needed), select it, and open chat. */
+  openConversation: (address: string) => void
+  /** Drop a DM tab; its history stays stored. */
+  closeConversation: (address: string) => void
+  /** Delete the stored history with a partner and clear their lines. */
+  deleteHistory: (address: string) => void
+  /** Visibility, toggled by the React sidebar chat icon. */
+  open: boolean
+  toggle: () => void
+  /** Nearby players (drives the "Nearby · N" header + members list). */
+  members: NearbyMember[]
+  /** Lowercased addresses talking in voice chat right now (engine voice stream). */
+  speaking: ReadonlySet<string>
+  /** Open chat and queue an @name mention into the draft (from a profile card's "Mention"). */
+  mention: (name: string) => void
+  /** A queued @name waiting to be dropped into the chat draft (consumed by Chat), or null. */
+  pendingMention: string | null
+  /** Clear the queued mention once Chat has inserted it. */
+  consumeMention: () => void
+  /** Lines that landed where they could not be seen: with the chat closed, or open but idle on
+   *  another channel (the rail and its counts are hidden while idle). Reset when the chat opens or
+   *  becomes active. Drives the sidebar badge. */
+  unread: number
+  /** The panel reports whether it is active (hovered or focused, chrome shown). */
+  setActive: (active: boolean) => void
+  /** Nearby lines that landed while Nearby was not on screen (chat closed or a DM tab shown);
+   *  reset when it is. Drives the badge on the rail's Nearby tab. */
+  nearbyUnread: number
+  /** Bumped on every engine "focus chat" request (Enter, even while idle-open) — Chat watches
+   *  this to (re)focus the input beyond the open-transition case. */
+  focusTick: number
+  /** Open + (re)focus chat. Driven by the bridge's focusChat relay of the engine's Chat
+   *  action (Enter), which fires regardless of where DOM focus sits. */
+  requestFocus: () => void
+}
+
+const MAX_CHAT_LINES = 200
+
+// Render-settle: after a scene first reports loaded, hold the loader at least this long for the
+// engine to render the first frame (so the world isn't revealed as black models), and at most this
+// long so a stuck/absent render probe never traps the loader. The cap is deliberately short: the
+// `renderBusy` probe is best-effort (the engine build may not even expose `#shader-compiling`), so a
+// long cap turned a missed probe into a multi-second frozen-looking hold with the engine idle.
+const MIN_REVEAL_MS = 300
+const MAX_REVEAL_MS = 1500
+// While loading, the engine streams scenes and `visible` can briefly drop between one finishing
+// and the next starting. Revealing the world in that gap flashes the HUD (chat + sidebar) in and
+// out, so we only drop the loader once loading has been stably clear for this long.
+const REVEAL_DEBOUNCE_MS = 600
+// how long, back from the auth site, the stored sign-in waits for the catalyst to have the profile
+const AUTH_PROFILE_WAIT_MS = 30_000
+// the look pending on the stage while RANDOMIZE's fetch is under way (no look number yet)
+const EXPECTED_LOOK = -1
+// how long that fetch is waited for before RANDOMIZE is let go again
+const EXPECTED_LOOK_MS = 15_000
+
+export type LoginStatus =
+  | 'loading'
+  | 'sign-in-or-guest'
+  | 'reuse-login-or-new'
+
+export type SessionPhase = 'login' | 'welcome' | 'lobby' | 'picking' | 'entering' | 'world'
+
+// Where the user chose to spawn after login (the post-jump-in Places picker). `null` = skip → the
+// engine's default spawn (Genesis Plaza). A world switches realm; a parcel teleports once spawned.
+export type Destination =
+  | { kind: 'parcel'; x: number; y: number }
+  | { kind: 'world'; realm: string; position?: string }
+  | null
+
+/** What the guest start page picked: the new guest's name and curated default look (`default<look>`). */
+export type GuestPick = NewAccountPick
+
+export interface LoginFlow {
+  status: LoginStatus
+  /** Root wallet address of the stored SSO identity (shown on the "welcome back" screen). */
+  account: string | null
+  busy: boolean
+  error: string | null
+  /** Engine has booted and can accept the login command. The engine-driven CTAs (Jump in / Explore)
+   *  stay disabled until this is true so a click never lands in a silent wait. Always true for mock. */
+  engineReady: boolean
+  /** The lobby stage's avatar has loaded. The boot bar holds short of done until then. Always true
+   *  without an engine (mock), or for a link's destination (straight into the world, no stage). */
+  avatarLoaded: boolean
+  /** Real boot progress (0–100, weighted) from the engine loader, for the login footer bar. */
+  loadProgress: number
+  /** Active boot step id ('download'|'compile'|'init'|'workers'|'gpu') or null. */
+  loadStep: string | null
+  /** Fresh sign-in: same-domain auth redirect (web) or the engine's remote-wallet flow (native). */
+  startWithAccount: () => void
+  /** Native fresh sign-in in flight → show the verification panel (code null until it arrives). */
+  authPending: boolean
+  authCode: string | null
+  /** Abort the in-flight native fresh sign-in. */
+  cancelLogin: () => void
+  /** `pick`: the guest start page's name and default look, accepted with the terms once signed in.
+   *  Before the engine is ready the click is kept (`acceptQueued`) and runs once it is. */
+  exploreAsGuest: (pick?: GuestPick) => void
+  acceptQueued: boolean
+  /** Reuse the stored SSO identity (hand it to the engine). */
+  jumpIn: () => void
+  /** The stored account's profile, for the screens before the engine draws it. */
+  profile: StoredProfile
+  /** The last login failed because the user's profile couldn't be fetched — offer
+   *  resetProfileAndJumpIn as the explicit recovery. */
+  profileFetchFailed: boolean
+  /** Retry the login, continuing with (and deploying) a default profile if the fetch still
+   *  fails. PERMANENTLY REPLACES the account's existing profile — only offered after a
+   *  profile-fetch failure, and the UI must make the consequence clear. */
+  resetProfileAndJumpIn: () => void
+  /** Sign in with a different account → auth site. */
+  useDifferentAccount: () => void
+}
+
+/** The welcome page, shown after sign-in while the terms aren't accepted on this install or the
+ *  account has no profile yet. */
+export interface WelcomeFlow {
+  /** The terms still need accepting (the world is held until they are). */
+  terms: boolean
+  /** The account has no profile: the name and look are its new one's, deployed on accept. */
+  newProfile: boolean
+  /** Signed in to the lobby, and not yet known whether the page is needed: the stage shows alone. */
+  pending: boolean
+  saving: boolean
+  error: string | null
+  /** Another of the curated default looks on the avatar, fetched here (deployed on accept). */
+  reroll: () => void
+  /** The curated default look `default<look>`, as fetched, on the stage's avatar: the guest start
+   *  page's pick. */
+  showLook: (look: number, avatar: AvatarLook) => void
+  /** The look the next RANDOMIZE shows, for the stage to load out of sight meanwhile. */
+  preloadLook: (look: number, avatar: AvatarLook) => void
+  /** A look is on its way to the stage (asked for, not yet shown there): RANDOMIZE waits. */
+  lookPending: boolean
+  /** The look last put on the stage, for a fresh pick never to repeat (it would never show). */
+  lastLook: number | null
+  /** A look is about to be asked for (its fetch is under way): holds RANDOMIZE until `showLook`. */
+  expectLook: () => void
+  /** Accept the terms, and for a new profile deploy it under `name` with the look. */
+  accept: (name?: string) => void
+  /** Open the terms of use or the privacy policy in the browser. */
+  openLegal: (doc: 'terms' | 'privacy') => void
+}
+
+/** The scene editor's handle on the session (features/editorHost). */
+export interface EditorHostState {
+  /** 'edit' takes the HUD chrome and its hotkeys away, 'play' leaves a player's minimum. */
+  mode: EditorHudMode
+  setMode: (mode: EditorHudMode) => void
+}
+
+export interface EngineSession {
+  phase: SessionPhase
+  playerReady: boolean
+  /** The engine has drawn the lobby stage and avatar, so the page's stand-in can fade out. */
+  lobbyStageReady: boolean
+  /** The lobby reopened in-world from the menu. */
+  lobbyPage: { open: boolean; toggle: () => void; travel: (dest: Destination) => void }
+  /** The Backpack avatar preview's on-screen rect (CSS px), while it is open. */
+  avatarPreviewRect: { x: number; y: number; width: number; height: number } | null
+  /** The persisted home destination the lobby's landing card shows (null before the engine knows). */
+  homeScene: () => { realm: string | null; parcel: string } | null
+  /** Post-jump-in Places picker: choose where to spawn (or null to skip → Genesis Plaza). */
+  pickDestination: (dest: Destination) => void
+  login: LoginFlow
+  welcome: WelcomeFlow
+  /** Entry overlay state (the sceneLoading stream): what is loading while `phase` is
+   *  'entering'. NOT the scene the player is in — that is `minimap.sceneTitle`, resolved by
+   *  parcel; this title is whatever was last loading and goes stale as the player moves. */
+  sceneLoading: SceneLoadingState | null
+  /** One 0–100 value for the whole loader, across every stage it waits on; it only rises. */
+  loadingProgress: number
+  /** Why the last in-world travel failed (the engine kept the player where they were), shown as a notice. */
+  travelError: string | null
+  dismissTravelError: () => void
+  /** The realm a HUD-requested travel is heading to, until the engine reports the outcome. The
+   *  loader shows meanwhile. */
+  travellingTo: string | null
+  /** Fatal engine error → full-screen error popup. 'launch' = boot panic (fatal), 'runtime' =
+   *  post-launch crash bridged from the engine watchdog (dismissable). null when healthy. */
+  fatalError: FatalError | null
+  /** Reload the whole page (error-popup action). */
+  reload: () => void
+  /** Dismiss a non-fatal (runtime) error popup. */
+  dismissFatal: () => void
+  /** World-entity hover hints (empty = nothing hovered). */
+  hover: HoverAction[]
+  /** Engine has grabbed the mouse for camera-look (OS cursor hidden) → show the crosshair. */
+  cursorLocked: boolean
+  /** In-range world-entity tooltips, anchored at projected screen coords. */
+  proximity: ProximityTip[]
+  chat: ChatState
+  friends: FriendsState
+  settings: SettingsState
+  bindings: BindingsState
+  profile: ProfileState
+  notifications: NotificationsState
+  skybox: SkyboxState
+  emotes: EmotesState
+  backpack: BackpackState
+  communities: CommunitiesState
+  map: MapState
+  minimap: MinimapState
+  places: PlacesState
+  events: EventsState
+  shop: ShopState
+  gallery: GalleryState
+  /** The Create page (features/editorHost/CreatePage); `show` opens or closes it without toggling. */
+  create: { open: boolean; toggle: () => void; show: (open: boolean) => void }
+  /** Scene permission prompts (e.g. ChangeRealm) awaiting an Allow/Deny. */
+  permissions: PermissionsState
+  /** The password prompt for a password-protected world being travelled to. */
+  worldPassword: WorldPasswordState
+  editor: EditorHostState
+  mic: { enabled: boolean; available: boolean; toggle: () => void }
+  /** Trigger a sidebar nav action in the scene (open menu/popup, emotes, mic). */
+  nav: (action: NavAction) => void
+  /** Report (or clear) the screen rect where the scene should render an engine view. */
+  setEngineViewport: (
+    region: 'map' | 'avatarPreview' | 'lobby',
+    rect: { x: number; y: number; width: number; height: number } | null,
+    dpr?: number
+  ) => void
+  /** Report the screen area the persistent HUD occupies (see lib/hudInset.ts). */
+  setInteractableArea: (area: InteractableArea) => void
+  /** Sign out → back to the login screen. */
+  logout: () => void
+  /** A full scene menu page is open → the React HUD (sidebar + chat) hides. */
+  menuOpen: boolean
+  closeAllPanels: () => void
+}
+
+/** Parse a camera-reel `dateTime` (unix seconds, unix ms, or ISO) to epoch ms for sort/grouping. */
+export function photoTime(dateTime: string): number {
+  if (/^\d+$/.test(dateTime)) {
+    const n = Number(dateTime)
+    return n < 1e12 ? n * 1000 : n // sub-1e12 → seconds, else already ms
+  }
+  const t = Date.parse(dateTime)
+  return Number.isNaN(t) ? 0 : t
+}
+
+function initialMessages(): ChatLine[] {
+  return [{ sender: '', message: 'Type /help for available commands.', channel: 'Nearby', messageId: '', id: -1, ts: Date.now() }]
+}
+
+export function useEngineSession(createDriver: () => LoginDriver): EngineSession {
+  const driverRef = useRef<LoginDriver | null>(null)
+  const [status, setStatus] = useState<LoginStatus>('loading')
+  // Same-domain SSO identity read from localStorage (null = no stored account).
+  const [stored, setStored] = useState<StoredLogin | null>(null)
+  // How the pending login is reported once it resolves: 'stored' reads the stored identity's kind
+  // then (it loads alongside the status), null is a scene-owned login the page never ran.
+  const pendingLoginType = useRef<LoginType | 'stored' | null>(null)
+  const lastLoginType = useRef<LoginType | null>(null)
+  // the terms accepted on this install, as the welcome flow reported it (the engine knows otherwise)
+  const termsOk = useRef(false)
+  // The Google Ads conversion, once per page load (shell/googleTag.ts dedupes per tab session).
+  const inWorldReported = useRef(false)
+  const storedRef = useRef<StoredLogin | null>(null)
+  storedRef.current = stored
+  const welcomeRef = useRef<{ terms: boolean; newProfile: boolean } | null>(null)
+  // The guest start page's pick went in with the sign-in, and its ACCEPT AND PLAY already accepted
+  // the terms, so the welcome page is answered instead of shown.
+  const guestPick = useRef<GuestPick | null>(null)
+  // ACCEPT AND PLAY clicked before the engine was ready: runs once it is
+  const [queuedGuest, setQueuedGuest] = useState<{ pick: GuestPick | null } | null>(null)
+  // the look sent to the stage and not yet shown there (null = none)
+  const [pendingLook, setPendingLook] = useState<number | null>(null)
+  // The address of the engine's actual reusable previous login (drives "Welcome back").
+  const [prevUserId, setPrevUserId] = useState<string | null>(null)
+  const account = prevUserId ?? (stored ? rootAddress(stored.identity) : null)
+  // The stored account's profile, for the screens before the engine draws it. The stored sign-in
+  // waits for the answer: back from the auth site, the profile it just made can still be syncing
+  // to the catalyst, which the engine's own fetch then asks (and waits for too, login_profile).
+  const accountAddress = status === 'reuse-login-or-new' && account != null ? account : undefined
+  const accountProfile = useStoredProfile(accountAddress, returnedFromAuth ? AUTH_PROFILE_WAIT_MS : 0)
+  const accountChecking = accountAddress != null && !accountProfile.settled
+  const [busy, setBusy] = useState(false)
+  const busyRef = useRef(false)
+  busyRef.current = busy
+  const [error, setError] = useState<string | null>(null)
+  // Engine boots (autostart) while the login screen is up; this flips true once it can take commands.
+  const [engineReady, setEngineReady] = useState(false)
+  const [avatarLoaded, setAvatarLoaded] = useState(false)
+  // Real WASM-download/boot progress surfaced from the engine (0–100) + the active step id,
+  // for the login footer bar. The engine's own loader is hidden (hideLoader=1).
+  const [loadProgress, setLoadProgress] = useState(0)
+  const [loadStep, setLoadStep] = useState<string | null>(null)
+  // Fatal engine error → full-screen popup. 'launch' = boot panic (fatal, no dismiss); 'runtime' =
+  // post-launch crash bridged from the engine watchdog (can be a false positive → dismissable).
+  // ?simerror=1 (or =launch, =realm) seeds a sample so each surface can be iterated without a real
+  // panic — 'realm' matters in mock, where the driver has no launch and the ?realm= pre-flight
+  // (below) is skipped entirely.
+  const [fatalError, setFatalError] = useState<FatalError | null>(() => {
+    const sim = new URLSearchParams(location.search).get('simerror')
+    if (sim == null) return null
+    if (sim === 'realm') return { message: 'The world "noexiste.dcl.eth" doesn\'t exist. (simulated)', source: 'realm' }
+    return {
+      message: "panicked at crates/dcl_wasm/src/inner/mod.rs:41:9:\ncan't init wasm queue\n\n(simulated)",
+      source: sim === 'launch' ? 'launch' : 'runtime'
+    }
+  })
+
+  // Past login → waiting for the world.
+  const [submitted, setSubmitted] = useState(false)
+  // The post-jump-in Places picker: stay in 'picking' until the user chooses a destination (or skips).
+  const [destinationPicked, setDestinationPicked] = useState(false)
+  // Signed in and shown the lobby, with the engine launched holding the world back (web) or already
+  // running (native, mock). Ends once a destination lands; a failed one returns here.
+  const [lobby, setLobby] = useState(false)
+  const lobbyRef = useRef(false)
+  const [lobbyStageReady, setLobbyStageReady] = useState(false)
+  lobbyRef.current = lobby
+  // The welcome page: asked of the engine after each sign-in, null until it answers (or once accepted).
+  const [welcome, setWelcome] = useState<{ terms: boolean; newProfile: boolean } | null>(null)
+  // the lobby waits for the answer, so it never shows only to be replaced by the page
+  const [welcomePending, setWelcomePending] = useState(false)
+  const [welcomeSaving, setWelcomeSaving] = useState(false)
+  const [welcomeError, setWelcomeError] = useState<string | null>(null)
+  // A ?position/?realm link the sign-in entered, and the destination whose world was launched held
+  // for the terms (undefined = none): it goes there once the welcome page is done.
+  const welcomeLink = useRef<Destination>(null)
+  const heldDest = useRef<Destination | undefined>(undefined)
+  // The engine launches once per page (boot.js), so after that a destination is a runtime travel.
+  const launchedRef = useRef(false)
+  // The last place recorded as visited (realm|title), so walking inside one scene records it once.
+  const visitedTitle = useRef('')
+  // The login captured on Jump in, run once the engine is launched (for the lobby, or straight at a
+  // ?position/?realm destination).
+  const pendingLogin = useRef<((driver: LoginDriver) => Promise<unknown>) | null>(null)
+  // Native fresh sign-in (driver.loginNew) in flight: non-null shows the verification-code panel;
+  // `code` fills in when the engine's 'loginCode' message lands. The attempt counter invalidates
+  // a cancelled attempt's eventual resolution (the promise settles after loginCancel).
+  const [auth, setAuth] = useState<{ code: string | null } | null>(null)
+  const authAttempt = useRef(0)
+  // Stops the post-launch boot-panic poll once the world is reached (so it can't mislabel a benign
+  // post-boot panic as a launch failure). The timer id is kept so it's cancelled on unmount.
+  const bootPollStop = useRef(false)
+  const pollTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Native parcel pick: the engine can only teleport an existing player (there's no boot-at-position
+  // when the engine is already running), so the pick is held until playerReady — or sent at once if
+  // the player already spawned (see the no-launch pick path).
+  const pendingParcel = useRef<{ x: number; y: number } | null>(null)
+  // A realm change the HUD asked for, until the bridge reports how it ended ('travelResult'). Only
+  // the latest counts: an earlier one is answered as superseded when a newer one replaces it.
+  const travelSeq = useRef(0)
+  const [travellingTo, setTravellingTo] = useState<string | null>(null)
+  const [travelError, setTravelError] = useState<string | null>(null)
+  const [editorMode, setEditorModeState] = useState<EditorHudMode>('off')
+  const [playerReady, setPlayerReady] = useState(false)
+  // Ref twin of playerReady: the destination pick runs in a callback that would close over a
+  // stale value of the state.
+  const playerReadyRef = useRef(false)
+  const [sceneLoading, setSceneLoading] = useState<SceneLoadingState | null>(null)
+  const [hover, setHover] = useState<HoverAction[]>([])
+  const [proximity, setProximity] = useState<ProximityTip[]>([])
+  const [cursorLocked, setCursorLocked] = useState(false)
+  const [messages, setMessages] = useState<ChatLine[]>(initialMessages)
+  const [channel, setChannel] = useState('Nearby')
+  const channelRef = useRef(channel)
+  channelRef.current = channel
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  // Which tabs are open, for the message handler and for de-duplicating opens within a batch;
+  // `conversations` carries what the tabs show.
+  const openTabsRef = useRef<Set<string>>(new Set())
+  // A DM tab shows the engine's stored history and nothing else: `messages` holds Nearby only.
+  // The store is re-read when the tab is shown and whenever a line lands on the shown tab.
+  const [dmLines, setDmLines] = useState<Record<string, ChatLine[]>>({})
+  // Reactions to Nearby lines, by message id; a DM tab's come with its stored history.
+  const [nearbyReactions, setNearbyReactions] = useState<Record<string, MessageReaction[]>>({})
+  const nearbyIdsRef = useRef<Set<string>>(new Set())
+  const [members, setMembers] = useState<NearbyMember[]>([])
+  const [speaking, setSpeaking] = useState<ReadonlySet<string>>(() => new Set())
+  // Mirror cursor-lock into a ref so the run-once message handler reads it without a stale closure —
+  // avatarClick uses it to centre the card while the camera has the pointer locked.
+  const cursorLockedRef = useRef(false)
+  const [chatOpen, setChatOpen] = useState(true)
+  const [chatUnread, setChatUnread] = useState(0)
+  const [nearbyUnread, setNearbyUnread] = useState(0)
+  const [chatFocusTick, setChatFocusTick] = useState(0)
+  // Read inside the message-subscription closure (mounted once), not via a stale `chatOpen` capture.
+  const chatOpenRef = useRef(chatOpen)
+  chatOpenRef.current = chatOpen
+  const chatActiveRef = useRef(false)
+  // True while something is covering the chat (see the assignment below for what counts). Read by
+  // requestFocusChat from a callback that would otherwise close over a stale value. Popups aren't in
+  // here — they live in their own module store, so requestFocusChat asks it directly.
+  const chatCoveredRef = useRef(false)
+  // Open + (re)focus chat — the engine's "Chat" system action (Enter, relayed by the bridge as
+  // focusChat) funnels here, wherever keyboard focus sat when it fired.
+  const requestFocusChat = useCallback(() => {
+    // Enter is only a chat key when nothing is covering the chat. While the main menu, a popup or a
+    // modal is up it owns the screen, so Enter neither dismisses it nor focuses the chat behind it.
+    // hasOpenPopup() is read here, not during render: the popup stack is a module store that changes
+    // without re-rendering this hook.
+    if (chatCoveredRef.current || hasOpenPopup()) return
+    // Release the browser pointer lock so the mouse stops driving the camera and you can type. On web
+    // camera-look IS the pointer lock; exiting it here (the always-firing focus path) reliably releases
+    // it, and the engine self-heals — update_pointer_lock drops camera-look on
+    // `!document.pointerLockElement`. No-op on native (no DOM pointer lock; the engine frees its own OS
+    // cursor grab from the Chat action).
+    document.exitPointerLock?.()
+    // Friends is the only panel Enter closes: it shares the chat's bottom-left dock, so Chat renders
+    // null behind it (App's `hidden`) and focusing without closing it would do nothing on screen.
+    // The rest (profile, notifications, emotes) sit clear of the chat, so leave them open.
+    setFriendsOpen(false)
+    setChatOpen(true)
+    setChatFocusTick((t) => t + 1)
+  }, [])
+  const [pendingMention, setPendingMention] = useState<string | null>(null)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [friendsData, setFriendsData] = useState<{
+    available: boolean
+    friends: Friend[]
+    received: FriendRequest[]
+    sent: FriendRequest[]
+    blocked: string[]
+    blockedUsers: BlockedUser[]
+    loading: boolean
+  }>({ available: false, friends: [], received: [], sent: [], blocked: [], blockedUsers: [], loading: false })
+  const [friendsOpen, setFriendsOpen] = useState(false)
+  // In-flight friend actions as `op:address`, so their buttons disable until the service answers.
+  const [friendPending, setFriendPending] = useState<ReadonlySet<string>>(new Set())
+  const [mutualFriends, setMutualFriends] = useState<Record<string, MutualFriend[]>>({})
+  const [settings, setSettings] = useState<Setting[]>([])
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  // The binding table lives in the bindingLabels external store (leaf components — menu bar,
+  // hover keycaps — read it without the session); this hook is its single writer and re-reads
+  // it here to expose session.bindings.list.
+  const { bindings } = useBindingsSnapshot()
+  // Engine hotkey edges arrive on the run-once driver subscription; dispatch through a ref
+  // assigned every render so the handler sees current toggles/state without stale closures
+  // (same idiom as chatOpenRef).
+  const systemActionRef = useRef<(action: string, pressed: boolean) => void>(() => {})
+  // The active press-a-key capture. Only the newest matters: the engine has no capture
+  // cancel (a stale request resolves on the NEXT input), so anything but the active id is
+  // dropped when an inputCaptured message lands.
+  const captureRef = useRef<{ id: string; resolve: (input: string) => void } | null>(null)
+  const captureSeq = useRef(0)
+  const [profile, setProfile] = useState<Profile | null>(null)
+  const [profileOpen, setProfileOpen] = useState(false)
+  // Own-profile edit: the claimed names the picker offers, and the state of the save in flight.
+  const [ownedNames, setOwnedNames] = useState<string[]>([])
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [profileSaveError, setProfileSaveError] = useState<string | null>(null)
+  // What the profile looked like before the in-flight save, to put back if the engine rejects it.
+  const profileRevertRef = useRef<{ address: string; profile: Profile | null; stored: Profile | undefined } | null>(null)
+  const [notifications, setNotifications] = useState<AppNotification[]>([])
+  const [notificationsOpen, setNotificationsOpen] = useState(false)
+  const [skyboxOpen, setSkyboxOpen] = useState(false)
+  const [skyboxHours, setSkyboxHoursState] = useState(SKYBOX_START_HOURS)
+  const [skyboxProgressing, setSkyboxProgressingState] = useState(true)
+  const [emotes, setEmotes] = useState<Emote[]>([])
+  const [emotesOpen, setEmotesOpen] = useState(false)
+  const [mic, setMic] = useState({ enabled: false, available: false })
+  const [catalogItems, setCatalogItems] = useState<Wearable[]>([])
+  const [catalogTotal, setCatalogTotal] = useState(0)
+  const [catalogLoading, setCatalogLoading] = useState(false)
+  const catalogReqId = useRef(0)
+  const [equippedWearables, setEquippedWearables] = useState<Wearable[]>([])
+  const [bodyShape, setBodyShape] = useState<string | undefined>(undefined)
+  const [forceRender, setForceRenderState] = useState<string[]>([])
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [avatarColors, setAvatarColors] = useState<{ skin?: string; hair?: string; eyes?: string } | undefined>(undefined)
+  // Mirror of catalogItems for equipWearables' optimistic equipped-set rebuild (avoids stale closure).
+  const catalogItemsRef = useRef<Wearable[]>([])
+  useEffect(() => { catalogItemsRef.current = catalogItems }, [catalogItems])
+  const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
+  const [backpackOpen, setBackpackOpen] = useState(false)
+  const [communities, setCommunities] = useState<Community[]>([])
+  const [communitiesOpen, setCommunitiesOpen] = useState(false)
+  const [communityDetail, setCommunityDetail] = useState<CommunityDetailMessage | null>(null)
+  const [communityError, setCommunityError] = useState<{ id: string; message: string } | null>(null)
+  const [mapParcel, setMapParcel] = useState({ x: 0, y: 0 })
+  const [mapOpen, setMapOpen] = useState(false)
+  // Minimap pose: a ref, not state — see MinimapState.pose for why.
+  const poseRef = useRef<PlayerPose>({ x: 0, z: 0, yaw: 0, camYaw: 0 })
+  const [satelliteView, setSatelliteView] = useState<SatelliteView | null>(null)
+  const [sceneTitle, setSceneTitle] = useState('')
+  const [placesOpen, setPlacesOpen] = useState(false)
+  // The lobby reopened in-world: over the running world, under the panels it opens.
+  const [lobbyOpen, setLobbyOpen] = useState(false)
+  const [home, setHome] = useState<{ realm: string | null; parcel: string } | null>(null)
+  const [eventsOpen, setEventsOpen] = useState(false)
+  const [shopOpen, setShopOpen] = useState(false)
+  const [galleryPhotos, setGalleryPhotos] = useState<GalleryPhoto[]>([])
+  const [galleryStorage, setGalleryStorage] = useState({ current: 0, max: 0 })
+  const [galleryLoaded, setGalleryLoaded] = useState(false)
+  const [galleryMetas, setGalleryMetas] = useState<Record<string, GalleryPhotoMeta | null>>({})
+  const [galleryOpen, setGalleryOpen] = useState(false)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [permissionQueue, setPermissionQueue] = useState<PermissionRequestMessage[]>([])
+  const [visitAnswers, setVisitAnswers] = useState<VisitAnswer[]>([])
+  // the engine's latest outcome per permission the scene used this visit (scene hash + type)
+  const [triggeredPermissions, setTriggeredPermissions] = useState<(TriggeredPermission & { scene: string })[]>([])
+  // types the scene was refused without the player clicking Deny — by a visit deny or a stored rule
+  // — and those the player has seen. The engine reports the refusal of the request the player did
+  // click Deny (or Escape) on too: that one report is skipped.
+  const [refusedTypes, setRefusedTypes] = useState<string[]>([])
+  const [seenDenied, setSeenDenied] = useState<string[]>([])
+  const skipRefusal = useRef(new Set<string>())
+  const [permissionRules, setPermissionRules] = useState<PermissionRules | null>(null)
+  // hash of the scene the player stands in (sceneInfo), for the rules lookup
+  const currentScene = useRef<string | undefined>(undefined)
+  const [sceneHash, setSceneHash] = useState<string | undefined>(undefined)
+  // The HUD's own answers this visit, by scene hash + type, until the player leaves the scene or
+  // reloads it: a boolean answers the scene's later requests too ('visit'); null does not (a
+  // dismissed prompt asks again; an "Always …" answer is the engine's stored rule from here on).
+  const answeredPermissions = useRef(new Map<string, boolean | null>())
+  const [worldPassword, setWorldPassword] = useState<WorldPasswordRequestMessage | null>(null)
+  const chatId = useRef(0)
+  // The speed to restore when Time progression is turned back on (the last running speed seen).
+  const skyboxDaySpeed = useRef(SKYBOX_DAY_SPEED)
+  // Catalog fetches done once per session (cache; relays re-emit on change).
+  const fetchedRef = useRef<Set<string>>(new Set())
+
+  useEffect(() => {
+    const driver = createDriver()
+    driverRef.current = driver
+    // The profile store asks the engine itself for any address it's shown and doesn't hold.
+    setProfileRequester((address, extras) => driver.send({ kind: 'getUserProfile', address, extras }))
+
+    // One generic subscription; switch on kind (mirrors dcl-editor's onSceneMessage).
+    const off = driver.on((msg) => {
+      switch (msg.kind) {
+        case 'event':
+          if (msg.name === 'playerReady') {
+            playerReadyRef.current = true
+            setPlayerReady(true)
+            bootPollStop.current = true // world reached → stop watching for a boot panic
+            // The bridge pushes bindings at registration, but that can race the page's channel
+            // subscription — re-request now that both ends are up (shortcut hints need them).
+            driver.send({ kind: 'getBindings' })
+            if (pendingParcel.current != null) {
+              driver.send({ kind: 'teleport', ...pendingParcel.current })
+              pendingParcel.current = null
+            }
+          }
+          break
+        case 'analytics':
+          // the engine's "First Move In World" (its Segment event, a metre walked since logging in):
+          // the shell's Google Ads conversion (shell/googleTag.ts), the same moment, so the two
+          // counts agree. Only with the terms accepted, like every event the engine sends; a move
+          // before that is not the one reported, a later login's first move can be. The session id
+          // goes to Google with it, so the GA4 export joins the Segment session.
+          if (msg.event === 'First Move In World' && !inWorldReported.current) {
+            const terms = termsOk.current || driver.termsAccepted?.() === true
+            if (inShell && terms) {
+              inWorldReported.current = true
+              postToShell({ type: 'bevy-shell:in-world', login_type: lastLoginType.current, session_id: sessionId() })
+            }
+          }
+          break
+        case 'loginCode':
+          // Only meaningful while a fresh sign-in is in flight; a stray late code must not
+          // resurrect the panel.
+          setAuth((a) => (a == null ? a : { code: msg.code }))
+          break
+        case 'sceneLoading':
+          setSceneLoading(msg.state)
+          break
+        case 'hover': {
+          const next = msg.actions
+          setHover((prev) => (hoverKey(prev) === hoverKey(next) ? prev : next))
+          break
+        }
+        case 'cursorLock':
+          cursorLockedRef.current = msg.locked
+          setCursorLocked(msg.locked)
+          break
+        case 'proximity': {
+          const next = msg.tips
+          setProximity((prev) => (proximityKey(prev) === proximityKey(next) ? prev : next))
+          break
+        }
+        case 'avatarClick': {
+          // The card's scrim swallows mouse input, so the engine's raycast freezes and never sends
+          // the hover-exit — clear the hover here or its tooltip stays painted beside the card.
+          setHover([])
+          // Open the profile card as a popup, anchored at the live DOM cursor (centre while the camera
+          // has the pointer locked). The card resolves the name/avatar by address from the roster.
+          const p = cursorLockedRef.current ? { x: window.innerWidth / 2, y: window.innerHeight / 2 } : getCursor()
+          openProfileCard(msg.address, p.x, p.y)
+          break
+        }
+        case 'chat': {
+          const key = isDmChannel(msg.chat.channel) ? channelKey(msg.chat.channel) : 'Nearby'
+          const shown = chatOpenRef.current && channelRef.current === key
+          if (!shown && !(chatOpenRef.current && chatActiveRef.current)) setChatUnread((n) => n + 1)
+          if (key === 'Nearby') {
+            if (!shown) setNearbyUnread((n) => n + 1)
+            // known at once, so a reaction relayed right behind its line isn't dropped
+            if (msg.chat.messageId !== '') nearbyIdsRef.current.add(msg.chat.messageId)
+            setMessages((prev) =>
+              [...prev, { ...msg.chat, id: chatId.current++, ts: Date.now() }].slice(
+                -MAX_CHAT_LINES
+              )
+            )
+            break
+          }
+          // A DM (theirs, or the echo of ours) is already in the store by the time it is relayed:
+          // the shown tab re-reads it, any other tab counts it.
+          ensureConversation(key)
+          if (shown) {
+            driverRef.current?.send({ kind: 'dmHistory', address: key })
+          } else {
+            setConversations((prev) => prev.map((c) => (c.address === key ? { ...c, unread: c.unread + 1 } : c)))
+          }
+          break
+        }
+        case 'dmHistory': {
+          const key = channelKey(msg.address)
+          // a late answer for a tab closed meanwhile
+          if (!openTabsRef.current.has(key)) break
+          // Ids are the row's place in the store, so a re-read keeps every row it already showed
+          // and only the rows added since read as new.
+          const skipped = Math.max(0, msg.entries.length - MAX_CHAT_LINES)
+          const lines: ChatLine[] = msg.entries.slice(skipped).map((e, i) => ({
+            sender: e.from,
+            message: e.message,
+            channel: key,
+            messageId: e.messageId,
+            id: skipped + i,
+            ts: e.receivedAt,
+            reactions: e.reactions
+          }))
+          setDmLines((prev) => ({ ...prev, [key]: lines }))
+          break
+        }
+        case 'chatReaction': {
+          const r = msg.reaction
+          if (r.channel === 'Nearby') {
+            // reactions to lines we don't have (from before we arrived, or scrolled away) are dropped
+            if (!nearbyIdsRef.current.has(r.messageId)) break
+            setNearbyReactions((prev) => {
+              const next = applyReaction(prev[r.messageId] ?? [], r)
+              return next === prev[r.messageId] ? prev : { ...prev, [r.messageId]: next }
+            })
+            break
+          }
+          // a DM's reactions are stored with it: the shown tab re-reads them
+          const key = channelKey(r.channel)
+          if (chatOpenRef.current && channelRef.current === key) driverRef.current?.send({ kind: 'dmHistory', address: key })
+          break
+        }
+        case 'dmUserState': {
+          const key = channelKey(msg.address)
+          setConversations((prev) => prev.map((c) => (c.address === key ? { ...c, state: msg.state, online: msg.online } : c)))
+          break
+        }
+        case 'focusChat':
+          requestFocusChat()
+          break
+        case 'chatVisibility':
+          setChatOpen(msg.open)
+          break
+        case 'members':
+          setMembers(msg.members)
+          seedProfiles(msg.members)
+          break
+        case 'voiceActivity': {
+          const address = msg.address.toLowerCase()
+          setSpeaking((prev) => {
+            if (prev.has(address) === msg.active) return prev
+            const next = new Set(prev)
+            if (msg.active) next.add(address)
+            else next.delete(address)
+            return next
+          })
+          break
+        }
+        case 'menuVisibility':
+          setMenuOpen(msg.open)
+          break
+        case 'friendActionDone':
+        case 'friendActionFailed': {
+          const ok = msg.kind === 'friendActionDone'
+          setFriendPending((prev) => {
+            const next = new Set(prev)
+            next.delete(`${msg.op}:${msg.address.toLowerCase()}`)
+            return next
+          })
+          emitFriendEvent({ op: msg.op, address: msg.address, ok })
+          toastFriendResult(msg.op, msg.address, ok)
+          break
+        }
+        case 'mutualFriends':
+          setMutualFriends((prev) => ({ ...prev, [msg.address.toLowerCase()]: msg.friends }))
+          break
+        case 'friendOnline':
+          toastFriendOnline(msg.address)
+          break
+        case 'friends':
+          setFriendsData({
+            available: msg.available,
+            friends: msg.friends,
+            received: msg.received,
+            sent: msg.sent,
+            blocked: msg.blocked,
+            blockedUsers: msg.blockedUsers ?? [],
+            loading: msg.loading === true
+          })
+          seedProfiles([...msg.friends, ...msg.received, ...msg.sent])
+          break
+        case 'settings':
+          setSettings(msg.settings)
+          break
+        case 'bindings':
+          setBindingsSnapshot(msg.bindings)
+          break
+        case 'inputCaptured':
+          if (captureRef.current?.id === msg.id) {
+            const { resolve } = captureRef.current
+            captureRef.current = null
+            resolve(msg.input)
+          }
+          break
+        case 'systemAction':
+          systemActionRef.current(msg.action, msg.pressed)
+          break
+        case 'bridgeUnavailable':
+          // Every panel behind the bridge would stay empty with nothing to explain why. Not a crash:
+          // the engine and the world itself are fine, so it opens as an ordinary dialog (issue #1233).
+          setFatalError((prev) => prev ?? {
+            message: 'The HUD could not reach the explorer bridge, so panels may stay empty. Restarting usually fixes it.',
+            source: 'bridge'
+          })
+          break
+        case 'profile':
+          setProfile(msg.profile)
+          // The passport reads the store, so an authoritative own profile has to reach it too or a
+          // just-saved name would keep its stale claimed-name seal until reopened.
+          if (msg.profile != null) receiveProfile(msg.profile.address, msg.profile)
+          break
+        case 'userProfile':
+          receiveProfile(msg.address, msg.profile)
+          break
+        case 'profileChanged':
+          profileChanged(msg.address, msg.version)
+          break
+        case 'ownedNames':
+          setOwnedNames(msg.names)
+          break
+        case 'profileSaved':
+          setProfileSaving(false)
+          // A failed save must not leave the optimistic edit on screen claiming to be saved, so the
+          // pre-save profile goes back — see saveProfile.
+          if (!msg.ok) {
+            setProfileSaveError(msg.error ?? 'Could not save your profile.')
+            const revert = profileRevertRef.current
+            if (revert != null) {
+              setProfile(revert.profile)
+              updateProfile(revert.address, () => revert.stored)
+            }
+          }
+          profileRevertRef.current = null
+          break
+        case 'notifications':
+          setNotifications(msg.notifications)
+          break
+        case 'emotes':
+          setEmotes(msg.emotes)
+          break
+        case 'mic':
+          setMic({ enabled: msg.enabled, available: msg.available })
+          break
+        case 'requestFailed':
+          fetchedRef.current.delete(msg.request)
+          console.error(`[bridge] ${msg.request} failed:`, msg.error)
+          break
+        case 'avatarSaveFailed':
+          setSaveError(SAVE_FAILED_MESSAGE)
+          console.error('[backpack] deploy failed:', msg.message)
+          break
+        case 'wearables':
+          setEquippedWearables(msg.equipped)
+          if (msg.bodyShape) setBodyShape(msg.bodyShape)
+          if (msg.forceRender) setForceRenderState(msg.forceRender)
+          if (msg.colors) {
+            const c = msg.colors
+            setAvatarColors((prev) => ({
+              skin: c.skin ? color3ToHex(c.skin) : prev?.skin,
+              hair: c.hair ? color3ToHex(c.hair) : prev?.hair,
+              eyes: c.eyes ? color3ToHex(c.eyes) : prev?.eyes
+            }))
+          }
+          // The grid page carries its own per-item equipped flags (stamped at fetch, flipped by the
+          // single-equip optimistic rebuild) — an authoritative emit (e.g. after equipOutfit) must
+          // reconcile them too, or stale page flags shadow the new set in the category slots
+          // (equippedByCat prefers page items) and the card markers.
+          setCatalogItems((list) =>
+            list.map((w) => ({
+              ...w,
+              equipped: msg.equipped.some((e) => e.urn === w.urn || e.urn.startsWith(`${w.urn}:`))
+            }))
+          )
+          break
+        case 'catalogPage':
+          // Only the newest request's page wins — drop stale responses (fast page/filter changes).
+          if (msg.catalog === 'wearables' && msg.requestId === catalogReqId.current) {
+            setCatalogItems(msg.items)
+            setCatalogTotal(msg.total)
+            setCatalogLoading(false)
+          }
+          break
+        case 'outfits':
+          setOutfits(msg.metadata)
+          break
+        case 'communities':
+          setCommunities(msg.communities)
+          break
+        case 'communityActionFailed':
+          setCommunityError({ id: msg.id, message: COMMUNITY_ERROR[msg.action] })
+          break
+        case 'communityDetail':
+          setCommunityDetail(msg)
+          break
+        case 'mapState':
+          setMapParcel({ x: msg.x, y: msg.y })
+          break
+        case 'playerPose': {
+          // Mutate the ref instead of setState: this arrives ~20/s and the minimap reads
+          // it from a RAF loop, so it must not drive React renders.
+          poseRef.current = { x: msg.x, z: msg.z, yaw: msg.yaw, camYaw: msg.camYaw }
+          // The parcel is state, but only changes on a boundary crossing: returning `prev`
+          // unchanged makes React skip the render.
+          const px = Math.floor(msg.x / PARCEL_METERS)
+          const py = Math.floor(msg.z / PARCEL_METERS)
+          setMapParcel((prev) => (prev.x === px && prev.y === py ? prev : { x: px, y: py }))
+          break
+        }
+        case 'consoleReply':
+          // Command feedback: a local "DCL System" line, never broadcast (same shape as pushSystemMessage).
+          setMessages((prev) =>
+            [
+              ...prev,
+              { sender: '', message: formatConsoleReply(msg.command, msg.args, msg.output), channel: 'Nearby', messageId: '', id: chatId.current++, ts: Date.now() }
+            ].slice(-MAX_CHAT_LINES)
+          )
+          break
+        case 'realmInfo':
+          setSatelliteView(msg.satelliteView)
+          break
+        case 'homeScene':
+          setHome({ realm: msg.realm === DEFAULT_REALM ? null : msg.realm, parcel: `${msg.parcel.x},${msg.parcel.y}` })
+          break
+        case 'travelResult':
+          if (msg.travelId !== travelSeq.current) break
+          setTravellingTo(null)
+          if (!msg.ok) {
+            setTravelError(`Couldn't travel to "${msg.realm}": ${msg.message ?? 'unknown error'}`)
+          }
+          if (lobbyRef.current) {
+            if (msg.ok) setLobby(false)
+            else setDestinationPicked(false)
+          }
+          break
+        case 'lobbyStageReady':
+          setLobbyStageReady(true)
+          setAvatarLoaded(true)
+          break
+        case 'lookShown':
+          setPendingLook((pending) => (pending === msg.look ? null : pending))
+          break
+        case 'welcome': {
+          const chosen = guestPick.current
+          guestPick.current = null
+          if (chosen == null || (!msg.terms && !msg.newProfile)) setWelcomePending(false)
+          // native, which launches itself, holds a link's world for the terms (src/lib.rs)
+          if (msg.terms && driver.launch == null && welcomeLink.current != null) heldDest.current = welcomeLink.current
+          if (!msg.terms) termsOk.current = true
+          if (!msg.terms && !msg.newProfile) {
+            releaseLinkRef.current()
+            break
+          }
+          // a new profile's name shows on the page; the profile is otherwise first pulled on world entry
+          if (msg.newProfile && !fetchedRef.current.has('getProfile')) {
+            fetchedRef.current.add('getProfile')
+            driver.send({ kind: 'getProfile' })
+          }
+          welcomeRef.current = { terms: msg.terms, newProfile: msg.newProfile }
+          if (!msg.terms) termsOk.current = true
+          // with the name, so the engine deploys the new profile it holds for the welcome page
+          if (chosen != null) {
+            setWelcomeSaving(true)
+            setWelcomeError(null)
+            driver.send({ kind: 'acceptWelcome', name: chosen.name })
+            break
+          }
+          screenViewed(msg.newProfile ? 'AVATAR_NAMING' : 'WELCOME')
+          setWelcome({ terms: msg.terms, newProfile: msg.newProfile })
+          break
+        }
+        case 'welcomeAccepted': {
+          setWelcomeSaving(false)
+          setWelcomePending(false)
+          if (!msg.ok) {
+            setWelcomeError(msg.error ?? 'Saving failed')
+            // the guest start page's accept failed: the welcome page shows, with the error
+            if (welcomeRef.current != null) setWelcome((w) => w ?? welcomeRef.current)
+            break
+          }
+          releaseLinkRef.current()
+          termsOk.current = true
+          setWelcome(null)
+          if (welcomeRef.current?.newProfile) screenViewed('AUTH_DEPLOY_SUCCESS')
+          welcomeRef.current = null
+          break
+        }
+        case 'sceneInfo':
+          setSceneTitle(msg.title)
+          // Leaving a scene forgets its visit answers (a neighbour's are kept until the player leaves
+          // that one); the used permissions and the badge are the current scene's only.
+          if (msg.scene !== currentScene.current) {
+            const left = currentScene.current
+            if (left != null) {
+              setVisitAnswers((u) => u.filter((e) => e.scene !== left))
+              for (const key of answeredPermissions.current.keys()) {
+                if (key.startsWith(`${left}|`)) answeredPermissions.current.delete(key)
+              }
+            }
+            currentScene.current = msg.scene
+            setSceneHash(msg.scene)
+            setTriggeredPermissions([])
+            setRefusedTypes([])
+            setSeenDenied([])
+            setPermissionRules(null)
+            skipRefusal.current.clear()
+          }
+          if (msg.title !== '' && msg.parcel != null && msg.realm && !msg.preview && (msg.genesis || msg.realm.includes('.'))) {
+            const key = `${msg.realm}|${msg.title}`
+            if (key !== visitedTitle.current) {
+              visitedTitle.current = key
+              recordVisit({ realm: msg.realm, genesis: msg.genesis === true, parcel: msg.parcel }).catch(() => undefined)
+            }
+          }
+          break
+        case 'gallery':
+          setGalleryPhotos([...msg.photos].sort((a, b) => photoTime(b.dateTime) - photoTime(a.dateTime)))
+          setGalleryStorage({ current: msg.current, max: msg.max })
+          setGalleryLoaded(true)
+          break
+        case 'galleryPhoto':
+          setGalleryMetas((prev) => ({ ...prev, [msg.id]: msg.meta }))
+          break
+        case 'permissionRequest': {
+          const remembered = answeredPermissions.current.get(`${msg.scene}|${msg.ty}`)
+          if (typeof remembered === 'boolean') {
+            driverRef.current?.send({ kind: 'permissionResolve', id: msg.id, ty: msg.ty, allow: remembered, level: 'visit', scene: msg.scene, realm: msg.realm })
+            break
+          }
+          setPermissionQueue((q) => (q.some((r) => r.id === msg.id) ? q : [...q, msg]))
+          break
+        }
+        case 'permissionWithdrawn':
+          setPermissionQueue((q) => q.filter((r) => r.id !== msg.id))
+          break
+        case 'permissionUsed':
+          // a neighbouring scene's or a portable's use is not this scene's
+          if (msg.scene !== currentScene.current) break
+          setTriggeredPermissions((t) => {
+            const same = t.find((e) => e.scene === msg.scene && e.ty === msg.ty)
+            if (same?.allowed === msg.allowed) return t
+            return [...t.filter((e) => e !== same), { scene: msg.scene, ty: msg.ty, allowed: msg.allowed }]
+          })
+          if (!msg.allowed && !skipRefusal.current.delete(`${msg.scene}|${msg.ty}`)) {
+            setRefusedTypes((r) => (r.includes(msg.ty) ? r : [...r, msg.ty]))
+          }
+          break
+        case 'permissionRules': {
+          const { kind: _kind, ...rules } = msg
+          if (msg.scene === currentScene.current) setPermissionRules(rules)
+          break
+        }
+        case 'worldPasswordRequest':
+          setWorldPassword(msg)
+          break
+        case 'worldPasswordWithdrawn':
+          setWorldPassword(null)
+          break
+      }
+    })
+
+    // Same-domain SSO: an identity in this origin's localStorage (written by the auth site)
+    // means the user is already signed in — no engine query, no polling. Returning from the
+    // auth-site redirect lands here too, with the identity already present.
+    // The autopilot never looks at what is stored: it signs in with the local guest (the auto-login
+    // effect below), so no stored account is read, shown or used.
+    if (boot.current.autoLogin !== 'autopilot') {
+      // Show "Jump in" only when the ENGINE has a usable previous login. Gating on the stored SSO
+      // identity alone showed a Jump-in button that couldn't actually log in (the engine reuses its
+      // own saved login via loginPrevious; there is no log-in-with-raw-identity surface), so a stale
+      // localStorage entry would strand the user on a button that throws. The driver folds both
+      // signals together (engine saved login + SSO) into getPreviousLogin().
+      const login = getLogin().catch(() => null)
+      void login.then(setStored)
+      // an auto-login boot (?guest=1) goes straight in: nothing to pick, the splash stays up
+      const screen = (stored: boolean): void => {
+        if (boot.current.autoLogin == null) setStatus(stored ? 'reuse-login-or-new' : 'sign-in-or-guest')
+      }
+      driver
+        .getPreviousLogin()
+        .then((r) => {
+          setPrevUserId(r.userId)
+          screen(Boolean(r.userId))
+        })
+        .catch(() => login.then((l) => screen(l != null)))
+    }
+
+    return () => {
+      off()
+      driver.dispose()
+      driverRef.current = null
+    }
+    // createDriver is stable; run-once.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Watch engine boot: the engine autostarts on mount, so poll until it can take commands, then stop.
+  // Drivers without an engine (mock/tests) report ready immediately.
+  useEffect(() => {
+    const driver = driverRef.current
+    if (driver == null || typeof driver.engineReady !== 'function') {
+      setEngineReady(true)
+      setAvatarLoaded(true)
+      setLoadProgress(100)
+      return
+    }
+    if (driver.engineReady()) {
+      setEngineReady(true)
+      setLoadProgress(100)
+      return
+    }
+    const id = setInterval(() => {
+      const d = driverRef.current
+      setLoadProgress(d?.loadProgress?.() ?? 0)
+      setLoadStep(d?.loadStep?.() ?? null)
+      if (d?.engineReady?.() === true) {
+        setEngineReady(true)
+        setLoadProgress(100)
+        setLoadStep(null)
+        clearInterval(id)
+      }
+    }, 200)
+    return () => clearInterval(id)
+  }, [])
+
+  // Runtime engine crashes (heartbeat stall) are detected by the bundle's watchdog and surfaced to us
+  // directly (the engine's own crash overlay is hidden behind react-web's HUD).
+  useEffect(() => {
+    // Same-document engine (no iframe): the crash watchdog in engine/boot.js calls this directly
+    // instead of rendering any overlay — React owns the error UI.
+    const w = window as Window & { __onEngineCrash?: (message: string, source: string) => void }
+    w.__onEngineCrash = (message) => {
+      setFatalError((prev) => prev ?? { message: message || 'The engine stopped responding.', source: 'runtime' })
+    }
+    return () => {
+      delete w.__onEngineCrash
+    }
+  }, [])
+
+  // Cancel the boot-panic poll on unmount — the one self-scheduling timer in this hook.
+  useEffect(() => () => { if (pollTimer.current) clearTimeout(pollTimer.current) }, [])
+
+  // On world-entry, pull the profile (top-bar chip) and notifications (so the unread badge
+  // shows immediately, not only after the panel is first opened). Marked fetched once.
+  useEffect(() => {
+    if (!playerReady) return
+    if (!fetchedRef.current.has('getProfile')) {
+      fetchedRef.current.add('getProfile')
+      driverRef.current?.send({ kind: 'getProfile' })
+    }
+    if (!fetchedRef.current.has('getNotifications')) {
+      fetchedRef.current.add('getNotifications')
+      driverRef.current?.send({ kind: 'getNotifications' })
+    }
+  }, [playerReady])
+
+  // Inject a local "DCL System" line (empty sender → rendered as the system member) for command
+  // feedback (/help, /goto usage, /commands output) that must NOT be broadcast to other players.
+  const pushSystemMessage = useCallback((message: string) => {
+    setMessages((prev) =>
+      [...prev, { sender: '', message, channel: 'Nearby', messageId: '', id: chatId.current++, ts: Date.now() }].slice(-MAX_CHAT_LINES)
+    )
+  }, [])
+
+  // A realm change from the HUD: the loader shows from the request until the engine reports the
+  // outcome (it validates the destination before leaving the current realm).
+  const travel = useCallback((msg: ChangeRealmRequest | (TeleportRequest & { realm: string })) => {
+    setLobbyOpen(false)
+    const travelId = ++travelSeq.current
+    setTravellingTo(msg.realm)
+    driverRef.current?.send({ ...msg, travelId })
+  }, [])
+  const changeRealm = useCallback((realm: string) => travel({ kind: 'changeRealm', realm }), [travel])
+  const dismissTravelError = useCallback(() => setTravelError(null), [])
+
+  // Chat send doubles as the slash-command interceptor (parity with bevy-ui-scene's `sendChatMessage`):
+  // a recognized `/command` never reaches other players — it teleports, reloads, runs an engine console
+  // command, or echoes a system message. Anything else is sent as a normal Nearby message.
+  const sendChat = useCallback(
+    (text: string) => {
+      const cmd = parseChatCommand(text)
+      switch (cmd.kind) {
+        case 'send':
+          if (cmd.text) driverRef.current?.send({ kind: 'sendChat', message: cmd.text, channel: channelRef.current })
+          break
+        case 'goto':
+          driverRef.current?.send({ kind: 'teleport', x: cmd.x, y: cmd.y })
+          break
+        case 'genesis':
+          changeRealm(DEFAULT_REALM)
+          break
+        case 'world':
+          changeRealm(cmd.realm)
+          break
+        case 'reload':
+          driverRef.current?.send({ kind: 'reloadScene' })
+          // the reloaded scene starts afresh, so this visit's answers and uses go too
+          answeredPermissions.current.clear()
+          setVisitAnswers([])
+          setTriggeredPermissions([])
+          setRefusedTypes([])
+          setSeenDenied([])
+          skipRefusal.current.clear()
+          break
+        case 'commands':
+          driverRef.current?.send({ kind: 'consoleCommand', command: 'help' })
+          break
+        case 'console':
+          driverRef.current?.send({ kind: 'consoleCommand', command: cmd.command, args: cmd.args })
+          break
+        case 'system':
+          pushSystemMessage(cmd.message)
+          break
+      }
+    },
+    [pushSystemMessage, changeRealm]
+  )
+
+  // Toggle one exclusive panel (closing chat + all others); optionally run onOpen.
+  // All exclusive (one-at-a-time) panel setters. Toggling one closes chat + the rest.
+  const panelSetters = [setFriendsOpen, setSettingsOpen, setProfileOpen, setNotificationsOpen, setEmotesOpen, setBackpackOpen, setCommunitiesOpen, setMapOpen, setPlacesOpen, setEventsOpen, setShopOpen, setGalleryOpen, setCreateOpen, setSkyboxOpen]
+  const exclusive = useCallback(
+    (setSelf: React.Dispatch<React.SetStateAction<boolean>>, onOpen?: () => void) => {
+      setChatOpen(false)
+      panelSetters.forEach((set) => {
+        if (set !== setSelf) set(false)
+      })
+      setSelf((o) => {
+        if (!o && onOpen) onOpen()
+        return !o
+      })
+    },
+    // panelSetters are stable useState setters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []
+  )
+  const send = useCallback(
+    (kind: 'getSettings' | 'getProfile' | 'getNotifications' | 'getEmotes' | 'getWearables' | 'getCommunities' | 'getMap') => {
+      driverRef.current?.send({ kind })
+    },
+    []
+  )
+  // Cache catalog-style fetches: only request once per session. Equip/join/setSetting
+  // re-emit fresh data through the relay, so we never need to re-pull on reopen. Avoids
+  // hammering the catalyst every time a menu is reopened.
+  const ensure = useCallback(
+    (kind: 'getSettings' | 'getProfile' | 'getEmotes' | 'getWearables' | 'getOutfits' | 'getCommunities' | 'getGallery') => {
+      if (fetchedRef.current.has(kind)) return
+      fetchedRef.current.add(kind)
+      driverRef.current?.send({ kind })
+    },
+    []
+  )
+  const closeAllPanels = useCallback(() => {
+    setChatOpen(false)
+    setLobbyOpen(false)
+    panelSetters.forEach((set) => set(false))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const toggleChat = useCallback(() => {
+    panelSetters.forEach((set) => set(false))
+    setChatOpen((o) => !o)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // Opening chat (any path — sidebar, Enter, a queued mention) clears the unread badge, and the
+  // shown DM tab's: its lines are on screen again, re-read in case any landed while it was closed.
+  useEffect(() => {
+    if (!chatOpen) return
+    setChatUnread(0)
+    const key = channelRef.current
+    if (key === 'Nearby') {
+      setNearbyUnread(0)
+    } else {
+      setConversations((prev) => prev.map((c) => (c.address === key ? { ...c, unread: 0 } : c)))
+      driverRef.current?.send({ kind: 'dmHistory', address: key })
+    }
+  }, [chatOpen])
+  // Active, the panel shows its rail and the per-channel counts, so the sidebar's can go.
+  const setChatActive = useCallback((active: boolean) => {
+    chatActiveRef.current = active
+    if (active) setChatUnread(0)
+  }, [])
+  // "Mention" from a profile card opens chat and queues the @name; Chat consumes it into its draft.
+  const mentionInChat = useCallback((name: string) => {
+    panelSetters.forEach((set) => set(false))
+    setChatOpen(true)
+    setPendingMention(name)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const consumeMention = useCallback(() => setPendingMention(null), [])
+  // A DM tab for `key` (lowercase wallet), added on first sight: the engine follows the partner's
+  // state while the tab is open. Its lines load when it is shown.
+  const ensureConversation = useCallback((key: string) => {
+    if (openTabsRef.current.has(key)) return
+    openTabsRef.current.add(key)
+    setConversations((prev) => [...prev, { address: key, unread: 0, state: null, online: false }])
+    driverRef.current?.send({ kind: 'dmWatch', address: key, on: true })
+  }, [])
+  const selectChannel = useCallback((next: string) => {
+    const key = channelKey(next)
+    setChannel(key)
+    if (key === 'Nearby') {
+      setNearbyUnread(0)
+    } else {
+      setConversations((prev) => prev.map((c) => (c.address === key ? { ...c, unread: 0 } : c)))
+      // with chat closed, opening it reads the tab
+      if (chatOpenRef.current) driverRef.current?.send({ kind: 'dmHistory', address: key })
+    }
+  }, [])
+  const openConversation = useCallback((address: string) => {
+    const key = channelKey(address)
+    panelSetters.forEach((set) => set(false))
+    setChatOpen(true)
+    ensureConversation(key)
+    selectChannel(key)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const closeConversation = useCallback((address: string) => {
+    const key = channelKey(address)
+    openTabsRef.current.delete(key)
+    setConversations((prev) => prev.filter((c) => c.address !== key))
+    setDmLines((prev) => {
+      const next = { ...prev }
+      delete next[key]
+      return next
+    })
+    driverRef.current?.send({ kind: 'dmWatch', address: key, on: false })
+    if (channelRef.current === key) setChannel('Nearby')
+  }, [])
+  const deleteHistory = useCallback((address: string) => {
+    const key = channelKey(address)
+    driverRef.current?.send({ kind: 'dmDelete', address: key })
+    setDmLines((prev) => ({ ...prev, [key]: [] }))
+    // a read queued before the delete would answer with the old rows: this one answers after it
+    driverRef.current?.send({ kind: 'dmHistory', address: key })
+  }, [])
+  // Nearby reactions follow the lines kept: those for lines trimmed off the log go with them.
+  useEffect(() => {
+    const ids = new Set(messages.map((l) => l.messageId).filter((id) => id !== ''))
+    nearbyIdsRef.current = ids
+    setNearbyReactions((prev) => {
+      const kept = Object.entries(prev).filter(([id]) => ids.has(id))
+      return kept.length === Object.keys(prev).length ? prev : Object.fromEntries(kept)
+    })
+  }, [messages])
+  const channelMessages = useMemo(
+    () =>
+      channel === 'Nearby'
+        ? messages.map((l) => (nearbyReactions[l.messageId] != null ? { ...l, reactions: nearbyReactions[l.messageId] } : l))
+        : (dmLines[channel] ?? []),
+    [messages, nearbyReactions, dmLines, channel]
+  )
+  const reactInChat = useCallback((messageId: string, emoji: string, remove: boolean) => {
+    driverRef.current?.send({ kind: 'sendChatReaction', channel: channelRef.current, messageId, emoji, remove })
+  }, [])
+  const bubbleText = useCallback((sender: string, messageId: string, message: string) => {
+    driverRef.current?.send({ kind: 'chatBubbleText', sender, messageId, message })
+  }, [])
+
+  // The full-screen main menu — mirrors App's `pageOpen`.
+  const menuPageOpen =
+    settingsOpen || backpackOpen || communitiesOpen || mapOpen || placesOpen || eventsOpen || shopOpen || galleryOpen || lobbyOpen || createOpen
+  // What takes the screen from the chat, for requestFocusChat: the main menu, the emote wheel, and
+  // the two modals App renders above everything (permission prompt, fatal error).
+  chatCoveredRef.current =
+    menuPageOpen || emotesOpen || permissionQueue.length > 0 || fatalError != null || (EDITOR_BUILD && editorMode !== 'off')
+
+  // In-world, cancel is an ENGINE action: the cancel key flows to the engine like any other
+  // input, resolves to 'Cancel', and comes back on the action stream — the dispatcher below
+  // performs the one layered close (topmost popup, else open panels) for keyboard and
+  // gamepad alike. No DOM cancel handling here; see the pre-world fallback further down.
+  const anyPanelOpen =
+    menuPageOpen || friendsOpen || profileOpen || notificationsOpen || emotesOpen || skyboxOpen
+  // Everything that can sit over the in-world lobby: Cancel closes these before the lobby.
+  const anyPanelOpenExceptLobby =
+    settingsOpen || backpackOpen || communitiesOpen || mapOpen || placesOpen || eventsOpen || shopOpen || galleryOpen ||
+    friendsOpen || profileOpen || notificationsOpen || emotesOpen || skyboxOpen
+  const toggleFriends = useCallback(() => exclusive(setFriendsOpen), [exclusive])
+  const loadSettings = useCallback(() => ensure('getSettings'), [ensure])
+  // Re-read on every open: the engine changes settings itself (the DM privacy slot follows the
+  // social service), and settings are local, so there is nothing to spare by caching.
+  const toggleSettings = useCallback(() => exclusive(setSettingsOpen, () => send('getSettings')), [exclusive, send])
+  const toggleProfile = useCallback(() => exclusive(setProfileOpen, () => ensure('getProfile')), [exclusive, ensure])
+  const toggleNotifications = useCallback(() => exclusive(setNotificationsOpen, () => send('getNotifications')), [exclusive, send])
+  const toggleEmotes = useCallback(() => exclusive(setEmotesOpen, () => ensure('getEmotes')), [exclusive, ensure])
+  const toggleBackpack = useCallback(
+    () => {
+      if (!playerReadyRef.current) return
+      exclusive(setBackpackOpen, () => {
+        ensure('getWearables')
+        ensure('getEmotes') // Backpack's Emotes tab reuses the emotes list.
+        ensure('getOutfits') // Backpack's Outfits tab.
+        driverRef.current?.send({ kind: 'getOwnedNames' })
+      })
+    },
+    [exclusive, ensure]
+  )
+  const toggleCommunities = useCallback(() => exclusive(setCommunitiesOpen, () => ensure('getCommunities')), [exclusive, ensure])
+  const toggleMap = useCallback(() => exclusive(setMapOpen, () => send('getMap')), [exclusive, send])
+  // Places fetches its own HTTP data (no bridge), so opening needs no engine request.
+  const togglePlaces = useCallback(() => exclusive(setPlacesOpen), [exclusive])
+  const toggleEvents = useCallback(() => exclusive(setEventsOpen), [exclusive])
+  const toggleShop = useCallback(() => exclusive(setShopOpen), [exclusive])
+  const toggleCreate = useCallback(() => exclusive(setCreateOpen), [exclusive])
+  const showCreate = useCallback((open: boolean) => {
+    setChatOpen(false)
+    panelSetters.forEach((set) => set(open && set === setCreateOpen))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  // The engine clock as `/time` (no args) reports it; null when there is no engine console.
+  const readClock = useCallback(async (): Promise<{ hours: number; speed: number } | null> => {
+    const reply = await driverRef.current?.command?.('/time').catch(() => undefined)
+    const clock = reply != null ? parseTimeReply(reply) : null
+    if (clock != null && clock.speed !== 0) skyboxDaySpeed.current = clock.speed
+    return clock
+  }, [])
+  const setClock = useCallback((hours: number, speed: number) => {
+    driverRef.current
+      ?.command?.(`/time ${hours.toFixed(2)} ${speed}`)
+      .catch((e: unknown) => console.warn('[hud] /time failed:', e))
+  }, [])
+  const toggleSkybox = useCallback(
+    () =>
+      exclusive(setSkyboxOpen, () => {
+        void readClock().then((clock) => {
+          if (clock == null) return
+          setSkyboxHoursState(clock.hours)
+          setSkyboxProgressingState(clock.speed !== 0)
+        })
+      }),
+    [exclusive, readClock]
+  )
+  const setSkyboxHours = useCallback(
+    (hours: number) => {
+      setSkyboxHoursState(hours)
+      if (!skyboxProgressing) setClock(hours, 0)
+    },
+    [skyboxProgressing, setClock]
+  )
+  const setSkyboxProgressing = useCallback(
+    (on: boolean) => {
+      setSkyboxProgressingState(on)
+      if (on) {
+        setClock(skyboxHours, skyboxDaySpeed.current)
+        return
+      }
+      // Freeze where the running clock is now, not where the slider last was.
+      void readClock().then((clock) => {
+        const hours = clock?.hours ?? skyboxHours
+        setSkyboxHoursState(hours)
+        setClock(hours, 0)
+      })
+    },
+    [skyboxHours, readClock, setClock]
+  )
+  // While the day cycle runs, the open menu follows the engine clock (Unity's slider tracks it too).
+  useEffect(() => {
+    if (!skyboxOpen || !skyboxProgressing) return
+    let live = true
+    const id = setInterval(() => {
+      void readClock().then((clock) => {
+        if (live && clock != null && clock.speed !== 0) setSkyboxHoursState(clock.hours)
+      })
+    }, 1000)
+    return () => {
+      live = false
+      clearInterval(id)
+    }
+  }, [skyboxOpen, skyboxProgressing, readClock])
+  const toggleGallery = useCallback(() => exclusive(setGalleryOpen, () => ensure('getGallery')), [exclusive, ensure])
+  const loadGalleryPhoto = useCallback((id: string) => {
+    driverRef.current?.send({ kind: 'getGalleryPhoto', id })
+  }, [])
+  const removeGalleryPhoto = useCallback((id: string) => {
+    driverRef.current?.send({ kind: 'deleteGalleryPhoto', id })
+    // Optimistically drop it; the bridge re-emits the full gallery to confirm.
+    setGalleryPhotos((list) => list.filter((p) => p.id !== id))
+    setGalleryStorage((s) => ({ ...s, current: Math.max(0, s.current - 1) }))
+  }, [])
+  const teleport = useCallback((x: number, y: number) => {
+    setLobbyOpen(false)
+    driverRef.current?.send({ kind: 'teleport', x, y })
+  }, [])
+  const teleportToPlace = useCallback(
+    (x: number, y: number) => {
+      if (!isGenesisSatelliteView(satelliteView)) travel({ kind: 'teleport', realm: DEFAULT_REALM, x, y })
+      else teleport(x, y)
+    },
+    [satelliteView, teleport, travel]
+  )
+  // The in-world lobby: open it over the world (closing other pages), and travel from it the
+  // way any in-world pick does — a runtime realm change or teleport, then close.
+  const toggleLobby = useCallback(() => {
+    // a page over the lobby (or anything else) gives way to it; only the lobby alone closes
+    const closing = lobbyOpen && !anyPanelOpenExceptLobby
+    setChatOpen(false)
+    panelSetters.forEach((set) => set(false))
+    setLobbyOpen(!closing)
+    if (!closing) {
+      setLobbyStageReady(false)
+      screenViewed('LOBBY')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lobbyOpen, anyPanelOpenExceptLobby])
+  const homeScene = useCallback(() => driverRef.current?.homeScene?.() ?? home, [home])
+  useEffect(() => {
+    if ((!lobby && !lobbyOpen) || driverRef.current?.homeScene != null) return
+    setHome(null)
+    driverRef.current?.send({ kind: 'getHomeScene' })
+  }, [lobby, lobbyOpen])
+  // Opening the Backpack or the lobby rebuilds the stage, so the page's stand-in shows again.
+  useEffect(() => {
+    if (backpackOpen) setLobbyStageReady(false)
+  }, [backpackOpen])
+  const travelFromLobbyInWorld = useCallback(
+    (dest: Destination) => {
+      if (dest == null) {
+        const home = homeScene()
+        if (home == null) return
+        const [x, y] = home.parcel.split(',').map(Number)
+        travel({ kind: 'teleport', realm: home.realm ?? DEFAULT_REALM, x, y })
+      } else if (dest.kind === 'parcel') teleportToPlace(dest.x, dest.y)
+      else {
+        const [x, y] = (dest.position ?? '').split(',').map(Number)
+        if (Number.isFinite(x) && Number.isFinite(y)) travel({ kind: 'teleport', realm: dest.realm, x, y })
+        else travel({ kind: 'changeRealm', realm: dest.realm })
+      }
+      setLobbyOpen(false)
+    },
+    [homeScene, teleportToPlace, travel]
+  )
+  const setMinimapConfig = useCallback(
+    (config: { style: MinimapStyle; rotation: MinimapRotation; visibleMeters: number }) => {
+      driverRef.current?.send({ kind: 'minimapConfig', ...config })
+    },
+    []
+  )
+  const loadPermissionRules = useCallback(() => {
+    const scene = currentScene.current
+    if (scene != null) driverRef.current?.send({ kind: 'getPermissionRules', scene })
+  }, [])
+
+  // The HUD answered for `scene` + `ty` (a prompt or the review): remember it; a 'visit' answer is
+  // listed, an "Always …" answer shows as the stored rule once refetched. What the scene did under
+  // the previous state no longer points at a row.
+  const answerPermission = (subject: Omit<VisitAnswer, 'allowed'>, allow: boolean, level: PermissionRuleLevel): void => {
+    const key = `${subject.scene}|${subject.ty}`
+    answeredPermissions.current.set(key, level === 'visit' ? allow : null)
+    const others = (u: VisitAnswer[]): VisitAnswer[] => u.filter((e) => !(e.scene === subject.scene && e.ty === subject.ty))
+    const answer: VisitAnswer = { ty: subject.ty, sceneName: subject.sceneName, scene: subject.scene, realm: subject.realm, allowed: allow }
+    setVisitAnswers((u) => (level === 'visit' ? [...others(u), answer] : others(u)))
+    setTriggeredPermissions((t) => t.filter((e) => !(e.scene === subject.scene && e.ty === subject.ty)))
+    setRefusedTypes((r) => r.filter((ty) => ty !== subject.ty))
+    setSeenDenied((s) => s.filter((ty) => ty !== subject.ty))
+  }
+
+  const setPermissionRule = useCallback(
+    (subject: PermissionSubject, allow: boolean, level: PermissionRuleLevel) => {
+      driverRef.current?.send({ kind: 'permissionRule', ty: subject.ty, level, allow, scene: subject.scene, realm: subject.realm })
+      answerPermission(subject, allow, level)
+      loadPermissionRules()
+    },
+    [loadPermissionRules]
+  )
+
+  // the rule (or visit answer) is gone: the scene asks next time
+  const clearPermissionRule = useCallback(
+    (subject: PermissionSubject) => {
+      if (subject.scope !== 'visit') {
+        driverRef.current?.send({ kind: 'permissionRule', ty: subject.ty, level: subject.scope, allow: null, scene: subject.scene, realm: subject.realm })
+      }
+      answeredPermissions.current.delete(`${subject.scene}|${subject.ty}`)
+      setVisitAnswers((u) => u.filter((e) => !(e.scene === subject.scene && e.ty === subject.ty)))
+      setTriggeredPermissions((t) => t.filter((e) => !(e.scene === subject.scene && e.ty === subject.ty)))
+      setRefusedTypes((r) => r.filter((ty) => ty !== subject.ty))
+      setSeenDenied((s) => s.filter((ty) => ty !== subject.ty))
+      loadPermissionRules()
+    },
+    [loadPermissionRules]
+  )
+
+  const resetPermissions = useCallback(() => {
+    driverRef.current?.send({ kind: 'resetPermissions' })
+    answeredPermissions.current.clear()
+    setVisitAnswers([])
+    setTriggeredPermissions([])
+    setRefusedTypes([])
+    setSeenDenied([])
+    skipRefusal.current.clear()
+    loadPermissionRules()
+  }, [loadPermissionRules])
+
+  const markPermissionsSeen = useCallback(() => setSeenDenied(refusedTypes), [refusedTypes])
+  const unseenDenied = refusedTypes.filter((ty) => !seenDenied.includes(ty)).length
+
+  const resolvePermission = useCallback(
+    (id: number, allow: boolean, level: PermissionLevelChoice) => {
+      setPermissionQueue((q) => {
+        const req = q.find((r) => r.id === id)
+        if (req) {
+          // a dismissed prompt ('once') is no answer: the scene asks again, its refusal has no row
+          if (level === 'once') answeredPermissions.current.set(`${req.scene}|${req.ty}`, null)
+          else answerPermission({ ty: req.ty, sceneName: req.sceneName, scene: req.scene, realm: req.realm }, allow, level)
+          // the player refused this one themselves: its report is not a silent refusal
+          if (!allow) skipRefusal.current.add(`${req.scene}|${req.ty}`)
+          driverRef.current?.send({ kind: 'permissionResolve', id, ty: req.ty, allow, level, scene: req.scene, realm: req.realm })
+          // a visit answer settles the scene's other queued requests for the type as well
+          if (level === 'visit') {
+            const same = q.filter((r) => r.id !== id && r.scene === req.scene && r.ty === req.ty)
+            for (const r of same) driverRef.current?.send({ kind: 'permissionResolve', id: r.id, ty: r.ty, allow, level, scene: r.scene, realm: r.realm })
+            return q.filter((r) => r.id !== id && !same.includes(r))
+          }
+        }
+        return q.filter((r) => r.id !== id)
+      })
+    },
+    []
+  )
+  const resolveWorldPassword = useCallback((password: string | null) => {
+    setWorldPassword((p) => {
+      if (p == null) return p
+      driverRef.current?.send({ kind: 'worldPasswordResolve', password })
+      return null
+    })
+  }, [])
+  // Runs the login captured at Jump In, once the engine is up.
+  const runPendingLogin = useCallback((driver: NonNullable<typeof driverRef.current>): void => {
+    const login = pendingLogin.current
+    pendingLogin.current = null
+    const type = pendingLoginType.current
+    pendingLoginType.current = null
+    Promise.resolve(login?.(driver))
+      .then(() => {
+        if (type != null) {
+          lastLoginType.current = type === 'stored' ? storedLoginType(storedRef.current) : type
+          screenViewed('AUTH_SUCCESS', { login_type: lastLoginType.current })
+        }
+        welcomeLink.current = urlDestination.current
+        urlDestination.current = null
+        setBusy(false)
+        if (welcomeShown()) driver.send({ kind: 'getWelcome' })
+      })
+      .catch((e: unknown) => {
+        console.error('[login] post-launch login failed:', e)
+        // The engine driver rejects with a RAW STRING (wasm-bindgen JsValue), not an Error —
+        // e.message would be undefined and the login screen would show no error at all.
+        const msg = e instanceof Error ? e.message : String(e)
+        screenViewed('AUTH_ERROR', { error: msg })
+        // No person to retry or pick another way: the engine ends the run (non-zero, no CSV), and
+        // nothing here returns to a sign-in screen or tries again.
+        if (boot.current.autoLogin === 'autopilot') {
+          void driverRef.current
+            ?.autopilotFailed?.(`sign-in failed: ${msg}`)
+            ?.catch((e2: unknown) => console.error('[autopilot] the engine was not told the sign-in failed:', e2))
+          return
+        }
+        setError(msg !== '' ? msg : 'Login failed')
+        setBusy(false)
+        // Back to the LOGIN screen, not the picker or lobby: neither renders an error, and the
+        // login screen is where the retry / profile-reset actions live. The engine stays
+        // launched (start()'s __bevyStarted guard makes the next launch a no-op).
+        setSubmitted(false)
+        setDestinationPicked(false)
+        setLobby(false)
+        setWelcomePending(false)
+        guestPick.current = null
+      })
+  }, [])
+
+  // Boots the engine (once per page) and watches the boot for a panic. False when launch threw.
+  const launchEngine = useCallback(
+    (driver: NonNullable<typeof driverRef.current>, realm: string, position?: string, host?: LaunchHostOptions): boolean => {
+      bootPollStop.current = false
+      driver.clearEnginePanic?.() // start clean so the boot poll only sees THIS launch's panic
+      try {
+        driver.launch?.(realm, position, host)
+      } catch (e) {
+        // A boot-time engine panic throws synchronously out of launch() (a generic "unreachable"
+        // wasm trap). The readable message is captured on the engine via enginePanic().
+        const panic = driverRef.current?.enginePanic?.()?.message
+        setFatalError({ message: panic ?? (e as Error)?.message ?? 'The engine failed to start.', source: 'launch' })
+        driverRef.current?.clearEnginePanic?.()
+        setBusy(false)
+        return false
+      }
+      launchedRef.current = true
+      // A boot panic can also surface a frame or two AFTER launch() returns (async wasm init / OnceCell)
+      // — launch() returns normally, so poll the panic hook during boot and raise it as a FATAL 'launch'
+      // error, not the dismissable 'runtime' crash the heartbeat watchdog would otherwise mislabel it as.
+      // Stops on world-entry (bootPollStop) or after the window elapses.
+      let polls = 0
+      const pollPanic = (): void => {
+        if (bootPollStop.current) return
+        const panic = driverRef.current?.enginePanic?.()?.message
+        if (panic != null) {
+          setFatalError((prev) => prev ?? { message: panic, source: 'launch' })
+          driverRef.current?.clearEnginePanic?.()
+          return
+        }
+        if (++polls < 24) pollTimer.current = setTimeout(pollPanic, 250) // ~6s boot window
+      }
+      pollTimer.current = setTimeout(pollPanic, 250)
+      return true
+    },
+    []
+  )
+
+  // A link's destination goes straight into the world, with no stage before it: the boot bar has
+  // no avatar to wait for (the lobby's stage reports its own).
+  useEffect(() => {
+    if (engineReady && urlDestination.current != null) setAvatarLoaded(true)
+  }, [engineReady])
+
+  // A visitor with no session gets the engine the moment it is ready, holding the world, with no
+  // sign-in: the guest start page's stage then shows the live avatar instead of a snapshot, and
+  // ACCEPT AND PLAY only has the sign-in left to run (submitLogin sees launchedRef). A link's
+  // destination and the auto-login boots launch for themselves.
+  useEffect(() => {
+    const driver = driverRef.current
+    if (!engineReady || submitted || status !== 'sign-in-or-guest' || driver?.launch == null || launchedRef.current) return
+    if (urlDestination.current != null || boot.current.autoLogin != null) return
+    const home = driver.homeScene?.()
+    launchEngine(driver, home?.realm ?? DEFAULT_REALM, home?.parcel ?? '0,0', { holdWorld: true })
+  }, [engineReady, submitted, status, launchEngine])
+
+  // A destination for an engine already running at its own start realm (native, mock): runtime
+  // directives instead of boot parameters. A world switches realm now (works pre-login); a parcel
+  // teleport needs a spawned player, so it's held until playerReady. A parcel pick sends no realm
+  // change: if the picker was reachable at all the engine omitted ?realm=, which it only does when
+  // it booted on the HUD's own DEFAULT_REALM — a changeRealm to the same realm is NOT a no-op (full
+  // scene purge + reconnect). Skip likewise keeps the engine's own start realm.
+  const travelInPlace = useCallback(
+    (driver: NonNullable<typeof driverRef.current>, dest: Destination): void => {
+      // Deferred to the playerReady flush only if the player hasn't spawned yet. Fresh sign-in
+      // completes login BEFORE the picker, so playerReady has usually fired by pick time and the
+      // flush would never run again — send immediately then. An immediate teleport still lands
+      // after a just-sent changeRealm: the engine applies teleports after realm changes and
+      // overrides the spawn position.
+      const sendParcel = (x: number, y: number): void => {
+        if (playerReadyRef.current) driver.send({ kind: 'teleport', x, y })
+        else pendingParcel.current = { x, y }
+      }
+      if (dest?.kind === 'world') {
+        travel({ kind: 'changeRealm', realm: dest.realm })
+        const [x, y] = (dest.position ?? '').split(',').map(Number)
+        if (Number.isFinite(x) && Number.isFinite(y)) sendParcel(x, y)
+      } else if (dest?.kind === 'parcel') {
+        sendParcel(dest.x, dest.y)
+      }
+    },
+    [travel]
+  )
+
+  // Leaving the lobby. The engine is holding the world on its boot realm (native holds whenever
+  // the lobby shows, see src/lib.rs), and only a realm change releases it, so every destination
+  // names its realm (Skip goes home).
+  const travelFromLobby = useCallback(
+    (dest: Destination): void => {
+      if (dest == null) {
+        const home = homeScene()
+        const [x, y] = (home?.parcel ?? '0,0').split(',').map(Number)
+        travel({ kind: 'teleport', realm: home?.realm ?? DEFAULT_REALM, x, y })
+      } else if (dest.kind === 'parcel') {
+        travel({ kind: 'teleport', realm: DEFAULT_REALM, x: dest.x, y: dest.y })
+      } else {
+        const [x, y] = (dest.position ?? '').split(',').map(Number)
+        if (Number.isFinite(x) && Number.isFinite(y)) travel({ kind: 'teleport', realm: dest.realm, x, y })
+        else travel({ kind: 'changeRealm', realm: dest.realm })
+      }
+    },
+    [homeScene, travel]
+  )
+  // A link held for the terms is released by travelling there; the lobby keeps its hold until a
+  // destination is picked.
+  const releaseLink = useCallback(() => {
+    const dest = heldDest.current
+    heldDest.current = undefined
+    welcomeLink.current = null
+    if (dest !== undefined && !lobbyRef.current) travelFromLobby(dest)
+  }, [travelFromLobby])
+  const releaseLinkRef = useRef(releaseLink)
+  releaseLinkRef.current = releaseLink
+
+  // Post-jump-in Places picker (or the lobby): choose a destination (or null to skip → home),
+  // then leave the picker. A world switches realm now; a parcel is teleported once the avatar spawns.
+  const pickDestination = useCallback((dest: Destination) => {
+    const driver = driverRef.current
+    if (driver == null) return
+    // from the lobby, a pick waits for sign-in: it releases the hold, so a failed sign-in
+    // afterwards would leave the world loaded under the sign-in screen
+    if (lobbyRef.current && busyRef.current) return
+    setDestinationPicked(true) // flip to the loading overlay first
+    if (lobbyRef.current) {
+      travelFromLobby(dest)
+      return
+    }
+    setBusy(true)
+
+    // Boot the engine straight at the chosen destination, then run the deferred login. `engine_run`
+    // is heavy and runs on the shared main thread, so defer it a paint (rAF, setTimeout fallback) so
+    // the loading overlay is on screen before the freeze — same trick as the login loader. Run once.
+    let ran = false
+    const run = (): void => {
+      // Bail if the session unmounted during the deferred kick — cleanup nulls driverRef, so this
+      // guards against launching on a disposed driver (the rAF/timeout aren't otherwise cancellable).
+      if (ran || driverRef.current == null) return
+      ran = true
+      if (driver.launch == null) {
+        travelInPlace(driver, dest)
+        runPendingLogin(driver)
+        return
+      }
+      // World by realm, parcel by spawn position, skip at 0,0 (Genesis). Nothing loaded before this,
+      // so only the chosen scene streams in. (No-op on the mock, which has no engine to launch.)
+      // Parcels pass the MAIN realm explicitly — the engine's initialRealm may carry a ?realm
+      // override (possibly an invalid world after a failed validation), and inheriting it would
+      // strand a Genesis pick "Reconnecting to the realm" forever.
+      let launched: boolean
+      if (dest == null) {
+        // Skip goes HOME — the engine's persisted home scene (0,0 on the default realm unless
+        // the user pinned one; the engine gives no realm before launch, so the default is ours).
+        const home = driver.homeScene?.()
+        launched = launchEngine(driver, home?.realm ?? DEFAULT_REALM, home?.parcel ?? '0,0', holdForTerms(driver, dest))
+      } else if (dest.kind === 'world') launched = launchEngine(driver, dest.realm, dest.position, holdForTerms(driver, dest))
+      else launched = launchEngine(driver, DEFAULT_REALM, `${dest.x},${dest.y}`, holdForTerms(driver, dest))
+      if (launched) runPendingLogin(driver)
+    }
+    requestAnimationFrame(() => requestAnimationFrame(run))
+    setTimeout(run, 60)
+  }, [launchEngine, runPendingLogin, travelFromLobby, travelInPlace])
+  // Boot-mode flags (?hud=0 / ?guest=1 / ?systemScene= — see lib/bootMode.ts), captured once
+  // per session mount so tests can vary location.search between mounts.
+  const boot = useRef(bootMode())
+  // The welcome page needs a HUD to show it, the sites embed's auto guest skips it, and the
+  // autopilot has no one to accept it.
+  const welcomeShown = (): boolean =>
+    !boot.current.hideHud && boot.current.autoLogin !== 'guest' && boot.current.autoLogin !== 'autopilot'
+  // A destination launched straight in (a link) holds the world while the terms wait for the page.
+  // Not in preview, which refuses the realm change that would release it.
+  const holdForTerms = (driver: LoginDriver, dest: Destination): LaunchHostOptions | undefined => {
+    if (!welcomeShown() || new URLSearchParams(location.search).has('preview') || driver.termsAccepted?.() !== false) return undefined
+    heldDest.current = dest
+    return { holdWorld: true }
+  }
+  // ?position=x,y / ?realm= (parity with the plain engine page): skip the Places picker and launch
+  // straight there. realm wins when both are given, carrying the position along — letting
+  // ?position shadow ?realm made a reload in a custom realm respawn in Genesis at the same
+  // coordinates (a parcel launch passes DEFAULT_REALM explicitly). The engine's URL sync only
+  // writes ?position when the realm honours one; realms with fixed scene urns (worlds) spawn at
+  // their base scene and ignore it anyway. Consumed by the first successful login — a failed one
+  // retries to the same destination, the engine having already launched there unheld, where the
+  // lobby can't work; after a sign-out the picker shows normally.
+  const urlDestination = useRef<Destination>(
+    (() => {
+      const q = new URLSearchParams(location.search)
+      const raw = q.get('position')
+      const [x, y] = raw?.split(',').map((n) => parseInt(n.trim(), 10)) ?? []
+      const hasPosition = Number.isFinite(x) && Number.isFinite(y)
+      const realm = entryRealm(q)
+      if (realm != null) return { kind: 'world', realm, position: hasPosition ? `${x},${y}` : undefined }
+      if (hasPosition) return { kind: 'parcel', x, y }
+      // A hidden HUD renders no picker — land at Genesis 0,0 so the boot doesn't strand on an
+      // invisible screen (parity with the picker's "skip").
+      if (boot.current.hideHud) return { kind: 'parcel', x: 0, y: 0 }
+      // Likewise for the autopilot: nobody picks a destination, so none waits in the lobby
+      if (boot.current.autoLogin === 'autopilot') return { kind: 'parcel', x: 0, y: 0 }
+      // An editor link (?editor[=<projectId>]) opens the editor once in-world: land rather than wait in the lobby.
+      if (editorEntry(location.search).open) return { kind: 'parcel', x: 0, y: 0 }
+      return null
+    })()
+  )
+  const validatingRealm = useRef(false)
+  useEffect(() => {
+    if (!submitted || destinationPicked || urlDestination.current == null) return
+    const dest = urlDestination.current
+    if (dest.kind === 'world' && driverRef.current?.launch == null) {
+      // Native: ?realm= is injected by the engine from its own --realm, so the engine is
+      // already there — skip the picker and keep the realm (the no-launch pickDestination(null)
+      // path). No validation fetch either: the engine booted on this realm, and preview/file
+      // realms wouldn't pass the worlds-server about probe anyway.
+      pickDestination(null)
+      return
+    }
+    // The autopilot skips the pre-flight: its run is the engine's, and an unreachable realm fails
+    // there (not in world in time), with the exit marker, where the harness reads it.
+    if (dest.kind === 'world' && boot.current.autoLogin === 'autopilot') {
+      pickDestination(dest)
+      return
+    }
+    if (dest != null && dest.kind === 'world') {
+      if (validatingRealm.current) return
+      validatingRealm.current = true
+      // Launching against an unreachable realm strands the engine in a cryptic login failure, so
+      // block up front: 404 → not found, no/failed answer (incl. timeout) → unreachable.
+      checkRealm(dest.realm)
+        .then((result) => {
+          if (result === 'ok') pickDestination(dest)
+          else {
+            urlDestination.current = null
+            setFatalError({ message: realmCheckMessage(dest.realm, result), source: 'realm' })
+          }
+        })
+        .finally(() => {
+          validatingRealm.current = false
+        })
+      return
+    }
+    pickDestination(dest)
+  }, [submitted, destinationPicked, pickDestination])
+  // Optimistically reflect a new equipped set so the button flips to "Unequip" immediately AND the
+  // equipped set stays authoritative for the next equip — the engine deploy + wearables re-emit lags,
+  // and a failed deploy never re-emits at all. `urns` is the full next set (see BackpackPage), so
+  // rebuild `equippedWearables` from it (resolving each urn against the catalog ∪ current equipped),
+  // mirroring bevy-ui-scene's local-store-is-source-of-truth model. Otherwise a stale equipped set
+  // makes each subsequent equip drop the previously-equipped items from the deploy.
+  const applyEquippedOptimistic = useCallback((urns: string[]) => {
+    const matches = (u: string, urn: string): boolean => u === urn || u.startsWith(`${urn}:`)
+    setCatalogItems((list) => list.map((w) => ({ ...w, equipped: urns.some((u) => matches(u, w.urn)) })))
+    setEquippedWearables((prev) => {
+      const pool = new Map<string, Wearable>([...catalogItemsRef.current, ...prev].map((w) => [w.urn, w]))
+      return urns
+        .map((u): Wearable | null => {
+          const w = pool.get(u) ?? [...pool.values()].find((x) => u.startsWith(`${x.urn}:`))
+          return w != null ? { ...w, equipped: true } : null
+        })
+        .filter((w): w is Wearable => w != null)
+    })
+  }, [])
+  const equipWearables = useCallback((urns: string[]) => {
+    driverRef.current?.send({ kind: 'equip', urns })
+    applyEquippedOptimistic(urns)
+  }, [applyEquippedOptimistic])
+  const retrySave = useCallback(() => {
+    setSaveError(null)
+    driverRef.current?.send({ kind: 'commitAvatar' })
+  }, [])
+  // The bridge swaps its look back straight away, so re-reading the equipped sets picks it up.
+  const revertSave = useCallback(() => {
+    setSaveError(null)
+    driverRef.current?.send({ kind: 'revertAvatar' })
+    send('getWearables')
+    send('getEmotes')
+  }, [send])
+  // Closing the Backpack (its own toggle, or another page opening) deploys its look in one go, as
+  // Unity does; the bridge skips it when nothing changed.
+  const backpackWasOpen = useRef(false)
+  useEffect(() => {
+    if (backpackWasOpen.current && !backpackOpen) driverRef.current?.send({ kind: 'commitAvatar' })
+    backpackWasOpen.current = backpackOpen
+  }, [backpackOpen])
+  const setAvatarColor = useCallback((target: AvatarColorTarget, hex: string) => {
+    setAvatarColors((prev) => ({ ...prev, [target]: hex }))
+    driverRef.current?.send({ kind: 'setAvatarColor', target, color: hexToColor3(hex) })
+  }, [])
+  const previewWearables = useCallback((urns: string[] | null) => {
+    driverRef.current?.send({ kind: 'previewAvatar', urns })
+  }, [])
+  const focusPreview = useCallback((focus: PreviewFocus) => {
+    driverRef.current?.send({ kind: 'previewFocus', focus })
+  }, [])
+  const setForceRender = useCallback((categories: string[]) => {
+    setForceRenderState(categories)
+    driverRef.current?.send({ kind: 'setForceRender', categories })
+  }, [])
+  const queryCatalog = useCallback((q: CatalogQuery) => {
+    catalogReqId.current += 1
+    setCatalogLoading(true)
+    driverRef.current?.send({ kind: 'catalogQuery', catalog: 'wearables', requestId: catalogReqId.current, ...q })
+  }, [])
+  const saveOutfit = useCallback((slot: number) => {
+    driverRef.current?.send({ kind: 'saveOutfit', slot })
+  }, [])
+  const deleteOutfit = useCallback((slot: number) => {
+    driverRef.current?.send({ kind: 'deleteOutfit', slot })
+  }, [])
+  const equipOutfit = useCallback((slot: number) => {
+    // The bridge resolves the outfit's wearables by urn and re-emits the full `wearables` set (incl.
+    // items off the loaded catalog page), which becomes the authoritative equipped set — so no
+    // client-side rebuild here (that dropped off-page items and later un-equipped them).
+    driverRef.current?.send({ kind: 'equipOutfit', slot })
+  }, [])
+  const createCommunity = useCallback(
+    (input: { name: string; description: string; privacy: 'public' | 'private'; discoverable: boolean }) => {
+      driverRef.current?.send({ kind: 'createCommunity', ...input })
+    },
+    []
+  )
+  const joinCommunity = useCallback((id: string) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'joinCommunity', id })
+  }, [])
+  const requestToJoinCommunity = useCallback((id: string) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'requestToJoinCommunity', id })
+  }, [])
+  const cancelJoinRequest = useCallback((id: string, requestId: string) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'cancelJoinRequest', id, requestId })
+  }, [])
+  const leaveCommunity = useCallback((id: string) => {
+    setCommunityError(null)
+    driverRef.current?.send({ kind: 'leaveCommunity', id })
+  }, [])
+  const loadCommunityDetail = useCallback((id: string) => {
+    setCommunityDetail(null) // clear stale detail while the new one loads
+    driverRef.current?.send({ kind: 'getCommunityDetail', id })
+  }, [])
+  const playEmote = useCallback((urn: string) => {
+    driverRef.current?.send({ kind: 'triggerEmote', urn })
+    setEmotesOpen(false)
+  }, [])
+  // Assign an owned emote to a wheel slot (urn:'' clears it) on the Backpack's look, reflecting the
+  // slot move here straight away (nothing deploys until the Backpack closes).
+  const equipEmote = useCallback((slot: number, urn: string) => {
+    driverRef.current?.send({ kind: 'equipEmote', slot, urn })
+    setEmotes((list) =>
+      list.map((e) => {
+        if (e.urn === urn) return { ...e, slot } // the newly assigned one
+        if (e.slot === slot) return { ...e, slot: undefined } // whatever was in that slot
+        return e
+      })
+    )
+  }, [])
+  const toggleMic = useCallback(() => {
+    setMic((m) => {
+      driverRef.current?.send({ kind: 'setMic', enabled: !m.enabled })
+      return { ...m, enabled: !m.enabled } // optimistic; relay confirms
+    })
+  }, [])
+  const markNotificationsRead = useCallback(() => {
+    const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id)
+    if (unreadIds.length === 0) return
+    // Persist to the notifications service so it survives a re-fetch on reopen.
+    driverRef.current?.send({ kind: 'markNotificationsRead', ids: unreadIds })
+    setNotifications((prev) => prev.map((n) => (n.read ? n : { ...n, read: true })))
+  }, [notifications])
+  const requestOwnedNames = useCallback(() => {
+    driverRef.current?.send({ kind: 'getOwnedNames' })
+  }, [])
+  // Save an edit to YOUR OWN profile. Applied locally straight away — the engine only acks once it
+  // has deployed the new version, and the catalyst reindexes later still, so waiting for the round
+  // trip would leave the passport showing the old profile for seconds after a save. `profileSaved`
+  // either confirms it or hands back the pre-save state (see the message handler).
+  const saveProfile = useCallback(
+    (edit: ProfileEdit) => {
+      const address = profile?.address.toLowerCase() ?? ''
+      profileRevertRef.current = { address, profile, stored: peekProfile(address) }
+      setProfileSaveError(null)
+      setProfileSaving(true)
+      driverRef.current?.send({ kind: 'saveProfile', ...edit })
+      setProfile((prev) => (prev != null ? applyProfileEdit(prev, edit, ownedNames) : prev))
+      updateProfile(address, (mine) => (mine != null ? applyProfileEdit(mine, edit, ownedNames) : mine))
+    },
+    [profile, ownedNames]
+  )
+  const dismissProfileSaveError = useCallback(() => setProfileSaveError(null), [])
+  const friendAct = useCallback((op: FriendAction, address: string, message?: string) => {
+    setFriendPending((prev) => new Set(prev).add(`${op}:${address.toLowerCase()}`))
+    // the social events mobile sends on the click, whatever the outcome
+    const receiver_id = address.toLowerCase()
+    if (op === 'request') track('Friend Request', { receiver_id })
+    else if (op === 'accept') track('Friend Accept', { receiver_id })
+    else if (op === 'delete') track('Unfriend', { receiver_id })
+    else if (op === 'block') track('Block User', { receiver_id, is_friend: friendsData.friends.some((f) => f.address.toLowerCase() === receiver_id) })
+    driverRef.current?.send({ kind: 'friendAction', op, address, message })
+  }, [friendsData.friends])
+  const loadMutualFriends = useCallback((address: string) => {
+    driverRef.current?.send({ kind: 'getMutualFriends', address })
+  }, [])
+  const settingSet = useCallback((name: string, value: number) => {
+    driverRef.current?.send({ kind: 'setSetting', name, value })
+  }, [])
+  const bindingsSet = useCallback((entries: BindingEntry[]) => {
+    driverRef.current?.send({ kind: 'setBindings', bindings: entries })
+  }, [])
+  const bindingsReset = useCallback(() => {
+    driverRef.current?.send({ kind: 'resetBindings' })
+  }, [])
+  const captureBinding = useCallback(() => {
+    const id = `capture-${++captureSeq.current}`
+    const input = new Promise<string>((resolve) => {
+      captureRef.current = { id, resolve }
+    })
+    driverRef.current?.send({ kind: 'captureInput', id })
+    return {
+      input,
+      cancel: () => {
+        if (captureRef.current?.id === id) captureRef.current = null
+      }
+    }
+  }, [])
+
+  const nav = useCallback((action: NavAction) => {
+    // Opening another panel closes the React panels (single active panel).
+    closeAllPanels()
+    driverRef.current?.send({ kind: 'navAction', action })
+  }, [closeAllPanels])
+
+  const setEditorMode = useCallback((mode: EditorHudMode) => {
+    if (mode !== 'off') panelSetters.forEach((set) => set(false))
+    setEditorModeState(mode)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const logout = useCallback(() => {
+    driverRef.current?.logout().catch((e: Error) => console.error('[session] logout failed', e))
+    clearLogins() // drop the same-domain SSO identity for this origin
+    setStored(null)
+    pendingLoginType.current = null
+    lastLoginType.current = null
+    welcomeRef.current = null
+    guestPick.current = null
+    setQueuedGuest(null)
+    setPendingLook(null)
+    setStatus('sign-in-or-guest')
+    closeAllPanels()
+    setPlayerReady(false)
+    setSubmitted(false) // back to the login screen
+    setDestinationPicked(false) // re-show the picker on the next jump-in
+    setLobby(false)
+    setLobbyOpen(false)
+    setLobbyStageReady(false)
+    setWelcome(null)
+    setWelcomePending(false)
+    setWelcomeSaving(false)
+    setWelcomeError(null)
+    welcomeLink.current = null
+    heldDest.current = undefined
+    visitedTitle.current = ''
+    pendingLogin.current = null
+    // The next account starts clean: it fetches its own data and hasn't spawned yet.
+    fetchedRef.current.clear()
+    playerReadyRef.current = false
+    pendingParcel.current = null
+    // Nothing of this account's may show under the next one, or be saved onto it: an unsaved
+    // Backpack look is dropped rather than committed after the engine has let the account go.
+    backpackWasOpen.current = false
+    profileRevertRef.current = null
+    setProfile(null)
+    setPrevUserId(null)
+    setOwnedNames([])
+    setProfileSaving(false)
+    setProfileSaveError(null)
+    setSaveError(null)
+    setEquippedWearables([])
+    setBodyShape(undefined)
+    setForceRenderState([])
+    setAvatarColors(undefined)
+    setNotifications([])
+    setCommunities([])
+    setFriendPending(new Set())
+    setMutualFriends({})
+    setMessages(initialMessages)
+    setChannel('Nearby')
+    openTabsRef.current.clear()
+    setConversations([])
+    setDmLines({})
+    setChatUnread(0)
+    setNearbyUnread(0)
+  }, [closeAllPanels])
+
+  // Where the Backpack's avatar shows through, so the lobby under its modal can open the same hole.
+  const [avatarPreviewRect, setAvatarPreviewRect] = useState<{ x: number; y: number; width: number; height: number } | null>(null)
+  const setEngineViewport = useCallback(
+    (region: 'map' | 'avatarPreview' | 'lobby', rect: { x: number; y: number; width: number; height: number } | null, dpr?: number) => {
+      if (region === 'avatarPreview') setAvatarPreviewRect(rect)
+      driverRef.current?.send({ kind: 'engineViewport', region, rect, dpr })
+    },
+    []
+  )
+
+  const setInteractableArea = useCallback((area: InteractableArea) => {
+    driverRef.current?.send({ kind: 'interactableArea', ...area })
+  }, [])
+
+  // engine_run briefly blocks the main thread, so the lobby (or the loader) paints first and the
+  // launch runs behind it (the guest start page's early launch, above, is the one that runs under
+  // an interactive screen). On failure, back to sign-in.
+  const submitLogin = useCallback(
+    (loginCall: (driver: LoginDriver) => Promise<unknown>, loginType: LoginType | 'stored' | null): boolean => {
+      const driver = driverRef.current
+      if (driver == null || busy || !engineReady) return false
+      setError(null)
+      pendingLogin.current = loginCall
+      pendingLoginType.current = loginType
+      setSubmitted(true)
+      // A ?position/?realm link launches straight there (pickDestination, from the url effect).
+      if (urlDestination.current != null) return true
+      // Otherwise the lobby: launch now holding the world back, so signing in, the avatar and
+      // friends work but no scene loads until a destination is picked (which releases it).
+      setLobby(true)
+      setWelcomePending(welcomeShown())
+      // an engine launched for the guest start page keeps its stage, avatar and all, into the lobby
+      if (!launchedRef.current) setLobbyStageReady(false)
+      setBusy(true)
+      let ran = false
+      const run = (): void => {
+        if (ran || driverRef.current == null) return
+        ran = true
+        if (driver.launch != null && !launchedRef.current) {
+          const home = driver.homeScene?.()
+          if (!launchEngine(driver, home?.realm ?? DEFAULT_REALM, home?.parcel ?? '0,0', { holdWorld: true })) {
+            setWelcomePending(false) // no sign-in to answer it
+            return
+          }
+        }
+        runPendingLogin(driver)
+      }
+      // Defer a paint so the lobby is on screen before engine_run's main-thread work.
+      requestAnimationFrame(() => requestAnimationFrame(run))
+      setTimeout(run, 60)
+      return true
+    },
+    [busy, engineReady, launchEngine, runPendingLogin]
+  )
+
+
+  // the curated default look on the stage, so RANDOMIZE never repeats it
+  const shownLook = useRef(0)
+  const showLook = useCallback((look: number, avatar: AvatarLook) => {
+    shownLook.current = look
+    setPendingLook(look)
+    driverRef.current?.send({ kind: 'showLook', look, avatar })
+  }, [])
+  // A look is pending from the moment it is asked for, so RANDOMIZE can't be hit again while its
+  // profile is fetched; a fetch that never comes back lets go after a while (timed from the last
+  // ask: an earlier ask's timer must not let a later one go).
+  const expectTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const expectLook = useCallback(() => {
+    setPendingLook(EXPECTED_LOOK)
+    driverRef.current?.send({ kind: 'expectLook' })
+    if (expectTimer.current != null) clearTimeout(expectTimer.current)
+    expectTimer.current = setTimeout(() => setPendingLook((pending) => (pending === EXPECTED_LOOK ? null : pending)), EXPECTED_LOOK_MS)
+  }, [])
+  const preloadLook = useCallback((look: number, avatar: AvatarLook) => driverRef.current?.send({ kind: 'preloadLook', look, avatar }), [])
+  // RANDOMIZE: the page picks and fetches the look (the scene's fetches are signed, and it has no
+  // say in the pick), and the stage wears it; a later pick outruns a slow fetch
+  const rerollLook = useCallback(() => {
+    clickButton('NAME_RANDOMIZE', 'AVATAR_NAMING')
+    expectLook()
+    const look = randomDefaultLook(shownLook.current || undefined)
+    shownLook.current = look
+    void fetchStoredProfile(`default${look}`).then((profile) => {
+      if (profile?.look != null && shownLook.current === look) showLook(look, profile.look)
+    })
+  }, [showLook, expectLook])
+  const openLegal = useCallback((doc: 'terms' | 'privacy') => driverRef.current?.send({ kind: 'openLegal', doc }), [])
+  const acceptWelcome = useCallback((name?: string) => {
+    clickButton('LETS_GO', welcomeRef.current?.newProfile ? 'AVATAR_NAMING' : 'WELCOME')
+    setWelcomeSaving(true)
+    setWelcomeError(null)
+    driverRef.current?.send({ kind: 'acceptWelcome', name })
+  }, [])
+
+  // The button creates a guest account that persists; ?guest=1 stays a throwaway guest.
+  const startGuest = useCallback(
+    (pick?: GuestPick) => {
+      const persistent = driverRef.current?.loginPersistentGuest != null
+      guestPick.current = pick ?? null
+      if (!submitLogin((d) => d.loginPersistentGuest?.(pick) ?? d.loginGuest(), 'guest')) guestPick.current = null
+      else if (persistent) screenViewed('ACCOUNT_GUEST_CREATE')
+    },
+    [submitLogin]
+  )
+  const exploreAsGuest = useCallback(
+    (pick?: GuestPick) => {
+      if (pick != null) clickButton('LETS_GO', 'AVATAR_NAMING')
+      else clickButton('PLAY_GUEST', 'ACCOUNT_HOME')
+      // before the engine is ready the click is kept, and runs once it is (the effect below)
+      if (!engineReady && driverRef.current != null) {
+        setQueuedGuest({ pick: pick ?? null })
+        return
+      }
+      startGuest(pick)
+    },
+    [engineReady, startGuest]
+  )
+  useEffect(() => {
+    if (queuedGuest == null || !engineReady) return
+    setQueuedGuest(null)
+    startGuest(queuedGuest.pick ?? undefined)
+  }, [queuedGuest, engineReady, startGuest])
+  const autoGuest = useCallback(() => submitLogin((d) => d.loginGuest(), 'guest'), [submitLogin])
+  // The autopilot's guest is the account kept on this machine (or in this profile), not a thirdweb
+  // wallet, a throwaway or a stored account
+  const autopilotGuest = useCallback(() => submitLogin((d) => d.loginLocalGuest?.() ?? d.loginGuest(), 'guest'), [submitLogin])
+  // Reuse the existing login. The driver picks the path its backend supports (console
+  // `/login_identity` for the engine, `loginPrevious` over the bridge).
+  const enterStored = useCallback((defaultOnError?: boolean) => submitLogin((d) => d.jumpIn(defaultOnError), 'stored'), [submitLogin])
+  const jumpIn = useCallback(() => {
+    clickButton('lets_go', 'COMEBACK')
+    enterStored()
+  }, [enterStored])
+  // A stored session goes straight to the lobby, once per page: the lobby's profile menu is where
+  // to sign out or switch accounts.
+  const autoEntered = useRef(false)
+  useEffect(() => {
+    if (status !== 'reuse-login-or-new' || submitted || !engineReady || autoEntered.current) return
+    if (accountChecking) return
+    autoEntered.current = true
+    enterStored()
+  }, [status, submitted, engineReady, enterStored, accountChecking])
+  // The engine tags profile-fetch login failures (vs bad credentials etc.) with this marker —
+  // mirrors PROFILE_FETCH_FAILED in system_bridge. Only then do we offer the destructive reset.
+  const profileFetchFailed = error != null && error.includes('profile fetch failed')
+  // Explicit recovery from an unfetchable/corrupt profile: retry, continuing with a default
+  // profile if it still fails. The engine deploys that default, permanently replacing the
+  // account's server-side profile — the button copy must carry that warning.
+  const resetProfileAndJumpIn = useCallback(() => {
+    clickButton('try_again', 'AUTH_ERROR')
+    enterStored(true)
+  }, [enterStored])
+
+  // Fresh sign-in (or signing in with a different account). Web: bounce to the same-domain
+  // auth site, which writes the identity back to this origin's localStorage and redirects
+  // here. Native (the driver has loginNew): that redirect would resolve against cef:// and
+  // 404 into the asset server — instead run the engine's remote-wallet flow, which opens the
+  // auth site in the user's EXTERNAL browser and streams back a verification code to show.
+  // The auth runs now (not deferred like Jump in — it needs the user at the code panel);
+  // approval means the engine is already logged in, so the destination pick has no deferred
+  // login left to run.
+  const startWithAccount = useCallback(() => {
+    if (busy) return
+    clickButton('SIGN_IN', 'AVATAR_NAMING')
+    guestPick.current = null
+    const driver = driverRef.current
+    if (driver?.loginNew == null) {
+      screenViewed('AUTH_BROWSER_OPEN', { method: 'sso' })
+      redirectToAuth()
+      return
+    }
+    const attempt = ++authAttempt.current
+    setError(null)
+    setBusy(true)
+    setAuth({ code: null })
+    driver
+      .loginNew()
+      .then(() => {
+        if (attempt !== authAttempt.current) return // cancelled meanwhile
+        setAuth(null)
+        setBusy(false)
+        pendingLogin.current = null
+        setSubmitted(true)
+        welcomeLink.current = urlDestination.current
+        if (welcomeShown()) driverRef.current?.send({ kind: 'getWelcome' })
+        // the engine booted holding the world, as for Jump in: the pick is the lobby's
+        if (urlDestination.current == null) {
+          setLobby(true)
+          setLobbyStageReady(false)
+          setWelcomePending(welcomeShown())
+        }
+      })
+      .catch((e: unknown) => {
+        if (attempt !== authAttempt.current) return // cancelled: the rejection is expected
+        setAuth(null)
+        setBusy(false)
+        const msg = e instanceof Error ? e.message : String(e)
+        setError(msg !== '' ? msg : 'Sign-in failed')
+      })
+  }, [busy])
+
+  // Abort an in-flight fresh sign-in: drop the engine's login task and invalidate the pending
+  // loginNew promise (it settles late — as cancelled from the relay or rejected — and is ignored).
+  const cancelLogin = useCallback(() => {
+    authAttempt.current++
+    setAuth(null)
+    setBusy(false)
+    driverRef.current?.loginCancel().catch(() => {})
+  }, [])
+
+  // "Use a different account" shows the sign-in/guest screen (Start with account + Explore as
+  // guest) rather than jumping straight to auth — matching the reference scene, and the only way a
+  // returning user can reach Explore as Guest.
+  const useDifferentAccount = useCallback(() => {
+    if (busy) return
+    clickButton('use_another_account', 'COMEBACK')
+    setStatus('sign-in-or-guest')
+  }, [busy])
+
+  // Auto-login (see lib/bootMode.ts): skip the sign-in screen the moment the engine is warm —
+  // as a guest (?guest=1, the sites `/discover` embed), or with no React login at all
+  // (?systemScene=: the substituted ui scene owns login in-engine, pre-react behavior), or, for
+  // the benchmark autopilot (?autopilot), with the machine's local guest and nothing else: the
+  // guest is made once and kept, each run signs a fresh identity with its key (the account stays),
+  // and a stored account is neither read nor used. A guest that fails to be made fails the run;
+  // the engine ends it (runPendingLogin). The destination is auto-picked by the effect above
+  // (?position / ?realm, else the hidden-HUD Genesis fallback), so this goes straight into the
+  // scene. Fires once — `submitted` flips true on the first call and gates re-entry.
+  useEffect(() => {
+    if (boot.current.autoLogin == null || !engineReady || submitted) return
+    if (boot.current.autoLogin === 'guest') autoGuest()
+    // scene-owned: no React login at all — just boot the engine (a no-op deferred login).
+    else if (boot.current.autoLogin === 'scene-owned') submitLogin(() => Promise.resolve(), null)
+    else autopilotGuest()
+  }, [engineReady, submitted, autoGuest, autopilotGuest, submitLogin])
+
+  // Render-settle. When the scene flips from loading → loaded (visible true→false), hold the loader
+  // a beat longer while the engine actually renders the world (compiling shaders / uploading
+  // textures) — otherwise it's revealed as black models. Gated on the engine's `renderBusy` probe
+  // and capped by MAX_REVEAL_MS so it never hangs. Mock has no engine to wait for (no renderBusy) →
+  // no delay. Applies to every scene stream, not just the first, so crossings don't flash black.
+  const [revealing, setRevealing] = useState(false)
+  const prevSceneVisible = useRef<boolean | undefined>(undefined)
+  useEffect(() => {
+    const visible = sceneLoading?.visible
+    const justLoaded = prevSceneVisible.current === true && visible === false
+    prevSceneVisible.current = visible
+    if (!justLoaded || typeof driverRef.current?.renderBusy !== 'function') return
+    setRevealing(true)
+    const startedAt = performance.now()
+    let timer: ReturnType<typeof setTimeout>
+    const tick = (): void => {
+      const elapsed = performance.now() - startedAt
+      const stillRendering = driverRef.current?.renderBusy?.() === true
+      if ((elapsed >= MIN_REVEAL_MS && !stillRendering) || elapsed >= MAX_REVEAL_MS) {
+        setRevealing(false)
+        return
+      }
+      timer = setTimeout(tick, 120)
+    }
+    timer = setTimeout(tick, MIN_REVEAL_MS)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sceneLoading?.visible])
+
+  // Mirror the engine's native loading screen (SDK7 SceneLoadingWindow: `if (!visible) return null`).
+  // The engine keeps its loader visible until the player's scene is rendered, and flips it back on
+  // for each scene streamed into Genesis Plaza. We debounce the *reveal* (loading→world) so a brief
+  // `visible` gap between scenes doesn't flash the HUD; the loader still appears INSTANTLY whenever
+  // loading re-asserts. Loading = a HUD travel pending, or scene visible, or not spawned, or the
+  // render-settle still holding.
+  // No state received yet (sceneLoading == null) counts as loading: the loading stream is the
+  // bridge-scene's domain, and until it's running and reports otherwise the world isn't ready
+  // (on native the engine relay itself sends no loading state at all).
+  const loadingNow = travellingTo != null || sceneLoading?.visible !== false || !playerReady || revealing
+  const [loaderActive, setLoaderActive] = useState(true)
+  useEffect(() => {
+    if (loadingNow) {
+      setLoaderActive(true)
+      return
+    }
+    // No engine to stream scenes (mock / tests) → nothing to bridge, reveal immediately.
+    if (typeof driverRef.current?.renderBusy !== 'function') {
+      setLoaderActive(false)
+      return
+    }
+    const t = setTimeout(() => setLoaderActive(false), REVEAL_DEBOUNCE_MS)
+    return () => clearTimeout(t)
+  }, [loadingNow])
+
+  const loadingTracker = useRef(createLoadingProgress())
+  if (!loaderActive) loadingTracker.current.reset()
+  const loadingProgress = loaderActive
+    ? loadingTracker.current.next({ scene: sceneLoading, playerReady, revealing, travelling: travellingTo != null })
+    : 100
+
+  const phase: SessionPhase = !submitted
+    ? 'login'
+    : welcome != null || (welcomePending && lobby)
+      ? 'welcome'
+      : !destinationPicked
+      ? urlDestination.current != null
+        ? 'entering' // a ?position/?realm launch is about to fire — never flash the picker
+        : lobby
+          ? 'lobby'
+          : 'picking'
+      : loaderActive
+        ? 'entering'
+        : 'world'
+
+  // The screens a phase shows (the loading screen's own are the engine's: LOADING_START / END /
+  // TIMEOUT come from `crates/analytics/src/loading.rs`).
+  const prevPhase = useRef<SessionPhase | null>(null)
+  useEffect(() => {
+    const prev = prevPhase.current
+    prevPhase.current = phase
+    if (prev === phase) return
+    if (phase === 'lobby') screenViewed('LOBBY')
+    else if (phase === 'picking') screenViewed('PLACES_PICKER')
+  }, [phase])
+  // The sign-in screens as mobile names them, once per showing (an error flip on the same screen
+  // is not a new view). The "welcome back" panel only shows after a failed sign-in: a stored login
+  // heads for the lobby under the splash.
+  const loginScreen = useRef<string | null>(null)
+  useEffect(() => {
+    const screen =
+      phase !== 'login' || boot.current.hideHud
+        ? null
+        : status === 'sign-in-or-guest'
+          ? 'AVATAR_NAMING'
+          : status === 'reuse-login-or-new' && error != null
+            ? 'COMEBACK'
+            : null
+    if (screen != null && screen !== loginScreen.current) screenViewed(screen)
+    loginScreen.current = screen
+  }, [phase, status, error])
+
+  // Once launched the bridge scene must exist, so from here on its absence is a fault. Not
+  // 'picking': nothing is launched behind the picker.
+  useEffect(() => {
+    if (phase === 'welcome' || phase === 'lobby' || phase === 'entering' || phase === 'world') driverRef.current?.expectBridge?.()
+  }, [phase])
+
+  // HUD focus, declared to the engine (fire-and-forget; latest wins). `ui` reserves all
+  // input above scenes — the avatar stops walking when a menu/popup opens — while the
+  // system-action stream keeps flowing so Cancel/hotkeys still arrive here. `text` reserves
+  // the keyboard above the stream too: keys are typing, no actions resolve at all. Chat
+  // alone is deliberately NOT ui — you can walk with the chat panel open.
+  const popupOpen = useSyncExternalStore(subscribePopups, hasOpenPopup)
+  const locked = useSyncExternalStore(subscribeInputLock, isInputLocked)
+  const [textFocused, setTextFocused] = useState(false)
+  useEffect(() => {
+    const update = (): void => setTextFocused(isEditableTarget(document.activeElement))
+    const onFocusOut = (): void => void setTimeout(update, 0) // activeElement settles next tick
+    // The cancel key blurs a focused text field (fields are otherwise sticky: while one
+    // holds focus no actions resolve, so cancel could never escape it). Bubble phase, so a
+    // widget that owns the key — chat's layered Escape — can stopPropagation first.
+    const onKey = (e: KeyboardEvent): void => {
+      if (isCancelKey(e) && isEditableTarget(e.target)) (e.target as HTMLElement).blur()
+    }
+    document.addEventListener('focusin', update, true)
+    document.addEventListener('focusout', onFocusOut, true)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('focusin', update, true)
+      document.removeEventListener('focusout', onFocusOut, true)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [])
+  // `scroll` focus: the cursor sits over a scrollable HUD element, so the SCROLL gesture
+  // belongs to that panel — the engine reserves the Scroll actions (every input bound to
+  // them stands down for world consumers: camera zoom on a shared wheel, movement on a
+  // shared key) while their edges keep streaming for the driver below. Tracked on
+  // pointer crossings (pointerover, and pointermove for shadow roots), walking up for scrollable overflow.
+  const [scrollHover, setScrollHover] = useState(false)
+  const scrollElRef = useRef<Element | null>(null)
+  const lastWheelAtRef = useRef(0)
+  useEffect(() => {
+    const scrollable = (el: Element): boolean => {
+      const s = getComputedStyle(el)
+      return (
+        (/(auto|scroll)/.test(s.overflowY) && el.scrollHeight > el.clientHeight) ||
+        (/(auto|scroll)/.test(s.overflowX) && el.scrollWidth > el.clientWidth)
+      )
+    }
+    // from the composed path: inside a shadow root (the scene editor's UI) e.target is its host
+    const findScrollable = (t: EventTarget | undefined): Element | null => {
+      let el = t instanceof Element ? t : null
+      while (el != null && el !== document.body) {
+        if (scrollable(el)) return el
+        const root = el.parentElement == null ? el.getRootNode() : null
+        el = root instanceof ShadowRoot ? root.host : el.parentElement
+      }
+      return null
+    }
+    // a crossing inside a shadow root never reaches the window as pointerover
+    let over: EventTarget | undefined
+    const onOver = (e: PointerEvent): void => {
+      const t = e.composedPath()[0]
+      if (t === over) return
+      over = t
+      scrollElRef.current = findScrollable(t)
+      setScrollHover(scrollElRef.current != null)
+    }
+    // Every wheel event is stamped so the scroll driver can tell a wheel-sourced Scroll
+    // edge (the DOM already scrolled natively — the wheel directions are FIXED Scroll
+    // bindings, engine-enforced) from a key/gamepad one.
+    const onWheel = (): void => {
+      lastWheelAtRef.current = performance.now()
+    }
+    window.addEventListener('pointerover', onOver)
+    window.addEventListener('pointermove', onOver)
+    window.addEventListener('wheel', onWheel, true)
+    return () => {
+      window.removeEventListener('pointerover', onOver)
+      window.removeEventListener('pointermove', onOver)
+      window.removeEventListener('wheel', onWheel, true)
+    }
+  }, [])
+  // The scroll driver: Scroll press/release edges from the action stream scroll the hovered
+  // panel at a steady rate while held — this is what makes panels scrollable from ANY
+  // Scroll binding (gamepad shoulder buttons, keys), not just the wheel.
+  const scrollDirsRef = useRef(new Set<string>())
+  const scrollAnimRef = useRef<number | null>(null)
+  const scrollTickAtRef = useRef(0)
+  const HUD_SCROLL_SPEED = 800 // px/s
+  const ensureScrollLoop = (): void => {
+    if (scrollAnimRef.current != null || scrollDirsRef.current.size === 0) return
+    scrollTickAtRef.current = performance.now()
+    const tick = (): void => {
+      const dirs = scrollDirsRef.current
+      if (dirs.size === 0) {
+        scrollAnimRef.current = null
+        return
+      }
+      const now = performance.now()
+      const d = (HUD_SCROLL_SPEED * (now - scrollTickAtRef.current)) / 1000
+      scrollTickAtRef.current = now
+      scrollElRef.current?.scrollBy({
+        left: (dirs.has('Right') ? d : 0) - (dirs.has('Left') ? d : 0),
+        top: (dirs.has('Down') ? d : 0) - (dirs.has('Up') ? d : 0)
+      })
+      scrollAnimRef.current = requestAnimationFrame(tick)
+    }
+    scrollAnimRef.current = requestAnimationFrame(tick)
+  }
+  useEffect(
+    () => () => {
+      if (scrollAnimRef.current != null) cancelAnimationFrame(scrollAnimRef.current)
+    },
+    []
+  )
+  const uiFocus = anyPanelOpen || popupOpen || locked
+  // `covered` also spans the loading overlay: it outlives the engine's own out-of-world state
+  // (player spawn, render-settle, reveal debounce), so the engine can't see that tail itself.
+  const covered = menuPageOpen || phase === 'welcome' || phase === 'lobby' || phase === 'entering'
+  // The open menu page, by the SystemAction that toggles it (the pages are exclusive, so at most
+  // one is open). The engine answers a scene's openExplorerUi from this, and writes the page's
+  // opened/closed events to the scene whose request opened it.
+  const menu = settingsOpen ? 'Settings'
+    : backpackOpen ? 'Backpack'
+    : communitiesOpen ? 'Communities'
+    : mapOpen ? 'Map'
+    : placesOpen ? 'Places'
+    : galleryOpen ? 'Gallery'
+    : null
+  useEffect(() => {
+    if (phase !== 'world' && phase !== 'entering' && phase !== 'lobby' && phase !== 'welcome') return
+    // The lobby and the welcome page hold input like a menu page: the player can't walk under them.
+    const ui = uiFocus || phase === 'lobby' || phase === 'welcome'
+    driverRef.current?.send({ kind: 'uiFocus', ui, text: textFocused, scroll: scrollHover, covered, menu })
+  }, [phase, uiFocus, textFocused, scrollHover, covered, menu])
+
+  // Pre-world the bridge stream doesn't exist, so popups opened during login/entering
+  // (realm errors, world-visit prompts) need a DOM cancel fallback; in-world the engine's
+  // 'Cancel' action owns closing (see the dispatcher below).
+  useWindowKeyDown(
+    (e) => {
+      if (!isCancelKey(e) || isInputLocked() || !hasOpenPopup()) return
+      e.preventDefault()
+      e.stopPropagation()
+      closeTopPopup()
+    },
+    { capture: true, enabled: phase !== 'world' && phase !== 'lobby' }
+  )
+
+  // Engine-authoritative hotkeys (the [M]/[Z]/… hints in the nav + sidebar): SystemAction
+  // edges relayed from the engine's input stream via the bridge, so user rebinds apply and
+  // keys fire regardless of where keyboard focus sits. The engine already resolves nothing
+  // while `text` focus is declared; the DOM-focus guards stay as defence for the declaration
+  // race (a keystroke landing before the uiFocus relay does).
+  systemActionRef.current = (action, pressed) => {
+    // Scroll edges (both edges — held scrolls continuously) drive the hovered panel via
+    // the driver above. Wheel-sourced edges are skipped: the DOM scrolled natively on the
+    // wheel event itself, and acting on its echo would double-scroll.
+    const scrollDir = /^Scroll(Up|Down|Left|Right)$/.exec(action)
+    if (scrollDir != null) {
+      if (pressed && performance.now() - lastWheelAtRef.current < 250) return
+      if (pressed) scrollDirsRef.current.add(scrollDir[1])
+      else scrollDirsRef.current.delete(scrollDir[1])
+      ensureScrollLoop()
+      return
+    }
+    if (!pressed || (phase !== 'world' && phase !== 'lobby') || isInputLocked()) return
+    if (isEditableTarget(document.activeElement)) return
+    if ((window as EngineFocusWindow).__engineTextFocus) return
+    if (EDITOR_BUILD && !hudActsOn(editorMode, action)) return
+    // 'Cancel' is the one action handled even with a popup open: the engine resolved the
+    // cancel key or gamepad button, and this is the single layered close — topmost popup
+    // first, else the topmost registered leaf layer (lightbox, open dropdown — see
+    // cancelLayers), else any open panels. One layer per press.
+    if (action === 'Cancel') {
+      if (hasOpenPopup()) closeTopPopup()
+      else if (dispatchCancelLayer()) return
+      // the lobby sits under the panels it opens: close those first, then the lobby
+      else if (anyPanelOpenExceptLobby) panelSetters.forEach((set) => set(false))
+      else setLobbyOpen(false)
+      return
+    }
+    // the startup lobby mounts only what it opens itself; the world's hotkeys wait for the world
+    if (phase === 'lobby') return
+    if (hasOpenPopup()) return
+    // Quick emotes: while the wheel is open, QuickEmoteN plays that slot's emote (which also
+    // closes the wheel). With the wheel closed a number does nothing — this covers both
+    // "hold B, tap a number" and "tap B, then a number", since either way B opened the wheel.
+    const quickEmote = /^QuickEmote(\d)$/.exec(action)
+    if (quickEmote != null) {
+      if (!emotesOpen) return
+      const emote = emotes.find((em) => em.slot === Number(quickEmote[1]))
+      if (emote) playEmote(emote.urn)
+      return
+    }
+    switch (action) {
+      case 'Map': toggleMap(); break
+      case 'Places': togglePlaces(); break
+      case 'Communities': toggleCommunities(); break
+      case 'Backpack': toggleBackpack(); break
+      case 'Gallery': toggleGallery(); break
+      case 'Settings': toggleSettings(); break
+      case 'Friends': toggleFriends(); break
+      case 'ChatPanel': toggleChat(); break
+      case 'Emote': toggleEmotes(); break
+      // 'Microphone' is NOT handled here: MicUiPlugin isn't NativeUi-gated, so the engine
+      // itself still toggles the mic on that action (the mic relay updates the HUD icon).
+      // 'Chat' (Enter) is NOT handled here: the bridge's chat domain turns it into the
+      // dedicated 'focusChat' message (releasing the engine pointer lock scene-side too).
+    }
+  }
+
+  // Stable slices let memoized surfaces (the minimap) skip HUD re-renders they don't depend on.
+  const mapSlice = useMemo(
+    () => ({ x: mapParcel.x, y: mapParcel.y, open: mapOpen, toggle: toggleMap, teleport, changeRealm, teleportToPlace }),
+    [mapParcel, mapOpen, toggleMap, teleport, changeRealm, teleportToPlace]
+  )
+  const minimapSlice = useMemo(
+    () => ({ pose: poseRef, satelliteView, sceneTitle, setConfig: setMinimapConfig }),
+    [satelliteView, sceneTitle, setMinimapConfig]
+  )
+
+  return {
+    phase,
+    playerReady,
+    lobbyStageReady,
+    lobbyPage: { open: lobbyOpen, toggle: toggleLobby, travel: travelFromLobbyInWorld },
+    homeScene,
+    avatarPreviewRect,
+    pickDestination,
+    welcome: {
+      terms: welcome?.terms ?? false,
+      newProfile: welcome?.newProfile ?? false,
+      pending: welcome == null,
+      saving: welcomeSaving,
+      error: welcomeError,
+      reroll: rerollLook,
+      showLook,
+      preloadLook,
+      lookPending: pendingLook != null,
+      lastLook: shownLook.current || null,
+      expectLook,
+      accept: acceptWelcome,
+      openLegal
+    },
+    sceneLoading,
+    loadingProgress,
+    travelError,
+    dismissTravelError,
+    travellingTo,
+    fatalError,
+    reload: () => location.reload(),
+    dismissFatal: () => {
+      // Re-arm the engine watchdog (it left its `shown` flag set when it bridged the crash) so a later
+      // genuine crash still surfaces, and clear the stashed panic so it isn't re-read stale.
+      driverRef.current?.rearmCrashWatchdog?.()
+      driverRef.current?.clearEnginePanic?.()
+      setFatalError(null)
+    },
+    hover,
+    cursorLocked,
+    proximity,
+    chat: {
+      messages: channelMessages,
+      send: sendChat,
+      react: reactInChat,
+      nearby: messages,
+      bubbleText,
+      channel,
+      select: selectChannel,
+      conversations,
+      openConversation,
+      closeConversation,
+      deleteHistory,
+      open: chatOpen,
+      toggle: toggleChat,
+      members,
+      speaking,
+      mention: mentionInChat,
+      pendingMention,
+      consumeMention,
+      unread: chatUnread,
+      setActive: setChatActive,
+      nearbyUnread,
+      focusTick: chatFocusTick,
+      requestFocus: requestFocusChat
+    },
+    friends: {
+      available: friendsData.available,
+      list: friendsData.friends,
+      received: friendsData.received,
+      sent: friendsData.sent,
+      blocked: friendsData.blocked,
+      blockedUsers: friendsData.blockedUsers,
+      loading: friendsData.loading,
+      open: friendsOpen,
+      toggle: toggleFriends,
+      act: friendAct,
+      pending: friendPending,
+      mutuals: mutualFriends,
+      loadMutuals: loadMutualFriends
+    },
+    settings: { list: settings, open: settingsOpen, toggle: toggleSettings, set: settingSet, load: loadSettings },
+    bindings: { list: bindings, set: bindingsSet, reset: bindingsReset, capture: captureBinding },
+    profile: {
+      data: profile,
+      open: profileOpen,
+      toggle: toggleProfile,
+      ownedNames,
+      saving: profileSaving,
+      saveError: profileSaveError,
+      save: saveProfile,
+      requestOwnedNames,
+      dismissSaveError: dismissProfileSaveError
+    },
+    skybox: {
+      open: skyboxOpen,
+      toggle: toggleSkybox,
+      hours: skyboxHours,
+      progressing: skyboxProgressing,
+      setHours: setSkyboxHours,
+      setProgressing: setSkyboxProgressing
+    },
+    notifications: {
+      list: notifications,
+      unread: notifications.reduce((n, x) => n + (x.read ? 0 : 1), 0),
+      open: notificationsOpen,
+      toggle: toggleNotifications,
+      markAllRead: markNotificationsRead
+    },
+    emotes: { list: emotes, open: emotesOpen, toggle: toggleEmotes, play: playEmote, equip: equipEmote },
+    backpack: {
+      list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
+      equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, forceRender, setForceRender,
+      outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5,
+      saveOutfit, deleteOutfit, equipOutfit
+    },
+    communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail },
+    map: mapSlice,
+    minimap: minimapSlice,
+    places: { open: placesOpen, toggle: togglePlaces },
+    events: { open: eventsOpen, toggle: toggleEvents },
+    shop: { open: shopOpen, toggle: toggleShop },
+    create: { open: createOpen, toggle: toggleCreate, show: showCreate },
+    gallery: {
+      list: galleryPhotos,
+      current: galleryStorage.current,
+      max: galleryStorage.max,
+      loaded: galleryLoaded,
+      open: galleryOpen,
+      toggle: toggleGallery,
+      metas: galleryMetas,
+      loadPhoto: loadGalleryPhoto,
+      remove: removeGalleryPhoto
+    },
+    permissions: {
+      pending: permissionQueue,
+      visit: visitAnswers.filter((e) => e.scene === sceneHash),
+      triggered: triggeredPermissions,
+      unseenDenied,
+      markSeen: markPermissionsSeen,
+      rules: permissionRules,
+      loadRules: loadPermissionRules,
+      setRule: setPermissionRule,
+      clearRule: clearPermissionRule,
+      resetDefaults: resetPermissions,
+      resolve: resolvePermission
+    },
+    worldPassword: { pending: worldPassword, resolve: resolveWorldPassword },
+    editor: { mode: editorMode, setMode: setEditorMode },
+    mic: { enabled: mic.enabled, available: mic.available, toggle: toggleMic },
+    nav,
+    setEngineViewport,
+    setInteractableArea,
+    logout,
+    menuOpen,
+    closeAllPanels,
+    login: {
+      status,
+      account,
+      busy,
+      error,
+      engineReady,
+      avatarLoaded,
+      loadProgress,
+      loadStep,
+      startWithAccount,
+      authPending: auth != null,
+      authCode: auth?.code ?? null,
+      cancelLogin,
+      exploreAsGuest,
+      acceptQueued: queuedGuest != null,
+      jumpIn,
+      profile: accountProfile,
+      profileFetchFailed,
+      resetProfileAndJumpIn,
+      useDifferentAccount
+    }
+  }
+}

@@ -1,0 +1,172 @@
+diff --git a/src/c/protocol.rs b/src/c/protocol.rs
+index 6e2e1d4e..2fcde230 100644
+--- a/src/c/protocol.rs
++++ b/src/c/protocol.rs
+@@ -256,8 +256,13 @@ unsafe fn enet_protocol_dispatch_incoming_commands<S: Socket>(
+             (*event).data = u32::from((*peer).receive_limit);
+             (*peer).receive_limit = 0;
+             if !(*peer).receive_terminal
+-                && (*peer).dispatched_commands.sentinel.next
+-                    != core::ptr::addr_of_mut!((*peer).dispatched_commands.sentinel)
++                && (matches!(
++                    (*peer).state,
++                    ENET_PEER_STATE_CONNECTION_PENDING
++                        | ENET_PEER_STATE_CONNECTION_SUCCEEDED
++                        | ENET_PEER_STATE_ZOMBIE
++                ) || (*peer).dispatched_commands.sentinel.next
++                    != core::ptr::addr_of_mut!((*peer).dispatched_commands.sentinel))
+             {
+                 (*peer).flags |= ENET_PEER_FLAG_NEEDS_DISPATCH as u16;
+                 enet_list_insert(
+diff --git a/src/test.rs b/src/test.rs
+index 610a3bbc..e63dd39a 100644
+--- a/src/test.rs
++++ b/src/test.rs
+@@ -667,6 +667,147 @@ mod receive_policy {
+         });
+     }
+ 
++    fn pending_aggregate_limit(host: &mut Host<UdpSocket>, sender: &UdpSocket, bytes: bool) {
++        unsafe {
++            let policy = (*raw(host)).receive_policy.as_mut().unwrap();
++            if bytes {
++                policy.maximum_queued_bytes = core::mem::size_of::<ENetIncomingCommand>()
++                    + core::mem::size_of::<ENetPacket>()
++                    + 1;
++            } else {
++                policy.maximum_queued_commands = 1;
++            }
++        }
++        // Leave sequence 1 missing, so accepted data cannot supply another dispatch entry.
++        let mut datagram = reliable(2, 0, &[11], 0x86);
++        datagram.extend_from_slice(&reliable(3, 0, &[22], 0x86)[4..]);
++        assert!(inject(host, sender, datagram).is_none());
++    }
++
++    fn aggregate_then_disconnect(bytes: bool) {
++        let (mut host, sender) = rig();
++        pending_aggregate_limit(&mut host, &sender, bytes);
++        // A rejected command ends its datagram. Receive a separate DISCONNECT
++        // before dispatch, as the native service's receive pass can do.
++        let mut datagram = vec![0x40, 0, 0, 1, 0x44, 0xff, 0, 0];
++        datagram.extend_from_slice(&77u32.to_be_bytes());
++        assert!(inject(&mut host, &sender, datagram).is_none());
++        assert_eq!(host.peer(PeerID(0)).state(), PeerState::Zombie);
++        assert_eq!(counters(&host, 0), (0, 0));
++        let expected = if bytes {
++            ReceiveLimitKind::QueuedBytes
++        } else {
++            ReceiveLimitKind::QueuedCommands
++        };
++        assert!(matches!(host.check_events(),
++            Some(Event::ReceiveLimitExceeded { kind, .. }) if kind == expected));
++        assert!(
++            matches!(
++                host.check_events(),
++                Some(Event::Disconnect { data: 77, .. })
++            ),
++            "aggregate report consumed native Disconnect"
++        );
++        assert!(host.check_events().is_none());
++        assert_eq!(counters(&host, 0), (0, 0));
++        assert_eq!(host.peer(PeerID(0)).state(), PeerState::Disconnected);
++        let replacement = UdpSocket::bind("127.0.0.1:0").unwrap();
++        assert_eq!(
++            host.connect(replacement.local_addr().unwrap(), 3, 0)
++                .unwrap()
++                .id(),
++            PeerID(0)
++        );
++    }
++
++    #[test]
++    fn aggregate_limit_commands_preserve_same_pass_disconnect_and_slot_reuse() {
++        aggregate_then_disconnect(false);
++    }
++
++    #[test]
++    fn aggregate_limit_bytes_preserve_same_pass_disconnect_and_slot_reuse() {
++        aggregate_then_disconnect(true);
++    }
++
++    #[test]
++    fn aggregate_limit_preserves_pending_connect_lifecycle_dispatch() {
++        for state in [
++            ENET_PEER_STATE_CONNECTION_PENDING,
++            ENET_PEER_STATE_CONNECTION_SUCCEEDED,
++        ] {
++            let (mut host, sender) = rig();
++            pending_aggregate_limit(&mut host, &sender, false);
++            // Stage each existing connect lifecycle state on the already queued node.
++            // Receive handlers normally require Connected; this fixture isolates dispatch ownership.
++            unsafe {
++                (*host.peer_mut(PeerID(0)).0).state = state;
++                (*host.peer_mut(PeerID(0)).0).event_data = 91;
++            }
++            assert!(matches!(
++                host.check_events(),
++                Some(Event::ReceiveLimitExceeded {
++                    kind: ReceiveLimitKind::QueuedCommands,
++                    ..
++                })
++            ));
++            assert!(
++                matches!(host.check_events(), Some(Event::Connect { data: 91, .. })),
++                "aggregate report consumed pending Connect state {state}"
++            );
++            assert_eq!(host.peer(PeerID(0)).state(), PeerState::Connected);
++            assert!(host.check_events().is_none());
++            host.peer_mut(PeerID(0)).reset();
++            assert_eq!(counters(&host, 0), (0, 0));
++        }
++    }
++
++    #[test]
++    fn aggregate_limit_preserves_timeout_disconnect_and_slot_reuse() {
++        let (mut host, sender) = rig();
++        host.flush();
++        host.peer_mut(PeerID(0)).set_timeout(1, 1, 1);
++        unsafe {
++            let h = raw(&host);
++            *(*h).time.assume_init_mut() = Box::new(|| core::time::Duration::from_millis(1000));
++            let peer = host.peer_mut(PeerID(0)).0;
++            (*peer).next_timeout = 1;
++            (*peer).earliest_timeout = 1;
++            let sent = (*peer)
++                .sent_reliable_commands
++                .sentinel
++                .next
++                .cast::<ENetOutgoingCommand>();
++            assert_ne!(
++                sent.cast::<ENetListNode>(),
++                core::ptr::addr_of_mut!((*peer).sent_reliable_commands.sentinel)
++            );
++            (*sent).sent_time = 1;
++            (*sent).round_trip_timeout = 1;
++            (*sent).send_attempts = 1;
++        }
++        pending_aggregate_limit(&mut host, &sender, false);
++        assert!(matches!(
++            host.service().unwrap(),
++            Some(Event::ReceiveLimitExceeded {
++                kind: ReceiveLimitKind::QueuedCommands,
++                ..
++            })
++        ));
++        assert!(matches!(
++            host.service().unwrap(),
++            Some(Event::Disconnect { .. })
++        ));
++        assert_eq!(counters(&host, 0), (0, 0));
++        let replacement = UdpSocket::bind("127.0.0.1:0").unwrap();
++        assert_eq!(
++            host.connect(replacement.local_addr().unwrap(), 3, 0)
++                .unwrap()
++                .id(),
++            PeerID(0)
++        );
++    }
++
+     #[test]
+     fn native_receive_valid_declaration_above_old_max_reports_before_allocation() {
+         let (mut host, sender) = rig();

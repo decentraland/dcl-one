@@ -1,0 +1,120 @@
+{
+  "auth_chain": {
+    "links": [
+      {
+        "payload": "0x17d8e3dc00b830f9cf91898eb39a1d99585ea582",
+        "signature": "",
+        "type": "SIGNER"
+      },
+      {
+        "payload": "Decentraland Login\nEphemeral address: 0x91c4b79350b017d979d246adb09075d7e0427ed5\nExpiration: 2099-01-01T00:00:00.000Z",
+        "signature": "<<REDACTED:signature>>",
+        "type": "ECDSA_EPHEMERAL"
+      },
+      {
+        "payload": "get:/:1793181183513:{}",
+        "signature": "<<REDACTED:signature>>",
+        "type": "ECDSA_SIGNED_ENTITY"
+      }
+    ],
+    "metadata": "{}",
+    "timestamp": "1793181183513"
+  },
+  "calls": [
+    {
+      "captured_at": "2026-10-28T09:53:04Z",
+      "name": "get-friends",
+      "procedure": "GetFriends",
+      "request": "GetFriendsPayload { pagination: Some(Pagination { limit: 50, offset: 0 }) }",
+      "request_b64": "CgIIMg==",
+      "response": "PaginatedFriendsProfilesResponse { friends: [], pagination_data: Some(PaginatedResponse { total: 0, page: 1 }) }",
+      "response_b64": "EgIQAQ=="
+    },
+    {
+      "captured_at": "2026-10-28T09:53:05Z",
+      "name": "get-friends-no-pagination",
+      "procedure": "GetFriends",
+      "request": "GetFriendsPayload { pagination: None }",
+      "request_b64": "",
+      "response": "PaginatedFriendsProfilesResponse { friends: [], pagination_data: Some(PaginatedResponse { total: 0, page: 1 }) }",
+      "response_b64": "EgIQAQ=="
+    },
+    {
+      "captured_at": "2026-10-28T09:53:05Z",
+      "name": "get-pending-friendship-requests",
+      "procedure": "GetPendingFriendshipRequests",
+      "request": "GetFriendshipRequestsPayload { pagination: Some(Pagination { limit: 50, offset: 0 }) }",
+      "request_b64": "CgIIMg==",
+      "response": "PaginatedFriendshipRequestsResponse { pagination_data: Some(PaginatedResponse { total: 0, page: 1 }), response: Some(Requests(FriendshipRequests { requests: [] })) }",
+      "response_b64": "CgAaAhAB"
+    },
+    {
+      "captured_at": "2026-10-28T09:53:06Z",
+      "name": "get-sent-friendship-requests",
+      "procedure": "GetSentFriendshipRequests",
+      "request": "GetFriendshipRequestsPayload { pagination: Some(Pagination { limit: 50, offset: 0 }) }",
+      "request_b64": "CgIIMg==",
+      "response": "PaginatedFriendshipRequestsResponse { pagination_data: Some(PaginatedResponse { total: 0, page: 1 }), response: Some(Requests(FriendshipRequests { requests: [] })) }",
+      "response_b64": "CgAaAhAB"
+    },
+    {
+      "captured_at": "2026-10-28T09:53:07Z",
+      "name": "get-blocked-users",
+      "procedure": "GetBlockedUsers",
+      "request": "GetBlockedUsersPayload { pagination: Some(Pagination { limit: 50, offset: 0 }) }",
+      "request_b64": "CgIIMg==",
+      "response": "GetBlockedUsersResponse { profiles: [], pagination_data: Some(PaginatedResponse { total: 0, page: 1 }) }",
+      "response_b64": "EgIQAQ=="
+    },
+    {
+      "captured_at": "2026-10-28T09:53:07Z",
+      "name": "get-social-settings",
+      "procedure": "GetSocialSettings",
+      "request": "()",
+      "request_b64": "",
+      "response": "GetSocialSettingsResponse { response: Some(Ok(Ok { settings: Some(SocialSettings { private_messages_privacy: All, blocked_users_messages_visibility: ShowMessages, show_situation_reactions: Show }) })) }",
+      "response_b64": "CgIKAA=="
+    },
+    {
+      "captured_at": "2026-10-28T09:53:08Z",
+      "name": "get-private-messages-settings",
+      "procedure": "GetPrivateMessagesSettings",
+      "request": "GetPrivateMessagesSettingsPayload { user: [User { address: \"0x0000000000000000000000000000000000000000\" }, User { address: \"0xfa29419d7bd3fd7ec461e29ad5fe63d5605dfda1\" }] }",
+      "request_b64": "CiwKKjB4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMAosCioweGZhMjk0MTlkN2JkM2ZkN2VjNDYxZTI5YWQ1ZmU2M2Q1NjA1ZGZkYTE=",
+      "response": "GetPrivateMessagesSettingsResponse { response: Some(Ok(Ok { settings: [PrivateMessagesSettings { user: Some(User { address: \"0x0000000000000000000000000000000000000000\" }), private_messages_privacy: All, is_friend: false }, PrivateMessagesSettings { user: Some(User { address: \"0xfa29419d7bd3fd7ec461e29ad5fe63d5605dfda1\" }), private_messages_privacy: All, is_friend: false }] })) }",
+      "response_b64": "CmAKLgosCioweDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAKLgosCioweGZhMjk0MTlkN2JkM2ZkN2VjNDYxZTI5YWQ1ZmU2M2Q1NjA1ZGZkYTE="
+    },
+    {
+      "captured_at": "2026-10-28T09:53:09Z",
+      "name": "get-friendship-status-zero",
+      "procedure": "GetFriendshipStatus",
+      "request": "GetFriendshipStatusPayload { user: Some(User { address: \"0x0000000000000000000000000000000000000000\" }) }",
+      "request_b64": "CiwKKjB4MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMA==",
+      "response": "GetFriendshipStatusResponse { response: Some(Accepted(Ok { status: None, message: None })) }",
+      "response_b64": "CgIIBw=="
+    },
+    {
+      "captured_at": "2026-10-28T09:53:09Z",
+      "name": "get-friendship-status-throwaway",
+      "procedure": "GetFriendshipStatus",
+      "request": "GetFriendshipStatusPayload { user: Some(User { address: \"0xfa29419d7bd3fd7ec461e29ad5fe63d5605dfda1\" }) }",
+      "request_b64": "CiwKKjB4ZmEyOTQxOWQ3YmQzZmQ3ZWM0NjFlMjlhZDVmZTYzZDU2MDVkZmRhMQ==",
+      "response": "GetFriendshipStatusResponse { response: Some(Accepted(Ok { status: None, message: None })) }",
+      "response_b64": "CgIIBw=="
+    },
+    {
+      "captured_at": "2026-10-28T09:53:10Z",
+      "name": "get-blocking-status",
+      "procedure": "GetBlockingStatus",
+      "request": "()",
+      "request_b64": "",
+      "response": "GetBlockingStatusResponse { blocked_users: [], blocked_by_users: [] }",
+      "response_b64": ""
+    }
+  ],
+  "captured_from": "wss://rpc-social-service-ea.decentraland.org",
+  "description": "The eight read procedures of the social RPC, called once each by a wallet created for the run (no data behind it). The status reads name the zero address and a second address created for the run. Signatures in the chain are redacted; the keys were held in memory only.",
+  "other": "0xfa29419d7bd3fd7ec461e29ad5fe63d5605dfda1",
+  "signer": "0x17d8e3dc00b830f9cf91898eb39a1d99585ea582",
+  "started_at": "2026-10-28T09:53:02Z"
+}

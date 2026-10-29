@@ -1,0 +1,414 @@
+/* from: shop@2d3bf62:app/src/components/EmptyState/EmptyState.styles.ts (Root[data-fill], Illustration, Text,
+         Title, Body, the solid CTA, Centered), app/src/styles/index.css (.page gutter),
+         marketplace@3bf3662f: decentraland-ui SignIn.css + StarWalletIcon.css, webapp/src/themes/shop-parity.css (the sign-in page),
+         webapp/src/components/{SellPage/SellPage.css,CancelSalePage/CancelSalePage.css,ManaField/ManaField.css}
+   The seller pages' own look, scoped under .shop-chrome so nothing else on the site changes. */
+
+.shop-chrome .seller-page {
+  width: 100%;
+  max-width: 1760px;
+  margin: 0 auto;
+  padding: 28px var(--shop-gutter, 54px) 80px;
+  font-family: var(--shop-sans);
+  color: var(--shop-soft-white, #fcfcfc);
+  box-sizing: border-box;
+}
+
+.shop-chrome .seller-empty-centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  min-height: 618px;
+}
+.shop-chrome .seller-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 16px 32px;
+  border-radius: 16px;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fcfcfc;
+  box-sizing: border-box;
+}
+.shop-chrome .seller-empty[data-fill="true"] {
+  width: 100%;
+  flex: 1;
+}
+.shop-chrome .seller-empty__art {
+  width: 138px;
+  height: 138px;
+}
+.shop-chrome .seller-empty__text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+.shop-chrome .seller-empty__text:last-child {
+  padding-bottom: 32px;
+}
+.shop-chrome .seller-empty__title {
+  margin: 0;
+  font-family: var(--shop-sans);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1.6;
+}
+.shop-chrome .seller-empty__body {
+  margin: 0;
+  max-width: 540px;
+  font-family: var(--shop-sans);
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 1.6;
+}
+.shop-chrome .seller-empty__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 310px;
+  max-width: 100%;
+  height: 52px;
+  margin-bottom: 16px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  font-family: var(--shop-sans);
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  cursor: pointer;
+  background: #fcfcfc;
+  color: #242129;
+  transition: background 0.15s ease;
+}
+.shop-chrome .seller-empty__cta:hover,
+.shop-chrome .seller-empty__cta:active {
+  background: #f5f5f5;
+}
+.shop-chrome .seller-empty__cta:active {
+  transform: translateY(1px);
+}
+.shop-chrome .seller-empty__cta:focus-visible {
+  outline: 2px solid #fcfcfc;
+  outline-offset: 2px;
+}
+
+.shop-chrome .seller-market-signin {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(100vh - var(--shop-nav-h, 92px) - 66px);
+  padding: 40px 0;
+  box-sizing: border-box;
+  font-family: var(--shop-sans);
+  color: #fff;
+  text-align: center;
+}
+.shop-chrome .seller-market-signin__header {
+  margin: 0 0 25px;
+  font-family: var(--shop-sans);
+  font-size: 28px;
+  line-height: 34px;
+  font-weight: 500;
+  color: #fff;
+}
+.shop-chrome .seller-market-signin__wallet {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 180px;
+  height: 180px;
+  margin-bottom: 25px;
+  border-radius: 100%;
+  background: #2b1140;
+  color: #fff;
+}
+.shop-chrome .seller-market-signin__wallet svg {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 3.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.shop-chrome .seller-market-signin__message {
+  margin: 0;
+  padding: 0 38px;
+  font-size: 16px;
+  line-height: 1.4;
+  color: #cfcdd4;
+}
+.shop-chrome .seller-market-signin__message a {
+  color: #fff;
+  text-decoration: underline;
+}
+.shop-chrome .seller-market-signin__connect {
+  flex: none;
+  margin-top: 56px;
+  min-width: 133px;
+  height: 44px;
+  padding: 0 32px;
+  border: 0;
+  border-radius: 6px;
+  background: #ff2d55;
+  color: #fff;
+  font-family: var(--shop-sans);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.shop-chrome .seller-market-signin__connect:hover {
+  background: #ff4063;
+}
+.shop-chrome .seller-market-signin__connect:focus-visible {
+  outline: 2px solid #fcfcfc;
+  outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+  .shop-chrome .seller-page {
+    padding: 16px 16px 56px;
+  }
+  .shop-chrome .seller-empty-centered {
+    min-height: 0;
+  }
+  .shop-chrome .seller-empty__art {
+    width: 110px;
+    height: 110px;
+  }
+}
+
+.shop-chrome .seller-token .mk-action-layout__media {
+  width: 240px;
+  max-width: 100%;
+  border-radius: 16px;
+}
+.shop-chrome .seller-token .assetaction__subtitle b {
+  color: #fff;
+  font-weight: 700;
+}
+.shop-chrome .seller-sell__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  max-width: 420px;
+  margin-bottom: 20px;
+}
+.shop-chrome .seller-sell__notice {
+  max-width: 500px;
+  margin: 0 0 24px;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  color: #fcfcfc;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.shop-chrome .seller-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.shop-chrome .seller-field__label {
+  font-family: var(--shop-sans);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: #cfcdd4;
+}
+.shop-chrome .seller-field__control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fcfcfc;
+  box-sizing: border-box;
+}
+.shop-chrome .seller-field__control:focus-within {
+  border-color: #fcfcfc;
+}
+.shop-chrome .seller-field__control[data-invalid] {
+  border-color: #ff2d55;
+}
+.shop-chrome .seller-field__control input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font-family: var(--shop-sans);
+  font-size: 16px;
+  color-scheme: dark;
+}
+.shop-chrome .seller-field__control input::placeholder {
+  color: rgba(252, 252, 252, 0.45);
+}
+.shop-chrome .seller-field__error {
+  margin: 0;
+  font-size: 13px;
+  color: #ff5d7c;
+}
+.shop-chrome .seller-field__help {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #cfcdd4;
+}
+.shop-chrome .seller-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-top: 8px;
+}
+.shop-chrome .seller-btn {
+  min-width: 160px;
+  height: 46px;
+  padding: 0 32px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-family: var(--shop-sans);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.shop-chrome .seller-btn:hover:not(:disabled) {
+  background: rgba(0, 0, 0, 0.42);
+}
+.shop-chrome .seller-btn--primary {
+  background: #ff2d55;
+}
+.shop-chrome .seller-btn--primary:hover:not(:disabled) {
+  background: #ff4063;
+}
+.shop-chrome .seller-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.shop-chrome .seller-btn:focus-visible {
+  outline: 2px solid #fcfcfc;
+  outline-offset: 2px;
+}
+.shop-chrome .seller-cancel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.seller-confirm {
+  font-family: "Inter", system-ui, sans-serif;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.seller-confirm .seller-confirm__title {
+  margin: 0 0 4px;
+  font-size: 20px;
+  font-weight: 700;
+}
+.seller-confirm p {
+  margin: 0;
+  line-height: 1.5;
+}
+.seller-confirm .seller-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+.seller-confirm .seller-field__label {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.seller-confirm .seller-field__control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+}
+.seller-confirm .seller-field__control input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+}
+.seller-confirm .seller-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 12px;
+}
+.seller-confirm .seller-btn {
+  min-width: 120px;
+  height: 44px;
+  padding: 0 24px;
+  border: 1px solid currentColor;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.seller-confirm .seller-btn--primary {
+  border-color: #ff2d55;
+  background: #ff2d55;
+  color: #fff;
+}
+.seller-confirm .seller-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+@media (max-width: 768px) {
+  .shop-chrome .seller-token .mk-action-layout__media {
+    width: 100%;
+  }
+  .shop-chrome .seller-buttons {
+    flex-direction: column-reverse;
+    gap: 15px;
+  }
+  .shop-chrome .seller-btn {
+    width: 100%;
+  }
+  .shop-chrome .seller-market-signin {
+    min-height: calc(100vh - var(--shop-nav-h, 64px) - 120px);
+  }
+}

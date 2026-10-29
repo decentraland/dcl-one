@@ -1,0 +1,20 @@
+name: Repository structure
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  structure:
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install ripgrep
+        run: sudo apt-get update && sudo apt-get install -y ripgrep
+      - name: Validate the ownership catalogue
+        run: python3 tooling/owners.py --check
+      - name: Validate the single proto source
+        run: python3 tooling/proto-source-check.py
+      - name: Validate backend module layers
+        run: bash services/catalyst/scripts/check-module-dag.sh

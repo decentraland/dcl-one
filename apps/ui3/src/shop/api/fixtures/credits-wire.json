@@ -1,0 +1,1489 @@
+{
+  "generatedBy": "ui3/src/shop/api/fixtures/generate.mjs",
+  "sources": [
+    {
+      "path": "services/catalyst/tests/fixtures/shop/credits-server@465e628bc/wire/credits-authorize.json",
+      "sha256": "9fea6a37adf0d86958f177a6aaa4285a916736395ff345d3238611434d581741"
+    },
+    {
+      "path": "services/catalyst/tests/fixtures/shop/credits-server@465e628bc/wire/credits-authorize-batch.json",
+      "sha256": "ac8d45cbe1405e1aef86ce0389998122b2f661c64d1acc768b1354490bfb5943"
+    },
+    {
+      "path": "services/catalyst/tests/fixtures/shop/credits-server@465e628bc/wire/credits-authorize-cancel-submitted.json",
+      "sha256": "7a8f867d49e44d0c7361e11c61780a41126ceb4db39762f6ab815a0c38d4076c"
+    }
+  ],
+  "setup": {
+    "authorize": {
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:11-18",
+      "buyer": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "managerOverride": "0x1111111111111111111111111111111111111111",
+      "chainId": 80002,
+      "oracle": {
+        "manaWei": "1234567890000000000",
+        "oracleRate": "30000000",
+        "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:14-17"
+      },
+      "signedCapWei": "1851851835000000000",
+      "capRule": "manaWei * 150 / 100 (DEFAULT_CAP_HEADROOM_PCT), sized from the QUOTED usdPriceCents",
+      "ttlSeconds": 900,
+      "balanceCents": 100000,
+      "signerMock": {
+        "signature": "0xsignature",
+        "messageHash": "0xhash",
+        "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:53"
+      }
+    },
+    "batch": {
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:10-18",
+      "buyer": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "managerOverride": "0x1111111111111111111111111111111111111111",
+      "chainId": 80002,
+      "contract": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+      "oracle": {
+        "manaWei": "1234567890000000000",
+        "oracleRate": "30000000"
+      },
+      "signedCapWei": "1851851835000000000",
+      "ttlSeconds": 900,
+      "balanceCents": 100000,
+      "signerMock": {
+        "signature": "0xsignature"
+      }
+    }
+  },
+  "cases": [
+    {
+      "route": "authorize",
+      "name": "no signed-fetch auth",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:99-106",
+      "auth": null,
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "Invalid or missing signed-fetch authentication"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "auth is not an address",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:108-117",
+      "auth": "not-an-address",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "Invalid or missing signed-fetch authentication"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "USD credits flag off",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:119-137",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "status": 404,
+      "body": {
+        "error": "USD credits are not enabled"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "usdPriceCents missing",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:139-146",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {}
+      },
+      "status": 400,
+      "body": {
+        "error": "A positive integer \"usdPriceCents\" is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "usdPriceCents fractional",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:148-155",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 12.5
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "A positive integer \"usdPriceCents\" is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "usdPriceCents zero",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:157-164",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 0
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "A positive integer \"usdPriceCents\" is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "body is not JSON",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:166-176",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "rawBody": "not JSON"
+      },
+      "status": 400,
+      "body": {
+        "error": "A positive integer \"usdPriceCents\" is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "fractional credit price rounds the charge up, not the cap",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:178-236",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 184
+        }
+      },
+      "status": 200,
+      "body": {
+        "usdCents": 190
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "unknown source",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:257-265",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 200,
+          "source": "telegram"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "\"source\" must be \"website\" or \"client\" when provided"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "balance below the rounded price",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:277-296",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "balanceCents": 150
+      },
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "status": 402,
+      "body": {
+        "error": "Insufficient credits",
+        "balanceCents": 150,
+        "requiredCents": 200
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "reserve lost a race",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:298-309",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "reserve": {
+          "intent": null,
+          "balanceCents": 50
+        }
+      },
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "status": 402,
+      "body": {
+        "error": "Insufficient credits",
+        "balanceCents": 50,
+        "requiredCents": 200
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "too many live credits",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:339-363",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "reserve": {
+          "intent": null,
+          "balanceCents": 100000,
+          "liveIntentLimitReached": true
+        }
+      },
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "status": 409,
+      "body": {
+        "error": "Too many purchases in progress. Complete or cancel them before starting another one.",
+        "balanceCents": 100000
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "success, trade purchase",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:365-421",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 200,
+          "tradeId": "trade-99"
+        }
+      },
+      "status": 200,
+      "body": {
+        "credit": {
+          "id": {
+            "$any": "string",
+            "rule": "the reserved salt: hexlify(randomBytes(32))",
+            "source": "src/controllers/handlers/authorize-usd-credit.ts:139"
+          },
+          "amount": "1851851835000000000",
+          "availableAmount": "1851851835000000000",
+          "expiresAt": {
+            "$any": "number",
+            "rule": "unix SECONDS: floor(now/1000) + USD_CREDIT_TTL_SECONDS (default 300)",
+            "source": "src/controllers/handlers/authorize-usd-credit.ts:144"
+          },
+          "signature": "0xsignature",
+          "contract": "0x1111111111111111111111111111111111111111"
+        },
+        "maxCreditedValue": "1851851835000000000",
+        "usdCents": 200,
+        "oracleRate": "30000000"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "NAME registration",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:429-436",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "mauri"
+        }
+      },
+      "status": 200,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "authorize",
+      "name": "NAME at the registrar maximum",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:438-445",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "abcdefghijklmno"
+        }
+      },
+      "status": 200,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "authorize",
+      "name": "NAME longer than the registrar allows",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:450",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "abcdefghijklmnop"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "\"name\" must be 2-15 alphanumeric characters",
+        "rule": "asserted status only; message from usd-credit-lines.ts",
+        "source": "src/logic/usd-credit-lines.ts:73"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "NAME shorter than the registrar allows",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:451",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "a"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "\"name\" must be 2-15 alphanumeric characters",
+        "rule": "asserted status only; message from usd-credit-lines.ts",
+        "source": "src/logic/usd-credit-lines.ts:73"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "NAME carrying characters a NAME cannot hold",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:452",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "drop table"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "\"name\" must be 2-15 alphanumeric characters",
+        "rule": "asserted status only; message from usd-credit-lines.ts",
+        "source": "src/logic/usd-credit-lines.ts:73"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "NAME carrying the presentation suffix",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:453",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "mauri.dcl.eth"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "\"name\" must be 2-15 alphanumeric characters",
+        "rule": "asserted status only; message from usd-credit-lines.ts",
+        "source": "src/logic/usd-credit-lines.ts:73"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "authorize",
+      "name": "CollectionStore mint (item identity, no trade)",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:469-478",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "contractAddress": "0x3b5306be0da3202a5e7b00d1acc16a46cd88dfdc",
+          "itemId": "12"
+        }
+      },
+      "status": 200,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "authorize",
+      "name": "item alongside a trade",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:480-489",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "tradeId": "trade-7",
+          "contractAddress": "0x3b5306be0da3202a5e7b00d1acc16a46cd88dfdc",
+          "itemId": "12"
+        }
+      },
+      "status": 200,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "authorize",
+      "name": "contract is not an address",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:491-500",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "contractAddress": "nope",
+          "itemId": "12"
+        }
+      },
+      "status": 400,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "authorize",
+      "name": "item id not numeric",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:502-511",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "contractAddress": "0x3b5306be0da3202a5e7b00d1acc16a46cd88dfdc",
+          "itemId": "DROP TABLE"
+        }
+      },
+      "status": 400,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "authorize",
+      "name": "contract without item",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:515-522",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "contractAddress": "0x3b5306be0da3202a5e7b00d1acc16a46cd88dfdc"
+        }
+      },
+      "status": 400,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "authorize",
+      "name": "item without contract",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:524-529",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "itemId": "12"
+        }
+      },
+      "status": 400,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "authorize",
+      "name": "pre-launch gate refuses an address not on the list",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:561-571",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "status": 404,
+      "body": {
+        "error": "USD credits are not enabled",
+        "rule": "identical to the flag-off answer",
+        "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:575-586"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "no signed-fetch auth",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:99-108",
+      "auth": null,
+      "state": null,
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 200
+            }
+          ]
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "Invalid or missing signed-fetch authentication"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "flag off",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:121-132",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 200
+            }
+          ]
+        }
+      },
+      "status": 404,
+      "body": {
+        "error": "USD credits are not enabled"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "items missing or empty: {}",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:150-160",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {}
+      },
+      "status": 400,
+      "body": {
+        "error": "A non-empty \"items\" array is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "items missing or empty: {\"items\":[]}",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:150-160",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "items": []
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "A non-empty \"items\" array is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "items missing or empty: {\"items\":\"nope\"}",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:150-160",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "items": "nope"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "A non-empty \"items\" array is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "31 lines",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:162-171",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            },
+            {
+              "usdPriceCents": 10
+            }
+          ]
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "A checkout may hold at most 30 items"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "one malformed line names its index",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:173-189",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 100
+            },
+            {
+              "usdPriceCents": 100,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "not-a-number"
+            }
+          ]
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "items[1]: \"itemId\" must be a numeric id when an item is given"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "balance short of the group total",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:191-206",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "balanceCents": 150
+      },
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 100
+            },
+            {
+              "usdPriceCents": 100
+            }
+          ]
+        }
+      },
+      "status": 402,
+      "body": {
+        "error": "Insufficient credits",
+        "balanceCents": 150,
+        "requiredCents": 200
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "too many live credits",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:208-226",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "reserve": {
+          "intents": null,
+          "balanceCents": 5000,
+          "liveIntentLimitReached": true
+        }
+      },
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 200
+            }
+          ]
+        }
+      },
+      "status": 409,
+      "body": {
+        "error": "Too many purchases in progress. Complete or cancel them before starting another one.",
+        "balanceCents": 5000
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "valid three-line checkout",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:228-315",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 110,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "2"
+            },
+            {
+              "usdPriceCents": 65,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "3"
+            },
+            {
+              "usdPriceCents": 90,
+              "tradeId": "trade-9"
+            }
+          ]
+        }
+      },
+      "status": 200,
+      "body": {
+        "credit": {
+          "amount": "1851851835000000000",
+          "availableAmount": "1851851835000000000",
+          "signature": "0xsignature",
+          "contract": "0x1111111111111111111111111111111111111111",
+          "id": {
+            "$any": "string",
+            "rule": "the group salt",
+            "source": "src/controllers/handlers/authorize-usd-credit-batch.ts:212"
+          },
+          "expiresAt": {
+            "$any": "number",
+            "rule": "unix SECONDS",
+            "source": "src/controllers/handlers/authorize-usd-credit-batch.ts:141"
+          }
+        },
+        "maxCreditedValue": "1851851835000000000",
+        "oracleRate": "30000000",
+        "usdCents": 270,
+        "lines": {
+          "$length": 3
+        }
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "source recorded on every line",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:302-307",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 110,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "2"
+            },
+            {
+              "usdPriceCents": 65,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "3"
+            },
+            {
+              "usdPriceCents": 90,
+              "tradeId": "trade-9"
+            }
+          ],
+          "source": "website"
+        }
+      },
+      "status": 200,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "batch",
+      "name": "unknown source",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:309-314",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 110,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "2"
+            },
+            {
+              "usdPriceCents": 65,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "3"
+            },
+            {
+              "usdPriceCents": 90,
+              "tradeId": "trade-9"
+            }
+          ],
+          "source": "wherever"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "\"source\" must be \"website\" or \"client\" when provided"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "batch",
+      "name": "single line behaves like /credits/authorize",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:317-328",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 200
+            }
+          ]
+        }
+      },
+      "status": 200,
+      "body": {
+        "maxCreditedValue": "1851851835000000000",
+        "usdCents": 200
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "cancel",
+      "name": "no auth",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:38-45",
+      "auth": null,
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ]
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "Invalid or missing signed-fetch authentication"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "cancel",
+      "name": "salts missing",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:56-63",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {}
+      },
+      "status": 400,
+      "body": {
+        "error": "A \"salts\" array with 1 to 100 entries is required",
+        "rule": "status asserted; message from the handler",
+        "source": "src/controllers/handlers/cancel-usd-intents.ts:51"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "cancel",
+      "name": "salts empty",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:65-72",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": []
+        }
+      },
+      "status": 400,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "cancel",
+      "name": "101 salts",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:74-83",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>",
+            "0x<64 hex>"
+          ]
+        }
+      },
+      "status": 400,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "cancel",
+      "name": "no string salts",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:85-92",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            1,
+            2,
+            null
+          ]
+        }
+      },
+      "status": 400,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "cancel",
+      "name": "no bytes32 salts",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:94-101",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xsalt1",
+            "nope",
+            "0x1234"
+          ]
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "No valid credit ids in \"salts\"",
+        "rule": "status asserted; message from the handler",
+        "source": "src/controllers/handlers/cancel-usd-intents.ts:56"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "cancel",
+      "name": "valid salts",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:122-127",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "retired": 2,
+        "spendableAtSeconds": 1800000000
+      },
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ]
+        }
+      },
+      "status": 200,
+      "body": {
+        "released": 2,
+        "retired": 2,
+        "spendableAtSeconds": 1800000000
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "cancel",
+      "name": "malformed entries dropped",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:129-133",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            42,
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            null,
+            "0xnope"
+          ]
+        }
+      },
+      "status": 200,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "cancel",
+      "name": "nothing retired",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:136-145",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "retired": 0,
+        "spendableAtSeconds": null
+      },
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ]
+        }
+      },
+      "status": 200,
+      "body": {
+        "released": 0,
+        "retired": 0,
+        "spendableAtSeconds": null
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "submitted",
+      "name": "no auth",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:48-58",
+      "auth": null,
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "Invalid or missing signed-fetch authentication"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "submitted",
+      "name": "txHash absent",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:71-87",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ]
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "A \"txHash\" bytes32 hex string is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "submitted",
+      "name": "txHash not a string",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:71-87",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": 12345
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "A \"txHash\" bytes32 hex string is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "submitted",
+      "name": "txHash too short",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:71-87",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "0xdeadbeef"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "A \"txHash\" bytes32 hex string is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "submitted",
+      "name": "txHash missing the 0x prefix",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:71-87",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "A \"txHash\" bytes32 hex string is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "submitted",
+      "name": "txHash not hex",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:71-87",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "0xzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "A \"txHash\" bytes32 hex string is required"
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "submitted",
+      "name": "salts absent",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:89-100",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "status": 400,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "submitted",
+      "name": "salts not an array",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:89-100",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": "not-an-array",
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "status": 400,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "submitted",
+      "name": "salts empty",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:89-100",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [],
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "status": 400,
+      "body": null,
+      "bodyAsserted": false
+    },
+    {
+      "route": "submitted",
+      "name": "no bytes32 salts",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:113-123",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": null,
+      "request": {
+        "body": {
+          "salts": [
+            "nope",
+            "0x1234"
+          ],
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "status": 400,
+      "body": {
+        "error": "No valid credit ids in \"salts\""
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "submitted",
+      "name": "valid",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:134-142",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "recorded": 2
+      },
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "status": 200,
+      "body": {
+        "recorded": 2
+      },
+      "bodyAsserted": true
+    },
+    {
+      "route": "submitted",
+      "name": "no rows of the caller",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:158-165",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "recorded": 0
+      },
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "status": 200,
+      "body": {
+        "recorded": 0
+      },
+      "bodyAsserted": true
+    }
+  ]
+}

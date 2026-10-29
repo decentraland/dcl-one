@@ -1,0 +1,91 @@
+[package]
+name = "dcl-scene-cli"
+version = "0.32.0"
+edition = "2024"
+description = "Binary-compatible Rust replacement for @dcl/sdk-commands: bundle (rolldown, in-process), preview-serve, and deploy Decentraland SDK7 scenes"
+# Same dual terms as abgen, so embedding the converter in-process later is a
+# licensing no-op rather than a relicensing event.
+license = "Apache-2.0 OR AGPL-3.0-or-later"
+workspace = "../../services/catalyst"
+
+[[bin]]
+name = "dcl-scene-cli"
+path = "src/main.rs"
+
+[dependencies]
+sha2 = { workspace = true }
+# The watch banner's re-float paces itself to the terminal height; this is
+# the cross-platform probe (ioctl on unix, the console API on windows).
+terminal_size = "0.4"
+oxc_sourcemap = "9"
+# Hashes, auth chains, signing and signed fetch: the node's own implementation.
+dcl-auth.workspace = true
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+parking_lot = { workspace = true }
+hex = { workspace = true }
+dcl-preview-tunnel-protocol.workspace = true
+dcl-scene-authoring.workspace = true
+dcl-livekit-token.workspace = true
+# LiveKit room tokens for `start --livekit-url`: a plain HS256 JWT, no SDK.
+hmac = { workspace = true }
+tokio = { workspace = true }
+axum = { workspace = true }
+tower-http = { workspace = true, features = ["compression-gzip"] }
+reqwest = { workspace = true, features = ["http2", "charset", "query", "multipart", "form"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+dunce = "1"
+flate2 = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+clap = { workspace = true }
+futures = { workspace = true }
+base64 = { workspace = true }
+url = { workspace = true, features = ["serde"] }
+if-addrs = "=0.15.0"
+ignore = "0.4.33"
+notify = "8"
+prost = { workspace = true }
+qrcode = { version = "=0.14.1", default-features = false, features = ["svg"] }
+rand = { workspace = true }
+tokio-tungstenite = { workspace = true }
+rolldown = { version = "=1.2.14", optional = true }
+rolldown_common = { version = "=1.2.14", optional = true }
+rolldown_utils = { version = "=1.2.14", optional = true }
+zip = { workspace = true }
+chrono = { workspace = true }
+# The scene's server-side storage (`dcl-scene-cli storage`, the preview's /values
+# routes): one SQLite file per project. 0.39 is the release sharing the
+# workspace's libsqlite3-sys 0.37 (sqlx-sqlite 0.9 in catalyrst-bench caps it there,
+# and two `links = "sqlite3"` packages cannot coexist); `bundled` keeps the binary self-contained.
+rusqlite = { version = "=0.39.0", features = ["bundled"] }
+brotli-decompressor = "6"
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
+[dev-dependencies]
+dcl-preview-tunnel.workspace = true
+alloy = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+
+[features]
+default = ["rolldown"]
+rolldown = ["dep:rolldown", "dep:rolldown_common", "dep:rolldown_utils"]
+
+[build-dependencies]
+prost-build = "0.14"
+prost = { workspace = true }
+prost-types = "0.14"
+protox = "0.10"
+# The abgen and livekit-server embeds (abgen-release.lock, livekit-release.lock):
+# sha2 verifies the pinned release archives, flate2 compresses them before they
+# go into the binary, zip opens LiveKit's Windows archives.
+sha2 = { workspace = true }
+base64 = { workspace = true }
+# csp.json in PLAY_EMBED_DIR (engine/web/csp-policy.mts) is the page's policy.
+serde_json = { workspace = true }
+flate2 = { workspace = true }
+zip = { workspace = true }

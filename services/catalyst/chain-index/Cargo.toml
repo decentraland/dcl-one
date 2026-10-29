@@ -1,0 +1,26 @@
+[package]
+name = "catalyst-chain-index"
+version.workspace = true
+edition = "2024"
+description = "The subgraph client: names, LAND, collections and registries read from the chain indexes"
+publish = false
+
+[dependencies]
+dcl-http = { workspace = true, features = ["db"] }
+catalyst-shared = { path = "../shared" }
+tokio.workspace = true
+axum.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+reqwest.workspace = true
+url.workspace = true
+
+[features]
+ts = ["catalyst-shared/ts"]
+test-support = ["catalyst-shared/test-support"]
+
+[dev-dependencies]
+catalyst-shared = { path = "../shared", features = ["test-support"] }
+tokio = { workspace = true, features = ["test-util"] }

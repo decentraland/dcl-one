@@ -1,0 +1,196 @@
+/* from: shop@2d3bf62:app/src/styles/index.css (.page), app/src/components/EmptyState/EmptyState.styles.ts,
+   app/src/pages/MyAssets.styles.ts (toolbar search). */
+
+.shop-myitems {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1760px;
+  margin: 0 auto;
+  padding: 28px 54px 80px;
+  color: #fcfcfc;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.shop-myitems__centered {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  min-height: 618px;
+}
+.shop-myitems-empty {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 16px 32px;
+  border-radius: 16px;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fcfcfc;
+}
+.shop-myitems-empty[data-fill="true"] {
+  width: 100%;
+  flex: 1;
+}
+.shop-myitems-empty__art {
+  width: 138px;
+  height: 138px;
+}
+.shop-myitems-empty__text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+.shop-myitems-empty__text:last-child {
+  padding-bottom: 32px;
+}
+.shop-myitems-empty__title,
+.shop-myitems-empty__body {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 400;
+  line-height: 1.6;
+}
+.shop-myitems-empty__title {
+  font-size: 20px;
+  font-weight: 700;
+}
+.shop-myitems-empty__body {
+  max-width: 540px;
+}
+.shop-myitems-empty__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 310px;
+  max-width: 100%;
+  height: 52px;
+  margin-bottom: 16px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  background: #fcfcfc;
+  color: #242129;
+  font: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.shop-myitems-empty__cta:hover,
+.shop-myitems-empty__cta:active {
+  background: #f5f5f5;
+}
+.shop-myitems-empty__cta:active {
+  transform: translateY(1px);
+}
+.shop-myitems-empty__cta:focus-visible {
+  outline: 2px solid #fcfcfc;
+  outline-offset: 2px;
+}
+
+.shop-myitems__heading {
+  margin: 0 0 4px;
+  padding: 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ui-muted);
+}
+.shop-myitems__cats a.shop-cats__cat {
+  text-decoration: none;
+}
+.shop-myitems__radio {
+  width: 100%;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.shop-myitems__dot {
+  box-sizing: border-box;
+  width: 18px;
+  height: 18px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--ui-border-strong, rgba(255, 255, 255, 0.4));
+}
+.shop-myitems__radio[aria-pressed="true"] .shop-myitems__dot {
+  border: 5px solid var(--ui-accent, #ff2d55);
+  background: #fcfcfc;
+}
+.shop-myitems__rarityname {
+  text-transform: capitalize;
+}
+.shop-myitems__search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 180px;
+  max-width: 420px;
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fcfcfc;
+}
+.shop-myitems__search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.shop-myitems__search input::-webkit-search-cancel-button {
+  display: none;
+}
+.shop-myitems__search button {
+  display: inline-flex;
+  border: 0;
+  background: none;
+  color: inherit;
+  padding: 0;
+  cursor: pointer;
+}
+.shop-myitems .shop-browse__main > .es--inline {
+  min-height: calc(100vh - 250px);
+  justify-content: end;
+  padding-bottom: 16vh;
+}
+
+@media (max-width: 768px) {
+  .shop-myitems {
+    padding: 16px 16px 56px;
+  }
+  .shop-myitems__centered {
+    min-height: 0;
+  }
+  .shop-myitems-empty__art {
+    width: 110px;
+    height: 110px;
+  }
+  .shop-myitems__search {
+    order: 5;
+    flex-basis: 100%;
+    max-width: none;
+  }
+}

@@ -1,0 +1,44 @@
+# Adapted from the exact snapshot in rendering/bevy-explorer/source/.github/workflows/.
+name: Bevy Explorer / Manual CDN rollout
+'on':
+  workflow_dispatch:
+    inputs:
+      packageVersion:
+        description: 'NPM Version of the release (@dcl-regenesislabs/bevy-explorer-web)'
+        required: true
+        default: ''
+      deploymentEnvironment:
+        type: choice
+        description: Deployment environment
+        required: true
+        default: zone
+        options:
+        - zone
+        - org
+      rolloutPercentage:
+        description: The percentage for this rollout
+        required: true
+        default: '100'
+jobs:
+  set-manual-by-path-rollout:
+    runs-on: ubuntu-24.04
+    steps:
+    - name: Set Rollout
+      uses: decentraland/set-rollout-action@26ead404b6944fd0ce0d087cc59fd817607454d6 # v2
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        ref: ${{ github.event.ref }}
+        sha: ${{ github.sha }}
+        packageName: '@dcl-regenesislabs/bevy-explorer-web'
+        packageVersion: ${{ github.event.inputs.packageVersion }}
+        deploymentPath: 'play'
+        deploymentEnvironment: ${{ github.event.inputs.deploymentEnvironment }}
+        deploymentName: _site
+        percentage: ${{ github.event.inputs.rolloutPercentage }}
+    timeout-minutes: 10
+permissions:
+  contents: read
+  deployments: write
+concurrency:
+  group: bevy-explorer-cdn-rollout
+  cancel-in-progress: false

@@ -1,0 +1,23 @@
+{
+  "description": "GET a path the rpc host does not know: the uWS catch-all. Captured GET https://rpc-social-service-ea.decentraland.org/v1/does-not-exist -> 404.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/does-not-exist",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*"
+    },
+    "body_json": {
+      "error": "Not Found"
+    }
+  },
+  "captured_from": "https://rpc-social-service-ea.decentraland.org/v1/does-not-exist",
+  "captured_at": "2026-10-26T17:36:53Z",
+  "volatile_paths": []
+}

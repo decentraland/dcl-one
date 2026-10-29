@@ -1,0 +1,28 @@
+{
+  "method": "GET",
+  "url": "https://comms-gatekeeper.decentraland.org/scene-admin",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 400,
+  "status_text": "Bad Request",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c68d35b21d933-TXL",
+    "connection": "keep-alive",
+    "content-length": "43",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:30 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "traceparent": "0-e57f0677ffb3c8c4214c4ad6f1197892-0000000000000000-0",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:30Z",
+  "elapsed_ms": 161,
+  "body_bytes": 43,
+  "body_file": "scene-admin-unauth.raw.body",
+  "redacted": false
+}

@@ -1,0 +1,7 @@
+# DCL_ONE_ROOT is the repository root as an absolute path, so a crate names a
+# file elsewhere in the tree (schemas/, library/, apps/) from the root instead of
+# climbing out of its own directory:
+#   include_str!(concat!(env!("DCL_ONE_ROOT"), "/schemas/10_explore.sql"))
+# Cargo reads this file from any directory below the root.
+[env]
+DCL_ONE_ROOT = { value = "", relative = true }

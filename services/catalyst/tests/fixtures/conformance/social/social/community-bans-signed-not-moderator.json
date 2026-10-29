@@ -1,0 +1,28 @@
+{
+  "description": "GET /v1/communities/{id}/bans signed by a wallet that is not a moderator. Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans:1790364256054:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x4214f97c52a1943966179029e0acb3c1121a009c9c38267a26e46a8f0b6da0676f05056c748421b68f772b70613e10bed47172e91fb1ff8e9d3ee77c4045beb41c\"}",
+      "x-identity-timestamp": "1790364256054",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Not Authorized",
+      "message": "The user 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f doesn't have permission to get banned members from the community"
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans",
+  "captured_at": "2026-09-25T19:24:16Z",
+  "volatile_paths": []
+}

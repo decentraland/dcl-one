@@ -1,0 +1,28 @@
+{
+  "description": "GET /subscription/opt-outs/{scope}/{scopeId} signed with a scope outside the enum. Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://notifications.decentraland.org/subscription/opt-outs/planet/00000000-0000-4000-8000-000000000000 -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/subscription/opt-outs/planet/00000000-0000-4000-8000-000000000000",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/subscription/opt-outs/planet/00000000-0000-4000-8000-000000000000:1790364284682:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x0e8b25c476f37ad5d334aae992e06f78a89e4a0406c04389c770655d45620952259d522ef343ba2beff9dac433735c6c944bc022270d9c0ae2042eeddc01d91d1b\"}",
+      "x-identity-timestamp": "1790364284682",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Bad request",
+      "message": "Invalid scope"
+    }
+  },
+  "captured_from": "https://notifications.decentraland.org/subscription/opt-outs/planet/00000000-0000-4000-8000-000000000000",
+  "captured_at": "2026-09-25T19:24:45Z",
+  "volatile_paths": []
+}

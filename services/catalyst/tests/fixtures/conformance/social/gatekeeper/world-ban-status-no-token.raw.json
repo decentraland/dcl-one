@@ -1,0 +1,28 @@
+{
+  "method": "GET",
+  "url": "https://comms-gatekeeper.decentraland.org/worlds/genesis.dcl.eth/parcels/0,0/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/ban-status",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 401,
+  "status_text": "Unauthorized",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c68ffea0ad933-TXL",
+    "connection": "keep-alive",
+    "content-length": "43",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:37 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "traceparent": "0-72ad04dc6da6bf9c63644c5e940e4f37-0000000000000000-0",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:37Z",
+  "elapsed_ms": 150,
+  "body_bytes": 43,
+  "body_file": "world-ban-status-no-token.raw.body",
+  "redacted": false
+}

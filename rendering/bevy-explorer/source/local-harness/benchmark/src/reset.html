@@ -1,0 +1,63 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Preparing the profile</title></head>
+<body><p>Preparing the profile...</p>
+<script>
+(async () => {
+  // `to` is a path on this origin: one leading slash, no backslash, no white space
+  // (a browser reads `/\host` and `/<tab>/host` as another origin), and the
+  // address it makes must still be this origin's.
+  const to = new URLSearchParams(location.search).get('to') || '/';
+  const sameOrigin = /^\/(?![\/\\])[^\s\\]*$/.test(to) && new URL(to, location.origin).origin === location.origin;
+  const target = sameOrigin ? to : '/';
+  const KEEP = 'dcl-local-guest-root-key';
+  const step = async (name, work) => {
+    try {
+      return await work();
+    } catch (error) {
+      console.error('[benchmark] profile reset failed:', name, error);
+      return 'failed';
+    }
+  };
+
+  const workers = await step('service workers', async () => {
+    const registrations = await navigator.serviceWorker.getRegistrations();
+    await Promise.all(registrations.map((r) => r.unregister()));
+    return registrations.length;
+  });
+  const local = await step('local storage', async () => {
+    const keys = Object.keys(localStorage).filter((key) => key !== KEEP);
+    keys.forEach((key) => localStorage.removeItem(key));
+    return keys.length;
+  });
+  const session = await step('session storage', async () => {
+    const count = sessionStorage.length;
+    sessionStorage.clear();
+    return count;
+  });
+  const cookies = await step('cookies', async () => {
+    let count = 0;
+    if (typeof cookieStore !== 'undefined') {
+      for (const cookie of await cookieStore.getAll()) {
+        await cookieStore.delete({ name: cookie.name, domain: cookie.domain, path: cookie.path });
+        count++;
+      }
+    } else {
+      for (const part of document.cookie.split(';')) {
+        const name = part.split('=')[0].trim();
+        if (name) {
+          document.cookie = name + '=; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=/';
+          count++;
+        }
+      }
+    }
+    return count;
+  });
+  const guest = localStorage.getItem(KEEP) === null ? 'none' : 'kept';
+
+  // the run's own path: /__perf/<token>/reset -> /__perf/<token>/reset-done
+  const base = location.pathname.replace(/\/reset$/, '');
+  const summary = `serviceWorkers=${workers} localStorage=${local} sessionStorage=${session} cookies=${cookies} guestKey=${guest}`;
+  await fetch(base + '/reset-done', { method: 'POST', body: summary }).catch(() => {});
+  location.replace(target);
+})();
+</script></body></html>

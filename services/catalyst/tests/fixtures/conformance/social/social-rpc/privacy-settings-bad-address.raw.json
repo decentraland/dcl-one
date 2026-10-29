@@ -1,0 +1,29 @@
+{
+  "method": "GET",
+  "url": "https://rpc-social-service-ea.decentraland.org/v1/users/not-an-address/privacy-settings",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 400,
+  "status_text": "Bad Request",
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a50b39cd5de98e5b-EZE",
+    "connection": "keep-alive",
+    "content-length": "27",
+    "content-type": "application/json",
+    "date": "Mon, 26 Oct 2026 17:36:53 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "uwebsockets": "20",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-10-26T17:36:53Z",
+  "elapsed_ms": 201,
+  "body_bytes": 27,
+  "body_file": "privacy-settings-bad-address.raw.body",
+  "redacted": false
+}

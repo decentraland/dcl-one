@@ -1,0 +1,31 @@
+/* from: shop@2d3bf62:app/src/components/SaleTag/SaleTag.styles.ts; the card's placement from AssetCard.styles.ts (SaleBadge) */
+.shop-saletag {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 4px;
+  background: linear-gradient(#ffc9d5, #ffc9d5) padding-box, linear-gradient(157.44deg, #ffbc5b 0%, #ff2d55 50.52%, #c640cd 100%) border-box;
+  border: 0.5px solid transparent;
+  color: #161518;
+  font-family: var(--shop-sans, Inter, system-ui, sans-serif);
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 12px;
+  white-space: nowrap;
+}
+.shop-saletag[data-size="lg"] {
+  font-size: 20px;
+  line-height: 20px;
+}
+.shop-saletag__pct {
+  font-weight: 700;
+  color: #ec303a;
+}
+.shop-card__media > .shop-saletag {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 4;
+}

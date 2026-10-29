@@ -1,0 +1,23 @@
+{
+  "description": "GET /v1/communities/{id} with a non-uuid id. Captured GET https://social-api.decentraland.org/v1/communities/not-a-uuid -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities/not-a-uuid",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Bad request",
+      "message": "Invalid identifier"
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities/not-a-uuid",
+  "captured_at": "2026-09-25T19:24:04Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,28 @@
+{
+  "description": "CORS preflight for GET /categories from https://decentraland.org. Captured OPTIONS https://badges.decentraland.org/categories -> 204.",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/categories",
+    "query": {},
+    "headers": {
+      "origin": "https://decentraland.org",
+      "access-control-request-method": "GET",
+      "access-control-request-headers": "content-type"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 204,
+    "headers": {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET,HEAD,OPTIONS,DELETE,POST,PUT",
+      "access-control-allow-headers": "content-type",
+      "access-control-max-age": "86400",
+      "vary": "Access-Control-Request-Headers"
+    },
+    "body_bytes_b64": ""
+  },
+  "captured_from": "https://badges.decentraland.org/categories",
+  "captured_at": "2026-09-25T19:24:53Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,133 @@
+name: Bevy Explorer / Headless build
+on:
+  workflow_call:
+    inputs:
+      build-matrix:
+        type: string
+        required: false
+        default: >-
+          {"include":[
+              {"platform": "macos-arm64", "npm_platform": "darwin-arm64", "runner": "macos-15", "target": "aarch64-apple-darwin"},
+              {"platform": "macos-amd64", "npm_platform": "darwin-x64", "runner": "macos-15", "target": "x86_64-apple-darwin"},
+              {"platform": "linux-amd64", "npm_platform": "linux-x64", "runner": "ubuntu-22.04", "target": "x86_64-unknown-linux-gnu"},
+              {"platform": "windows-amd64", "npm_platform": "win32-x64", "runner": "windows-2025", "target": "x86_64-pc-windows-msvc"}
+          ]}
+permissions:
+  contents: read
+  actions: read
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.build-matrix) }}
+    concurrency:
+      group: headless-build-${{ github.event_name }}-${{ github.ref }}-${{ matrix.platform }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || '' }}
+      cancel-in-progress: true
+    runs-on: ${{ matrix.runner == 'windows-2025' && 'windows-2025-16core' || matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Reserve disk space on the hosted Linux runner
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |-
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          df -h /
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py clang cmake pkg-config \
+            libasound2-dev libudev-dev libgl-dev libx11-dev libxext-dev \
+            libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
+      - name: Install clang for webrtc-sys
+        if: runner.os == 'Linux'
+        run: ../../../apps/bevy-explorer/install-clang.sh
+      - name: Install protoc
+        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+          targets: ${{ matrix.target }}
+      - name: Prepare the pinned native toolchain for caching
+        run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: bevy-explorer-headless-${{ matrix.platform }}
+          workspaces: rendering/bevy-explorer/source -> target
+      - name: Build the local headless app
+        run: python ../../../apps/bevy-explorer/build-headless.py --target ${{ matrix.target }}
+      - name: Stamp snapshot version
+        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        with:
+          cwd: ./rendering/bevy-explorer/source/deploy/headless/launcher
+          deterministic-snapshot: true
+          only-update-versions: true
+      - name: Strip binaries
+        if: runner.os != 'Windows'
+        run: strip target/${{ matrix.target }}/release/headless target/${{ matrix.target }}/release/dcl_deno_ipc
+      - name: Smoke test
+        if: matrix.platform != 'macos-amd64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="target/${{ matrix.target }}/release/headless"
+          [ "${{ runner.os }}" = "Windows" ] && bin="$bin.exe"
+          # Boots the engine and the sidecar against a realm that does not exist; proves the
+          # binary links, starts, spawns its sidecar and shuts down cleanly.
+          "$bin" --realm http://127.0.0.1:1 --preview --server-mode --timeout 20 2>&1 | tee smoke.log
+          grep -q "\[headless\]" smoke.log
+      - name: Package engine and sidecar
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: ${{ matrix.platform }}
+          REVISION: ${{ github.sha }}
+        run: |-
+          python - <<'PYTHON'
+          import os, shutil
+          from pathlib import Path
+          root=Path('../../../apps/bevy-explorer/dist/headless')
+          base=root / ('bevy-explorer-headless-' + os.environ['PLATFORM'] + '-' + os.environ['REVISION'])
+          shutil.make_archive(str(base), 'zip' if os.name == 'nt' else 'gztar', root / os.environ['TARGET'])
+          PYTHON
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-explorer-headless-${{ matrix.platform }}-${{ github.sha }}
+          path: |-
+            apps/bevy-explorer/dist/headless/*.tar.gz
+            apps/bevy-explorer/dist/headless/*.zip
+          if-no-files-found: error
+          retention-days: 14
+      - name: Assemble platform package
+        shell: bash
+        run: |
+          set -euo pipefail
+          suffix=""
+          [ "${{ runner.os }}" = "Windows" ] && suffix=".exe"
+          node deploy/headless/build-platform-package.js \
+            --platform ${{ matrix.npm_platform }} \
+            --version "$(node -p "require('./deploy/headless/launcher/package.json').version")" \
+            --engine "target/${{ matrix.target }}/release/headless$suffix" \
+            --sidecar "target/${{ matrix.target }}/release/dcl_deno_ipc$suffix" \
+            --out deploy/headless/dist
+      - name: Pack tarball
+        shell: bash
+        run: |
+          cd deploy/headless/dist/bevy-headless-server-${{ matrix.npm_platform }}
+          npm pack --pack-destination "$GITHUB_WORKSPACE/rendering/bevy-explorer/source/deploy/headless/dist"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-headless-${{ matrix.npm_platform }}-${{ github.sha }}
+          path: rendering/bevy-explorer/source/deploy/headless/dist/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 100

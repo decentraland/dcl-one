@@ -1,0 +1,22 @@
+{
+  "description": "GET /scene-participants without sceneId/realmName. Captured GET https://comms-gatekeeper.decentraland.org/scene-participants -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/scene-participants",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Either pointer or realm_name must be provided"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/scene-participants",
+  "captured_at": "2026-09-25T19:24:30Z",
+  "volatile_paths": []
+}

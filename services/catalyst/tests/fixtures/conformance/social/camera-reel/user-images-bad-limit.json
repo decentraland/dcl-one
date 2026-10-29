@@ -1,0 +1,25 @@
+{
+  "description": "GET /api/users/{address}/images?limit=abc: the bad-param shape. Captured GET https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/images?limit=abc -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/images",
+    "query": {
+      "limit": [
+        "abc"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "content-length": "54"
+    },
+    "body_bytes_b64": "UXVlcnkgZGVzZXJpYWxpemUgZXJyb3I6IGludmFsaWQgZGlnaXQgZm91bmQgaW4gc3RyaW5n"
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/images?limit=abc",
+  "captured_at": "2026-09-25T19:25:04Z",
+  "volatile_paths": []
+}

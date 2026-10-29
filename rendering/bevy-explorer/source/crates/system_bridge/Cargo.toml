@@ -1,0 +1,31 @@
+[package]
+name = "system_bridge"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+[lints]
+workspace = true
+
+[dependencies]
+common = { workspace = true }
+console = { workspace = true }
+clap = { workspace = true }
+
+bevy = { workspace = true }
+bevy_console = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dcl_component = { workspace = true }
+platform = { workspace = true }
+system_api_types = { workspace = true }
+
+serde_repr = "0.1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { workspace = true }
+js-sys = { workspace = true }
+web-sys = { workspace = true }

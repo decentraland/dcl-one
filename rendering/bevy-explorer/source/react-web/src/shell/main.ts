@@ -1,0 +1,178 @@
+// The web shell (index.html): the top-level page that embeds the app (app.html: HUD + engine) in
+// an iframe. app.html is served with Document-Isolation-Policy, which makes it cross-origin
+// isolated on its own; this page is deliberately NOT isolated, so the browser keeps the two in
+// separate processes. The signed-in identity's key stays here: the app asks for the public
+// identity and for signatures, and never reads the origin's localStorage itself.
+import { authLoginUrl, authReturnUrl } from '../features/auth/sso'
+import { ANALYTICS_SESSION_PARAM, ANON_USER_ID_PARAM, dropAttributionParams } from '../lib/analytics'
+import { AUTH_RETURN_PARAM } from '../lib/entryParams'
+import { migratePrefs } from '../lib/prefs'
+import { request } from './login'
+import { onInWorld } from './googleTag'
+
+// The service worker's scope is the package DIRECTORY, but the production entry URL has no
+// trailing slash, which puts this page outside it: the worker never sees the request, so the
+// host's COEP isolates this page, and a reload keeps it that way. Navigate to the directory form
+// instead, where the worker serves the page.
+const outOfScope = !location.pathname.endsWith('/') && !location.pathname.endsWith('.html')
+if (outOfScope) location.replace(location.pathname + '/' + location.search + location.hash)
+
+// Where the sign-in redirect returns to: this page as it was entered, before the attribution
+// params were taken off the address bar (and the engine's url sync rewrote the rest), so the
+// return lands with everything the entry had.
+const entryUrl = location.href
+
+let frame: HTMLIFrameElement | null = null
+let mounting = false
+function mount(): void {
+  if (mounting) return
+  mounting = true
+  // the app can't read localStorage, so hand it whatever an earlier version kept there first
+  void migratePrefs()
+    .catch((e: unknown) => console.warn('[shell] could not move stored preferences:', e))
+    .then(mountApp)
+}
+
+// Segment's anonymous id for this browser, the cookie decentraland.org's pages set: the app
+// stamps it on its analytics so the warehouse joins the session to the landing visit.
+function segmentAnonymousId(): string | null {
+  const raw = document.cookie
+    .split('; ')
+    .find((c) => c.startsWith('ajs_anonymous_id='))
+    ?.slice('ajs_anonymous_id='.length)
+  if (!raw) return null
+  const value = decodeURIComponent(raw)
+  return value.startsWith('"') ? value.slice(1, -1) : value
+}
+
+const ANALYTICS_SESSION_KEY = 'dcl-analytics-session'
+
+function mountApp(): void {
+  const f = document.createElement('iframe')
+  const q = new URLSearchParams(location.search)
+  // the return from the sign-in redirect continues the analytics session the app left with
+  const resumed = sessionStorage.getItem(ANALYTICS_SESSION_KEY)
+  sessionStorage.removeItem(ANALYTICS_SESSION_KEY)
+  if (resumed) q.set(ANALYTICS_SESSION_PARAM, resumed)
+  const anonymous = segmentAnonymousId()
+  if (anonymous && !q.has(ANON_USER_ID_PARAM)) q.set(ANON_USER_ID_PARAM, anonymous)
+  f.src = 'app.html' + (q.size > 0 ? '?' + q.toString() : '') + location.hash
+  f.title = 'Decentraland'
+  f.allow = 'fullscreen; microphone; clipboard-read; clipboard-write; autoplay; gamepad'
+  f.addEventListener('load', () => f.focus())
+  document.body.appendChild(f)
+  frame = f
+  dropAttributionParams([AUTH_RETURN_PARAM])
+}
+
+// Shown instead of the app when the app would share this page's process.
+function refuse(): void {
+  console.error('[shell] this page is cross-origin isolated, so the app would share its process')
+  const p = document.createElement('p')
+  p.textContent = "Decentraland couldn't start. Reload the page to try again."
+  document.body.appendChild(p)
+}
+
+// Mounts the app, unless this page is cross-origin isolated (the host's COOP/COEP without the
+// service worker's rewrite, or an earlier version's worker): then the app shares its process.
+function start(): void {
+  if (crossOriginIsolated) refuse()
+  else mount()
+}
+
+// Messages from the app, for things only this page can do.
+addEventListener('message', async (e: MessageEvent) => {
+  const f = frame
+  if (!f || e.source !== f.contentWindow || e.origin !== location.origin) return
+  const m = e.data as { type?: unknown; [key: string]: unknown } | null
+  if (!m || typeof m !== 'object') return
+  switch (m.type) {
+    case 'bevy-shell:request': {
+      let reply: { result?: unknown; error?: string }
+      try {
+        reply = { result: await request(m.method, m.params) }
+      } catch (err) {
+        reply = { error: err instanceof Error ? err.message : String(err) }
+      }
+      f.contentWindow?.postMessage({ type: 'bevy-shell:response', id: m.id, ...reply }, location.origin)
+      break
+    }
+    // the engine's URL sync (engine/boot.js set_url_params), mirrored into the address bar
+    case 'bevy-shell:url':
+      if (typeof m.search === 'string' && (m.search === '' || m.search[0] === '?')) {
+        history.replaceState(null, '', location.pathname + m.search + location.hash)
+      }
+      break
+    // sign-in: the same-origin auth site, returning here
+    case 'bevy-shell:auth-login':
+      if (typeof m.session === 'string') sessionStorage.setItem(ANALYTICS_SESSION_KEY, m.session)
+      location.assign(authLoginUrl(authReturnUrl(entryUrl)))
+      break
+    // the session's first move in world: the Google Ads conversion (googleTag.ts), and GA4's ids
+    // back to the app for Segment
+    case 'bevy-shell:in-world':
+      if (f.contentWindow) onInWorld(m, f.contentWindow)
+      break
+    // the untrusted-link gate's exit (see src/features/gate/UntrustedLaunchGate.tsx)
+    case 'bevy-shell:exit':
+      window.close()
+      location.replace('https://decentraland.org')
+      break
+  }
+})
+
+// The service worker gives app.html its isolation header and strips the host's COEP from this
+// page (deploy/web/service_worker.js), and the engine's IPFS cache depends on it. A first visit or
+// a hard reload bypasses it, and an earlier version's worker isolates this page, so reload ONCE
+// when the current one is active; the flag stops a broken worker from reload-looping. Until then
+// the app is not mounted.
+const FLAG = 'coi_sw_reloaded'
+if (outOfScope) {
+  // leaving for the in-scope url
+} else if ((window as { credentialless?: boolean }).credentialless) {
+  // no sign-in key to keep from the app here (see inShell in src/lib/shell.ts)
+  location.replace('app.html' + location.search + location.hash)
+} else if (!('serviceWorker' in navigator)) {
+  start()
+} else {
+  // whether THIS load went through the current worker: one that claims the page mid-load
+  // (clients.claim on a first visit) didn't rewrite its headers, so it still needs the reload
+  const ready = navigator.serviceWorker.controller != null && !crossOriginIsolated
+  if (ready) {
+    sessionStorage.removeItem(FLAG)
+    mount()
+  }
+  navigator.serviceWorker
+    .register('service_worker.js')
+    .then(async (reg) => {
+      if (ready) return
+      // registering again doesn't check for a newer worker than an earlier version's
+      await reg.update().catch(() => {})
+      const reloadOnce = (): void => {
+        if (sessionStorage.getItem(FLAG)) {
+          sessionStorage.removeItem(FLAG)
+          console.error('[shell] service worker failed to take control after reload')
+          start()
+        } else {
+          sessionStorage.setItem(FLAG, 'true')
+          location.reload()
+        }
+      }
+      // a new worker (a first visit, or an update to an earlier version's) takes over once active
+      const pending = reg.installing ?? reg.waiting
+      if (pending) {
+        pending.addEventListener('statechange', () => {
+          if (pending.state === 'activated') reloadOnce()
+          else if (pending.state === 'redundant') start()
+        })
+      } else if (reg.active) {
+        reloadOnce()
+      } else {
+        start()
+      }
+    })
+    .catch((e: unknown) => {
+      console.log('[shell] service worker registration failed:', e)
+      start()
+    })
+}

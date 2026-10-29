@@ -1,0 +1,1851 @@
+[
+  {
+    "started_at": "2026-09-25T19:23:58.813Z",
+    "ended_at": "2026-09-25T19:25:10.228Z",
+    "argv": [],
+    "signer": "0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f",
+    "redactions": {
+      "jwt": 0,
+      "email": 4
+    },
+    "hosts": {
+      "social-api.decentraland.org": 46,
+      "peer.decentraland.org": 2,
+      "comms-gatekeeper.decentraland.org": 29,
+      "notifications.decentraland.org": 13,
+      "badges.decentraland.org": 10,
+      "assets-cdn.decentraland.org": 3,
+      "profile-images.decentraland.org": 13,
+      "camera-reel-service.decentraland.org": 17
+    },
+    "helpers": [
+      {
+        "label": "active profile entities",
+        "method": "POST",
+        "url": "https://peer.decentraland.org/content/entities/active",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:23Z"
+      },
+      {
+        "label": "Genesis Plaza scene entity",
+        "method": "POST",
+        "url": "https://peer.decentraland.org/content/entities/active",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:24Z"
+      }
+    ],
+    "requests": [
+      {
+        "svc": "social",
+        "name": "communities-list",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities?limit=10&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:23:58Z",
+        "bytes": 6341,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "communities-list-page2",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities?limit=5&offset=5",
+        "status": 200,
+        "captured_at": "2026-09-25T19:23:59Z",
+        "bytes": 3276,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "communities-list-search",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities?search=dec&limit=5&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:23:59Z",
+        "bytes": 3197,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "communities-list-only-voice-chat",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities?onlyWithActiveVoiceChat=true&limit=5",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:00Z",
+        "bytes": 62,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "communities-list-limit-zero",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities?limit=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:01Z",
+        "bytes": 50838,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "communities-list-limit-not-a-number",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities?limit=abc",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:01Z",
+        "bytes": 50838,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "communities-list-401-minimal-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities?minimal=true&search=dec",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:02Z",
+        "bytes": 91,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "communities-list-minimal-signed",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities?minimal=true&search=dec&limit=5",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:02Z",
+        "bytes": 632,
+        "signedPath": "/v1/communities"
+      },
+      {
+        "svc": "social",
+        "name": "community-by-id",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:03Z",
+        "bytes": 447,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-by-id-404-unknown",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/00000000-0000-4000-8000-000000000000",
+        "status": 404,
+        "captured_at": "2026-09-25T19:24:03Z",
+        "bytes": 91,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-by-id-bad-id",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/not-a-uuid",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:04Z",
+        "bytes": 54,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-members",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/members?limit=10&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:04Z",
+        "bytes": 4140,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-members-only-online",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/members?onlyOnline=true&limit=5",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:05Z",
+        "bytes": 2164,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-members-404-unknown",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/00000000-0000-4000-8000-000000000000/members",
+        "status": 404,
+        "captured_at": "2026-09-25T19:24:05Z",
+        "bytes": 91,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-places",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/places?limit=10&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:06Z",
+        "bytes": 1381,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-posts",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/posts?limit=5&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:07Z",
+        "bytes": 2696,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-posts-v2",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v2/communities/e99471aa-31c4-4952-abf6-99905445f43b/posts?limit=5&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:07Z",
+        "bytes": 1721,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "communities-v2-list-search",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v2/communities?search=dec&limit=5&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:08Z",
+        "bytes": 3077,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "communities-v2-list-no-search",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v2/communities?limit=5&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:08Z",
+        "bytes": 3013,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-v2-by-id",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v2/communities/e99471aa-31c4-4952-abf6-99905445f43b",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:09Z",
+        "bytes": 421,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-v2-by-id-404-unknown",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v2/communities/00000000-0000-4000-8000-000000000000",
+        "status": 404,
+        "captured_at": "2026-09-25T19:24:09Z",
+        "bytes": 91,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-v2-members",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v2/communities/e99471aa-31c4-4952-abf6-99905445f43b/members?limit=5&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:10Z",
+        "bytes": 1029,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "member-communities",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/members/0xbcac4dafb7e215f2f6cb3312af6d5e4f9d9e7eda/communities?limit=5&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:10Z",
+        "bytes": 360,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "member-communities-bad-address",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/members/not-an-address/communities",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:11Z",
+        "bytes": 64,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "mutes-400-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/mutes?limit=100&offset=0",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:12Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "mutes-signed",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/mutes?limit=100&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:12Z",
+        "bytes": 64,
+        "signedPath": "/v1/mutes"
+      },
+      {
+        "svc": "social",
+        "name": "member-requests-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/members/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/requests",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:13Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "member-requests-signed",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/members/0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f/requests?limit=10&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:13Z",
+        "bytes": 63,
+        "signedPath": "/v1/members/0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f/requests"
+      },
+      {
+        "svc": "social",
+        "name": "member-requests-v2-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v2/members/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/requests",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:14Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "member-invites-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/members/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/invites",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:14Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "member-invites-signed-self",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/members/0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f/invites",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:15Z",
+        "bytes": 66,
+        "signedPath": "/v1/members/0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f/invites"
+      },
+      {
+        "svc": "social",
+        "name": "community-bans-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:15Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-bans-signed-not-moderator",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:16Z",
+        "bytes": 155,
+        "signedPath": "/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans"
+      },
+      {
+        "svc": "social",
+        "name": "community-bans-v2-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v2/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:16Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-requests-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/requests",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:17Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "community-requests-signed-not-owner",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/requests",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:18Z",
+        "bytes": 131,
+        "signedPath": "/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/requests"
+      },
+      {
+        "svc": "social",
+        "name": "community-requests-v2-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v2/communities/e99471aa-31c4-4952-abf6-99905445f43b/requests",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:18Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "voice-chats-active-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/community-voice-chats/active",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:19Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "voice-chats-active-signed",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/community-voice-chats/active",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:19Z",
+        "bytes": 37,
+        "signedPath": "/v1/community-voice-chats/active"
+      },
+      {
+        "svc": "social",
+        "name": "referral-progress-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/referral-progress",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:20Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "referral-progress-signed",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/referral-progress",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:20Z",
+        "bytes": 75,
+        "signedPath": "/v1/referral-progress"
+      },
+      {
+        "svc": "social",
+        "name": "moderation-communities-unauth",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/moderation/communities",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:21Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "moderation-communities-signed-not-moderator",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/moderation/communities",
+        "status": 403,
+        "captured_at": "2026-09-25T19:24:21Z",
+        "bytes": 66,
+        "signedPath": "/v1/moderation/communities"
+      },
+      {
+        "svc": "social",
+        "name": "managed-communities-401-no-bearer",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/managed",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:22Z",
+        "bytes": 70,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "preflight-communities",
+        "method": "OPTIONS",
+        "url": "https://social-api.decentraland.org/v1/communities",
+        "status": 204,
+        "captured_at": "2026-09-25T19:24:23Z",
+        "bytes": 0,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "unknown-path-404",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/does-not-exist",
+        "status": 404,
+        "captured_at": "2026-09-25T19:24:23Z",
+        "bytes": 9,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "status",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/status",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:24Z",
+        "bytes": 104,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "status-head",
+        "method": "HEAD",
+        "url": "https://comms-gatekeeper.decentraland.org/status",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:25Z",
+        "bytes": 0,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "ping",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/ping",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:25Z",
+        "bytes": 5,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "user-bans",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/bans",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:26Z",
+        "bytes": 27,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "user-bans-unknown-address",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/users/0x0000000000000000000000000000000000000001/bans",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:26Z",
+        "bytes": 27,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "user-bans-bad-address",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/users/not-an-address/bans",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:27Z",
+        "bytes": 27,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "get-scene-adapter-unauth",
+        "method": "POST",
+        "url": "https://comms-gatekeeper.decentraland.org/get-scene-adapter",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:27Z",
+        "bytes": 55,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "get-scene-adapter-signed-no-realm-name",
+        "method": "POST",
+        "url": "https://comms-gatekeeper.decentraland.org/get-scene-adapter",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:28Z",
+        "bytes": 69,
+        "signedPath": "/get-scene-adapter"
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "get-server-scene-adapter-unauth",
+        "method": "POST",
+        "url": "https://comms-gatekeeper.decentraland.org/get-server-scene-adapter",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:28Z",
+        "bytes": 55,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-participants (wrong query names sceneId/realmName; 400 body kept as scene-participants-400-no-params, files removed)",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-participants?sceneId=bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy&realmName=main",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:29Z",
+        "bytes": 57,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-participants-400-no-params",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-participants",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:30Z",
+        "bytes": 57,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-admin-unauth",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-admin",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:30Z",
+        "bytes": 43,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-admin-signed-wrong-signer",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-admin",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:31Z",
+        "bytes": 127,
+        "signedPath": "/scene-admin"
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-bans-unauth",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:31Z",
+        "bytes": 43,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-bans-signed-wrong-signer",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:32Z",
+        "bytes": 127,
+        "signedPath": "/scene-bans"
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-bans-addresses-unauth",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-bans/addresses",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:32Z",
+        "bytes": 43,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-stream-access-unauth",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-stream-access",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:33Z",
+        "bytes": 43,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "user-warnings-401-unauth",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:33Z",
+        "bytes": 58,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "user-warnings-signed-not-moderator",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:34Z",
+        "bytes": 58,
+        "signedPath": "/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings"
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "bans-401-unauth",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/bans",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:34Z",
+        "bytes": 58,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "private-messages-token-unauth",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/private-messages/token",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:35Z",
+        "bytes": 43,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "voice-chat-status-401-no-token",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/voice-chat-status",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:36Z",
+        "bytes": 43,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "community-voice-chat-active-401-no-token",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/community-voice-chat/active",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:36Z",
+        "bytes": 43,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "community-voice-chat-status-401-no-token",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/community-voice-chat/e99471aa-31c4-4952-abf6-99905445f43b/status",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:37Z",
+        "bytes": 43,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "world-ban-status-no-token",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/worlds/genesis.dcl.eth/parcels/0,0/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/ban-status",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:37Z",
+        "bytes": 43,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "cast-stream-info-invalid-key",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/cast/stream-info/not-a-real-streaming-key",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:38Z",
+        "bytes": 33,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "cast-presenters-unauth",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/cast/presenters",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:38Z",
+        "bytes": 43,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "preflight-get-scene-adapter",
+        "method": "OPTIONS",
+        "url": "https://comms-gatekeeper.decentraland.org/get-scene-adapter",
+        "status": 204,
+        "captured_at": "2026-09-25T19:24:39Z",
+        "bytes": 0,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "unknown-path-404",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/does-not-exist",
+        "status": 404,
+        "captured_at": "2026-09-25T19:24:39Z",
+        "bytes": 9,
+        "signedPath": null
+      },
+      {
+        "svc": "notifications",
+        "name": "status",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/status",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:40Z",
+        "bytes": 104,
+        "signedPath": null
+      },
+      {
+        "svc": "notifications",
+        "name": "notifications-unauth",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/notifications",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:40Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "notifications",
+        "name": "notifications-signed",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/notifications",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:41Z",
+        "bytes": 20,
+        "signedPath": "/notifications"
+      },
+      {
+        "svc": "notifications",
+        "name": "notifications-signed-filters",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/notifications?limit=5&onlyUnread&from=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:41Z",
+        "bytes": 20,
+        "signedPath": "/notifications"
+      },
+      {
+        "svc": "notifications",
+        "name": "notifications-expired-timestamp",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/notifications",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:42Z",
+        "bytes": 186,
+        "signedPath": null
+      },
+      {
+        "svc": "notifications",
+        "name": "subscription-unauth",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/subscription",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:42Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "notifications",
+        "name": "subscription-signed",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/subscription",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:43Z",
+        "bytes": 4073,
+        "signedPath": "/subscription"
+      },
+      {
+        "svc": "notifications",
+        "name": "opt-outs-community-unauth",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/subscription/opt-outs/community/e99471aa-31c4-4952-abf6-99905445f43b",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:43Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "notifications",
+        "name": "opt-outs-community-signed",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/subscription/opt-outs/community/e99471aa-31c4-4952-abf6-99905445f43b",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:44Z",
+        "bytes": 87,
+        "signedPath": "/subscription/opt-outs/community/e99471aa-31c4-4952-abf6-99905445f43b"
+      },
+      {
+        "svc": "notifications",
+        "name": "opt-outs-bad-scope-signed",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/subscription/opt-outs/planet/00000000-0000-4000-8000-000000000000",
+        "status": 400,
+        "captured_at": "2026-09-25T19:24:45Z",
+        "bytes": 49,
+        "signedPath": "/subscription/opt-outs/planet/00000000-0000-4000-8000-000000000000"
+      },
+      {
+        "svc": "notifications",
+        "name": "unsubscribe-address-no-signature",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/unsubscribe/0x8d6f63e382d73cf53858864f673f39e9ff915a1e",
+        "status": 401,
+        "captured_at": "2026-09-25T19:24:45Z",
+        "bytes": 51,
+        "signedPath": null
+      },
+      {
+        "svc": "notifications",
+        "name": "preflight-notifications",
+        "method": "OPTIONS",
+        "url": "https://notifications.decentraland.org/notifications",
+        "status": 204,
+        "captured_at": "2026-09-25T19:24:46Z",
+        "bytes": 0,
+        "signedPath": null
+      },
+      {
+        "svc": "notifications",
+        "name": "unknown-path-404",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/does-not-exist",
+        "status": 404,
+        "captured_at": "2026-09-25T19:24:46Z",
+        "bytes": 9,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "categories",
+        "method": "GET",
+        "url": "https://badges.decentraland.org/categories",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:46Z",
+        "bytes": 81,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "user-badges",
+        "method": "GET",
+        "url": "https://badges.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/badges",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:47Z",
+        "bytes": 2430,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "user-badges-second-address",
+        "method": "GET",
+        "url": "https://badges.decentraland.org/users/0xbcac4dafb7e215f2f6cb3312af6d5e4f9d9e7eda/badges",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:47Z",
+        "bytes": 4556,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "user-badges-unknown-address",
+        "method": "GET",
+        "url": "https://badges.decentraland.org/users/0x0000000000000000000000000000000000000001/badges",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:48Z",
+        "bytes": 41,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "user-badges-bad-address",
+        "method": "GET",
+        "url": "https://badges.decentraland.org/users/not-an-address/badges",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:49Z",
+        "bytes": 41,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "user-preview",
+        "method": "GET",
+        "url": "https://badges.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/preview",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:49Z",
+        "bytes": 404,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "user-preview-unknown-address",
+        "method": "GET",
+        "url": "https://badges.decentraland.org/users/0x0000000000000000000000000000000000000001/preview",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:50Z",
+        "bytes": 36,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "badge-tiers",
+        "method": "GET",
+        "url": "https://badges.decentraland.org/badges/dclcitizen/tiers",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:50Z",
+        "bytes": 21,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "asset-2d",
+        "method": "GET",
+        "url": "https://assets-cdn.decentraland.org/dclcitizen/2d/normal.png",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:50Z",
+        "bytes": 63767,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "asset-3d",
+        "method": "GET",
+        "url": "https://assets-cdn.decentraland.org/dclcitizen/3d/normal.png",
+        "status": 200,
+        "captured_at": "2026-09-25T19:24:51Z",
+        "bytes": 848778,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "asset-404",
+        "method": "GET",
+        "url": "https://assets-cdn.decentraland.org/assets/does-not-exist/2d/normal.png",
+        "status": 404,
+        "captured_at": "2026-09-25T19:24:53Z",
+        "bytes": 554,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "preflight-categories",
+        "method": "OPTIONS",
+        "url": "https://badges.decentraland.org/categories",
+        "status": 204,
+        "captured_at": "2026-09-25T19:24:53Z",
+        "bytes": 0,
+        "signedPath": null
+      },
+      {
+        "svc": "badges",
+        "name": "unknown-path-404",
+        "method": "GET",
+        "url": "https://badges.decentraland.org/does-not-exist",
+        "status": 404,
+        "captured_at": "2026-09-25T19:24:54Z",
+        "bytes": 9,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "face-profile-0",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:54Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "body-profile-0",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/body.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:54Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "face-profile-1",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/entities/bafkreifkus6iegxyerri7rbfzmxrj5c726prza7lqobufstyc54yuzxwpy/face.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:55Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "body-profile-1",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/entities/bafkreifkus6iegxyerri7rbfzmxrj5c726prza7lqobufstyc54yuzxwpy/body.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:56Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "face-profile-2",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/entities/bafkreig3xwydxjwphcz4yjyqlvicvstrrsfs3dix6q7jyv4qfnfge2d22i/face.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:56Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "body-profile-2",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/entities/bafkreig3xwydxjwphcz4yjyqlvicvstrrsfs3dix6q7jyv4qfnfge2d22i/body.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:57Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "face-head",
+        "method": "HEAD",
+        "url": "https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:57Z",
+        "bytes": 0,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "face-unknown-cid",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/face.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:58Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "body-unknown-cid",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/body.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:58Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "face-bad-cid",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/entities/not-a-cid/face.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:59Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "unknown-file",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/other.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:24:59Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "preflight-face",
+        "method": "OPTIONS",
+        "url": "https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png",
+        "status": 301,
+        "captured_at": "2026-09-25T19:25:00Z",
+        "bytes": 167,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "root-404",
+        "method": "GET",
+        "url": "https://profile-images.decentraland.org/",
+        "status": 404,
+        "captured_at": "2026-09-25T19:25:01Z",
+        "bytes": 9,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "health-live",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/health/live",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:01Z",
+        "bytes": 7,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "user",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:01Z",
+        "bytes": 35,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "user-unknown-address",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/users/0x0000000000000000000000000000000000000001",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:02Z",
+        "bytes": 35,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "user-images",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/images?limit=3&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:02Z",
+        "bytes": 47,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "user-images-compact-page2",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/images?limit=2&offset=1&compact=true",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:03Z",
+        "bytes": 47,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "user-images-limit-over-max",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/users/0x0000000000000000000000000000000000000001/images?limit=1000&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:03Z",
+        "bytes": 47,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "user-images-bad-limit",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/images?limit=abc",
+        "status": 400,
+        "captured_at": "2026-09-25T19:25:04Z",
+        "bytes": 54,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "image-metadata-404",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/images/00000000-0000-4000-8000-000000000000/metadata",
+        "status": 404,
+        "captured_at": "2026-09-25T19:25:05Z",
+        "bytes": 29,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "place-images",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/places/3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d/images?limit=5&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:05Z",
+        "bytes": 1713,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "place-images-page2",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/places/3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d/images?limit=2&offset=2",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:06Z",
+        "bytes": 702,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "place-images-unknown-place",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/places/00000000-0000-4000-8000-000000000000/images",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:06Z",
+        "bytes": 27,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "places-images-batch",
+        "method": "POST",
+        "url": "https://camera-reel-service.decentraland.org/api/places/images?limit=5&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:07Z",
+        "bytes": 1958,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "places-images-batch-400-empty",
+        "method": "POST",
+        "url": "https://camera-reel-service.decentraland.org/api/places/images",
+        "status": 400,
+        "captured_at": "2026-09-25T19:25:07Z",
+        "bytes": 35,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "wearable-images-400-bad-item",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/wearables/not-an-item/images",
+        "status": 400,
+        "captured_at": "2026-09-25T19:25:08Z",
+        "bytes": 67,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "docs-openapi",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/docs/openapi.json",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:08Z",
+        "bytes": 10374,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "preflight-user",
+        "method": "OPTIONS",
+        "url": "https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e",
+        "status": 200,
+        "captured_at": "2026-09-25T19:25:09Z",
+        "bytes": 0,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "unknown-path-404",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/does-not-exist",
+        "status": 404,
+        "captured_at": "2026-09-25T19:25:10Z",
+        "bytes": 0,
+        "signedPath": null
+      }
+    ],
+    "skipped": [
+      {
+        "svc": "camera-reel",
+        "name": "image-redirect",
+        "reason": "no image id from user-images"
+      },
+      {
+        "svc": "camera-reel",
+        "name": "image-metadata",
+        "reason": "no image id"
+      },
+      {
+        "svc": "camera-reel",
+        "name": "wearable-images",
+        "reason": "no item id in the captured photo metadata"
+      }
+    ]
+  },
+  {
+    "started_at": "2026-09-25T19:29:32.836Z",
+    "ended_at": "2026-09-25T19:29:43.044Z",
+    "argv": [
+      "--steps",
+      "member-invites-signed-other,get-scene-adapter-signed,scene-participants,scene-participants-default-realm,scene-participants-world,scene-admin-signed-scene,scene-bans-signed-scene,scene-bans-addresses-signed-scene,notifications-bad-signature,face-profile-0-object,body-profile-0-object,face-profile-1-object,body-profile-1-object,face-profile-2-object,body-profile-2-object,face-unknown-cid-object,image-redirect,image-file-redirect,image-metadata,wearable-images"
+    ],
+    "signer": "0xf7e07d862ddbe561a63ebb5dd809cf0542269587",
+    "redactions": {
+      "jwt": 1,
+      "email": 0
+    },
+    "hosts": {
+      "social-api.decentraland.org": 1,
+      "peer.decentraland.org": 2,
+      "comms-gatekeeper.decentraland.org": 8,
+      "notifications.decentraland.org": 1,
+      "profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com": 7,
+      "camera-reel-service.decentraland.org": 3
+    },
+    "helpers": [
+      {
+        "label": "active profile entities",
+        "method": "POST",
+        "url": "https://peer.decentraland.org/content/entities/active",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:33Z"
+      },
+      {
+        "label": "Genesis Plaza scene entity",
+        "method": "POST",
+        "url": "https://peer.decentraland.org/content/entities/active",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:33Z"
+      }
+    ],
+    "requests": [
+      {
+        "svc": "social",
+        "name": "member-invites-signed-other",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/members/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/invites",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:32Z",
+        "bytes": 11,
+        "signedPath": "/v1/members/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/invites"
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "get-scene-adapter-signed",
+        "method": "POST",
+        "url": "https://comms-gatekeeper.decentraland.org/get-scene-adapter",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:33Z",
+        "bytes": 628,
+        "signedPath": "/get-scene-adapter"
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-participants",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-participants?pointer=0,0&realm_name=main",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:34Z",
+        "bytes": 304,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-participants-default-realm",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-participants?pointer=0,0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:35Z",
+        "bytes": 304,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-participants-world",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-participants?realm_name=genesis.dcl.eth",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:35Z",
+        "bytes": 35,
+        "signedPath": null
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-admin-signed-scene",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-admin",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:36Z",
+        "bytes": 5408,
+        "signedPath": "/scene-admin"
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-bans-signed-scene",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0",
+        "status": 401,
+        "captured_at": "2026-09-25T19:29:36Z",
+        "bytes": 60,
+        "signedPath": "/scene-bans"
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-bans-signed-scene",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0",
+        "status": 401,
+        "captured_at": "2026-09-25T19:29:37Z",
+        "bytes": 669,
+        "signedPath": "/scene-bans?limit=20&offset=0"
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-bans-addresses-signed-scene",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-bans/addresses",
+        "status": 401,
+        "captured_at": "2026-09-25T19:29:37Z",
+        "bytes": 60,
+        "signedPath": "/scene-bans/addresses"
+      },
+      {
+        "svc": "notifications",
+        "name": "notifications-bad-signature",
+        "method": "GET",
+        "url": "https://notifications.decentraland.org/notifications",
+        "status": 401,
+        "captured_at": "2026-09-25T19:29:38Z",
+        "bytes": 188,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "face-profile-0-object",
+        "method": "GET",
+        "url": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:38Z",
+        "bytes": 36077,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "body-profile-0-object",
+        "method": "GET",
+        "url": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/body.png",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:38Z",
+        "bytes": 44260,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "face-profile-1-object",
+        "method": "GET",
+        "url": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreifkus6iegxyerri7rbfzmxrj5c726prza7lqobufstyc54yuzxwpy/face.png",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:39Z",
+        "bytes": 35355,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "body-profile-1-object",
+        "method": "GET",
+        "url": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreifkus6iegxyerri7rbfzmxrj5c726prza7lqobufstyc54yuzxwpy/body.png",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:39Z",
+        "bytes": 42753,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "face-profile-2-object",
+        "method": "GET",
+        "url": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreig3xwydxjwphcz4yjyqlvicvstrrsfs3dix6q7jyv4qfnfge2d22i/face.png",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:40Z",
+        "bytes": 35470,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "body-profile-2-object",
+        "method": "GET",
+        "url": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreig3xwydxjwphcz4yjyqlvicvstrrsfs3dix6q7jyv4qfnfge2d22i/body.png",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:41Z",
+        "bytes": 91439,
+        "signedPath": null
+      },
+      {
+        "svc": "profile-images",
+        "name": "face-unknown-cid-object",
+        "method": "GET",
+        "url": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/face.png",
+        "status": 404,
+        "captured_at": "2026-09-25T19:29:41Z",
+        "bytes": 356,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "image-redirect",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051",
+        "status": 307,
+        "captured_at": "2026-09-25T19:29:41Z",
+        "bytes": 0,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "image-file-redirect",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051-1790074770.jpg",
+        "status": 307,
+        "captured_at": "2026-09-25T19:29:42Z",
+        "bytes": 0,
+        "signedPath": null
+      },
+      {
+        "svc": "camera-reel",
+        "name": "image-metadata",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051/metadata",
+        "status": 200,
+        "captured_at": "2026-09-25T19:29:42Z",
+        "bytes": 5612,
+        "signedPath": null
+      }
+    ],
+    "skipped": [
+      {
+        "svc": "camera-reel",
+        "name": "wearable-images",
+        "reason": "no item id in the captured photo metadata"
+      }
+    ]
+  },
+  {
+    "started_at": "2026-09-25T19:30:59.620Z",
+    "ended_at": "2026-09-25T19:31:01.316Z",
+    "argv": [
+      "--steps",
+      "scene-bans-signed-scene,wearable-images"
+    ],
+    "signer": "0xd6690b5a1525b60a799fc41a63f59e01ed620cb1",
+    "redactions": {
+      "jwt": 0,
+      "email": 0
+    },
+    "hosts": {
+      "comms-gatekeeper.decentraland.org": 2,
+      "camera-reel-service.decentraland.org": 1
+    },
+    "helpers": [],
+    "requests": [
+      {
+        "svc": "gatekeeper",
+        "name": "scene-bans-signed-scene",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0",
+        "status": 401,
+        "captured_at": "2026-09-25T19:30:59Z",
+        "bytes": 60,
+        "signedPath": "/scene-bans"
+      },
+      {
+        "svc": "gatekeeper",
+        "name": "scene-bans-signed-scene",
+        "method": "GET",
+        "url": "https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0",
+        "status": 401,
+        "captured_at": "2026-09-25T19:31:00Z",
+        "bytes": 669,
+        "signedPath": "/scene-bans?limit=20&offset=0"
+      },
+      {
+        "svc": "camera-reel",
+        "name": "wearable-images",
+        "method": "GET",
+        "url": "https://camera-reel-service.decentraland.org/api/wearables/0x8bac6894f5e7c2a34a237d451f8cb0cf1a824ecc-0/images?limit=3&offset=0",
+        "status": 200,
+        "captured_at": "2026-09-25T19:31:01Z",
+        "bytes": 12382,
+        "signedPath": null
+      }
+    ],
+    "skipped": []
+  },
+  {
+    "started_at": "2026-10-26T17:36:50.433Z",
+    "ended_at": "2026-10-26T17:36:54.029Z",
+    "argv": [
+      "--only",
+      "social,social-rpc",
+      "--steps",
+      "communities-list-origin,status,health-live,privacy-settings-unknown,privacy-settings-bad-address,unknown-path-404"
+    ],
+    "signer": null,
+    "redactions": {
+      "jwt": 0,
+      "email": 0
+    },
+    "hosts": {
+      "social-api.decentraland.org": 2,
+      "rpc-social-service-ea.decentraland.org": 5
+    },
+    "helpers": [],
+    "requests": [
+      {
+        "svc": "social",
+        "name": "unknown-path-404",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/does-not-exist",
+        "status": 404,
+        "captured_at": "2026-10-26T17:36:50Z",
+        "bytes": 9,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "communities-list-origin",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/v1/communities?limit=1&offset=0",
+        "status": 200,
+        "captured_at": "2026-10-26T17:36:50Z",
+        "bytes": 504,
+        "signedPath": null
+      },
+      {
+        "svc": "social-rpc",
+        "name": "status",
+        "method": "GET",
+        "url": "https://rpc-social-service-ea.decentraland.org/status",
+        "status": 200,
+        "captured_at": "2026-10-26T17:36:51Z",
+        "bytes": 105,
+        "signedPath": null
+      },
+      {
+        "svc": "social-rpc",
+        "name": "health-live",
+        "method": "GET",
+        "url": "https://rpc-social-service-ea.decentraland.org/health/live",
+        "status": 200,
+        "captured_at": "2026-10-26T17:36:52Z",
+        "bytes": 5,
+        "signedPath": null
+      },
+      {
+        "svc": "social-rpc",
+        "name": "privacy-settings-unknown",
+        "method": "GET",
+        "url": "https://rpc-social-service-ea.decentraland.org/v1/users/0x0000000000000000000000000000000000000001/privacy-settings",
+        "status": 200,
+        "captured_at": "2026-10-26T17:36:52Z",
+        "bytes": 34,
+        "signedPath": null
+      },
+      {
+        "svc": "social-rpc",
+        "name": "privacy-settings-bad-address",
+        "method": "GET",
+        "url": "https://rpc-social-service-ea.decentraland.org/v1/users/not-an-address/privacy-settings",
+        "status": 400,
+        "captured_at": "2026-10-26T17:36:53Z",
+        "bytes": 27,
+        "signedPath": null
+      },
+      {
+        "svc": "social-rpc",
+        "name": "unknown-path-404",
+        "method": "GET",
+        "url": "https://rpc-social-service-ea.decentraland.org/v1/does-not-exist",
+        "status": 404,
+        "captured_at": "2026-10-26T17:36:53Z",
+        "bytes": 21,
+        "signedPath": null
+      }
+    ],
+    "skipped": []
+  },
+  {
+    "started_at": "2026-10-26T18:01:46.783Z",
+    "ended_at": "2026-10-26T18:01:47.560Z",
+    "argv": [
+      "--only",
+      "social",
+      "--steps",
+      "mutes-post-unauth,mutes-delete-unauth"
+    ],
+    "signer": null,
+    "redactions": {
+      "jwt": 0,
+      "email": 0
+    },
+    "hosts": {
+      "social-api.decentraland.org": 2
+    },
+    "helpers": [],
+    "requests": [
+      {
+        "svc": "social",
+        "name": "mutes-post-unauth",
+        "method": "POST",
+        "url": "https://social-api.decentraland.org/v1/mutes",
+        "status": 400,
+        "captured_at": "2026-10-26T18:01:46Z",
+        "bytes": 101,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "mutes-delete-unauth",
+        "method": "DELETE",
+        "url": "https://social-api.decentraland.org/v1/mutes",
+        "status": 400,
+        "captured_at": "2026-10-26T18:01:47Z",
+        "bytes": 101,
+        "signedPath": null
+      }
+    ],
+    "skipped": []
+  },
+  {
+    "started_at": "2026-10-26T20:46:17.163Z",
+    "ended_at": "2026-10-26T20:46:18.928Z",
+    "argv": [
+      "--only",
+      "social",
+      "--steps",
+      "health-live,health-ready,health-startup"
+    ],
+    "signer": null,
+    "redactions": {
+      "jwt": 0,
+      "email": 0
+    },
+    "hosts": {
+      "social-api.decentraland.org": 3
+    },
+    "helpers": [],
+    "requests": [
+      {
+        "svc": "social",
+        "name": "health-live",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/health/live",
+        "status": 200,
+        "captured_at": "2026-10-26T20:46:17Z",
+        "bytes": 5,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "health-ready",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/health/ready",
+        "status": 200,
+        "captured_at": "2026-10-26T20:46:17Z",
+        "bytes": 60,
+        "signedPath": null
+      },
+      {
+        "svc": "social",
+        "name": "health-startup",
+        "method": "GET",
+        "url": "https://social-api.decentraland.org/health/startup",
+        "status": 200,
+        "captured_at": "2026-10-26T20:46:18Z",
+        "bytes": 60,
+        "signedPath": null
+      }
+    ],
+    "skipped": []
+  }
+]

@@ -1,0 +1,91 @@
+/* from: shop@94584a5c:app/src/components/ResellersModal/ResellersModal.styles.ts */
+.shop-resales {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 14px;
+  border: 1px solid var(--ui-border);
+  background: var(--ui-panel);
+}
+.shop-resales__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.shop-resales__head h2,
+.shop-resales__classic h3 {
+  margin: 0;
+  font-size: 18px;
+}
+.shop-resales__head span,
+.shop-resales__note,
+.shop-resales__empty {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ui-muted);
+}
+.shop-resales__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.shop-resales__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--fill-1, rgba(255, 255, 255, 0.04));
+}
+.shop-resales__row[data-current] {
+  outline: 1px solid var(--ui-accent);
+}
+.shop-resales__who {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+  font-size: 13px;
+}
+.shop-resales__who span {
+  color: var(--ui-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shop-resales__view {
+  color: var(--ui-accent);
+  font-weight: 600;
+  text-decoration: none;
+}
+.shop-resales__pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 13px;
+}
+.shop-resales__pager button {
+  border: 1px solid var(--ui-border-strong);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ui-text);
+  padding: 4px 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.shop-resales__pager button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.shop-resales__classic {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}

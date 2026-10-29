@@ -1,0 +1,207 @@
+#import bevy_pbr::{
+    forward_io::{VertexOutput, FragmentOutput},
+    pbr_fragment::pbr_input_from_standard_material,
+    pbr_functions::{SampleBias, alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing},
+    pbr_bindings::{material, emissive_texture, emissive_sampler},
+    pbr_types::{STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT, STANDARD_MATERIAL_FLAGS_DOUBLE_SIDED_BIT},
+    mesh_functions,
+    mesh_view_bindings::{globals, view, lights},
+    pbr_types,
+    shadows,
+    view_transformations,
+}
+#import bevy_core_pipeline::tonemapping::approximate_inverse_tone_mapping
+
+#import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
+#import "embedded://shaders/bound_material_effect.wgsl"::{apply_outline, discard_dither}
+#import "embedded://shaders/toon.wgsl"::toon_lighting
+#import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
+#import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE}
+
+override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
+    let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
+    // far bound of the last cascade = the shadow distance for this light
+    let light = &lights.directional_lights[light_id];
+    let far = (*light).cascades[max((*light).num_cascades, 1u) - 1u].far_bound;
+    return soften_directional_shadow(base, far, view_z);
+}
+
+#ifdef ENVIRONMENT_MAP
+#import bevy_pbr::{ambient, clustered_forward::ClusterableObjectIndexRanges, environment_map, lighting}
+#import "embedded://shaders/sky_envmap_lookup.wgsl"::{sky_envmap_input, sky_envmap_level}
+
+// the sky envmap, levelled towards the flat ambient light, is the only ambient light
+// (see sky_envmap_lookup.wgsl)
+override fn environment_map::compute_radiances(input: lighting::LayerLightingInput, clusterable_object_index_ranges: ptr<function, ClusterableObjectIndexRanges>, world_position: vec3<f32>, found_diffuse_indirect: bool) -> environment_map::EnvironmentMapRadiances {
+    let upper = sky_envmap_input(input);
+    let radiances = environment_map::compute_radiances(upper, clusterable_object_index_ranges, world_position, found_diffuse_indirect);
+    return sky_envmap_level(radiances, input, upper, lights.ambient_color);
+}
+
+override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3<f32>, V: vec3<f32>, NdotV: f32, diffuse_color: vec3<f32>, specular_color: vec3<f32>, perceptual_roughness: f32, occlusion: vec3<f32>) -> vec3<f32> {
+    return vec3(0.0);
+}
+#endif
+@fragment
+fn fragment(
+    in: VertexOutput,
+    @builtin(front_facing) is_front: bool,
+#ifdef MULTISAMPLED
+    @builtin(sample_index) sample_index: u32,
+#endif
+) -> FragmentOutput {
+
+    // Lookup the tag for the given mesh
+    let mesh_tag = mesh_functions::get_tag(in.instance_index);
+
+#ifdef INVERTED_SCALE
+    let is_front_m = !is_front;
+#else
+    let is_front_m = is_front;
+#endif
+
+    var cap_brightness: f32 = 0.0;
+    var dither_opacity: f32 = 1.0;
+    if (mesh_tag & (#{NO_DITHERING_MESH_TAG} | #{OUTLINE_RED_MESH_TAG})) == 0 {
+        let dither = discard_dither(in.position.xy, in.world_position.xyz, view.user_value, (mesh_tag & #{CONE_ONLY_DITHER_MESH_TAG}) == 0, scene_bounds.base_opacity, mesh_functions::get_world_from_local(in.instance_index)[3].xyz, (scene_bounds.flags & SCENE_DITHER_CAPSULE) != 0u);
+        cap_brightness = dither.transparency;
+        dither_opacity = dither.opacity;
+    }
+
+    // generate a PbrInput struct from the StandardMaterial bindings
+    var pbr_input = pbr_input_from_standard_material(in, is_front_m);
+    var out: FragmentOutput;
+
+#ifndef MULTISAMPLED
+    let sample_index = 0u;
+#endif
+
+    // apply emmissive multiplier
+    // dcl uses default 2.0 intensity. we also override bevy_pbr base emissive rules so that 
+    // - if emissive texture is supplied but color is not, we use the texture (bevy by default multiplies emissive color and emissive texture, so color must be white to pass the texture through)
+    // - if emissive color (== gltf emissive_intensity == dcl pbr emissive_color * emissive_intensity) is supplied but emissive texture is not, we use emissive color * base color
+    // emissive color | emissive texture  | result
+    // 0                no                  0
+    // x                no                  x * base color
+    // 0                t                   2 * t
+    // x != 0           t                   x * t
+    var emissive: vec3<f32> = material.emissive.rgb;
+#ifdef VERTEX_UVS
+    if ((material.flags & STANDARD_MATERIAL_FLAGS_EMISSIVE_TEXTURE_BIT) != 0u) {
+        if dot(emissive, emissive) == 0.0 {
+            emissive = vec3(2.0);
+        }
+        var bias: SampleBias;
+        bias.mip_bias = view.mip_bias;
+        emissive = vec3<f32>(emissive * textureSampleBias(
+            emissive_texture, 
+            emissive_sampler,
+#ifdef STANDARD_MATERIAL_EMISSIVE_UV_B
+#ifdef VERTEX_UVS_B
+            (material.uv_transform * vec3(in.uv_b, 1.0)).xy,
+#else
+            (material.uv_transform * vec3(in.uv, 1.0)).xy,
+#endif
+#else
+            (material.uv_transform * vec3(in.uv, 1.0)).xy,
+#endif
+            bias.mip_bias,
+        ).rgb);
+    } else {
+        // emissive is set, no emissive texture, use base color texture as emissive texture (only if present)
+        if ((material.flags & STANDARD_MATERIAL_FLAGS_BASE_COLOR_TEXTURE_BIT) != 0u) {
+            emissive = emissive * pbr_input.material.base_color.rgb;
+        }
+    }
+#endif
+    // scale up for lumens, use 0 for auto-exposure weight (alpha channel)
+    pbr_input.material.emissive = vec4(emissive * 10.0, 0.0);
+
+    let world_position = pbr_input.world_position.xyz;
+    // check bounds
+    let outside_amt = scene_outside_amount(world_position);
+
+    var noise = 0.05;
+    var should_discard = false;
+    if outside_amt > 0.00 {
+        if outside_amt < scene_bounds.distance {
+            noise = simplex_noise_3d(world_position * 2.0 + globals.time * vec3(0.2, 0.16, 0.24)) * 0.5 + 0.55;
+            if noise < (outside_amt - 0.125) / 2.0 {
+                should_discard = true;
+            }
+        } else if outside_amt > 0.05 {
+            should_discard = true;
+        }
+    }
+
+    if should_discard && ((mesh_tag & #{SHOW_OUTSIDE_BOUNDS_MESH_TAG}) == 0) {
+        discard;
+    }
+
+    // alpha discard
+    pbr_input.material.base_color = alpha_discard(pbr_input.material, pbr_input.material.base_color);
+
+    // apply lighting
+    if (pbr_input.material.flags & bevy_pbr::pbr_types::STANDARD_MATERIAL_FLAGS_UNLIT_BIT) == 0u {
+        if (mesh_tag & #{TOON_MESH_TAG}) != 0u {
+            // avatars: cel shading (own light model; uses the cast shadow only
+            // to pick the lit-vs-shadowed band pair)
+            out.color = toon_lighting(pbr_input);
+        } else {
+            out.color = apply_pbr_lighting(pbr_input);
+        }
+    } else {
+        // invert tonemapping for unlit materials
+        out.color = approximate_inverse_tone_mapping(pbr_input.material.base_color, view.color_grading); 
+    }
+
+    if should_discard {
+        out.color.a = out.color.a * 0.5;
+        out.color.r = 4.0;
+    } else {
+        if noise < outside_amt / 2.0 {
+            out.color = mix(out.color, vec4(10.0, 1.0, 0.0, 1.0), (outside_amt / 2.0 - noise) / 0.125);
+        }
+    }
+
+    if (mesh_tag & #{OUTLINE_MESH_TAGS}) != 0 {
+        let outline_color = vec3(
+            f32((mesh_tag & #{OUTLINE_RED_MESH_TAG}) != 0),
+            f32((mesh_tag & #{OUTLINE_GREEN_MESH_TAG}) != 0),
+            f32((mesh_tag & #{OUTLINE_BLUE_MESH_TAG}) != 0),
+        );
+        let black = (mesh_tag & (#{OUTLINE_MESH_TAGS} & ~#{OUTLINE_BLACK_MESH_TAG})) == 0;
+        out.color = apply_outline(
+            in.position,
+            out.color, 
+            outline_color,
+            !black,
+            sample_index,
+            dither_opacity,
+        );
+    }
+
+    // apply in-shader post processing (fog, alpha-premultiply, and also tonemapping, debanding if the camera is non-hdr)
+    // note this does not include fullscreen postprocessing effects like bloom.
+    out.color = main_pass_post_lighting_processing(pbr_input, out.color);
+
+    let cap_factor = max(max(out.color.r, out.color.g), max(out.color.b, 1.0));
+    out.color = mix(out.color, vec4<f32>(out.color.rgb / cap_factor, out.color.a), saturate(cap_brightness * 2.0));
+
+    if out.color.a < 0.001 {
+        // avoid writing to the depth buffer for alpha-blend materials with low alpha
+        discard;
+    }
+
+#ifdef TRANSPARENT_FOCUS_OUTPUT
+    // accumulate alpha-weighted view depth + coverage for depth of field
+    out.focus = vec4(
+        -view_transformations::depth_ndc_to_view_z(in.position.z),
+        1.0,
+        0.0,
+        out.color.a,
+    );
+#endif
+
+    return out;
+}

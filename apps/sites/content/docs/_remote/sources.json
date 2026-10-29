@@ -1,0 +1,211 @@
+{
+ "https://github.com/decentraland/docs-creator/blob/main/images/media/daylight-settings.png": {
+  "error": "HTTP 404"
+ },
+ "https://github.com/decentraland/documentation/blob/main/static/images/DAO%20Organizational%20Chart/DAO%20Committee.png?raw=true": {
+  "file": "_remote/063ee68d732926eeb99173e9.webp",
+  "sha256": "063ee68d732926eeb99173e9299808aaf503e96bb15fe42e4a4fc6eeaf2fe679",
+  "bytes": 42440,
+  "from": "mirror:documentation/static/images/DAO Organizational Chart/DAO Committee.png",
+  "replaced": true
+ },
+ "https://github.com/decentraland/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Facilitation%20last.png?raw=true": {
+  "file": "_remote/058f90f95aed65ab975d706d.webp",
+  "sha256": "058f90f95aed65ab975d706dcca336697f24a35b7a66c96a57e995d7f4914857",
+  "bytes": 77430,
+  "from": "mirror:documentation/static/images/DAO Organizational Chart/Facilitation last.png",
+  "replaced": true
+ },
+ "https://github.com/decentraland/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Governance%20Squad.png?raw=true": {
+  "file": "_remote/f6663bc09324c4879744664c.webp",
+  "sha256": "f6663bc09324c4879744664ce0ff4a0667aa5e27be38a0abcc86b09467028eef",
+  "bytes": 65640,
+  "from": "mirror:documentation/static/images/DAO Organizational Chart/Governance Squad.png",
+  "replaced": true
+ },
+ "https://github.com/decentraland/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Grant%20Support.png?raw=true": {
+  "file": "_remote/28cc4e3f4a37dfd9819f791d.webp",
+  "sha256": "28cc4e3f4a37dfd9819f791d68c439c9f281eb7a009049cadd94b41587bd047d",
+  "bytes": 58406,
+  "from": "mirror:documentation/static/images/DAO Organizational Chart/Grant Support.png",
+  "replaced": true
+ },
+ "https://github.com/decentraland/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Security%20Advisory%20Board.png?raw=true": {
+  "file": "_remote/199ca9caded989d293a0f36d.webp",
+  "sha256": "199ca9caded989d293a0f36d5e03e5558c1e0ef7f4608f72159f8c3f1348e610",
+  "bytes": 51814,
+  "from": "mirror:documentation/static/images/DAO Organizational Chart/Security Advisory Board.png",
+  "replaced": true
+ },
+ "https://github.com/decentraland/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Wearables%20Curation%20Last.png?raw=true": {
+  "file": "_remote/dc4a02e026b26163106c05ac.webp",
+  "sha256": "dc4a02e026b26163106c05ac57e21cd5e0b0ca368d6abd6828c9df361b9e3629",
+  "bytes": 122636,
+  "from": "mirror:documentation/static/images/DAO Organizational Chart/Wearables Curation Last.png",
+  "replaced": true
+ },
+ "https://github.com/lordlikedao/documentation/blob/main/static/images/DAO%20Organizational%20Chart/Revocation.png?raw=true": {
+  "error": "HTTP 404"
+ },
+ "https://i.vimeocdn.com/video/1803452887-82f74713a8f16df8c3618654f539cfddf78cb1f9dfac951d99d340004ac26ad6-d_590x332": {
+  "file": "_remote/26ae9b1db5276e225497fc37.webp",
+  "sha256": "26ae9b1db5276e225497fc37765a59bb803bdd66c38bcc482f8bee445466c7b0",
+  "bytes": 25449,
+  "from": "https://i.vimeocdn.com/video/1803452887-82f74713a8f16df8c3618654f539cfddf78cb1f9dfac951d99d340004ac26ad6-d_590x332",
+  "replaced": true
+ },
+ "https://i.vimeocdn.com/video/1803464351-0e8bf5158cb87707397a547948f99278b1af45d7669622887a43c3bd9340c064-d_590x332": {
+  "file": "_remote/5a12aec98b02dff46c6ea7a5.webp",
+  "sha256": "5a12aec98b02dff46c6ea7a5822fe8b0f15147162ce200a2e8551aadeca3394a",
+  "bytes": 25381,
+  "from": "https://i.vimeocdn.com/video/1803464351-0e8bf5158cb87707397a547948f99278b1af45d7669622887a43c3bd9340c064-d_590x332",
+  "replaced": true
+ },
+ "https://i.ytimg.com/vi/Y7M-B6xnaEM/maxresdefault.jpg": {
+  "file": "_remote/b25b76a5b0e4c1d0cec817e8.webp",
+  "sha256": "b25b76a5b0e4c1d0cec817e8cc66677cc292448489bd897457330a539000a694",
+  "bytes": 132315,
+  "from": "https://i.ytimg.com/vi/Y7M-B6xnaEM/maxresdefault.jpg",
+  "replaced": true
+ },
+ "https://i.ytimg.com/vi/scPSP_U858k/maxresdefault.jpg": {
+  "file": "_remote/2b79a21fed4d0ba2abc23bfa.webp",
+  "sha256": "2b79a21fed4d0ba2abc23bfaca1cce355601507011982da47d096271a863df98",
+  "bytes": 117850,
+  "from": "https://i.ytimg.com/vi/scPSP_U858k/maxresdefault.jpg",
+  "replaced": true
+ },
+ "https://img.youtube.com/vi/-iWslh4uQIk/maxresdefault.jpg": {
+  "file": "_remote/629c65271f6a14386ffd42f7.webp",
+  "sha256": "629c65271f6a14386ffd42f7503e3260ef31d75495224d239d225530a775af67",
+  "bytes": 121616,
+  "from": "https://img.youtube.com/vi/-iWslh4uQIk/maxresdefault.jpg",
+  "replaced": true
+ },
+ "https://img.youtube.com/vi/YxAB4bujO_w/maxresdefault.jpg": {
+  "file": "_remote/eb23ea78b0ffa9a0778e60d6.webp",
+  "sha256": "eb23ea78b0ffa9a0778e60d6b0bdcaeaa6a1783e0672172a99c7074a02a21e22",
+  "bytes": 125545,
+  "from": "https://img.youtube.com/vi/YxAB4bujO_w/maxresdefault.jpg",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/IK_FK_rig_1.0.gif": {
+  "file": "_remote/b7bd249527c142b1c626e967.webp",
+  "sha256": "b7bd249527c142b1c626e967aa28675b821f56353594d225f24123da9ee20a1b",
+  "bytes": 5006292,
+  "from": "mirror:documentation-creators/images/emotes/IK_FK_rig_1.0.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/IsoRot_Arms_rig_1.0.gif": {
+  "file": "_remote/517ca0821f2dd011b2c186f1.webp",
+  "sha256": "517ca0821f2dd011b2c186f14b60e1dd703ce955a017990715785b28454c5904",
+  "bytes": 10134860,
+  "from": "mirror:documentation-creators/images/emotes/IsoRot_Arms_rig_1.0.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/IsoRot_Head_rig_1.0.gif": {
+  "file": "_remote/4c87d322918f5fad671253d0.webp",
+  "sha256": "4c87d322918f5fad671253d0603b2205675747ff8b4a02be0f3623cd5bbcfd52",
+  "bytes": 13233595,
+  "from": "mirror:documentation-creators/images/emotes/IsoRot_Head_rig_1.0.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/IsoRot_Head_rig_1.0.png": {
+  "file": "_remote/4afc891b59733db2550998de.webp",
+  "sha256": "4afc891b59733db2550998deb30ac0d4a901a8a6ac52abed6e6a9dade12007ad",
+  "bytes": 434368,
+  "from": "mirror:documentation-creators/images/emotes/IsoRot_Head_rig_1.0.png",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/IsoRot_rig_1.0.png": {
+  "file": "_remote/627c80a7f1680d2c4d02c6d4.webp",
+  "sha256": "627c80a7f1680d2c4d02c6d4ed58e9ded43dac357e46b61b2ee418b4057ff169",
+  "bytes": 436197,
+  "from": "mirror:documentation-creators/images/emotes/IsoRot_rig_1.0.png",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/changing_pose_mode.gif": {
+  "file": "_remote/2d50e8d239676da8c48b0736.webp",
+  "sha256": "2d50e8d239676da8c48b07360beabc369b8391090a4896966b92be2c26356b5f",
+  "bytes": 371509,
+  "from": "mirror:documentation-creators/images/emotes/changing_pose_mode.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/custom_attributes.gif": {
+  "file": "_remote/a66e6f888ab4d3128c2395ee.webp",
+  "sha256": "a66e6f888ab4d3128c2395eed2c92f1069eec0afc70f9d694799a241e4baf3cc",
+  "bytes": 2526526,
+  "from": "mirror:documentation-creators/images/emotes/custom_attributes.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/foot.gif": {
+  "file": "_remote/aa913f0950d1fe1e5d55b393.webp",
+  "sha256": "aa913f0950d1fe1e5d55b393790241b6135b498e66a5fdbc7e48f1969298c93d",
+  "bytes": 15494877,
+  "from": "mirror:documentation-creators/images/emotes/foot.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/foot_roll.gif": {
+  "file": "_remote/28fab31b129fde23a5c5f90d.webp",
+  "sha256": "28fab31b129fde23a5c5f90d813c6a809b3834750273e511937496d3f96af2e7",
+  "bytes": 23463000,
+  "from": "mirror:documentation-creators/images/emotes/foot_roll.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/framerate.png": {
+  "file": "_remote/53650a16525c3ac92e8eef4c.webp",
+  "sha256": "53650a16525c3ac92e8eef4c9c30856da347722134b838e979d95ef0afe81e25",
+  "bytes": 370108,
+  "from": "mirror:documentation-creators/images/emotes/framerate.png",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/head_pivot_rig_1.0.gif": {
+  "file": "_remote/19b528a3a24a1ffcdeaf8d5f.webp",
+  "sha256": "19b528a3a24a1ffcdeaf8d5f60fa58742b7b9e78666ef26910368e44f4a9be65",
+  "bytes": 2331498,
+  "from": "mirror:documentation-creators/images/emotes/head_pivot_rig_1.0.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/head_pivot_rig_2.0.gif": {
+  "file": "_remote/95fc62ca479c3f614187167d.webp",
+  "sha256": "95fc62ca479c3f614187167db57eb7f5179d146125d52fcd36eec8dc8d2ce907",
+  "bytes": 2222760,
+  "from": "mirror:documentation-creators/images/emotes/head_pivot_rig_2.0.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/ik_fk_rig_1.0.png": {
+  "file": "_remote/efb0c0633809e34cc3499adb.webp",
+  "sha256": "efb0c0633809e34cc3499adba1edf1ab9bca6d256fd4d7336b5b5ce2f9b1684d",
+  "bytes": 440441,
+  "from": "mirror:documentation-creators/images/emotes/ik_fk_rig_1.0.png",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/keyframe_custom_properties.gif": {
+  "file": "_remote/296a3a5045569233102e0836.webp",
+  "sha256": "296a3a5045569233102e083676651d98184fc885b07f8de394d08061a67e815b",
+  "bytes": 1092821,
+  "from": "mirror:documentation-creators/images/emotes/keyframe_custom_properties.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/locked_transform.png": {
+  "file": "_remote/52bbc9e002370ab201046aeb.webp",
+  "sha256": "52bbc9e002370ab201046aeb976c83ce8c609d3804cf017f99acbf4b4ecb1192",
+  "bytes": 449689,
+  "from": "mirror:documentation-creators/images/emotes/locked_transform.png",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/toe_tip.gif": {
+  "file": "_remote/68e7725b2019cbf56dd0f028.webp",
+  "sha256": "68e7725b2019cbf56dd0f02810e77d58be2603df89d55a72fedadbcf5acafc5e",
+  "bytes": 9100024,
+  "from": "mirror:documentation-creators/images/emotes/toe_tip.gif",
+  "replaced": true
+ },
+ "https://raw.githubusercontent.com/decentraland/documentation-creators/main/images/emotes/toes.gif": {
+  "file": "_remote/9c173333785f1d51960159db.webp",
+  "sha256": "9c173333785f1d51960159dbd51264e6ba84ed5d3dd4d8835e9e7ff95e3992bb",
+  "bytes": 6996148,
+  "from": "mirror:documentation-creators/images/emotes/toes.gif",
+  "replaced": true
+ }
+}

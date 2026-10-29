@@ -1,0 +1,30 @@
+{
+  "description": "GET /v1/community-voice-chats/active signed: the live list of communities with an active voice chat. Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://social-api.decentraland.org/v1/community-voice-chats/active -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/community-voice-chats/active",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/community-voice-chats/active:1790364259382:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x997ebd8e4b67ce2cc568988b65f4c02fea2a0e5a8c6b7dec69d9dc300fc7eb5d57e0c7fcf4b48965fc720d980324cef132fdc2aa47bd49a3c6967fb8d7dd47cf1c\"}",
+      "x-identity-timestamp": "1790364259382",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "activeChats": [],
+        "total": 0
+      }
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/community-voice-chats/active",
+  "captured_at": "2026-09-25T19:24:19Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,23 @@
+{
+  "description": "GET /v1/users/{address}/privacy-settings for a valid address with no settings row: the absent-row default. Captured GET https://rpc-social-service-ea.decentraland.org/v1/users/0x0000000000000000000000000000000000000001/privacy-settings -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/users/0x0000000000000000000000000000000000000001/privacy-settings",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*"
+    },
+    "body_json": {
+      "private_messages_privacy": "all"
+    }
+  },
+  "captured_from": "https://rpc-social-service-ea.decentraland.org/v1/users/0x0000000000000000000000000000000000000001/privacy-settings",
+  "captured_at": "2026-10-26T17:36:52Z",
+  "volatile_paths": []
+}

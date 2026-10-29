@@ -1,0 +1,29 @@
+/* from: shop@2d3bf62:app/src/components/LoadMore/LoadMore.styles.ts (Root, Trigger),
+         app/src/components/Button/Button.styles.ts (base + `ghost`: white, #a09ba8 line, soft-black label) */
+.shop-loadmore {
+  display: flex;
+  justify-content: center;
+  padding: 28px 0 8px;
+}
+.shop-loadmore__btn {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 160px;
+  padding: 12px 22px;
+  border: 1px solid #a09ba8;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #161518;
+  font-family: var(--shop-sans, "Inter", system-ui, sans-serif);
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 19px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.shop-loadmore__btn:hover:not(:disabled) { background: #ecebed; }
+.shop-loadmore__btn:disabled { opacity: 0.55; cursor: default; }
+.shop-loadmore__btn:focus-visible { outline: 2px solid #ff2d55; outline-offset: 2px; }

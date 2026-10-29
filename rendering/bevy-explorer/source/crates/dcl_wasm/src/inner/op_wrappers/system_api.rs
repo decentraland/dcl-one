@@ -1,0 +1,689 @@
+use crate::{serde_parse, serde_result, WasmError, WorkerContext};
+use js_sys;
+use serde::Serialize;
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
+pub async fn op_check_for_update(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_check_for_update(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_motd(state: &WorkerContext) -> Result<String, WasmError> {
+    dcl_js::system_api::op_motd(state.rc())
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub fn op_get_current_login(state: &WorkerContext) -> Option<String> {
+    dcl_js::system_api::op_get_current_login(&*state.state.borrow())
+}
+
+#[wasm_bindgen]
+pub async fn op_get_previous_login(state: &WorkerContext) -> Result<Option<String>, WasmError> {
+    dcl_js::system_api::op_get_previous_login(state.rc())
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_login_previous(state: &WorkerContext) -> Result<(), WasmError> {
+    dcl_js::system_api::op_login_previous(state.rc())
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_login_new_code(state: &WorkerContext) -> Result<Option<String>, WasmError> {
+    dcl_js::system_api::op_login_new_code(state.rc())
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_login_new_success(state: &WorkerContext) -> Result<(), WasmError> {
+    dcl_js::system_api::op_login_new_success(state.rc())
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub fn op_login_guest(state: &WorkerContext) {
+    dcl_js::system_api::op_login_guest(&mut *state.state.borrow_mut())
+}
+
+#[wasm_bindgen]
+pub fn op_login_cancel(state: &WorkerContext) {
+    dcl_js::system_api::op_login_cancel(&mut *state.state.borrow_mut())
+}
+
+#[wasm_bindgen]
+pub fn op_logout(state: &WorkerContext) {
+    dcl_js::system_api::op_logout(&mut *state.state.borrow_mut())
+}
+
+#[wasm_bindgen]
+pub async fn op_settings(state: &WorkerContext) -> Result<js_sys::Array, WasmError> {
+    dcl_js::system_api::op_settings(state.rc())
+        .await
+        .map(|r| {
+            r.into_iter()
+                .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
+                .collect()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_set_setting(
+    state: &WorkerContext,
+    name: String,
+    val: f32,
+) -> Result<(), WasmError> {
+    dcl_js::system_api::op_set_setting(state.rc(), name, val)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_kernel_fetch_headers(
+    state: &WorkerContext,
+    uri: String,
+    method: Option<String>,
+    meta: Option<String>,
+) -> Result<js_sys::Array, WasmError> {
+    dcl_js::system_api::op_kernel_fetch_headers(state.rc(), uri, method, meta)
+        .await
+        .map(|r| {
+            r.into_iter()
+                .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
+                .collect()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_set_avatar(state: &WorkerContext, avatar: JsValue) -> Result<u32, WasmError> {
+    // map_err rather than serde_parse!'s unwrap: with deny_unknown_fields a caller mistake
+    // must surface as a catchable JS error, not a worker panic.
+    let avatar = serde_wasm_bindgen::from_value(avatar)
+        .map_err(|e| WasmError::from(anyhow::anyhow!("setAvatar: {e}")))?;
+    dcl_js::system_api::op_set_avatar(state.rc(), avatar)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_native_input(state: &WorkerContext) -> String {
+    dcl_js::system_api::op_native_input(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_get_bindings(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_bindings(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_set_bindings(state: &WorkerContext, bindings: JsValue) -> Result<(), WasmError> {
+    serde_parse!(bindings);
+    dcl_js::system_api::op_set_bindings(state.rc(), bindings)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub fn op_set_ui_focus(
+    state: &WorkerContext,
+    ui: bool,
+    text: bool,
+    scroll: bool,
+    covered: bool,
+    menu: JsValue,
+) -> Result<(), WasmError> {
+    serde_parse!(menu);
+    dcl_js::system_api::op_set_ui_focus(state.rc(), ui, text, scroll, covered, menu)
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_console_command(
+    state: &WorkerContext,
+    cmd: String,
+    args: Vec<String>,
+) -> Result<String, WasmError> {
+    dcl_js::system_api::op_console_command(state.rc(), cmd, args)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_live_scene_info(state: &WorkerContext) -> Result<js_sys::Array, WasmError> {
+    dcl_js::system_api::op_live_scene_info(state.rc())
+        .await
+        .map(|r| {
+            r.into_iter()
+                .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
+                .collect()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_home_scene(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_home_scene(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_welcome(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_welcome(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_accept_terms(state: &WorkerContext) -> Result<(), WasmError> {
+    dcl_js::system_api::op_accept_terms(state.rc())
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_satellite_view(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_satellite_view(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub fn op_set_home_scene(state: &WorkerContext, realm: String, parcel: JsValue) {
+    serde_parse!(parcel);
+    dcl_js::system_api::op_set_home_scene(state.rc(), realm, parcel);
+}
+
+#[wasm_bindgen]
+pub async fn op_get_system_action_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_system_action_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_system_action_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_system_action_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_chat_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_chat_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_chat_stream(state: &WorkerContext, rid: u32) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_chat_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_send_chat(state: &WorkerContext, message: String, channel: String) {
+    dcl_js::system_api::op_send_chat(state.rc(), message, channel)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_chat_reaction_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_chat_reaction_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_chat_reaction_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_chat_reaction_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_send_chat_reaction(
+    state: &WorkerContext,
+    channel: String,
+    message_id: String,
+    emoji: String,
+    remove: bool,
+) {
+    dcl_js::system_api::op_send_chat_reaction(state.rc(), channel, message_id, emoji, remove)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_user_profile(
+    state: &WorkerContext,
+    address: String,
+) -> Result<JsValue, WasmError> {
+    let profile = dcl_js::system_api::op_get_user_profile(state.rc(), address).await;
+    // use a specific serializer to convert to object here, as wasm_bindgen's conversion otherwise produces a Map
+    profile
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub fn op_quit(state: &WorkerContext) {
+    dcl_js::system_api::op_quit(state.rc());
+}
+
+#[wasm_bindgen]
+pub async fn op_get_permission_request_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_permission_request_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_permission_request_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_permission_request_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_permission_used_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_permission_used_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_permission_used_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_permission_used_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_set_single_permission(state: &WorkerContext, id: usize, allow: bool) {
+    dcl_js::system_api::op_set_single_permission(state.rc(), id, allow);
+}
+
+#[wasm_bindgen]
+pub fn op_set_permanent_permission(
+    state: &WorkerContext,
+    level: &str,
+    value: Option<String>,
+    permission_type: JsValue,
+    allow: JsValue,
+) -> Result<(), WasmError> {
+    serde_parse!(permission_type);
+    serde_parse!(allow);
+    dcl_js::system_api::op_set_permanent_permission(
+        state.rc(),
+        level,
+        value,
+        permission_type,
+        allow,
+    )
+    .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_permanent_permissions(
+    state: &WorkerContext,
+    level: &str,
+    value: Option<String>,
+) -> Result<js_sys::Array, WasmError> {
+    dcl_js::system_api::op_get_permanent_permissions(state.rc(), level, value)
+        .await
+        .map(|r| {
+            r.into_iter()
+                .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
+                .collect()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub fn op_get_permission_types(_: &WorkerContext) -> js_sys::Array {
+    dcl_js::system_api::op_get_permission_types()
+        .into_iter()
+        .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
+        .collect()
+}
+
+#[wasm_bindgen]
+pub fn op_set_interactable_area(
+    state: &WorkerContext,
+    left: f32,
+    top: f32,
+    right: f32,
+    bottom: f32,
+) {
+    dcl_js::system_api::op_set_interactable_area(state.rc(), left, top, right, bottom);
+}
+
+#[wasm_bindgen]
+pub async fn op_get_mic_state(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_mic_state(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_set_mic_enabled(state: &WorkerContext, enabled: bool) {
+    dcl_js::system_api::op_set_mic_enabled(state.rc(), enabled).await;
+}
+
+#[wasm_bindgen]
+pub async fn op_get_voice_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_voice_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_voice_stream(state: &WorkerContext, rid: u32) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_voice_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_hover_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_hover_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_hover_stream(state: &WorkerContext, rid: u32) -> Result<JsValue, WasmError> {
+    let hover_event = dcl_js::system_api::op_read_hover_stream(state.rc(), rid).await;
+    // use a specific serializer to convert to object here, as wasm_bindgen's conversion otherwise produces a Map
+    hover_event
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_world_access_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_world_access_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_world_access_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    dcl_js::system_api::op_read_world_access_stream(state.rc(), rid)
+        .await
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub fn op_set_world_password(state: &WorkerContext, password: Option<String>) {
+    dcl_js::system_api::op_set_world_password(state.rc(), password);
+}
+
+#[wasm_bindgen]
+pub async fn op_get_proximity_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_proximity_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_proximity_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    let proximity_event = dcl_js::system_api::op_read_proximity_stream(state.rc(), rid).await;
+    proximity_event
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_profile_changed_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_profile_changed_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_profile_changed_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    let event = dcl_js::system_api::op_read_profile_changed_stream(state.rc(), rid).await;
+    event
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_scene_loading_ui_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_scene_loading_ui_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_scene_loading_ui_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    // json_compatible: a closed stream must end as null, not undefined, for the scene's loop
+    dcl_js::system_api::op_read_scene_loading_ui_stream(state.rc(), rid)
+        .await
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_analytics_event_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_analytics_event_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_analytics_event_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    // json_compatible: `properties` is a json object, which the default serializer would hand the
+    // scene as a Map, and a closed stream must end as null, not undefined
+    dcl_js::system_api::op_read_analytics_event_stream(state.rc(), rid)
+        .await
+        .map(|v| {
+            v.serialize(&serde_wasm_bindgen::Serializer::json_compatible())
+                .unwrap()
+        })
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_avatar_modifiers(state: &WorkerContext) -> Result<js_sys::Array, WasmError> {
+    dcl_js::system_api::op_get_avatar_modifiers(state.rc())
+        .await
+        .map(|r| {
+            r.into_iter()
+                .map(|v| serde_wasm_bindgen::to_value(&v).unwrap())
+                .collect()
+        })
+        .map_err(WasmError::from)
+}
+
+// Social / Friends
+
+#[wasm_bindgen]
+pub async fn op_get_friendship_event_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_friendship_event_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_friendship_event_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_friendship_event_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_friends(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_friends(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_mutual_friends(
+    state: &WorkerContext,
+    address: String,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_mutual_friends(state.rc(), address).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_sent_friend_requests(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_sent_friend_requests(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_received_friend_requests(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_received_friend_requests(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_social_initialized(state: &WorkerContext) -> Result<bool, WasmError> {
+    dcl_js::system_api::op_get_social_initialized(state.rc())
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_online_friends(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_online_friends(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_friend_connectivity_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_friend_connectivity_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_friend_connectivity_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_friend_connectivity_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_send_friend_request(
+    state: &WorkerContext,
+    address: String,
+    message: Option<String>,
+) -> Result<(), WasmError> {
+    dcl_js::system_api::op_send_friend_request(state.rc(), address, message)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_accept_friend_request(
+    state: &WorkerContext,
+    address: String,
+) -> Result<(), WasmError> {
+    dcl_js::system_api::op_accept_friend_request(state.rc(), address)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_reject_friend_request(
+    state: &WorkerContext,
+    address: String,
+) -> Result<(), WasmError> {
+    dcl_js::system_api::op_reject_friend_request(state.rc(), address)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_cancel_friend_request(
+    state: &WorkerContext,
+    address: String,
+) -> Result<(), WasmError> {
+    dcl_js::system_api::op_cancel_friend_request(state.rc(), address)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_delete_friend(state: &WorkerContext, address: String) -> Result<(), WasmError> {
+    dcl_js::system_api::op_delete_friend(state.rc(), address)
+        .await
+        .map_err(WasmError::from)
+}
+
+// Social / Blocking
+
+#[wasm_bindgen]
+pub async fn op_block_user(state: &WorkerContext, address: String) -> Result<(), WasmError> {
+    dcl_js::system_api::op_block_user(state.rc(), address)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_unblock_user(state: &WorkerContext, address: String) -> Result<(), WasmError> {
+    dcl_js::system_api::op_unblock_user(state.rc(), address)
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_blocked_users(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_blocked_users(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_blocking_status(state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_blocking_status(state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub fn op_get_dm_user_state_stream(state: &WorkerContext, address: String) -> u32 {
+    dcl_js::system_api::op_get_dm_user_state_stream(state.rc(), address)
+}
+
+#[wasm_bindgen]
+pub async fn op_read_dm_user_state_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_dm_user_state_stream(state.rc(), rid).await)
+}
+
+#[wasm_bindgen]
+pub fn op_close_dm_user_state_stream(state: &WorkerContext, rid: u32) {
+    dcl_js::system_api::op_close_dm_user_state_stream(state.rc(), rid)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_dm_history(
+    state: &WorkerContext,
+    address: String,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_get_dm_history(state.rc(), address).await)
+}
+
+#[wasm_bindgen]
+pub fn op_delete_dm_history(state: &WorkerContext, address: String) {
+    dcl_js::system_api::op_delete_dm_history(state.rc(), address)
+}
+
+#[wasm_bindgen]
+pub async fn op_get_block_update_stream(state: &WorkerContext) -> u32 {
+    dcl_js::system_api::op_get_block_update_stream(state.rc()).await
+}
+
+#[wasm_bindgen]
+pub async fn op_read_block_update_stream(
+    state: &WorkerContext,
+    rid: u32,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::system_api::op_read_block_update_stream(state.rc(), rid).await)
+}

@@ -1,0 +1,117 @@
+.cm {
+  padding: var(--ui-page-pad);
+  color: var(--text);
+  max-width: none;
+  margin: 0 auto;
+}
+
+.cm__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: var(--ui-gap);
+  margin-bottom: 32px;
+}
+.cm__card { padding: 16px; }
+.cm__cardlabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-45);
+  margin: 0 0 8px;
+}
+.cm__cardlabelrow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+.cm__cardlabelrow .cm__cardlabel {
+  margin: 0;
+}
+.cm__cardvalue {
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1;
+}
+.cm__cardnote {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--ink-45);
+}
+
+.cm__sim {
+  margin: 20px 0 0;
+  font-size: 12px;
+  color: var(--ink-45);
+}
+
+.cm__empty {
+  --es-pad: 56px 24px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+}
+.cm__empty code {
+  padding: 1px 6px;
+  border-radius: var(--r-control);
+  background: var(--fill-2);
+  color: var(--ink-85);
+  font-size: 12px;
+}
+
+@media (max-width: 760px) {
+  .cm__cards {
+    grid-template-columns: 1fr;
+  }
+  .cm {
+    padding: var(--ui-page-pad);
+  }
+}
+
+.cm__scenes {
+  margin-top: 32px;
+}
+.cm__scenetable {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  min-width: 560px;
+  font-size: 14px;
+}
+.cm__scenetable th,
+.cm__scenetable td {
+  padding: 10px 14px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+}
+.cm__scenetable thead th {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-45);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.cm__scenetable tbody tr:last-child td {
+  border-bottom: none;
+}
+.cm__scenetable a {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.cm__scenetable .cm__num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.cm__loc {
+  color: var(--ink-45);
+  font-size: 13px;
+}
+.cm__na {
+  color: var(--ink-45);
+  font-size: 13px;
+}
+
+.cm__scroll { overflow-x: auto; }
+.cm__scenes > .ui-section-card__body { padding: 0; }
+.cm__loaderror { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 24px; padding: 16px; border: 1px solid var(--error); border-radius: var(--ui-card-radius); background: var(--ui-panel); color: var(--ui-text); }

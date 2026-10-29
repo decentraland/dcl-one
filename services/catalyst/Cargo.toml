@@ -1,0 +1,235 @@
+[package]
+name = "catalyst"
+version.workspace = true
+edition = "2024"
+description = "Decentraland Catalyst node: one application package"
+
+[lib]
+name = "catalyst"
+path = "src/lib.rs"
+
+[[bin]]
+name = "catalyst"
+path = "src/main.rs"
+
+# The application crate plus the leaf crates it re-exports (src/lib.rs): http, auth,
+# fed, db (with schema_migrate) and jobs depend on nothing else in the application, so
+# an edit elsewhere never recompiles them (AGENTS.md, METRICS.md "Dev loop").
+[workspace]
+# The root package is a member by being the root; listing "." as well would make
+# every path below it an explicit member and void `exclude`. The creator SDK app
+# (dcl-scene-cli and its dcl-* support crates) is also a workspace member, but the node never links:
+# select it with -p, not --workspace beside the node, since dcl-scene-authoring
+# turns on serde_json's preserve_order and would reorder the node's JSON in that build.
+members = [
+    "builder",
+    "camera-reel",
+    "chain-index",
+    "comms",
+    "config",
+    "content",
+    "db",
+    "explore",
+    "fed",
+    "jobs",
+    "land-authz",
+    "price",
+    "shared",
+    "shop",
+    "social",
+    "storage",
+    "testing",
+    "worlds",
+    "../../library/dcl-*",
+    "../../apps/dcl-scene-cli",
+]
+exclude = ["../../library/vendor/rusty_enet"]
+# The upstream Explorer, vendored ENet and asset converter build independently.
+
+[workspace.package]
+version = "0.1.0"
+
+[workspace.dependencies]
+# The shared crates in ../../library, named once here so members write
+# `dcl-auth.workspace = true`. dcl-http's database answers (`db`) stay opt-in so
+# dcl-scene-cli links no database driver; the node's crates turn them on.
+dcl-auth = { path = "../../library/dcl-auth" }
+dcl-http = { path = "../../library/dcl-http", default-features = false }
+dcl-livekit-token = { path = "../../library/dcl-livekit-token" }
+dcl-preview-tunnel = { path = "../../library/dcl-preview-tunnel" }
+dcl-preview-tunnel-protocol = { path = "../../library/dcl-preview-tunnel-protocol" }
+dcl-scene-authoring = { path = "../../library/dcl-scene-authoring" }
+dcl-scene-cli = { path = "../../apps/dcl-scene-cli" }
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["multipart", "ws"] }
+tower-http = { version = "0.7", features = ["cors", "trace", "timeout", "fs", "normalize-path"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "postgres", "json", "chrono", "macros", "uuid"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive", "env"] }
+futures = "0.3"
+async-trait = "0.1"
+bytes = "1"
+uuid = { version = "1", features = ["serde", "v4", "v5"] }
+tokio-util = { version = "0.7", features = ["io"] }
+dashmap = "6"
+parking_lot = "0.12"
+hex = "0.4"
+libc = "0.2"
+urlencoding = "2"
+base64 = "0.23"
+alloy-primitives = { version = "1", features = ["k256"] }
+sha1 = "0.11"
+sha2 = "0.11"
+bs58 = "0.5"
+data-encoding = "2"
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls", "stream"] }
+flate2 = "1.1.10"
+url = "2.5.8"
+feruca = "0.12.0"
+regex = "1.13.1"
+tiny-skia = "0.12.0"
+prost = "0.14.4"
+# build-time proto codegen without protoc (comms; the scene crates pin their own)
+prost-build = "0.14"
+prost-types = "0.14"
+protox = "0.10"
+multer = "3.1.0"
+unicode-normalization = "0.1.26"
+icu_properties = "2.3.0"
+hmac = "0.13.0"
+bcrypt = "0.19.3"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp", "tiff"] }
+alloy-sol-types = "1.7.3"
+getrandom = "0.4.3"
+v8 = "=152.2.0"
+k256 = { version = "0.13.4", features = ["ecdsa"] }
+aes-gcm = "0.11.1"
+rand = "0.10.3"
+rusty_enet = { path = "../../library/vendor/rusty_enet", version = "0.4.0" }
+web-transport-quinn = "0.13.2"
+rustls-pemfile = "2.2.0"
+rustls-pki-types = "1.15.1"
+async-nats = "0.50.0"
+metrics = "0.24.6"
+metrics-exporter-prometheus = { version = "0.18.3", features = ["http-listener"] }
+toml = "1.1.8"
+alloy-consensus = "2.5.0"
+alloy-eips = "2.5.0"
+alloy-signer = "2.5.0"
+alloy-signer-local = "2.5.0"
+zip = { version = "9.0.5", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+openmls = "0.9.1"
+openmls_rust_crypto = "0.6.0"
+openmls_traits = "0.6.0"
+tls_codec = "0.5.0"
+ts-rs = "12"
+
+# Dev-only, shared by the member crates' tests.
+tokio-tungstenite = "0.30.0"
+alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
+
+[dependencies]
+dcl-http = { workspace = true, features = ["db"] }
+dcl-auth.workspace = true
+catalyst-fed = { path = "fed" }
+catalyst-db = { path = "db" }
+catalyst-jobs = { path = "jobs" }
+catalyst-shop = { path = "shop" }
+catalyst-camera-reel = { path = "camera-reel" }
+catalyst-builder = { path = "builder" }
+catalyst-social = { path = "social" }
+catalyst-worlds = { path = "worlds" }
+catalyst-comms = { path = "comms" }
+catalyst-explore = { path = "explore" }
+catalyst-content = { path = "content" }
+catalyst-land-authz = { path = "land-authz" }
+catalyst-chain-index = { path = "chain-index" }
+catalyst-price = { path = "price" }
+catalyst-storage = { path = "storage" }
+catalyst-config = { path = "config" }
+catalyst-shared = { path = "shared" }
+catalyst-testing = { path = "testing" }
+tokio.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+uuid.workspace = true
+tokio-util.workspace = true
+parking_lot.workspace = true
+hex.workspace = true
+urlencoding.workspace = true
+base64.workspace = true
+alloy-primitives.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+flate2.workspace = true
+url.workspace = true
+prost.workspace = true
+hmac.workspace = true
+image.workspace = true
+alloy-sol-types.workspace = true
+getrandom.workspace = true
+web-transport-quinn.workspace = true
+async-nats.workspace = true
+metrics.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[features]
+# The library/catalyst-api TypeScript exports (scripts/gen-ts.sh).
+ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "catalyst-price/ts", "catalyst-chain-index/ts", "catalyst-land-authz/ts", "catalyst-content/ts", "catalyst-explore/ts", "catalyst-comms/ts", "catalyst-worlds/ts", "catalyst-social/ts", "catalyst-builder/ts", "catalyst-camera-reel/ts", "catalyst-shop/ts"]
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.7"
+
+[dev-dependencies]
+bcrypt.workspace = true
+catalyst-db = { path = "db", features = ["scratch"] }
+catalyst-fed = { path = "fed", features = ["test-support"] }
+catalyst-shop = { path = "shop", features = ["test-support"] }
+catalyst-camera-reel = { path = "camera-reel", features = ["test-support"] }
+catalyst-builder = { path = "builder", features = ["test-support"] }
+catalyst-social = { path = "social", features = ["test-support"] }
+catalyst-comms = { path = "comms", features = ["test-support"] }
+catalyst-worlds = { path = "worlds", features = ["test-support"] }
+catalyst-explore = { path = "explore", features = ["test-support"] }
+catalyst-content = { path = "content", features = ["test-support"] }
+catalyst-land-authz = { path = "land-authz", features = ["test-support"] }
+catalyst-chain-index = { path = "chain-index", features = ["test-support"] }
+catalyst-price = { path = "price", features = ["test-support"] }
+catalyst-storage = { path = "storage", features = ["test-support"] }
+catalyst-config = { path = "config", features = ["test-support"] }
+catalyst-shared = { path = "shared", features = ["test-support"] }
+tokio = { version = "1", features = ["full", "test-util"] }
+tower = { version = "0.5", features = ["util"] }
+alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
+regex = "1.13.1"
+tokio-tungstenite.workspace = true
+rcgen = "0.14.10"
+rustls = { version = "0.23.46", features = ["ring"] }
+tokio-rustls = "0.26.6"
+
+# Dev loop only (METRICS.md, "Dev loop"); release is untouched. Line tables keep backtraces
+# for the crate while halving the debug binary; deps carry no debuginfo, and O1 makes their
+# hot paths (image thumbnails, JSON) about 5x faster than O0 without slowing an edit rebuild.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+opt-level = 1

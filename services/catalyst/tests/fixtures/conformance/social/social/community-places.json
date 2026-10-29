@@ -1,0 +1,128 @@
+{
+  "description": "GET /v1/communities/{id}/places, unauthenticated. Captured GET https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/places?limit=10&offset=0 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/places",
+    "query": {
+      "limit": [
+        "10"
+      ],
+      "offset": [
+        "0"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "results": [
+          {
+            "id": "5a44fd77-2e71-4e96-8488-6798eb2e3e77",
+            "title": "Music Festival Main Stage",
+            "description": "Join us on the main stage of Decentraland Music Festival",
+            "image": "https://peer.decentraland.org/content/contents/bafybeicas543bajwgkvklwdx3ovewnw7jyabwibd2mxgjmwnnp6zntmlpe",
+            "owner": null,
+            "world_name": null,
+            "content_rating": "RP",
+            "categories": [],
+            "likes": 5,
+            "dislikes": 0,
+            "favorites": 9,
+            "like_rate": 1,
+            "like_score": 0.5101,
+            "disabled": false,
+            "disabled_at": null,
+            "created_at": "2025-10-13T09:53:08.578Z",
+            "updated_at": "2025-10-13T09:53:08.578Z",
+            "base_position": "-66,-56",
+            "contact_name": "SDK",
+            "deployed_at": "2025-12-04T14:12:59.960Z",
+            "highlighted": false,
+            "world": false,
+            "is_private": false,
+            "highlighted_image": null,
+            "positions": [
+              "-58,-52",
+              "-58,-53",
+              "-58,-54",
+              "-58,-55",
+              "-58,-56",
+              "-59,-52",
+              "-59,-53",
+              "-59,-54",
+              "-59,-55",
+              "-59,-56",
+              "-60,-52",
+              "-60,-53",
+              "-60,-54",
+              "-60,-55",
+              "-60,-56",
+              "-61,-52",
+              "-61,-53",
+              "-61,-54",
+              "-61,-55",
+              "-61,-56",
+              "-62,-52",
+              "-62,-53",
+              "-62,-54",
+              "-62,-55",
+              "-62,-56",
+              "-63,-52",
+              "-63,-53",
+              "-63,-54",
+              "-63,-55",
+              "-63,-56",
+              "-64,-52",
+              "-64,-53",
+              "-64,-54",
+              "-64,-55",
+              "-64,-56",
+              "-65,-52",
+              "-65,-53",
+              "-65,-54",
+              "-65,-55",
+              "-65,-56",
+              "-66,-52",
+              "-66,-53",
+              "-66,-54",
+              "-66,-55",
+              "-66,-56"
+            ],
+            "contact_email": null,
+            "creator_address": null,
+            "sdk": null,
+            "ranking": 0,
+            "user_visits": 101,
+            "user_favorite": false,
+            "user_like": false,
+            "user_dislike": false,
+            "user_count": 0
+          }
+        ],
+        "total": 1,
+        "page": 1,
+        "pages": 1,
+        "limit": 10
+      }
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/places?limit=10&offset=0",
+  "captured_at": "2026-09-25T19:24:06Z",
+  "volatile_paths": [
+    "data.pages",
+    "data.results.deployed_at",
+    "data.results.favorites",
+    "data.results.like_rate",
+    "data.results.like_score",
+    "data.results.likes",
+    "data.results.updated_at",
+    "data.results.user_visits",
+    "data.total"
+  ]
+}

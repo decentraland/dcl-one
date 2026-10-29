@@ -1,0 +1,31 @@
+{
+  "description": "GET /api/users/{address}/images?limit=1000: the limit is clamped to 100. Captured GET https://camera-reel-service.decentraland.org/api/users/0x0000000000000000000000000000000000000001/images?limit=1000&offset=0 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/api/users/0x0000000000000000000000000000000000000001/images",
+    "query": {
+      "limit": [
+        "1000"
+      ],
+      "offset": [
+        "0"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "images": [],
+      "currentImages": 0,
+      "maxImages": 500
+    }
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/users/0x0000000000000000000000000000000000000001/images?limit=1000&offset=0",
+  "captured_at": "2026-09-25T19:25:03Z",
+  "volatile_paths": []
+}

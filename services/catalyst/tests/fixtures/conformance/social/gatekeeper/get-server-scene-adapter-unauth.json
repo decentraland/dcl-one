@@ -1,0 +1,24 @@
+{
+  "description": "POST /get-server-scene-adapter without an auth chain. Captured POST https://comms-gatekeeper.decentraland.org/get-server-scene-adapter -> 401.",
+  "request": {
+    "method": "POST",
+    "path": "/get-server-scene-adapter",
+    "query": {},
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {}
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Access denied, invalid signed-fetch request"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/get-server-scene-adapter",
+  "captured_at": "2026-09-25T19:24:28Z",
+  "volatile_paths": []
+}

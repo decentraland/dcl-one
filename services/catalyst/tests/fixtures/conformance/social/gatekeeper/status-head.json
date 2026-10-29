@@ -1,0 +1,18 @@
+{
+  "description": "HEAD /status, the explorer-boot probe (corpus: HEAD /comms-gatekeeper/status). Captured HEAD https://comms-gatekeeper.decentraland.org/status -> 200.",
+  "request": {
+    "method": "HEAD",
+    "path": "/status",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {},
+    "body_bytes_b64": ""
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/status",
+  "captured_at": "2026-09-25T19:24:25Z",
+  "volatile_paths": []
+}

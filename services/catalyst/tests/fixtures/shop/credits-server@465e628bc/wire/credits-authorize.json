@@ -1,0 +1,532 @@
+{
+  "about": "POST /credits/authorize: one credit for one line. Cases are the upstream unit test's literals: auth is the signed-fetch address the test injects (null = none), request.body the JSON body, response the asserted status/body. $any marks expect.any(...), $notAsserted a body the test does not pin; `rule` says what the handler computes there.",
+  "route": {
+    "method": "POST",
+    "path": "/credits/authorize",
+    "pipeline": "signedFetchMiddleware, authorizeRateLimit, authorizeUsdCreditHandler",
+    "source": "src/controllers/routes.ts:255"
+  },
+  "testSetup": {
+    "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:11-18",
+    "buyer": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+    "managerOverride": "0x1111111111111111111111111111111111111111",
+    "chainId": 80002,
+    "oracle": {
+      "manaWei": "1234567890000000000",
+      "oracleRate": "30000000",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:14-17"
+    },
+    "signedCapWei": "1851851835000000000",
+    "capRule": "manaWei * 150 / 100 (DEFAULT_CAP_HEADROOM_PCT), sized from the QUOTED usdPriceCents",
+    "ttlSeconds": 900,
+    "balanceCents": 100000,
+    "signerMock": {
+      "signature": "0xsignature",
+      "messageHash": "0xhash",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:53"
+    }
+  },
+  "cases": [
+    {
+      "name": "no signed-fetch auth",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:99-106",
+      "auth": null,
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Invalid or missing signed-fetch authentication"
+        }
+      }
+    },
+    {
+      "name": "auth is not an address",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:108-117",
+      "auth": "not-an-address",
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Invalid or missing signed-fetch authentication"
+        }
+      }
+    },
+    {
+      "name": "USD credits flag off",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:119-137",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "USD credits are not enabled"
+        }
+      }
+    },
+    {
+      "name": "usdPriceCents missing",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:139-146",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {}
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A positive integer \"usdPriceCents\" is required"
+        }
+      }
+    },
+    {
+      "name": "usdPriceCents fractional",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:148-155",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 12.5
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A positive integer \"usdPriceCents\" is required"
+        }
+      }
+    },
+    {
+      "name": "usdPriceCents zero",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:157-164",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 0
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A positive integer \"usdPriceCents\" is required"
+        }
+      }
+    },
+    {
+      "name": "body is not JSON",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:166-176",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "rawBody": "not JSON"
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A positive integer \"usdPriceCents\" is required"
+        }
+      }
+    },
+    {
+      "name": "fractional credit price rounds the charge up, not the cap",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:178-236",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 184
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "usdCents": 190
+        }
+      },
+      "effects": {
+        "oracleCalledWithCents": 184,
+        "reservedUsdCents": 190,
+        "capBelow": "2 * manaWei"
+      }
+    },
+    {
+      "name": "unknown source",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:257-265",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 200,
+          "source": "telegram"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "\"source\" must be \"website\" or \"client\" when provided"
+        }
+      }
+    },
+    {
+      "name": "balance below the rounded price",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:277-296",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "balanceCents": 150
+      },
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "response": {
+        "status": 402,
+        "body": {
+          "error": "Insufficient credits",
+          "balanceCents": 150,
+          "requiredCents": 200
+        }
+      }
+    },
+    {
+      "name": "reserve lost a race",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:298-309",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "reserve": {
+          "intent": null,
+          "balanceCents": 50
+        }
+      },
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "response": {
+        "status": 402,
+        "body": {
+          "error": "Insufficient credits",
+          "balanceCents": 50,
+          "requiredCents": 200
+        }
+      }
+    },
+    {
+      "name": "too many live credits",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:339-363",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "reserve": {
+          "intent": null,
+          "balanceCents": 100000,
+          "liveIntentLimitReached": true
+        }
+      },
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "error": "Too many purchases in progress. Complete or cancel them before starting another one.",
+          "balanceCents": 100000
+        }
+      }
+    },
+    {
+      "name": "success, trade purchase",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:365-421",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 200,
+          "tradeId": "trade-99"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "credit": {
+            "id": {
+              "$any": "string",
+              "rule": "the reserved salt: hexlify(randomBytes(32))",
+              "source": "src/controllers/handlers/authorize-usd-credit.ts:139"
+            },
+            "amount": "1851851835000000000",
+            "availableAmount": "1851851835000000000",
+            "expiresAt": {
+              "$any": "number",
+              "rule": "unix SECONDS: floor(now/1000) + USD_CREDIT_TTL_SECONDS (default 300)",
+              "source": "src/controllers/handlers/authorize-usd-credit.ts:144"
+            },
+            "signature": "0xsignature",
+            "contract": "0x1111111111111111111111111111111111111111"
+          },
+          "maxCreditedValue": "1851851835000000000",
+          "usdCents": 200,
+          "oracleRate": "30000000"
+        }
+      },
+      "effects": {
+        "reserved": {
+          "userAddress": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+          "usdCents": 200,
+          "manaCapWei": "1851851835000000000",
+          "oracleRate": "30000000",
+          "tradeId": "trade-99",
+          "contractAddress": null,
+          "itemId": null,
+          "registeredName": null
+        },
+        "signedFor": {
+          "userAddress": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+          "contract": "0x1111111111111111111111111111111111111111"
+        }
+      }
+    },
+    {
+      "name": "NAME registration",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:429-436",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "mauri"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "NAME at the registrar maximum",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:438-445",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "abcdefghijklmno"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "NAME longer than the registrar allows",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:450",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "abcdefghijklmnop"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "\"name\" must be 2-15 alphanumeric characters",
+          "rule": "asserted status only; message from usd-credit-lines.ts",
+          "source": "src/logic/usd-credit-lines.ts:73"
+        }
+      }
+    },
+    {
+      "name": "NAME shorter than the registrar allows",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:451",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "a"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "\"name\" must be 2-15 alphanumeric characters",
+          "rule": "asserted status only; message from usd-credit-lines.ts",
+          "source": "src/logic/usd-credit-lines.ts:73"
+        }
+      }
+    },
+    {
+      "name": "NAME carrying characters a NAME cannot hold",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:452",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "drop table"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "\"name\" must be 2-15 alphanumeric characters",
+          "rule": "asserted status only; message from usd-credit-lines.ts",
+          "source": "src/logic/usd-credit-lines.ts:73"
+        }
+      }
+    },
+    {
+      "name": "NAME carrying the presentation suffix",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:453",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "name": "mauri.dcl.eth"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "\"name\" must be 2-15 alphanumeric characters",
+          "rule": "asserted status only; message from usd-credit-lines.ts",
+          "source": "src/logic/usd-credit-lines.ts:73"
+        }
+      }
+    },
+    {
+      "name": "CollectionStore mint (item identity, no trade)",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:469-478",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "contractAddress": "0x3b5306be0da3202a5e7b00d1acc16a46cd88dfdc",
+          "itemId": "12"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "item alongside a trade",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:480-489",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "tradeId": "trade-7",
+          "contractAddress": "0x3b5306be0da3202a5e7b00d1acc16a46cd88dfdc",
+          "itemId": "12"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "contract is not an address",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:491-500",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "contractAddress": "nope",
+          "itemId": "12"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "item id not numeric",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:502-511",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "contractAddress": "0x3b5306be0da3202a5e7b00d1acc16a46cd88dfdc",
+          "itemId": "DROP TABLE"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "contract without item",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:515-522",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "contractAddress": "0x3b5306be0da3202a5e7b00d1acc16a46cd88dfdc"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "item without contract",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:524-529",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 30,
+          "itemId": "12"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "pre-launch gate refuses an address not on the list",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:561-571",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "usdPriceCents": 200
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "USD credits are not enabled",
+          "rule": "identical to the flag-off answer",
+          "source": "test/unit/controllers/handlers/authorize-usd-credit.spec.ts:575-586"
+        }
+      }
+    }
+  ]
+}

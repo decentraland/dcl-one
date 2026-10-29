@@ -1,0 +1,5 @@
+nodeLinker: hoisted
+allowBuilds:
+  "@dcl/sdk-commands": false
+  esbuild: false
+  protobufjs: false

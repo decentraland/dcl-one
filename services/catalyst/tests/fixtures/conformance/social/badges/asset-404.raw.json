@@ -1,0 +1,33 @@
+{
+  "method": "GET",
+  "url": "https://assets-cdn.decentraland.org/assets/does-not-exist/2d/normal.png",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 404,
+  "status_text": "Not Found",
+  "response_headers": {
+    "cf-cache-status": "BYPASS",
+    "cf-ray": "a40c69605c4fe567-TXL",
+    "connection": "keep-alive",
+    "content-encoding": "br",
+    "content-type": "text/html; charset=utf-8",
+    "date": "Fri, 25 Sep 2026 19:24:53 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "transfer-encoding": "chunked",
+    "vary": "accept-encoding",
+    "via": "1.1 d1867b092f625a3679893299e10edaee.cloudfront.net (CloudFront)",
+    "x-amz-cf-id": "hU7z01blb1Li-Nxe3W6LPYo4snKVxJqcptSzl-fp87OFMJfWHc42bQ==",
+    "x-amz-cf-pop": "AMS58-P5",
+    "x-cache": "Error from cloudfront",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:53Z",
+  "elapsed_ms": 492,
+  "body_bytes": 554,
+  "body_file": "asset-404.raw.body",
+  "redacted": false
+}

@@ -1,0 +1,75 @@
+[package]
+name = "catalyst-shop"
+version.workspace = true
+edition = "2024"
+description = "Shop: the marketplace, credits, payments, rentals and the EVM settlement (SHOP.md)"
+publish = false
+
+[dependencies]
+dcl-http = { workspace = true, features = ["db"] }
+dcl-auth.workspace = true
+catalyst-fed = { path = "../fed" }
+catalyst-jobs = { path = "../jobs" }
+catalyst-shared = { path = "../shared" }
+catalyst-config = { path = "../config" }
+catalyst-storage = { path = "../storage" }
+catalyst-price = { path = "../price" }
+catalyst-chain-index = { path = "../chain-index" }
+catalyst-land-authz = { path = "../land-authz" }
+catalyst-content = { path = "../content" }
+catalyst-comms = { path = "../comms" }
+catalyst-social = { path = "../social" }
+tokio.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+bytes.workspace = true
+uuid.workspace = true
+tokio-util.workspace = true
+parking_lot.workspace = true
+hex.workspace = true
+urlencoding.workspace = true
+alloy-primitives.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+flate2.workspace = true
+url.workspace = true
+feruca.workspace = true
+regex.workspace = true
+hmac.workspace = true
+alloy-sol-types.workspace = true
+getrandom.workspace = true
+k256.workspace = true
+rand.workspace = true
+alloy-consensus.workspace = true
+alloy-eips.workspace = true
+alloy-signer.workspace = true
+alloy-signer-local.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[features]
+ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "catalyst-price/ts", "catalyst-chain-index/ts", "catalyst-land-authz/ts", "catalyst-content/ts", "catalyst-comms/ts", "catalyst-social/ts"]
+test-support = ["catalyst-fed/test-support", "catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-storage/test-support", "catalyst-price/test-support", "catalyst-chain-index/test-support", "catalyst-land-authz/test-support", "catalyst-content/test-support", "catalyst-comms/test-support", "catalyst-social/test-support"]
+
+[dev-dependencies]
+catalyst-shared = { path = "../shared", features = ["test-support"] }
+catalyst-config = { path = "../config", features = ["test-support"] }
+catalyst-storage = { path = "../storage", features = ["test-support"] }
+catalyst-price = { path = "../price", features = ["test-support"] }
+catalyst-chain-index = { path = "../chain-index", features = ["test-support"] }
+catalyst-land-authz = { path = "../land-authz", features = ["test-support"] }
+catalyst-content = { path = "../content", features = ["test-support"] }
+catalyst-social = { path = "../social", features = ["test-support"] }
+catalyst-db = { path = "../db", features = ["scratch"] }
+catalyst-fed = { path = "../fed", features = ["test-support"] }
+tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }
+alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }

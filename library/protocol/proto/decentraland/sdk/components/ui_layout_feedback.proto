@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package decentraland.sdk.components;
+
+import "decentraland/sdk/components/common/id.proto";
+
+// experimental: bevy only, for scenes and the scene editor's agents to measure a scene's screen UI
+option (common.ecs_component_id) = 1504;
+
+// PBUiLayoutFeedback is where the renderer laid out a screen UI entity. It is written only on
+// entities whose UiTransform has an element_id, and again only when the layout changes. Units are
+// the UI canvas the scene is told about (UiCanvasInformation), from its top-left corner.
+message PBUiLayoutFeedback {
+  UiLayoutRect rect = 1;
+  // the part a scrolling or clipping ancestor leaves on screen; absent when nothing shows
+  optional UiLayoutRect visible_rect = 2;
+  // drawn this frame: displayed, not hidden, not entirely clipped
+  bool visible = 3;
+  // paint order among every UI node on screen, later on top
+  uint32 draw_order = 4;
+}
+
+message UiLayoutRect {
+  float x = 1;
+  float y = 2;
+  float width = 3;
+  float height = 4;
+}

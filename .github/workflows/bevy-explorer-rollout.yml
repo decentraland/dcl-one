@@ -1,0 +1,48 @@
+# Adapted from the exact snapshot in rendering/bevy-explorer/source/.github/workflows/.
+name: Bevy Explorer / CDN rollout
+'on':
+- deployment_status
+jobs:
+  set-rollout:
+    if: github.event.deployment.payload.packageName == '@dcl-regenesislabs/bevy-explorer-web' && github.event.deployment.task == 'upload-to-cdn' && github.event.deployment_status.state == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+    # PR previews and publish-tag builds reach the CDN too; only the next release goes to /play.
+    - name: Check the version is next
+      id: next
+      env:
+        VERSION: ${{ github.event.deployment.payload.packageVersion }}
+      run: |
+        for attempt in 1 2 3; do
+          tags=$(npm view @dcl-regenesislabs/bevy-explorer-web dist-tags --json) && break
+          [ "$attempt" = 3 ] && exit 1
+          sleep 20
+        done
+        if jq -e --arg v "$VERSION" '.next == $v' <<<"$tags" >/dev/null; then
+          echo 'rollout=true' >> "$GITHUB_OUTPUT"
+        elif jq -e --arg v "$VERSION" 'any(to_entries[]; (.key | startswith("pr-")) and .value == $v)' <<<"$tags" >/dev/null; then
+          echo "skipping PR preview $VERSION"
+        else
+          # A publish-tag build, or a main release npm does not show as next yet.
+          echo "::warning::not rolling out $VERSION: next is $(jq -r .next <<<"$tags"); use Manual CDN rollout if it should go live"
+        fi
+    - name: Set Rollout - Development
+      if: steps.next.outputs.rollout == 'true'
+      uses: decentraland/set-rollout-action@26ead404b6944fd0ce0d087cc59fd817607454d6 # v2
+      with:
+        token: ${{ github.token }}
+        ref: ${{ github.event.deployment.ref }}
+        sha: ${{ github.event.deployment.sha }}
+        packageName: '@dcl-regenesislabs/bevy-explorer-web'
+        packageVersion: ${{ github.event.deployment.payload.packageVersion }}
+        deploymentPath: 'play'
+        deploymentEnvironment: zone
+        deploymentName: _site
+        percentage: 100
+    timeout-minutes: 10
+permissions:
+  contents: read
+  deployments: write
+concurrency:
+  group: bevy-explorer-cdn-rollout
+  cancel-in-progress: false

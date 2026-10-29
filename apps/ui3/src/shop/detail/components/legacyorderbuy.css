@@ -1,0 +1,57 @@
+.shop-orderbuy {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  font-size: var(--fs-14);
+}
+.shop-orderbuy h2 {
+  margin: 0;
+  font-size: var(--fs-18);
+}
+.shop-orderbuy__terms {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.shop-orderbuy__terms > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.shop-orderbuy__terms dt {
+  color: var(--ui-muted);
+}
+.shop-orderbuy__terms dd {
+  margin: 0;
+  text-align: right;
+  color: var(--ui-text);
+}
+.shop-orderbuy__note {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  color: var(--ui-muted);
+  font-size: var(--fs-13);
+}
+.shop-orderbuy__note p {
+  margin: 0;
+}
+.shop-orderbuy__moved {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--fs-13);
+}
+.shop-orderbuy__moved input {
+  accent-color: var(--ui-accent);
+}
+.shop-orderbuy__error {
+  margin: 0;
+  color: var(--error);
+  font-size: var(--fs-13);
+}
+.shop-orderbuy__actions {
+  display: flex;
+  gap: 8px;
+}

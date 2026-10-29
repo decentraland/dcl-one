@@ -1,0 +1,24 @@
+/target/
+/schema.sql
+/migrations.sql
+/state/
+/credentials/
+/data/
+# IDE project state stays local.
+/.idea/
+# Security findings and catalogs about live services stay local until fixed and disclosed.
+/docs/comms/comms-security-review.md
+/docs/comms/agents/comms-security/
+/.claude/agents/comms-security-reviewer.md
+/docs/crates/agents/security-notes.md
+# Ledger views are rebuilt from the committed JSON, run logs and HTML templates.
+/docs/comms/architecture.html
+/docs/comms/decisions.html
+/docs/comms/ci.html
+/docs/comms/divergence.html
+/docs/comms/catalyst-worlds-lineage.html
+# AI plans, briefs, reports, replay scripts and verification copies stay local.
+/docs/comms/plans/
+# Crate-review pages and module edge counts are generated from the review sources.
+/docs/crates/*.html
+/docs/crates/agents/edges.txt

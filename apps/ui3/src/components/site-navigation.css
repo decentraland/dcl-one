@@ -1,0 +1,13 @@
+.ui2 {
+  --site-header-h: 72px;
+  --site-nav-h: 56px;
+  --site-nav-pad: 24px;
+  --site-nav-bg: #101014;
+  --site-nav-line: rgba(255, 255, 255, 0.1);
+  --site-nav-ink: rgba(255, 255, 255, 0.7);
+  --site-nav-active: #fff;
+}
+
+@media (max-width: 991px) {
+  .ui2 { --site-header-h: 64px; --site-nav-pad: 16px; }
+}

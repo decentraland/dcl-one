@@ -1,0 +1,26 @@
+.shop-index-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--r-control, 10px);
+  border: 1px solid var(--ui-border-strong);
+  background: var(--fill-2, rgba(255, 255, 255, 0.06));
+  color: var(--ui-text);
+  font-size: 13px;
+}
+.shop-index-notice p {
+  margin: 0;
+  flex: 1;
+}
+.shop-index-notice__asof {
+  color: var(--ui-muted);
+}
+.shop-index-notice[data-kind="unavailable"] {
+  border-color: var(--warning);
+}
+.shop-index-stamp {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ui-muted);
+}

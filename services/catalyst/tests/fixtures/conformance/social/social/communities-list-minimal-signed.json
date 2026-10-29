@@ -1,0 +1,79 @@
+{
+  "description": "GET /v1/communities?minimal=true&search=dec signed: the minimal (id, name, thumbnails) shape. Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://social-api.decentraland.org/v1/communities?minimal=true&search=dec&limit=5 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities",
+    "query": {
+      "minimal": [
+        "true"
+      ],
+      "search": [
+        "dec"
+      ],
+      "limit": [
+        "5"
+      ]
+    },
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/communities:1790364242463:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0xbca2467d4ecd88e00c95fbf3e798ac6a7cb465bc0d920e1081bd30019f4f752607c2c59c27cce73e1efd7e7c261698a7220fbfe779d79628bd6dc1a9896370951c\"}",
+      "x-identity-timestamp": "1790364242463",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "results": [
+          {
+            "id": "3ca51536-f8aa-4f94-b172-d8ff9a6abfe4",
+            "name": "ABC Decentraland",
+            "membersCount": 462,
+            "privacy": "public"
+          },
+          {
+            "id": "43fe9fad-6797-40c2-ad3e-4a7df3d34251",
+            "name": "DECENTALAND ITALIA",
+            "membersCount": 13,
+            "privacy": "public"
+          },
+          {
+            "id": "9573aa20-04bf-4fd3-baf2-64c941216683",
+            "name": "Decentraland DJ's and Music ",
+            "membersCount": 5,
+            "privacy": "public"
+          },
+          {
+            "id": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "name": "Decentraland Foundation",
+            "membersCount": 1303,
+            "privacy": "public"
+          },
+          {
+            "id": "3b3e5859-a6ba-46cf-9f23-533bd19418c8",
+            "name": "Decentraland Japan",
+            "membersCount": 127,
+            "privacy": "public"
+          }
+        ],
+        "total": 7,
+        "page": 1,
+        "pages": 2,
+        "limit": 5
+      }
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities?minimal=true&search=dec&limit=5",
+  "captured_at": "2026-09-25T19:24:02Z",
+  "volatile_paths": [
+    "data.pages",
+    "data.results.membersCount",
+    "data.total",
+    "data.results[]"
+  ]
+}

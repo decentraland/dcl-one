@@ -1,0 +1,159 @@
+name: Bevy Explorer / Scenes
+on:
+  push:
+    branches: [main]
+    paths:
+      - .cargo/**
+      - rust-toolchain*
+      - rendering/bevy-explorer/**
+      - library/protocol/proto/**
+      - apps/bevy-explorer/**
+      - tooling/bevy-ci.py
+      - tooling/tests/test_bevy_*.py
+      - .github/workflows/bevy-explorer-scenes.yml
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: Full acceptance suite, or a diagnostic subset for snapshot failures
+        type: choice
+        options: [full, snapshots]
+        default: full
+  schedule:
+    - cron: '17 3 * * *'
+permissions:
+  contents: read
+concurrency:
+  group: bevy-explorer-scenes-${{ github.event_name == 'schedule' && 'scheduler' || github.ref }}
+  # A later push can select no scenes; it must not cancel an active verdict.
+  cancel-in-progress: false
+jobs:
+  nightly:
+    # Dispatch main explicitly so its caches
+    # are accessible and the actual tested revision belongs to main.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Dispatch graphical tests on main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh api --method POST "repos/$GH_REPO/actions/workflows/bevy-explorer-scenes.yml/dispatches" -f ref=main
+  changes:
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      scenes: ${{ steps.plan.outputs.scenes }}
+      sha: ${{ steps.plan.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test the selection and setup guards
+        run: python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py' -v
+      - name: Select graphical tests from their inputs
+        id: plan
+        env:
+          BASE_SHA: ${{ github.event.before }}
+        run: python3 tooling/bevy-ci.py scenes-plan
+  hardcore-test:
+    name: Test Scenes (${{ inputs.suite || 'full' }})
+    needs:
+      - changes
+    if: ${{ needs.changes.outputs.scenes == 'true' && github.actor != 'dependabot[bot]' }}
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.changes.outputs.sha }}
+      - name: Reserve disk space on the hosted Linux runner
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |-
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          df -h /
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - name: Prepare the pinned native toolchain for caching
+        run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          # A graphical assertion must not force the next run to rebuild every dependency.
+          cache-on-failure: true
+          workspaces: rendering/bevy-explorer/source -> target
+          key: bevy-explorer-native
+      - name: Install protoc
+        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Install Linux build dependencies
+        run: |
+          sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
+            libasound2-dev libudev-dev libxkbcommon-x11-0 ninja-build clang curl pkg-config \
+            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
+            libssl-dev libx11-dev libgl1-mesa-dev libxext-dev pulseaudio libasound2-plugins alsa-utils \
+            libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
+      - name: Install clang for webrtc-sys
+        run: ../../../apps/bevy-explorer/install-clang.sh
+      - name: Export CEF distribution
+        run: |
+          cargo install export-cef-dir --version "139.8.0+139.0.40"
+          export-cef-dir --force "$HOME/.local/share/cef"
+          echo "CEF_PATH=$HOME/.local/share/cef" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$HOME/.local/share/cef:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+      - name: install xvfb, llvmpipe and lavapipe
+        run: |
+          sudo add-apt-repository ppa:kisak/kisak-mesa -y
+          sudo apt-get update
+          sudo apt install -y xvfb libegl1-mesa libgl1-mesa-dri libxcb-xfixes0-dev mesa-vulkan-drivers
+      - name: Build the scene runtime sidecar
+        run: cargo build --release --locked --timings -p dcl_deno_ipc
+      - name: Build the graphical test engine
+        run: cargo build --release --locked --timings --bin decentra-bevy
+      - name: Configure virtual audio for graphical tests
+        run: |
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=bevy_ci
+          pactl set-default-sink bevy_ci
+          pactl set-default-source bevy_ci.monitor
+          cat > "$HOME/.asoundrc" <<'ALSA'
+          pcm.!default { type pulse }
+          ctl.!default { type pulse }
+          ALSA
+          speaker-test --device default --channels 2 --test sine -l 1
+      - name: Prepare screenshot output directory
+        # References are embedded; the upstream comparator writes captures relative to cwd.
+        run: mkdir -p assets/images/screenshots
+      - name: Test Scenes
+        id: scenes
+        # Leave time to preserve diagnostics if scene execution stalls.
+        timeout-minutes: 20
+        env:
+          SCENE_PARCELS: ${{ inputs.suite == 'snapshots' && '52,-62;52,-64;52,-66' || '52,-52;52,-54;52,-56;52,-58;52,-60;52,-62;52,-64;52,-66;52,-68;54,-52;54,-54;54,-56;54,-58;54,-60' }}
+        run: |
+          set -o pipefail
+          xvfb-run -s "-screen 0 320x240x24" target/release/decentra-bevy --realm https://decentraland.github.io/scene-explorer-tests/scene-explorer-tests --test_scenes "$SCENE_PARCELS" --no_fog --distance 1 --scene_log_to_console 2>&1 | tee scene-tests.log
+          grep -Eq 'all tests passed!|all failures were allowed' scene-tests.log
+      - name: Record graphical scene result
+        if: always() && steps.scenes.outcome != '' && steps.scenes.outcome != 'skipped'
+        env:
+          SCENE_OUTCOME: ${{ steps.scenes.outcome }}
+          SCENE_SUITE: ${{ inputs.suite || 'full' }}
+        run: |
+          printf 'Graphical scene tests (%s): **%s**. Only the full suite establishes graphical acceptance. See the scene-test log artifact.\n' "$SCENE_SUITE" "$SCENE_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bevy-explorer-scene-tests-${{ inputs.suite || 'full' }}-${{ needs.changes.outputs.sha }}
+          path: |
+            rendering/bevy-explorer/source/scene-tests.log
+            rendering/bevy-explorer/source/assets/images/screenshots/*.png
+            rendering/bevy-explorer/source/target/cargo-timings/*.html
+          if-no-files-found: ignore
+          retention-days: 14
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 100

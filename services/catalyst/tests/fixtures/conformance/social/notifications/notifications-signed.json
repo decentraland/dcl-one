@@ -1,0 +1,27 @@
+{
+  "description": "GET /notifications signed by a wallet with no inbox. Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://notifications.decentraland.org/notifications -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/notifications",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/notifications:1790364280819:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x3788486b861fae1de87671d02d5b25b107c6d9bfdf47eb3460a97def13c6d7680257d0853a88cc4a140c08dcef68d3d4be94b84845a01700ef099b465c96524a1b\"}",
+      "x-identity-timestamp": "1790364280819",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "notifications": []
+    }
+  },
+  "captured_from": "https://notifications.decentraland.org/notifications",
+  "captured_at": "2026-09-25T19:24:41Z",
+  "volatile_paths": []
+}

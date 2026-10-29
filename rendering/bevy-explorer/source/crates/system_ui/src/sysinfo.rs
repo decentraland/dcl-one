@@ -1,0 +1,937 @@
+use avatar::mask_material::MaskMaterial;
+use bevy::{
+    diagnostic::{Diagnostic, DiagnosticsStore, FrameCount, FrameTimeDiagnosticsPlugin},
+    math::Vec3Swizzles,
+    platform::{collections::HashSet, hash::FixedHasher},
+    prelude::*,
+    render::mesh::{Indices, MeshTag},
+    text::JustifyText,
+    ui::FocusPolicy,
+};
+
+use bevy_console::ConsoleCommand;
+use bevy_dui::{DuiCommandsExt, DuiEntities, DuiProps, DuiRegistry};
+use common::{
+    gpu_time::GPU_FRAME_TIME,
+    sets::{SceneSets, SetupSets},
+    structs::{
+        AppConfig, CurrentRealm, CursorLocks, DebugInfo, PreviewCommand, PreviewMode, PrimaryUser,
+        StartupScenes, UiRoot, Version, ZOrder,
+    },
+    util::{ModifyComponentExt, TryPushChildrenEx},
+};
+use comms::{global_crdt::ForeignPlayer, Transport};
+use console::DoAddConsoleCommand;
+use scene_material::{SceneMaterial, SCENE_MATERIAL_OUTLINE_MESH_TAGS};
+use scene_runner::{
+    initialize_scene::{SceneLoading, TestingData, PARCEL_SIZE},
+    parcel_to_vec3,
+    renderer_context::RendererSceneContext,
+    update_world::{
+        gltf_container::{GltfLoadingCount, SceneResourceLookup},
+        ComponentTracker, TrackComponents,
+    },
+    vec3_to_parcel, ContainerEntity, ContainingScene, Toaster,
+};
+use ui_core::{
+    bound_node::BoundedImageMaterial,
+    stretch_uvs_image::StretchUvMaterial,
+    text_size::update_fontsize,
+    ui_actions::{Click, On},
+    BODY_TEXT_STYLE, TITLE_TEXT_STYLE,
+};
+use world_ui::TextShapeMaterial;
+
+use super::SystemUiRoot;
+
+pub struct SysInfoPanelPlugin;
+
+impl Plugin for SysInfoPanelPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Startup,
+            setup.in_set(SetupSets::Main).after(SetupSets::Init),
+        );
+        app.add_systems(
+            Update,
+            (
+                update_scene_load_state,
+                update_minimap,
+                update_tracker,
+                update_map_visibilty,
+                update_crosshair,
+            )
+                .before(update_fontsize)
+                .after(SceneSets::PostLoop),
+        );
+        app.add_systems(
+            OnEnter::<ui_core::State>(ui_core::State::Ready),
+            setup_minimap,
+        );
+        app.add_console_command::<SysinfoCommand, _>(set_sysinfo);
+
+        app.add_systems(First, (entity_count, display_tracked_components));
+        app.add_preview_console_command::<TrackComponentCommand, _>(set_track_components);
+    }
+}
+
+#[derive(Component)]
+struct SysInfoMarker;
+
+#[derive(Component)]
+struct SysInfoContainer;
+
+#[derive(Component)]
+struct CrossHair;
+
+pub(crate) fn setup(
+    mut commands: Commands,
+    root: Res<SystemUiRoot>,
+    config: Res<AppConfig>,
+    asset_server: Res<AssetServer>,
+    version: Res<Version>,
+) {
+    commands.entity(root.0).try_with_children(|commands| {
+        commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Percent(48.5),
+                    top: Val::Percent(48.5),
+                    right: Val::Percent(48.5),
+                    bottom: Val::Percent(48.5),
+                    align_content: AlignContent::Center,
+                    justify_content: JustifyContent::Center,
+                    ..Default::default()
+                },
+                ZOrder::Crosshair.default(),
+            ))
+            .try_with_children(|c| {
+                c.spawn((
+                    Node {
+                        width: Val::VMin(3.0),
+                        height: Val::VMin(3.0),
+                        ..Default::default()
+                    },
+                    ImageNode::new(asset_server.load("embedded://images/crosshair.png"))
+                        .with_color(Color::srgba(1.0, 1.0, 1.0, 0.7)),
+                    CrossHair,
+                ));
+            });
+
+        commands.spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::VMin(2.0),
+                bottom: Val::VMin(2.0),
+                ..Default::default()
+            },
+            Text::new(format!("Version: {}", version.0)),
+            BODY_TEXT_STYLE.get().unwrap().clone(),
+        ));
+    });
+
+    commands.entity(root.0).try_with_children(|commands| {
+        commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(40.0),
+                    top: Val::Px(0.0),
+                    display: if config.sysinfo_visible {
+                        Display::Flex
+                    } else {
+                        Display::None
+                    },
+                    flex_direction: FlexDirection::Column,
+                    align_self: AlignSelf::FlexStart,
+                    border: UiRect::all(Val::Px(5.)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.8, 0.8, 1.0, 0.8)),
+                FocusPolicy::Block,
+                SysInfoContainer,
+            ))
+            .try_with_children(|commands| {
+                commands.spawn((
+                    Text::new("System Info"),
+                    TITLE_TEXT_STYLE.get().unwrap().clone(),
+                ));
+
+                commands
+                    .spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            ..Default::default()
+                        },
+                        SysInfoMarker,
+                    ))
+                    .try_with_children(|commands| {
+                        let mut info_node = |label: String| {
+                            commands
+                                .spawn(Node::default())
+                                .try_with_children(|commands| {
+                                    commands.spawn((
+                                        Node {
+                                            width: Val::Px(150.0),
+                                            ..Default::default()
+                                        },
+                                        Text::new(label),
+                                        TextLayout::new_with_justify(JustifyText::Right),
+                                        BODY_TEXT_STYLE.get().unwrap().clone(),
+                                    ));
+                                    commands.spawn((
+                                        Node {
+                                            width: Val::Px(250.0),
+                                            ..Default::default()
+                                        },
+                                        Text::default(),
+                                        BODY_TEXT_STYLE.get().unwrap().clone(),
+                                    ));
+                                });
+                        };
+
+                        if config.graphics.log_fps {
+                            info_node("FPS :".to_owned());
+                            info_node("GPU :".to_owned());
+                        }
+
+                        info_node("Current Parcel :".to_owned());
+                        info_node("Current Scene :".to_owned());
+                        info_node("Scene State :".to_owned());
+                        info_node("Loading Scenes :".to_owned());
+                        info_node("Running Scenes :".to_owned());
+                        info_node("Blocked Scenes :".to_owned());
+                        info_node("Broken Scenes :".to_owned());
+                        info_node("Transports :".to_owned());
+                        info_node("Players :".to_owned());
+                        info_node("Debug info :".to_owned());
+                    });
+            });
+    });
+}
+
+#[derive(Component)]
+pub struct Minimap;
+
+#[derive(Component)]
+pub struct Tracker(bool);
+
+#[allow(clippy::too_many_arguments)]
+fn update_scene_load_state(
+    q: Query<Entity, With<SysInfoMarker>>,
+    q_children: Query<&Children>,
+    mut text: Query<&mut Text>,
+    mut style: Query<&mut Node>,
+    loading_scenes: Query<&SceneLoading>,
+    running_scenes: Query<&RendererSceneContext, Without<SceneLoading>>,
+    transports: Query<&Transport>,
+    players: Query<&ForeignPlayer>,
+    config: Res<AppConfig>,
+    mut last_update: Local<u32>,
+    time: Res<Time>,
+    diagnostics: Res<DiagnosticsStore>,
+    containing_scene: ContainingScene,
+    player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
+    debug_info: Res<DebugInfo>,
+) {
+    let tick = (time.elapsed_secs_f64() * 10.0) as u32;
+    if tick == *last_update {
+        return;
+    }
+    *last_update = tick;
+
+    let Ok((player, pos)) = player.single() else {
+        return;
+    };
+    let scene = containing_scene.get_parcel(player);
+    let parcel = (pos.translation().xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
+        .floor()
+        .as_ivec2();
+    let title = scene
+        .and_then(|scene| running_scenes.get(scene).ok())
+        .map(|context| context.title.clone())
+        .unwrap_or("???".to_owned());
+
+    if let Ok(sysinfo) = q.single() {
+        let mut ix = 0;
+        let children = q_children.get(sysinfo).unwrap();
+        let mut set_child = |value: String| {
+            // avoid touching Node/Text when unchanged - any write triggers relayout
+            let display = if value.is_empty() {
+                Display::None
+            } else {
+                Display::Flex
+            };
+            let mut style = style.get_mut(children[ix]).unwrap();
+            if style.display != display {
+                style.display = display;
+            }
+            let container = q_children.get(children[ix]).unwrap();
+            let mut text = text.get_mut(container[1]).unwrap();
+            if text.0 != value {
+                text.0 = value;
+            }
+            ix += 1;
+        };
+
+        let state = scene.map_or("-", |scene| {
+            if loading_scenes.get(scene).is_ok() {
+                "Loading"
+            } else if let Ok(scene) = running_scenes.get(scene) {
+                if scene.broken() {
+                    "Broken"
+                } else if !scene.blocked.is_empty() {
+                    "Blocked"
+                } else {
+                    "Running"
+                }
+            } else {
+                "Unknown?!"
+            }
+        });
+
+        let loading = loading_scenes.iter().count();
+        let running = running_scenes
+            .iter()
+            .filter(|context| !context.broken() && context.blocked.is_empty())
+            .count();
+        let blocked = running_scenes
+            .iter()
+            .filter(|context| !context.broken() && !context.blocked.is_empty())
+            .count();
+        let broken = running_scenes
+            .iter()
+            .filter(|context| context.broken())
+            .count();
+        let transports = transports.iter().count();
+        let players = players.iter().count() + 1;
+
+        if config.graphics.log_fps {
+            if let Some(fps) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS) {
+                let fps = fps.smoothed().unwrap_or_default();
+                set_child(format!("{fps:.0}"));
+            } else {
+                set_child("-".to_owned());
+            }
+            set_child(gpu_frame_time_text(&diagnostics));
+        }
+
+        set_child(format!("({},{})", parcel.x, parcel.y));
+        set_child(title);
+        set_child(state.to_owned());
+
+        set_child(format!("{loading}"));
+        set_child(format!("{running}"));
+        set_child(format!("{blocked}"));
+        set_child(format!("{broken}"));
+
+        set_child(format!("{transports}"));
+        set_child(format!("{players}"));
+
+        let debug_info = debug_info
+            .info
+            .iter()
+            .fold(String::default(), |msg, (key, info)| {
+                format!("{msg}\n{key}: {info}")
+            });
+        set_child(debug_info);
+    }
+}
+
+/// The GPU frame time as the panel shows it: the smoothed milliseconds, or the FPS row's dash while
+/// there is none, which is before the first measurement and, where the adapter has no timestamp
+/// queries and the path is absent, always.
+fn gpu_frame_time_text(diagnostics: &DiagnosticsStore) -> String {
+    diagnostics
+        .get(&GPU_FRAME_TIME)
+        .and_then(Diagnostic::smoothed)
+        .map_or_else(|| "-".to_owned(), |ms| format!("{ms:.1} ms"))
+}
+
+fn setup_minimap(
+    mut commands: Commands,
+    root: Res<SystemUiRoot>,
+    dui: Res<DuiRegistry>,
+    preview: Res<PreviewMode>,
+    system_scene: Option<Res<StartupScenes>>,
+) {
+    let components = commands
+        .spawn_template(&dui, "minimap", Default::default())
+        .unwrap();
+
+    commands
+        .entity(components.root)
+        .try_insert((Minimap, ZOrder::Minimap.default()));
+
+    if preview.server.is_some() {
+        commands
+            .entity(components.root)
+            .modify_component(|style: &mut Node| {
+                style.position_type = PositionType::Absolute;
+                style.right = Val::Percent(1.0);
+                style.bottom = Val::Percent(5.0);
+                style.top = Val::Auto;
+                style.left = Val::Auto;
+            });
+    } else {
+        commands
+            .entity(root.0)
+            .insert_children(0, &[components.root]);
+    }
+
+    commands.entity(components.named("map-container")).despawn();
+
+    if preview.server.is_some()
+        || system_scene
+            .as_ref()
+            .is_some_and(|ss| ss.scenes.first().is_some_and(|scene| scene.preview))
+    {
+        let tracker = commands
+            .entity(components.root)
+            .spawn_template(
+                &dui,
+                "tracker",
+                DuiProps::new().with_prop(
+                    "toggle",
+                    On::<Click>::new(|mut trackers: Query<&mut Tracker>| {
+                        for mut tracker in trackers.iter_mut() {
+                            tracker.0 = !tracker.0;
+                        }
+                    })
+                ).with_prop(
+                    "dismiss",
+                    On::<Click>::new(move |mut commands: Commands| {commands.entity(components.root).despawn()}),
+                ).with_prop(
+                    "inspect",
+                    On::<Click>::new(|
+                        mut reload: EventWriter<PreviewCommand>,
+                        mut test_data: ResMut<TestingData>,
+                        containing_scene: ContainingScene,
+                        scenes: Query<&RendererSceneContext>,
+                        player: Query<Entity, With<PrimaryUser>>,
+                        system_scene: Option<Res<StartupScenes>>,
+                        mut toaster: Toaster,
+                    | {
+                        if system_scene.as_ref().is_some_and(|ss| ss.scenes.first().is_some_and(|scene| scene.hot_reload.is_some())) {
+                            let ss = system_scene.unwrap();
+                            let ss = ss.scenes.first().unwrap();
+                            if let Some(hash) = ss.hash.clone() {
+                                test_data.inspect_hash = Some(hash.clone());
+                                let _ = ss.hot_reload.as_ref().unwrap().send(PreviewCommand::ReloadScene { hash });
+                                toaster.add_toast("inspector", "Please open chrome and navigate to \"chrome://inspect\" to attach a debugger to the UI scene");
+                            }
+                            return;
+                        }
+                        let Ok(player) = player.single() else {
+                            return;
+                        };
+                        let Some(scene) = containing_scene.get_parcel_oow(player) else {
+                            return;
+                        };
+                        let Ok(scene) = scenes.get(scene) else {
+                            return;
+                        };
+                        test_data.inspect_hash = Some(scene.hash.to_string());
+                        reload.write(PreviewCommand::ReloadScene { hash: scene.hash.to_string() });
+                        toaster.add_toast("inspector", "Please open chrome and navigate to \"chrome://inspect\" to attach a debugger");
+                    })
+                )
+                .with_prop("inspect-enabled", cfg!(feature = "inspect")),
+            )
+            .unwrap();
+        commands.entity(tracker.root).try_insert(Tracker(true));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_minimap(
+    q: Query<&DuiEntities, With<Minimap>>,
+    player: Query<&GlobalTransform, With<PrimaryUser>>,
+    containing_scene: ContainingScene,
+    scenes: Query<(&RendererSceneContext, Option<&GltfLoadingCount>)>,
+    mut text: Query<&mut Text>,
+    preview: Res<PreviewMode>,
+    root: Query<&Node, With<UiRoot>>,
+) {
+    // skip the scene lookup / string churn while the native hud is hidden (ui-scene
+    // mode); preview-server minimaps live outside the root so they always update
+    if preview.server.is_none()
+        && !root
+            .single()
+            .is_ok_and(|node| node.display == Display::Flex)
+    {
+        return;
+    }
+
+    let Ok(gt) = player.single() else {
+        return;
+    };
+
+    let player_translation = (gt.translation().xz() * Vec2::new(1.0, -1.0)) / PARCEL_SIZE;
+    let parcel = preview
+        .preview_parcel
+        .unwrap_or_else(|| player_translation.floor().as_ivec2());
+
+    let scene = containing_scene
+        .get_parcel_position(parcel_to_vec3(parcel))
+        .and_then(|scene| scenes.get(scene).ok());
+    let title = scene
+        .map(|(context, _)| context.title.clone())
+        .unwrap_or("???".to_owned());
+    let title = if preview.is_preview {
+        format!("[ Preview Mode ]\n{title}")
+    } else {
+        title
+    };
+    let sdk = scene.map(|(context, _)| context.sdk_version).unwrap_or("");
+    let state = scene
+        .map(|(context, gltf_count)| {
+            if context.broken() {
+                "Broken".to_owned()
+            } else if !context.blocked.is_empty() {
+                format!("Loading [{}]", gltf_count.map(|c| c.0).unwrap_or_default())
+            } else {
+                "Ok ".to_owned()
+            }
+        })
+        .unwrap_or("No scene".to_owned());
+
+    if let Ok(components) = q.single() {
+        if let Ok(mut text) = text.get_mut(components.named("title")) {
+            if text.0 != title {
+                text.0 = title;
+            }
+        }
+
+        if let Ok(mut text) = text.get_mut(components.named("position")) {
+            let position = format!("({},{})   {sdk}   {state}", parcel.x, parcel.y);
+            if text.0 != position {
+                text.0 = position;
+            }
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn update_tracker(
+    mut commands: Commands,
+    mut q: Query<(Ref<Tracker>, &DuiEntities)>,
+    stats: Query<&SceneResourceLookup>,
+    f: Res<FrameCount>,
+    player: Query<&GlobalTransform, With<PrimaryUser>>,
+    containing_scene: ContainingScene,
+    dui: Res<DuiRegistry>,
+    mesh_handles: Query<(&Mesh3d, &ContainerEntity, &Visibility)>,
+    material_handles: Query<(
+        &MeshMaterial3d<SceneMaterial>,
+        &ContainerEntity,
+        &Visibility,
+    )>,
+    scene_entities: Query<&ContainerEntity>,
+    meshes: Res<Assets<Mesh>>,
+    materials: Res<Assets<SceneMaterial>>,
+    diagnostics: Res<DiagnosticsStore>,
+    images: Res<Assets<Image>>,
+    preview: Res<PreviewMode>,
+) {
+    let Ok((tracker, entities)) = q.single_mut() else {
+        return;
+    };
+
+    if !f.0.is_multiple_of(100) && !tracker.is_changed() {
+        return;
+    }
+
+    commands
+        .entity(entities.named("content"))
+        .despawn_related::<Children>();
+
+    if !tracker.0 {
+        return;
+    }
+
+    let Ok(player) = player.single() else {
+        return;
+    };
+
+    let parcel = preview
+        .preview_parcel
+        .unwrap_or_else(|| vec3_to_parcel(player.translation()));
+    let scenes = containing_scene.get_parcel_position(parcel_to_vec3(parcel));
+    let Some(scene) = scenes.iter().next() else {
+        return;
+    };
+
+    let default_lookup = SceneResourceLookup::default();
+    let resource_lookup = stats.get(*scene).unwrap_or(&default_lookup);
+
+    let mut display_data = Vec::default();
+
+    if let Some(fps) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS) {
+        display_data.push((
+            "FPS",
+            (fps.smoothed().unwrap_or_default() as usize).to_string(),
+        ));
+    }
+    display_data.push(("GPU", gpu_frame_time_text(&diagnostics)));
+
+    display_data.push((
+        "Unique Gltf Meshes",
+        resource_lookup
+            .meshes_by_hash
+            .values()
+            .filter(|c| meshes.get(c.mesh_id).is_some())
+            .count()
+            .to_string(),
+    ));
+    display_data.push((
+        "Visible Mesh Count",
+        mesh_handles
+            .iter()
+            .filter(|(_, c, v)| &c.root == scene && !matches!(v, Visibility::Hidden))
+            .count()
+            .to_string(),
+    ));
+    display_data.push((
+        "Visible Triangle Count",
+        mesh_handles
+            .iter()
+            .filter(|(_, c, v)| &c.root == scene && !matches!(v, Visibility::Hidden))
+            .flat_map(|(h, _, _)| meshes.get(h.id()))
+            .map(|mesh| {
+                mesh.indices()
+                    .map(Indices::len)
+                    .unwrap_or_else(|| mesh.attributes().next().unwrap().1.len())
+                    / 3
+            })
+            .sum::<usize>()
+            .to_string(),
+    ));
+
+    display_data.push((
+        "Unique Gltf Materials",
+        resource_lookup
+            .materials
+            .values()
+            .filter(|h| materials.get(h.id()).is_some())
+            .count()
+            .to_string(),
+    ));
+
+    let visible_mats = material_handles
+        .iter()
+        .filter(|(_, c, v)| &c.root == scene && !matches!(v, Visibility::Hidden))
+        .map(|(h, ..)| &h.0)
+        .collect::<HashSet<_, FixedHasher>>();
+
+    display_data.push(("Visible Material Count", visible_mats.len().to_string()));
+
+    let textures = visible_mats
+        .iter()
+        .flat_map(|h| materials.get(h.id()))
+        .flat_map(|mat| {
+            mat.base
+                .base_color_texture
+                .iter()
+                .chain(mat.base.emissive_texture.as_ref())
+                .chain(mat.base.normal_map_texture.as_ref())
+        })
+        .collect::<HashSet<_>>();
+
+    display_data.push(("Total Texture Count", textures.len().to_string()));
+
+    let total_memory = textures
+        .iter()
+        .flat_map(|h| images.get(h.id()).and_then(|t| t.data.as_ref()))
+        .map(|data| data.len())
+        .sum::<usize>();
+    let total_mb = (total_memory as f32 / 1024.0 / 1024.0).round() as usize;
+
+    display_data.push(("Total Texture Memory (mb)", total_mb.to_string()));
+
+    display_data.push((
+        "Total Entities",
+        scene_entities
+            .iter()
+            .filter(|c| &c.root == scene)
+            .count()
+            .to_string(),
+    ));
+
+    for (key, value) in display_data {
+        commands
+            .entity(entities.named("content"))
+            .spawn_template(
+                &dui,
+                "tracker-item",
+                DuiProps::new()
+                    .with_prop("label", key.to_string())
+                    .with_prop("value", value),
+            )
+            .unwrap();
+    }
+}
+
+// set fps
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/sysinfo")]
+struct SysinfoCommand {
+    on: Option<bool>,
+}
+
+fn set_sysinfo(
+    mut commands: Commands,
+    mut input: ConsoleCommand<SysinfoCommand>,
+    q: Query<Entity, With<SysInfoContainer>>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        let on = command.on.unwrap_or(true);
+
+        commands
+            .entity(q.single().unwrap())
+            .modify_component(move |style: &mut Node| {
+                style.display = if on { Display::Flex } else { Display::None };
+            });
+        input.reply_ok("");
+    }
+}
+
+fn update_map_visibilty(
+    realm: Res<CurrentRealm>,
+    map: Query<&DuiEntities, With<Minimap>>,
+    mut style: Query<&mut Node>,
+    mut init: Local<bool>,
+) {
+    if !*init || realm.is_changed() {
+        let Ok(nodes) = map.single() else {
+            return;
+        };
+        let Ok(mut style) = style.get_mut(nodes.named("map-container")) else {
+            return;
+        };
+        *init = true;
+        // todo this is really bad
+        if realm
+            .about_url
+            .ends_with(&format!("{}/main/about", common::base_domain::get()))
+        {
+            style.display = Display::Flex;
+        } else {
+            style.display = Display::None;
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn entity_count(
+    q: Query<Entity>,
+    f: Res<FrameCount>,
+    meshes: Res<Assets<Mesh>>,
+    textures: Res<Assets<Image>>,
+    ui_nodes: Query<(), With<ComputedNode>>,
+    scene_mats: Query<&MeshTag, With<MeshMaterial3d<SceneMaterial>>>,
+    std_mats: Query<(), With<MeshMaterial3d<StandardMaterial>>>,
+    mask_mats: Query<(), With<MeshMaterial3d<MaskMaterial>>>,
+    uv_mats: Query<(), With<MaterialNode<StretchUvMaterial>>>,
+    bound_mats: Query<(), With<MaterialNode<BoundedImageMaterial>>>,
+    textshape_mats: Query<(), With<MeshMaterial3d<TextShapeMaterial>>>,
+) {
+    if f.0.is_multiple_of(100) {
+        let entities = q.iter().count();
+        let meshes = meshes.iter().count();
+        let textures = textures.iter().count();
+        let ui_nodes = ui_nodes.iter().count();
+        debug!("{entities} ents, {meshes} meshes, {textures} textures, {ui_nodes} ui nodes");
+
+        let outlined = scene_mats
+            .iter()
+            .filter(|m| m.0 & SCENE_MATERIAL_OUTLINE_MESH_TAGS != 0)
+            .count();
+        let scene_mats = scene_mats.iter().count();
+        let std_mats = std_mats.iter().count();
+        let mask_mats = mask_mats.iter().count();
+        let uv_mats = uv_mats.iter().count();
+        let bound_mats = bound_mats.iter().count();
+        let textshape_mats = textshape_mats.iter().count();
+        debug!("scene {scene_mats} ({outlined} outlined), std {std_mats}, mask: {mask_mats}, uv: {uv_mats}, bound: {bound_mats}, text: {textshape_mats}");
+    }
+}
+
+fn display_tracked_components(
+    track: Option<Res<TrackComponents>>,
+    f: Res<FrameCount>,
+    player: Query<Entity, With<PrimaryUser>>,
+    containing_scene: ContainingScene,
+    components: Query<&ComponentTracker>,
+) {
+    let Some(track) = track else {
+        return;
+    };
+
+    if !track.0 || f.0.is_multiple_of(100) {
+        return;
+    }
+
+    let Ok(player) = player.single() else {
+        return;
+    };
+
+    let scenes = containing_scene.get(player);
+    for scene in scenes {
+        println!("scene {:?}\n{:#?}", scene, components.get(scene));
+    }
+}
+
+// set fps
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/track_components")]
+struct TrackComponentCommand {
+    on: Option<bool>,
+}
+
+fn set_track_components(
+    mut input: ConsoleCommand<TrackComponentCommand>,
+    track: Option<ResMut<TrackComponents>>,
+) {
+    let Some(mut track) = track else {
+        return;
+    };
+    if let Some(Ok(command)) = input.take() {
+        let on = command.on.unwrap_or(true);
+        track.0 = on;
+        input.reply_ok("");
+    }
+}
+
+fn update_crosshair(
+    locks: Res<CursorLocks>,
+    mut prev: Local<Option<bool>>,
+    mut crosshair: Query<&mut ImageNode, With<CrossHair>>,
+) {
+    let locked = locks.0.contains("Camera");
+    if Some(locked) != *prev {
+        let Ok(mut img) = crosshair.single_mut() else {
+            return;
+        };
+        *prev = Some(locked);
+        if locked {
+            img.color.set_alpha(0.7);
+        } else {
+            img.color.set_alpha(0.2);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use bevy::{
+        asset::AssetPlugin,
+        diagnostic::{DiagnosticMeasurement, DiagnosticsPlugin, RegisterDiagnostic},
+        time::TimeUpdateStrategy,
+    };
+    use scene_runner::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
+    use ui_core::{BODY_TEXT_STYLE, TITLE_TEXT_STYLE};
+
+    use super::*;
+
+    /// The panel's rows, label and value, as `setup` builds the panel and
+    /// `update_scene_load_state` fills it. `gpu` registers `GPU_FRAME_TIME` and adds the given
+    /// measurements to it; `None` leaves the path absent.
+    fn panel(gpu: Option<&[f64]>) -> Vec<(String, String)> {
+        let _ = TITLE_TEXT_STYLE.set((TextFont::default(), TextColor(Color::BLACK)));
+        let _ = BODY_TEXT_STYLE.set((TextFont::default(), TextColor(Color::BLACK)));
+
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), DiagnosticsPlugin))
+            .init_asset::<Image>()
+            // every update is 200 ms of time: the panel refreshes every 100 ms
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                200,
+            )))
+            .insert_resource(AppConfig::default())
+            .insert_resource(Version("test".to_owned()))
+            .init_resource::<DebugInfo>()
+            .init_resource::<ScenePointers>()
+            .init_resource::<LiveScenes>()
+            .init_resource::<PortableScenes>()
+            .add_systems(Startup, setup)
+            .add_systems(Update, update_scene_load_state);
+        let root = app.world_mut().spawn(Node::default()).id();
+        app.insert_resource(SystemUiRoot(root));
+        app.world_mut()
+            .spawn((PrimaryUser::default(), GlobalTransform::default()));
+
+        if let Some(measurements) = gpu {
+            app.register_diagnostic(Diagnostic::new(GPU_FRAME_TIME).with_suffix("ms"));
+            let mut store = app.world_mut().resource_mut::<DiagnosticsStore>();
+            // one instant for all of them: the moving average does not move off the first
+            let time = bevy::platform::time::Instant::now();
+            for &value in measurements {
+                store
+                    .get_mut(&GPU_FRAME_TIME)
+                    .unwrap()
+                    .add_measurement(DiagnosticMeasurement { time, value });
+            }
+        }
+
+        // the first update starts the clock, the second one fills the panel
+        app.update();
+        app.update();
+
+        let world = app.world_mut();
+        let marker = world
+            .query_filtered::<Entity, With<SysInfoMarker>>()
+            .single(world)
+            .unwrap();
+        let text = |entity: Entity| world.get::<Text>(entity).unwrap().0.clone();
+        world
+            .get::<Children>(marker)
+            .unwrap()
+            .iter()
+            .map(|row| {
+                let cells = world.get::<Children>(row).unwrap();
+                (text(cells[0]), text(cells[1]))
+            })
+            .collect()
+    }
+
+    fn gpu_row(gpu: Option<&[f64]>) -> String {
+        let rows = panel(gpu);
+        let (_, value) = rows
+            .iter()
+            .find(|(label, _)| label == "GPU :")
+            .unwrap_or_else(|| panic!("no GPU row: {rows:?}"));
+        value.clone()
+    }
+
+    #[test]
+    fn gpu_reads_a_dash_while_the_path_is_absent() {
+        assert_eq!(gpu_row(None), "-");
+    }
+
+    #[test]
+    fn gpu_reads_a_dash_before_the_first_measurement() {
+        assert_eq!(gpu_row(Some(&[])), "-");
+    }
+
+    #[test]
+    fn gpu_reads_the_smoothed_milliseconds() {
+        assert_eq!(gpu_row(Some(&[12.34])), "12.3 ms");
+    }
+
+    #[test]
+    fn gpu_reads_the_smoothed_value_not_the_latest() {
+        assert_eq!(gpu_row(Some(&[4.0, 7.5])), "4.0 ms");
+    }
+
+    #[test]
+    fn gpu_follows_fps() {
+        let rows = panel(None);
+        let labels: Vec<_> = rows.iter().map(|(label, _)| label.as_str()).collect();
+        let fps = labels.iter().position(|&label| label == "FPS :").unwrap();
+        assert_eq!(labels[fps + 1], "GPU :", "{labels:?}");
+    }
+}

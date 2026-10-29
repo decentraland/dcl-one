@@ -1,0 +1,40 @@
+{
+  "description": "GET /v1/mutes signed, the explorer-boot form (limit=100&offset=0). Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://social-api.decentraland.org/v1/mutes?limit=100&offset=0 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/mutes",
+    "query": {
+      "limit": [
+        "100"
+      ],
+      "offset": [
+        "0"
+      ]
+    },
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/mutes:1790364252208:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x7fa3e40c6ada15c1478161db99735a4724f8b607c2b44a764c51e7b7f89391080fab8f3aa3a478ce0e74375465faed29b58668c7720351cb0580cae78c8b67611c\"}",
+      "x-identity-timestamp": "1790364252208",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "results": [],
+        "total": 0,
+        "page": 1,
+        "pages": 0,
+        "limit": 100
+      }
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/mutes?limit=100&offset=0",
+  "captured_at": "2026-09-25T19:24:12Z",
+  "volatile_paths": []
+}

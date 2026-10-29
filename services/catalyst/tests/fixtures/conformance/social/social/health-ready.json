@@ -1,0 +1,27 @@
+{
+  "description": "GET /health/ready: the @dcl/http-server status check. Captured GET https://social-api.decentraland.org/health/ready -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/health/ready",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/health+json; charset=utf-8"
+    },
+    "body_json": {
+      "details": {
+        "httpServer": {
+          "status": "pass"
+        }
+      },
+      "status": "pass"
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/health/ready",
+  "captured_at": "2026-10-26T20:46:17Z",
+  "volatile_paths": []
+}

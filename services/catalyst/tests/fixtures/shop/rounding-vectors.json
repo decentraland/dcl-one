@@ -1,0 +1,66 @@
+{
+  "pins": {
+    "credits-server": "465e628bce38b43d6d34d7168717b6cfa4852643",
+    "shop": "94584a5ce756c0068d6ce3cb1c180b921dcbe839"
+  },
+  "chargeForQuote": {
+    "from": "credits-server test/unit/logic/usd-credit-lines.spec.ts (chargeForQuote table)",
+    "cases": [[1, 10], [9, 10], [10, 10], [11, 20], [65, 70], [110, 110], [111, 120]],
+    "refused": [0, -5]
+  },
+  "creditsCeil": {
+    "from": "shop app/src/lib/currency.ts usdCentsToCredits; credits-server get-user-purchases.ts Math.ceil(usdCents / 10)",
+    "cases": [[1, 1], [200, 20], [201, 21], [410, 41], [0, 0]]
+  },
+  "creditsFloor": {
+    "from": "shop app/src/lib/currency.ts usdCentsToCreditsFloor; credits-server get-user-credits.ts Math.floor(balanceCents / 10)",
+    "cases": [[107, 10], [327, 32], [9, 0], [10, 1], [0, 0]]
+  },
+  "wholeCreditsFloor": {
+    "from": "shop app/src/lib/payment-options.spec.ts (the credits leg of a combined payment)",
+    "cases": [[327, 320], [320, 320], [7, 0]]
+  },
+  "usdCentsToManaWei": {
+    "from": "credits-server test/unit/logic/oracle.spec.ts (RATE 30_000_000, DECIMALS 8)",
+    "cases": [
+      {"cents": 200, "rate": "30000000", "decimals": 8, "bufferBps": 200, "manaWei": "6799999999999999999"},
+      {"cents": 200, "rate": "30000000", "decimals": 8, "bufferBps": 500, "manaWei": "6999999999999999999"}
+    ],
+    "refused": [{"cents": 0, "rate": "30000000"}, {"cents": 200, "rate": "0"}]
+  },
+  "capHeadroom": {
+    "from": "credits-server src/logic/usd-credit-cap.ts applyCapHeadroom (DEFAULT_CAP_HEADROOM_PCT 150)",
+    "cases": [{"quotedWei": "6799999999999999999", "pct": 150, "capWei": "10199999999999999998"}]
+  },
+  "manaForRemainder": {
+    "from": "shop app/src/lib/payment-options.spec.ts (500 MANA for 1000c; the reported 41-credit case)",
+    "cases": [
+      {"remainder": 680, "price": 1000, "priceWei": "500000000000000000000", "wei": "340000000000000000000"},
+      {"remainder": 90, "price": 410, "priceWei": "41000000000000000000", "wei": "9000000000000000000"},
+      {"remainder": 1, "price": 3, "priceWei": "10", "wei": "4"},
+      {"remainder": 0, "price": 1000, "priceWei": "500000000000000000000", "wei": "0"},
+      {"remainder": 1000, "price": 1000, "priceWei": "500000000000000000000", "wei": "500000000000000000000"}
+    ]
+  },
+  "usdWeiToCents": {
+    "from": "shop app/src/lib/api.spec.ts (usdWeiToCents)",
+    "cases": [["1000000000000000000", 100], ["5000000000000000000", 500], ["10000000000000001", 2], ["9999999999999999", 1], ["1000000000000000000000", 100000]]
+  },
+  "manaWeiToUsdCents": {
+    "from": "shop app/src/lib/mana-rate.spec.ts (manaWeiToUsdCents, RATE_TWO 200000000, 8 decimals)",
+    "cases": [
+      {"manaWei": "1000000000000000000", "rate": "200000000", "decimals": 8, "cents": 200},
+      {"manaWei": "30000000000000000", "rate": "200000000", "decimals": 8, "cents": 6},
+      {"manaWei": "26000000000000000", "rate": "200000000", "decimals": 8, "cents": 6},
+      {"manaWei": "100000000000000", "rate": "200000000", "decimals": 8, "cents": 1}
+    ]
+  },
+  "usdWeiToManaWei": {
+    "from": "shop app/src/lib/mana.spec.ts (readTradeManaPriceWei: 1 USD at aggregator 50000000, 8 decimals)",
+    "cases": [{"usdWei": "1000000000000000000", "rate": "50000000", "decimals": 8, "manaWei": "2000000000000000000"}]
+  },
+  "discountedUsdCents": {
+    "from": "shop app/src/lib/cart-checkout.spec.ts (discountedUsdCents; coupon discount in ppm)",
+    "cases": [[1000, 300000, 700], [1000, 500000, 500], [999, 300000, 700], [0, 300000, 0]]
+  }
+}

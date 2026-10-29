@@ -1,0 +1,104 @@
+name: Gateway / Images
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+    paths:
+      - 'flake.*'
+      - 'infra/gateway/**'
+      - 'infra/containers/images.nix'
+      - 'infra/packages/default.nix'
+      - 'apps/sites/src/routes/routes/**'
+      - 'tooling/image-publish.py'
+      - 'tooling/tests/test_image_publish.py'
+      - '.github/workflows/gateway-images.yml'
+  pull_request:
+    paths:
+      - 'flake.*'
+      - 'infra/gateway/**'
+      - 'infra/containers/images.nix'
+      - 'infra/packages/default.nix'
+      - 'apps/sites/src/routes/routes/**'
+      - 'tooling/image-publish.py'
+      - 'tooling/tests/test_image_publish.py'
+      - '.github/workflows/gateway-images.yml'
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the tested gateway image to Quay
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: gateway-images-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - name: Test configuration and publication guards
+        run: |
+          python3 -m unittest discover -s infra/gateway/tests -v
+          python3 -m unittest discover -s tooling/tests -p test_image_publish.py -v
+      - name: Build the gateway without compiling APIs or Sites
+        run: |
+          mkdir -p .cache/gateway-image
+          nix build .#image-gateway --out-link .cache/gateway-image/result -L
+          cp -L .cache/gateway-image/result .cache/gateway-image/image.tar.gz
+          docker load --input .cache/gateway-image/image.tar.gz
+      - name: Test routing and access controls on the exact image
+        run: python3 infra/gateway/smoke.py --revision "$GITHUB_SHA" --arch "${{ matrix.arch }}"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gateway-image-linux-${{ matrix.arch }}-${{ github.sha }}
+          path: .cache/gateway-image/image.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: gateway-image-smoke-linux-${{ matrix.arch }}-${{ github.sha }}
+          path: .cache/gateway-smoke/*.log
+          retention-days: 7
+  publish:
+    needs: build
+    if: >-
+      github.event_name != 'pull_request' &&
+      (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')) &&
+      ((github.event_name == 'push' && vars.QUAY_GATEWAY_REPOSITORY != '') ||
+       (github.event_name == 'workflow_dispatch' && inputs.publish))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      QUAY_GATEWAY_REPOSITORY: ${{ vars.QUAY_GATEWAY_REPOSITORY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gateway-image-linux-amd64-${{ github.sha }}
+          path: .cache/gateway-publish/gateway-image-linux-amd64-${{ github.sha }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: gateway-image-linux-arm64-${{ github.sha }}
+          path: .cache/gateway-publish/gateway-image-linux-arm64-${{ github.sha }}
+      - name: Install the image transfer tool
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Publish the tested archives and verify both architectures
+        env:
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+        run: python3 tooling/image-publish.py .cache/gateway-publish --component gateway

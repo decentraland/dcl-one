@@ -1,0 +1,54 @@
+// DOMAIN: the entry url's accepted-parameter set (lib/entryParams.ts) and the dialog that names
+// what a link carried that nothing reads (features/gate/EntryParamsDialog.tsx).
+
+import { describe, expect, it } from 'vitest'
+import { WEB_PARAMS } from '../engine/generated'
+import { acceptedEntryParams, entryRealm, unrecognisedEntryParams } from '../lib/entryParams'
+
+describe('acceptedEntryParams', () => {
+  it('is every link-settable engine param plus the page switches, with a doc each', () => {
+    const accepted = acceptedEntryParams()
+    const names = accepted.map((p) => p.name)
+    // /play carries no benchmark run, so `autopilot` is not something a link can set here
+    for (const p of WEB_PARAMS) expect(names.includes(p.name)).toBe(p.delivery !== 'host' && p.name !== 'autopilot')
+    for (const p of accepted) expect(p.doc.length).toBeGreaterThan(0)
+    expect(new Set(names).size).toBe(names.length)
+    expect(names).toContain('guest')
+    expect(names).toContain('fps')
+    expect(names).toContain('pulseCertificateHash')
+    // host-forced and debug switches are known, not advertised
+    for (const internal of ['native', 'hud', 'mock', 'gate', 'simerror']) expect(names).not.toContain(internal)
+  })
+})
+
+describe('unrecognisedEntryParams', () => {
+  it('is empty for a link made of accepted params only', () => {
+    expect(unrecognisedEntryParams(new URLSearchParams('?realm=x&position=1,2&mock=1&preview&world=boedo'))).toEqual([])
+    expect(unrecognisedEntryParams(new URLSearchParams('?native=1&hud=0&gate=gpu&simerror=realm'))).toEqual([])
+    // campaign links: Segment reads them, never called out
+    expect(unrecognisedEntryParams(new URLSearchParams('?utm_source=x&utm_campaign=y&anon_user_id=abc&analyticsSession=s'))).toEqual([])
+    // ad clicks: a Google Ads final url as the ad serves it, and other platforms' click ids
+    expect(unrecognisedEntryParams(new URLSearchParams('?gad_source=1&gad_campaignid=2231&gbraid=0AAAAA_KoQHo8&gclid=Cj0K'))).toEqual([])
+    expect(unrecognisedEntryParams(new URLSearchParams('?fbclid=a&msclkid=b&ttclid=c&twclid=d&li_fat_id=e&rdt_cid=f'))).toEqual([])
+  })
+
+  it('tells a link that carries the benchmark switches they were ignored: /play never runs the benchmark', () => {
+    expect(unrecognisedEntryParams(new URLSearchParams('?autopilot&realm=supportteam.dcl.eth'))).toEqual(['autopilot'])
+    expect(unrecognisedEntryParams(new URLSearchParams('?autopilot=&perfStream=/__perf/b&perfCsv'))).toEqual(['autopilot', 'perfStream', 'perfCsv'])
+  })
+
+  it('names each unknown key once, including the host-only editor flag', () => {
+    const q = new URLSearchParams('?realm=x&reaml=y&editor&reaml=z&initialRealm=w')
+    expect(unrecognisedEntryParams(q)).toEqual(['reaml', 'editor', 'initialRealm'])
+  })
+})
+
+describe('entryRealm', () => {
+  it('reads a world name as its .dcl.eth realm, with realm taking precedence', () => {
+    expect(entryRealm(new URLSearchParams('?world=boedo'))).toBe('boedo.dcl.eth')
+    expect(entryRealm(new URLSearchParams('?world=Boedo.dcl.eth'))).toBe('boedo.dcl.eth')
+    expect(entryRealm(new URLSearchParams('?world=boedo&realm=https://r'))).toBe('https://r')
+    expect(entryRealm(new URLSearchParams('?world=https://evil.example'))).toBeNull()
+    expect(entryRealm(new URLSearchParams('?position=1,2'))).toBeNull()
+  })
+})

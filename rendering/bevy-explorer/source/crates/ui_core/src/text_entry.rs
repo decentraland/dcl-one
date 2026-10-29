@@ -1,0 +1,360 @@
+use crate::{
+    dui_utils::PropsExt,
+    focus::Focusable,
+    text_size::FontSize,
+    ui_actions::{DataChanged, On, Submit},
+};
+use bevy::{
+    prelude::*,
+    window::{PrimaryWindow, WindowResized},
+};
+use bevy_dui::{DuiRegistry, DuiTemplate};
+use bevy_simple_text_input::{
+    TextInputCursorTimer, TextInputInactive, TextInputPlaceholder, TextInputPlugin,
+    TextInputPointerAction, TextInputPointerEvent, TextInputSelectionStyle, TextInputSettings,
+    TextInputSubmitEvent, TextInputSystem, TextInputTextColor, TextInputTextFont, TextInputValue,
+};
+use common::{
+    inputs::CommonInputAction, sets::SceneSets, structs::TextStyle, util::TryPushChildrenEx,
+};
+use input_manager::{InputManager, InputPriority, InputType};
+
+use super::focus::Focus;
+
+#[derive(Component, Debug)]
+pub struct TextEntry {
+    pub text_style: Option<TextStyle>,
+    pub hint_text: String,
+    pub hint_text_color: Option<Color>,
+    pub content: String,
+    pub enabled: bool,
+    pub accept_line: bool,
+    pub multiline: usize,
+    pub retain_focus_on_submit: bool,
+}
+
+impl Default for TextEntry {
+    fn default() -> Self {
+        Self {
+            text_style: None,
+            hint_text: Default::default(),
+            hint_text_color: None,
+            content: Default::default(),
+            enabled: true,
+            accept_line: true,
+            multiline: 1,
+            retain_focus_on_submit: false,
+        }
+    }
+}
+
+pub struct TextEntryPlugin;
+
+impl Plugin for TextEntryPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(TextInputPlugin);
+        app.add_systems(Startup, setup).add_systems(
+            Update,
+            (
+                propagate_focus,
+                pass_textinput_pointer_events,
+                update_text_entry_components,
+                pipe_events,
+                update_fontsize,
+            )
+                .chain()
+                .in_set(SceneSets::PostLoop)
+                .after(TextInputSystem),
+        );
+    }
+}
+
+#[derive(Component)]
+struct TextEntryEntity(Entity);
+
+#[allow(clippy::type_complexity)]
+fn update_text_entry_components(
+    mut commands: Commands,
+    text_entries: Query<(Entity, Ref<TextEntry>, Option<&TextEntryEntity>), Changed<TextEntry>>,
+    current_input_values: Query<&TextInputValue>,
+) {
+    for (entity, textbox, maybe_existing) in text_entries.iter() {
+        let text_lightness = Lcha::from(
+            textbox
+                .text_style
+                .as_ref()
+                .map(|s| s.1 .0)
+                .unwrap_or(Color::WHITE),
+        )
+        .lightness;
+        let (select, select_bg) = if text_lightness > 0.5 {
+            (Color::BLACK, Color::WHITE.with_alpha(0.85))
+        } else {
+            (Color::WHITE, Color::BLACK.with_alpha(0.85))
+        };
+
+        let mut cmds = match maybe_existing {
+            Some(existing) => commands.entity(existing.0),
+            None => {
+                let id = commands.spawn_empty().id();
+                commands
+                    .entity(entity)
+                    .try_push_children(&[id])
+                    .try_insert(TextEntryEntity(id));
+                let mut cmds = commands.entity(id);
+                cmds.try_insert((
+                    Node {
+                        width: Val::Percent(100.0),
+                        min_width: Val::Percent(100.0),
+                        height: Val::Percent(100.0),
+                        ..Default::default()
+                    },
+                    TextInputInactive(true),
+                    TextInputCursorTimer::default(),
+                    Interaction::default(),
+                    Focusable(Some(entity)),
+                ));
+                if textbox.text_style.is_none() {
+                    cmds.try_insert(FontSize(0.03 / 1.3));
+                }
+                cmds
+            }
+        };
+
+        // (re)insert value to trigger observable
+        let value = maybe_existing
+            .and_then(|e| current_input_values.get(e.0).ok())
+            .map(|tev| &tev.0)
+            .unwrap_or_else(|| &textbox.content);
+
+        cmds.try_insert((
+            TextInputSettings {
+                multiline: textbox.multiline > 1,
+                retain_on_submit: !textbox.accept_line,
+                mask_character: None,
+            },
+            TextInputTextFont(textbox.text_style.clone().unwrap_or_default().0),
+            TextInputTextColor(textbox.text_style.clone().unwrap_or_default().1),
+            TextInputSelectionStyle {
+                color: Some(select),
+                background: Some(select_bg),
+            },
+            TextInputPlaceholder {
+                value: textbox.hint_text.clone(),
+                text_font: Some(textbox.text_style.clone().unwrap_or_default().0),
+                text_color: Some(TextColor(
+                    textbox
+                        .hint_text_color
+                        .unwrap_or(Color::srgb(0.3, 0.3, 0.3)),
+                )),
+            },
+            TextInputValue(value.clone()),
+        ));
+    }
+}
+
+pub fn pass_textinput_pointer_events(
+    input_manager: InputManager,
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut was_pressed: Local<bool>,
+    mut prev_pos: Local<Vec2>,
+    mut pointer: EventWriter<TextInputPointerEvent>,
+    focus_check: Query<&TextInputInactive>,
+) {
+    let is_focussed = focus_check.iter().any(|inactive| !inactive.0);
+
+    let just_pressed = is_focussed
+        && input_manager.just_down(CommonInputAction::IaPointer, InputPriority::TextEntry);
+    let still_pressed = *was_pressed
+        && input_manager.is_down(CommonInputAction::IaPointer, InputPriority::TextEntry);
+
+    let position = window
+        .single()
+        .ok()
+        .map(|w| w.cursor_position().unwrap_or_default() * w.scale_factor())
+        .unwrap_or_default();
+
+    if just_pressed && is_focussed {
+        pointer.write(TextInputPointerEvent {
+            position,
+            action: TextInputPointerAction::Press,
+        });
+    } else if still_pressed && *prev_pos != position {
+        pointer.write(TextInputPointerEvent {
+            position,
+            action: TextInputPointerAction::Drag,
+        });
+    } else if *was_pressed && !still_pressed {
+        pointer.write(TextInputPointerEvent {
+            position,
+            action: TextInputPointerAction::Release,
+        });
+    }
+
+    *was_pressed = just_pressed || still_pressed;
+    *prev_pos = position;
+}
+
+pub fn update_fontsize(
+    mut q: Query<(&mut TextInputTextFont, Ref<FontSize>)>,
+    mut resized: EventReader<WindowResized>,
+    window: Query<&Window, With<PrimaryWindow>>,
+) {
+    let resized = resized.read().last().is_some();
+    let Ok(window) = window.single() else {
+        return;
+    };
+    let win_size = window.width().min(window.height());
+    if win_size <= 0.0 {
+        return;
+    }
+    for (mut text, size) in q.iter_mut().filter(|(_, sz)| resized || sz.is_changed()) {
+        text.0.font_size = win_size * size.0;
+    }
+}
+
+pub fn propagate_focus(
+    q: Query<(&TextEntry, &Children), With<Focus>>,
+    mut activate: Query<(Entity, &mut TextInputInactive)>,
+    mut input_manager: InputManager,
+    mut reserved: Local<bool>,
+) {
+    let active = q
+        .iter()
+        .filter_map(|(textbox, children)| {
+            if !textbox.enabled {
+                return None;
+            }
+            for child in children.iter() {
+                let Ok((ent, mut inactive)) = activate.get_mut(child) else {
+                    continue;
+                };
+
+                inactive.bypass_change_detection();
+                if inactive.0 {
+                    inactive.0 = false;
+                    inactive.set_changed();
+                }
+
+                return Some(ent);
+            }
+            None
+        })
+        .next();
+
+    for (ent, mut inactive) in activate.iter_mut() {
+        if Some(ent) != active {
+            inactive.0 = true;
+        }
+    }
+
+    // only release what we reserved: other keyboard claimants (e.g. the react HUD while one of
+    // its text fields is focused) share the (Keyboard, TextEntry) slot
+    if active.is_some() {
+        input_manager
+            .priorities()
+            .reserve(InputType::Keyboard, InputPriority::TextEntry);
+        *reserved = true;
+    } else if *reserved {
+        input_manager
+            .priorities()
+            .release(InputType::Keyboard, InputPriority::TextEntry);
+        *reserved = false;
+    }
+}
+
+fn pipe_events(
+    mut submit: EventReader<TextInputSubmitEvent>,
+    changed: Query<(Entity, Ref<TextInputValue>), Changed<TextInputValue>>,
+    parents: Query<&ChildOf>,
+    settings: Query<&TextEntry>,
+    mut commands: Commands,
+) {
+    for ev in submit.read() {
+        debug!("{:?} submit", ev.entity);
+        let Ok(parent) = parents.get(ev.entity) else {
+            continue;
+        };
+
+        if let Ok(mut commands) = commands.get_entity(parent.parent()) {
+            commands
+                .try_insert(Submit)
+                .try_insert(TextEntrySubmit(ev.value.trim().to_owned()));
+            debug!("{:?} submit to {}", commands.id(), ev.value);
+        }
+
+        if let Ok(settings) = settings.get(parent.parent()) {
+            if !settings.retain_focus_on_submit {
+                debug!("{:?} defocus", ev.entity);
+                commands.entity(ev.entity).remove::<Focus>();
+            }
+        }
+    }
+
+    for (entity, value) in changed.iter() {
+        if value.is_added() {
+            debug!("{:?} skip updated (added)", entity);
+            continue;
+        }
+        debug!("{:?} update", entity);
+        if let Some(mut commands) = parents
+            .get(entity)
+            .ok()
+            .and_then(|p| commands.get_entity(p.parent()).ok())
+        {
+            commands
+                .try_insert(DataChanged)
+                .try_insert(TextEntryValue(value.0.trim().to_owned()));
+            debug!("{:?} update to {}", commands.id(), value.0);
+        }
+
+        if value.0 == "\n" {
+            commands
+                .entity(entity)
+                .try_insert(TextInputValue::default());
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct TextEntrySubmit(pub String);
+
+#[derive(Component)]
+pub struct TextEntryValue(pub String);
+
+fn setup(mut dui: ResMut<DuiRegistry>) {
+    dui.register_template("text-entry", DuiTextEntryTemplate);
+}
+
+// TODO handle screen resizing
+
+pub struct DuiTextEntryTemplate;
+
+impl DuiTemplate for DuiTextEntryTemplate {
+    fn render(
+        &self,
+        commands: &mut bevy::ecs::system::EntityCommands,
+        mut props: bevy_dui::DuiProps,
+        ctx: &mut bevy_dui::DuiContext,
+    ) -> Result<bevy_dui::NodeMap, anyhow::Error> {
+        let multiline = props.take_as::<u32>(ctx, "multi-line")?.unwrap_or(1) as usize;
+
+        let textentry = TextEntry {
+            hint_text: props.take::<String>("hint-text")?.unwrap_or_default(),
+            content: props.take::<String>("initial-text")?.unwrap_or_default(),
+            enabled: !(props.take_as::<bool>(ctx, "disabled")?.unwrap_or(false)),
+            accept_line: props.take_as::<bool>(ctx, "accept-line")?.unwrap_or(false),
+            retain_focus_on_submit: props.take_as::<bool>(ctx, "retain-focus")?.unwrap_or(false),
+            multiline,
+            ..Default::default()
+        };
+        debug!("initial: {}", textentry.content);
+        commands.try_insert(textentry);
+
+        if let Some(onchanged) = props.take::<On<DataChanged>>("onchanged")? {
+            commands.try_insert(onchanged);
+        }
+
+        Ok(Default::default())
+    }
+}

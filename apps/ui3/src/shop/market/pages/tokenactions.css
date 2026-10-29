@@ -1,0 +1,364 @@
+/* from: marketplace@3bf3662f webapp/src/components/{AssetAction/AssetAction.css, TransferPage/TransferPage.css,
+   BidPage/BidModal/BidModal.css, Bid/Bid.css, ConfirmInputValueModal/ConfirmInputValueModal.css}; decentraland-ui
+   dark theme (Field, Button, Stats, Modal). */
+
+.shop-ta {
+  --ta-danger: #ff2d55;
+  --ta-text: #fcfcfc;
+  --ta-secondary: #cfcdd4;
+  --ta-muted: #a09ba8;
+  --ta-card: #242129;
+  font-family: var(--shop-sans, "Inter", system-ui, sans-serif);
+  color: var(--ta-text);
+}
+
+.shop-ta .assetaction {
+  min-height: 0;
+}
+.shop-ta .mk-action-layout__media {
+  width: 240px;
+  max-width: 100%;
+  aspect-ratio: 1;
+  border-radius: 16px;
+  background: var(--ta-media, #242129);
+}
+.shop-ta .mk-action-layout__media img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.shop-ta .assetaction__title {
+  font-size: 34px;
+  line-height: 42px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: var(--ta-text);
+}
+.shop-ta .assetaction__subtitle {
+  margin: 0 0 32px;
+  color: var(--ta-secondary);
+  font-size: 17px;
+  line-height: 26px;
+}
+.shop-ta .assetaction__subtitle b,
+.shop-ta .shop-ta-subtitle b {
+  color: var(--ta-text);
+  font-weight: 700;
+}
+.shop-ta .assetaction__right > .mk-section {
+  display: block;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.shop-ta .shop-ta-subtitle {
+  margin: 0 0 32px;
+  color: var(--ta-secondary);
+  font-size: 17px;
+  line-height: 26px;
+}
+.shop-ta .shop-ta-subtitle--error,
+.shop-ta .shop-ta-subtitle--error b {
+  color: var(--ta-danger);
+}
+.shop-ta .shop-ta-subtitle--bid {
+  margin-bottom: 10px;
+}
+
+.shop-ta .shop-ta-form {
+  max-width: 420px;
+}
+.shop-ta .shop-ta-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 420px;
+  max-width: 100%;
+  margin-bottom: 24px;
+}
+.shop-ta .shop-ta-fields--bid {
+  margin-top: 32px;
+}
+
+.shop-ta .shop-ta-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  margin-bottom: 16px;
+}
+.shop-ta .shop-ta-field__label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  line-height: 18px;
+  text-transform: uppercase;
+  color: var(--ta-muted);
+}
+.shop-ta .shop-ta-field__control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 48px;
+  padding: 0 14px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  color: var(--ta-text);
+  box-sizing: border-box;
+}
+.shop-ta .shop-ta-field__control:focus-within {
+  border-color: var(--ta-text);
+}
+.shop-ta .shop-ta-field__control[data-invalid] {
+  border-color: var(--ta-danger);
+}
+.shop-ta .shop-ta-field__control input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+  color-scheme: dark;
+}
+.shop-ta .shop-ta-field__control input::placeholder {
+  color: rgba(252, 252, 252, 0.45);
+}
+.shop-ta .shop-ta-field__control input:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.shop-ta .shop-ta-field__error {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ta-danger);
+}
+.shop-ta .shop-ta-field__help {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ta-secondary);
+}
+
+.shop-ta .shop-ta-warning {
+  margin: 0 0 24px;
+  color: var(--ta-danger);
+  font-size: 15px;
+  line-height: 24px;
+}
+.shop-ta .shop-ta-fee {
+  display: block;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--ta-muted);
+}
+.shop-ta .shop-ta-fee__covered {
+  color: #36d41d;
+}
+.shop-ta .shop-ta-message {
+  margin: 0 0 16px;
+  padding: 15px;
+  border-radius: 6px;
+  background: #2e2a33;
+  color: var(--ta-secondary);
+  font-size: 15px;
+  line-height: 22px;
+}
+.shop-ta .shop-ta-message strong,
+.shop-ta .shop-ta-message b {
+  color: var(--ta-text);
+}
+
+.shop-ta .shop-ta-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-top: 20px;
+}
+.shop-ta-btn {
+  min-width: 160px;
+  height: 46px;
+  padding: 0 32px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(115, 110, 125, 0.32);
+  color: #fff;
+  font-family: var(--shop-sans, "Inter", system-ui, sans-serif);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.shop-ta-btn:hover:not(:disabled) {
+  background: rgba(115, 110, 125, 0.45);
+}
+.shop-ta-btn--primary {
+  background: #ff2d55;
+}
+.shop-ta-btn--primary:hover:not(:disabled) {
+  background: #ff4063;
+}
+.shop-ta-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+.shop-ta-btn:focus-visible {
+  outline: 2px solid #fcfcfc;
+  outline-offset: 2px;
+}
+.shop-ta-btn--small {
+  min-width: 0;
+  height: 32px;
+  padding: 0 16px;
+  font-size: 12px;
+}
+
+.shop-ta .shop-ta-done {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+  color: var(--ta-secondary);
+  font-size: 16px;
+  line-height: 24px;
+}
+.shop-ta .shop-ta-done a {
+  color: var(--ta-danger);
+  text-decoration: none;
+  font-weight: 600;
+}
+.shop-ta .mk-write {
+  margin: 16px 0 0;
+}
+
+.shop-ta-confirm {
+  font-family: var(--shop-sans, "Inter", system-ui, sans-serif);
+  line-height: 1.5;
+}
+.shop-ta-confirm .shop-ta-confirm__title {
+  margin: 0 0 20px;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 600;
+}
+.shop-ta-confirm .shop-ta-confirm__content {
+  font-size: 15px;
+  line-height: 24px;
+}
+.shop-ta-confirm .shop-ta-confirm__content p {
+  margin: 0;
+}
+.shop-ta-confirm .shop-ta-confirm__field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 24px;
+}
+.shop-ta-confirm .shop-ta-confirm__label {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.shop-ta-confirm .shop-ta-confirm__control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+}
+.shop-ta-confirm .shop-ta-confirm__control input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 16px;
+}
+.shop-ta-confirm .shop-ta-confirm__actions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 28px;
+}
+.shop-ta-confirm .shop-ta-btn:not(.shop-ta-btn--primary) {
+  background: transparent;
+  border: 1px solid currentColor;
+  color: inherit;
+}
+.shop-ta-confirm .mk-write {
+  margin: 16px 0 0;
+}
+
+@media (max-width: 768px) {
+  .shop-ta .mk-action-layout__media {
+    width: 100%;
+  }
+  .shop-ta .shop-ta-fields,
+  .shop-ta .shop-ta-form {
+    width: 100%;
+    max-width: none;
+  }
+  .shop-ta .shop-ta-buttons {
+    flex-direction: column-reverse;
+    gap: 24px;
+  }
+  .shop-ta .shop-ta-buttons .shop-ta-btn {
+    width: 100%;
+  }
+  .shop-ta-confirm .shop-ta-confirm__actions {
+    flex-direction: column-reverse;
+  }
+  .shop-ta-confirm .shop-ta-btn {
+    width: 100%;
+  }
+}
+
+.shop-ta-confirm .shop-ta-confirm__hint {
+  margin: 8px 0;
+  font-size: 14px;
+  opacity: 0.75;
+}
+
+.shop-ta-signin .shop-land-signin {
+  padding: 40px 0;
+}
+.shop-ta-signin .shop-land-signin__header {
+  font-weight: 400;
+}
+.shop-ta-signin .shop-land-signin__icon {
+  background-color: #2a1238;
+}
+.shop-ta-signin .shop-land-signin__icon svg {
+  stroke: #fff;
+}
+.shop-ta-signin .shop-land-signin__message {
+  margin: 0 0 16px;
+  font-size: 16px;
+}
+.shop-ta-signin .shop-land-signin__message a {
+  color: #fff;
+  text-decoration: underline;
+}
+.shop-ta-signin .shop-land-signin__connect {
+  min-width: 128px;
+  height: 44px;
+  padding: 13px 32px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+}

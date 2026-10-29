@@ -1,0 +1,28 @@
+{
+  "method": "GET",
+  "url": "https://comms-gatekeeper.decentraland.org/users/not-an-address/bans",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 200,
+  "status_text": "OK",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c68bea895d933-TXL",
+    "connection": "keep-alive",
+    "content-length": "27",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:27 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "traceparent": "0-9c2843a03d222e56d30be2c524509fa4-0000000000000000-0",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:27Z",
+  "elapsed_ms": 159,
+  "body_bytes": 27,
+  "body_file": "user-bans-bad-address.raw.body",
+  "redacted": false
+}

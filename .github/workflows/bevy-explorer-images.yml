@@ -1,0 +1,133 @@
+name: Bevy Explorer / Images
+on:
+  workflow_run:
+    workflows: ['Bevy Explorer / CI']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Bevy Explorer CI run on this repository's main branch
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: bevy-explorer-images
+  cancel-in-progress: false
+jobs:
+  source:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.event != 'pull_request' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      run_id: ${{ steps.source.outputs.run_id }}
+      build: ${{ steps.source.outputs.build }}
+      products: ${{ steps.source.outputs.products }}
+      build-matrix: ${{ steps.source.outputs.build-matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - name: Validate the source run before downloading its artifacts
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_RUN: ${{ inputs.run_id || github.event.workflow_run.id }}
+        run: python3 tooling/bevy-ci.py source
+  build:
+    if: needs.source.outputs.build == 'true'
+    needs: source
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.source.outputs.build-matrix) }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bevy-explorer-${{ matrix.product }}${{ matrix.product == 'headless' && '-linux-amd64' || '' }}-${{ needs.source.outputs.sha }}
+          run-id: ${{ needs.source.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: apps/bevy-explorer/dist/${{ matrix.product }}
+      - name: Build and test the image from the tested application artifact
+        env:
+          REVISION: ${{ needs.source.outputs.sha }}
+          PRODUCT: ${{ matrix.product }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          docker build --build-arg "VCS_REF=$REVISION" \
+            -f "apps/bevy-explorer/Dockerfile.$PRODUCT" -t "bevy-explorer-$PRODUCT:ci" apps/bevy-explorer
+          python3 apps/bevy-explorer/image-smoke.py "$PRODUCT" --revision "$REVISION" --arch "$ARCH"
+          mkdir -p apps/bevy-explorer/dist/image
+          docker save "bevy-explorer-$PRODUCT:ci" | gzip > apps/bevy-explorer/dist/image/image.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-explorer-${{ matrix.product }}-image-linux-${{ matrix.arch }}-${{ needs.source.outputs.sha }}
+          path: apps/bevy-explorer/dist/image/image.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bevy-explorer-${{ matrix.product }}-image-smoke-linux-${{ matrix.arch }}-${{ needs.source.outputs.sha }}
+          path: apps/bevy-explorer/dist/image-smoke-*.log
+          retention-days: 7
+  publish:
+    needs: [source, build]
+    if: needs.source.outputs.build == 'true' && (vars.QUAY_BEVY_EXPLORER_WEB_REPOSITORY != '' || vars.QUAY_BEVY_EXPLORER_HEADLESS_REPOSITORY != '')
+    strategy:
+      fail-fast: false
+      matrix:
+        product: ${{ fromJSON(needs.source.outputs.products) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      QUAY_BEVY_EXPLORER_WEB_REPOSITORY: ${{ vars.QUAY_BEVY_EXPLORER_WEB_REPOSITORY }}
+      QUAY_BEVY_EXPLORER_HEADLESS_REPOSITORY: ${{ vars.QUAY_BEVY_EXPLORER_HEADLESS_REPOSITORY }}
+      DESTINATION: ${{ vars[matrix.product == 'web' && 'QUAY_BEVY_EXPLORER_WEB_REPOSITORY' || 'QUAY_BEVY_EXPLORER_HEADLESS_REPOSITORY'] }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: env.DESTINATION != ''
+        with:
+          # Use this workflow's publisher, including when replaying an older source run.
+          ref: ${{ github.workflow_sha }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: env.DESTINATION != ''
+      # Explicit paths keep the publisher layout stable for one or two architectures.
+      # A pattern matching only one artifact extracts directly into `path`.
+      - name: Download the AMD64 image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.DESTINATION != ''
+        with:
+          name: bevy-explorer-${{ matrix.product }}-image-linux-amd64-${{ needs.source.outputs.sha }}
+          path: .cache/bevy-images-publish/bevy-explorer-${{ matrix.product }}-image-linux-amd64-${{ needs.source.outputs.sha }}
+      - name: Download the ARM64 web image
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: env.DESTINATION != '' && matrix.product == 'web'
+        with:
+          name: bevy-explorer-web-image-linux-arm64-${{ needs.source.outputs.sha }}
+          path: .cache/bevy-images-publish/bevy-explorer-web-image-linux-arm64-${{ needs.source.outputs.sha }}
+      - name: Install the image transfer tool
+        if: env.DESTINATION != ''
+        run: sudo apt-get update && sudo apt-get install -y skopeo
+      - name: Publish the exact tested archives
+        if: env.DESTINATION != ''
+        env:
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+          REVISION: ${{ needs.source.outputs.sha }}
+          COMPONENT: bevy-explorer-${{ matrix.product }}
+        # The source job verifies main; workflow_run's own ref is the default branch.
+        run: python3 tooling/image-publish.py .cache/bevy-images-publish --component "$COMPONENT" --revision "$REVISION" --ref refs/heads/main

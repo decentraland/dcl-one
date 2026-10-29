@@ -1,0 +1,17 @@
+.shop-credit-rate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  color: var(--ink-7);
+  font-size: var(--fs-13);
+}
+
+.shop-credit-rate[data-align="center"] {
+  justify-content: center;
+  width: 100%;
+}
+
+.shop-credit-rate b {
+  color: var(--text);
+}

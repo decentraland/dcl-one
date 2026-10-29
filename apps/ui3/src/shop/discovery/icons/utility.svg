@@ -1,0 +1,16 @@
+<!-- Crossed tools, for the UTILITY chip on an item that unlocks something. Authored here rather than lifted
+     from decentraland-ui (whose IconBadge supplies the marketplace's version): this folder has glyphs that are
+     monochrome CSS masks over a shared 24 box, and that library icon is a font/sprite we do not carry.
+     Kept to solid geometry — a mask reads alpha only, and thin strokes disappear at the 18px this renders at. -->
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Wrench: shaft from lower-left to upper-right, with an open forked head. -->
+  <g transform="rotate(-45 12 12)">
+    <rect x="10.6" y="9" width="2.8" height="11" rx="1.4" fill="#000" />
+    <path d="M9.1 3.2h1.9v2.4h2v-2.4h1.9v3.9a1.6 1.6 0 0 1-1.6 1.6h-2.6a1.6 1.6 0 0 1-1.6-1.6V3.2Z" fill="#000" />
+  </g>
+  <!-- Screwdriver: shaft from upper-left to lower-right, with a squarer handle. -->
+  <g transform="rotate(45 12 12)">
+    <rect x="10.9" y="8.6" width="2.2" height="11.4" rx="1.1" fill="#000" />
+    <rect x="9.6" y="3.4" width="4.8" height="5.4" rx="1.6" fill="#000" />
+  </g>
+</svg>

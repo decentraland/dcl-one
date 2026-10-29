@@ -1,0 +1,23 @@
+{
+  "description": "GET /api/users/{address} for an address with no photos. Captured GET https://camera-reel-service.decentraland.org/api/users/0x0000000000000000000000000000000000000001 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/api/users/0x0000000000000000000000000000000000000001",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "currentImages": 0,
+      "maxImages": 500
+    }
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/users/0x0000000000000000000000000000000000000001",
+  "captured_at": "2026-09-25T19:25:02Z",
+  "volatile_paths": []
+}

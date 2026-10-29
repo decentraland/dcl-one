@@ -1,0 +1,289 @@
+# Adapted from upstream bevy-explorer's workflows for this repository's layout.
+name: Bevy Explorer / Desktop
+'on':
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Create a dcl-one prerelease after every desktop build passes
+        type: boolean
+        default: false
+jobs:
+  build:
+    name: Build ${{ matrix.build_name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - build_name: linux-amd64
+            os: ubuntu-24.04
+          - build_name: windows-amd64
+            os: windows-2025
+    env:
+      PACKAGE_FILE: bevy-explorer-desktop-${{ matrix.build_name }}-${{ github.sha }}.${{ startsWith(matrix.build_name, 'lin')
+        && 'tar.gz' || 'zip' }}
+      APPIMAGE_FILE: bevy-explorer-desktop-${{ matrix.build_name }}-${{ github.sha }}.AppImage
+      CARGO_BUILD_DIR: target/release
+      # The Segment sources the build reports to (crates/analytics); unset, the shared key. Only
+      # main and a tag get the prod key: a build of any other ref carries the dev key in its place.
+      BEVY_SEGMENT_WRITE_KEY_PROD: ${{ (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        && vars.BEVY_SEGMENT_WRITE_KEY_PROD || vars.BEVY_SEGMENT_WRITE_KEY_DEV }}
+      BEVY_SEGMENT_WRITE_KEY_DEV: ${{ vars.BEVY_SEGMENT_WRITE_KEY_DEV }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Clone repo
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Reserve disk space on the hosted Linux runner
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |-
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          df -h /
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - name: Prepare the pinned native toolchain for caching
+        run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: rendering/bevy-explorer/source -> target
+          key: bevy-explorer-desktop-${{ matrix.build_name }}
+      - name: add darwin target
+        if: runner.os == 'macos'
+        run: rustup target add aarch64-apple-darwin
+      - name: Install protoc
+        if: matrix.os != 'self-hosted-windows'
+        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Install alsa and udev
+        if: runner.os == 'linux'
+        run: sudo apt-get update; sudo apt-get install --no-install-recommends libasound2-dev libudev-dev
+      - name: Generate TS bindings
+        run: ./scripts/gen-ts-bindings.sh
+        shell: bash
+      - name: Bundle react HUD (page + bridge scene -> assets/)
+        run: |-
+          cd react-web && npm ci
+          cd bridge-scene && npm ci && cd ..
+          npm run bundle:native
+        shell: bash
+      - name: Install ninja (macos)
+        if: runner.os == 'macos'
+        run: brew install ninja
+      - name: Install ninja (linux)
+        if: runner.os == 'linux'
+        run: sudo apt-get install -y --no-install-recommends ninja-build
+      - name: Export CEF distribution
+        run: |-
+          cargo install export-cef-dir --version "139.8.0+139.0.40"
+          export-cef-dir --force "$HOME/.local/share/cef"
+          # GITHUB_ENV reaches native processes verbatim: on windows the git-bash $HOME
+          # (/c/Users/...) would resolve as C:\c\Users\... — write a windows path there.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "CEF_PATH=$(cygpath -w "$HOME/.local/share/cef")" >> "$GITHUB_ENV"
+          else
+            echo "CEF_PATH=$HOME/.local/share/cef" >> "$GITHUB_ENV"
+          fi
+        shell: bash
+      - name: install livekit deps
+        if: runner.os == 'linux'
+        run: sudo apt update -y; sudo apt install -y libssl-dev libx11-dev libgl1-mesa-dev libxext-dev fuse libfuse2t64
+          libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
+      - name: install ffmpeg deps (linux)
+        run: sudo apt install -y --no-install-recommends clang curl pkg-config libavcodec-dev libavformat-dev libavutil-dev
+          libavfilter-dev libavdevice-dev
+        if: runner.os == 'linux'
+      - name: Install clang for webrtc-sys
+        if: runner.os == 'linux'
+        run: ../../../apps/bevy-explorer/install-clang.sh
+      - name: install ffmpeg deps (macOs)
+        if: runner.os == 'macos'
+        run: |-
+          brew install ffmpeg@6 pkg-config;
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig" >> "$GITHUB_ENV"
+      - name: install ffmpeg deps (windows)
+        if: runner.os == 'windows' && matrix.os != 'self-hosted-windows'
+        run: |-
+          # Prefer the standalone LLVM install (stable across runner image rolls); fall back to the VS-bundled Clang toolset, whose version moves with the image and has produced opaque bindgen structs on rollover.
+          $vsLlvm = "$(& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)\VC\Tools\LLVM\x64\bin"
+          $libclang = @("C:\Program Files\LLVM\bin", $vsLlvm) | Where-Object { Test-Path "$_\libclang.dll" } | Select-Object -First 1
+          if (-not $libclang) { throw "libclang.dll not found (checked standalone LLVM and VS Clang toolset)" }
+          Write-Host "Using LIBCLANG_PATH=$libclang"
+          Add-Content $env:GITHUB_ENV "LIBCLANG_PATH=$libclang`n"
+          $ffUrl = "https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z"
+          for ($i = 1; $i -le 3; $i++) {
+            try { Invoke-WebRequest $ffUrl -OutFile ffmpeg-6.0-full_build-shared.7z; break }
+            catch { if ($i -eq 3) { throw }; Write-Host "ffmpeg download failed (attempt $i), retrying..."; Start-Sleep -Seconds 5 }
+          }
+          7z x ffmpeg-6.0-full_build-shared.7z
+          mkdir ffmpeg
+          mv ffmpeg-*/* ffmpeg/
+          if (-not (Test-Path "ffmpeg\include")) { throw "ffmpeg headers missing after extract (ffmpeg\include not found)" }
+          Add-Content $env:GITHUB_ENV "FFMPEG_DIR=${pwd}\ffmpeg`n"
+          Add-Content $env:GITHUB_PATH "${pwd}\ffmpeg\bin`n"
+        shell: pwsh
+      - name: install ffmpeg deps (windows)
+        if: runner.os == 'windows' && matrix.os == 'self-hosted-windows'
+        run: Add-Content $env:GITHUB_ENV "FFMPEG_DIR=c:\ffmpeg-6.0`n"
+        shell: pwsh
+      - name: Cargo build (windows)
+        if: runner.os == 'windows'
+        run: cargo build --release --locked --package dcl_deno_ipc && cargo build --release --locked
+      - name: Cargo build (macos)
+        if: runner.os == 'macos'
+        run: cargo build --release --locked --package dcl_deno_ipc && cargo build --release --locked
+      - name: Cargo build (linux)
+        if: runner.os == 'linux'
+        run: cargo build --release --locked --package dcl_deno_ipc && cargo build --release --locked
+      - name: Package common
+        run: |-
+          mkdir package
+          cp readme.md package/README.md
+          cp LICENSE package/LICENSE
+      - name: (macos) Preparing binary and librarys
+        if: runner.os == 'macos'
+        run: |-
+          brew install dylibbundler
+          mv ${{ env.CARGO_BUILD_DIR }}/decentra-bevy .
+          dylibbundler -cd -b -x decentra-bevy -d ./libs
+      - name: Package Macos
+        if: runner.os == 'macos'
+        env:
+          MACOS_CSC_CONTENT: ${{ secrets.MACOS_CSC_CONTENT }}
+          MACOS_CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          MACOS_DEVELOPER_ID: ${{ secrets.MACOS_DEVELOPER_ID }}
+          MACOS_NOTARIZATION_APPLE_ID: ${{ secrets.MACOS_NOTARIZATION_APPLE_ID }}
+          MACOS_NOTARIZATION_PWD: ${{ secrets.MACOS_NOTARIZATION_PWD }}
+          MACOS_NOTARIZATION_TEAM_ID: ${{ secrets.MACOS_NOTARIZATION_TEAM_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |-
+          cd deploy/macos
+          bash build.sh
+          mv DecentralandBevyExplorer.zip ../../${{ env.PACKAGE_FILE }}
+      - name: Package Windows
+        if: runner.os == 'Windows'
+        run: |-
+          cp ${{ env.CARGO_BUILD_DIR }}/decentra-bevy.exe package/decentra-bevy.exe
+          cp ${{ env.CARGO_BUILD_DIR }}/dcl_deno_ipc.exe package/dcl_deno_ipc.exe
+          cp ${{ env.CARGO_BUILD_DIR }}/decentra-bevy-cef.exe package/decentra-bevy-cef.exe
+          cp -r assets package/assets
+          # CEF runtime next to the exe (standard layout). export-cef-dir FLATTENS the
+          # distribution: dlls, snapshots, paks and locales all live at the root of the
+          # export dir — there is no Release/ or Resources/ subdir.
+          $cef = "$env:USERPROFILE\.local\share\cef"
+          cp "$cef\*.dll" package/
+          cp "$cef\*.bin" package/
+          cp "$cef\*.pak" package/
+          cp "$cef\*.dat" package/
+          cp "$cef\*.json" package/
+          cp -r "$cef\locales" package/locales
+          cp ${{ env.FFMPEG_DIR }}/bin/*.dll package
+          7z a ${{ env.PACKAGE_FILE }} ./package/*
+        shell: pwsh
+      - name: Package Linux
+        if: runner.os == 'linux'
+        run: |-
+          cp ${{ env.CARGO_BUILD_DIR }}/decentra-bevy package/decentra-bevy
+          cp ${{ env.CARGO_BUILD_DIR }}/dcl_deno_ipc package/dcl_deno_ipc
+          cp ${{ env.CARGO_BUILD_DIR }}/decentra-bevy-cef package/decentra-bevy-cef
+          cp -r assets package/assets
+          # CEF runtime next to the exe (standard layout). export-cef-dir FLATTENS the
+          # distribution: .so, snapshots, paks and locales all live at the root of the
+          # export dir — there is no Release/ or Resources/ subdir.
+          # NOTE (best-effort): unless cef-dll-sys sets an $ORIGIN rpath, linux users may
+          # need LD_LIBRARY_PATH=. to launch; AppImage packaging of CEF is not attempted.
+          cef="$HOME/.local/share/cef"
+          cp "$cef"/*.so* "$cef"/*.bin "$cef"/*.pak "$cef"/*.dat "$cef"/*.json package/
+          cp -r "$cef/locales" package/locales
+          if [ -f "$cef/chrome-sandbox" ]; then cp "$cef/chrome-sandbox" package/; fi
+          # We must enter the package/ directory in order to create a flat tarball (i.e. without a directory in it).
+          cd package
+          tar -czvf ../${{ env.PACKAGE_FILE }} ./*
+      - name: Package AppImage
+        if: runner.os == 'linux'
+        continue-on-error: true
+        run: |-
+          cd deploy/linux
+          mkdir -p BevyExplorer.AppDir/usr/bin BevyExplorer.AppDir/usr/lib
+          cp ../../target/release/decentra-bevy BevyExplorer.AppDir/usr/bin
+          cp ../../target/release/dcl_deno_ipc BevyExplorer.AppDir/usr/bin
+          # CEF: decentra-bevy links libcef.so, so linuxdeploy must be able to resolve
+          # it (LD_LIBRARY_PATH below) — it then bundles it into usr/lib and patches
+          # rpaths. The runtime resources (paks, icudtl, snapshots, locales) are not
+          # library dependencies, so copy them next to where libcef.so will land, and
+          # the subprocess helper is found as a sibling of the main binary (usr/bin).
+          # export-cef-dir FLATTENS the distribution: everything is at the export root.
+          cef="$HOME/.local/share/cef"
+          cp ../../target/release/decentra-bevy-cef BevyExplorer.AppDir/usr/bin
+          # HUD page + bridge-scene resolve assets/ against the exe dir (native_hud_roots)
+          cp -r ../../assets BevyExplorer.AppDir/usr/bin/assets
+          cp "$cef"/*.bin "$cef"/*.pak "$cef"/*.dat "$cef"/*.json BevyExplorer.AppDir/usr/lib/
+          cp -r "$cef/locales" BevyExplorer.AppDir/usr/lib/locales
+          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/1-alpha-20251107-1/linuxdeploy-x86_64.AppImage
+          wget https://github.com/AppImage/appimagetool/releases/latest/download/appimagetool-x86_64.AppImage
+          chmod +x ./linuxdeploy-x86_64.AppImage ./appimagetool-x86_64.AppImage
+          PATH="$(pwd):$PATH"
+          export PATH
+          APPIMAGETOOL="$(pwd)/appimagetool.AppImage"
+          export APPIMAGETOOL
+          export LD_LIBRARY_PATH="$cef:$LD_LIBRARY_PATH"
+          # libxkbcommon must NOT be bundled: it ships as a matched pair with the host's
+          # libxkbcommon-x11 (private struct layouts shared between the two), and only the
+          # base lib is a transitive dep here (ffmpeg -> SDL2), so bundling it pairs our
+          # build machine's copy with the host's -x11 half — the keymap winit builds
+          # through that mix is corrupt (hangs on every keypress, SEGV in
+          # xkb_keymap_unref at exit). winit dlopens both from the host instead.
+          ./linuxdeploy-x86_64.AppImage --appdir BevyExplorer.AppDir --output appimage --create-desktop-file \
+            --executable=../../target/release/decentra-bevy \
+            --executable=../../target/release/dcl_deno_ipc \
+            --executable=../../target/release/decentra-bevy-cef \
+            --exclude-library="libxkbcommon*" \
+            --icon-file=decentra-bevy.png
+          mv ./decentra-bevy-x86_64.AppImage ${{ env.APPIMAGE_FILE }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Collect desktop artifacts
+        shell: bash
+        run: |-
+          mkdir -p ../../../apps/bevy-explorer/dist/desktop
+          cp "$PACKAGE_FILE" ../../../apps/bevy-explorer/dist/desktop/
+          if [ -f "deploy/linux/$APPIMAGE_FILE" ]; then cp "deploy/linux/$APPIMAGE_FILE" ../../../apps/bevy-explorer/dist/desktop/; fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-explorer-desktop-${{ matrix.build_name }}-${{ github.sha }}
+          path: apps/bevy-explorer/dist/desktop/
+          if-no-files-found: error
+          retention-days: 14
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 100
+  release:
+    needs: build
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: bevy-explorer-desktop-*
+          merge-multiple: true
+          path: dist
+      - name: Create the component prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: bevy-explorer-desktop-v0.1.0-${{ github.run_number }}
+          REVISION: ${{ github.sha }}
+        run: gh release create "$RELEASE_TAG" dist/* --target "$REVISION" --title "$RELEASE_TAG" --generate-notes --prerelease
+permissions:
+  contents: read
+concurrency:
+  group: bevy-explorer-desktop-${{ github.ref }}
+  cancel-in-progress: false

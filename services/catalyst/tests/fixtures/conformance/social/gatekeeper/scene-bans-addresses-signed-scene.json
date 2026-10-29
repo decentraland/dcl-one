@@ -1,0 +1,27 @@
+{
+  "description": "GET /scene-bans/addresses signed as a scene by a wallet that administers nothing. Signed fetch with the run's throwaway key 0xf7e07d862ddbe561a63ebb5dd809cf0542269587 (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://comms-gatekeeper.decentraland.org/scene-bans/addresses -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/scene-bans/addresses",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xf7e07d862ddbe561a63ebb5dd809cf0542269587\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/scene-bans/addresses:1790364577570:{\\\"signer\\\":\\\"decentraland-kernel-scene\\\",\\\"realm\\\":{\\\"hostname\\\":\\\"realm-provider-ea.decentraland.org\\\",\\\"protocol\\\":\\\"v3\\\",\\\"serverName\\\":\\\"main\\\"},\\\"sceneId\\\":\\\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\\\",\\\"parcel\\\":\\\"-3,-2\\\"}\",\"signature\":\"0x8247cb29a6373477aae521f8544da8b51315f9f186d27e5aff0d97fa63ec2e0546b1dad2d78c94f478d2a7be368a32097874d76f890e240e0c8e00e802fd50b01c\"}",
+      "x-identity-timestamp": "1790364577570",
+      "x-identity-metadata": "{\"signer\":\"decentraland-kernel-scene\",\"realm\":{\"hostname\":\"realm-provider-ea.decentraland.org\",\"protocol\":\"v3\",\"serverName\":\"main\"},\"sceneId\":\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\",\"parcel\":\"-3,-2\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "User does not have permission to list scene bans"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/scene-bans/addresses",
+  "captured_at": "2026-09-25T19:29:37Z",
+  "volatile_paths": []
+}

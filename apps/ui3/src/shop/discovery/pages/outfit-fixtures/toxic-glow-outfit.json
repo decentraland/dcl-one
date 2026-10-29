@@ -1,0 +1,40 @@
+{
+  "outfit": {
+    "id": "04c8b816-c6d8-4c18-8f53-d17653825e47",
+    "name": "Toxic Glow",
+    "thumbnailHash": "2272ab5ac3b097393e10266dec225d31bb67e58931cde140464b428beb832e84",
+    "items": [
+      {
+        "itemId": "2",
+        "contractAddress": "0xda2cfda208b9abbd6f8771f52cda1355e384d3ff"
+      },
+      {
+        "itemId": "0",
+        "contractAddress": "0x9944c10d25e62a0401c5a7113081388a52ce0e3c"
+      },
+      {
+        "itemId": "0",
+        "contractAddress": "0x705652b66a12dcf782b0b3d5673fbf0c1797eba2"
+      },
+      {
+        "itemId": "11",
+        "contractAddress": "0x705652b66a12dcf782b0b3d5673fbf0c1797eba2"
+      },
+      {
+        "itemId": "1",
+        "contractAddress": "0xadcdaa049904d31b192b0f868c3c68ecae928849"
+      },
+      {
+        "itemId": "1",
+        "contractAddress": "0x81a1e00cc33b5ae2405c54cc906e894de8174683"
+      }
+    ],
+    "bodyShape": "male",
+    "gradientFrom": "#e0e0e0",
+    "gradientTo": "#3c3c3c",
+    "authorAddress": "0x4274c2545f2263f820f4e5dc19cca999c955238c",
+    "published": true,
+    "createdAt": 1785856445873,
+    "updatedAt": 1785861245838
+  }
+}

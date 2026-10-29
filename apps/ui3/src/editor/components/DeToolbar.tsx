@@ -1,0 +1,272 @@
+import type { ComponentType } from "react";
+import { useRef, useState } from "react";
+import type { EditorTool } from "../bus-protocol";
+import type { EditorCamMode } from "../editor-bus";
+import { useDismiss } from "../use-dismiss";
+import {
+  IconBug,
+  IconCamera,
+  IconDots,
+  IconMove,
+  IconPause,
+  IconPlay,
+  IconRotate,
+  IconRunCircle,
+  IconScale,
+  IconSelect,
+  IconSidebarLeft,
+  IconSidebarRight,
+  IconStep,
+  IconStop,
+  IconStopCircle,
+} from "./DeIcons";
+
+const TOOLS: { id: EditorTool; Icon: ComponentType; title: string }[] = [
+  { id: "select", Icon: IconSelect, title: "Select (Q)" },
+  { id: "translate", Icon: IconMove, title: "Move (W)" },
+  { id: "rotate", Icon: IconRotate, title: "Rotate (E)" },
+  { id: "scale", Icon: IconScale, title: "Scale (R)" },
+];
+
+export function saveChip(playing: boolean, saveLabel: string, saveClass: string): { label: string; cls: string } {
+  return playing ? { label: "Runtime", cls: "dim" } : { label: saveLabel, cls: saveClass };
+}
+
+export interface DeToolbarProps {
+  tool?: EditorTool;
+  playing?: boolean;
+  paused?: boolean;
+  camMode?: EditorCamMode;
+  saveLabel?: string;
+  saveClass?: string;
+  onTool?: (tool: EditorTool) => void;
+  hideLeft?: boolean;
+  onToggleLeft?: () => void;
+  hideRight?: boolean;
+  onToggleRight?: () => void;
+  onPlay?: () => void;
+  onPause?: () => void;
+  onStep?: () => void;
+  onStop?: () => void;
+  onDebug?: () => void;
+  debugActive?: boolean;
+  onCamMode?: (mode: EditorCamMode) => void;
+  onCameraSettings?: () => void;
+  cameraPreset?: string;
+  onCode?: () => void;
+  codeActive?: boolean;
+  onUIDesigner?: () => void;
+  uiDesignerActive?: boolean;
+  live?: boolean;
+  showGizmo?: boolean;
+}
+
+export function DeToolbar({
+  tool = "translate",
+  playing = false,
+  paused = false,
+  camMode = "free",
+  saveLabel = "Saved",
+  saveClass = "ok",
+  onTool,
+  hideLeft = false,
+  onToggleLeft,
+  hideRight = false,
+  onToggleRight,
+  onPlay,
+  onPause,
+  onStep,
+  onStop,
+  onDebug = undefined,
+  debugActive = false,
+  onCamMode = undefined,
+  onCameraSettings = undefined,
+  cameraPreset = "blender",
+  onCode = undefined,
+  codeActive = false,
+  onUIDesigner,
+  uiDesignerActive = false,
+  live = false,
+  showGizmo = !live,
+}: DeToolbarProps) {
+  const [camOpen, setCamOpen] = useState(false);
+  const camRef = useRef<HTMLDivElement | null>(null);
+  const active = playing || paused;
+  const chip = saveChip(active, saveLabel, saveClass);
+  useDismiss(camOpen, camRef, () => setCamOpen(false));
+
+  return (
+    <div className="eui-panel eui-toolbar">
+      <button
+        className={"eui-btn icon" + (hideLeft ? " active" : "")}
+        title={hideLeft ? "Show hierarchy" : "Hide hierarchy"}
+        aria-label={hideLeft ? "Show hierarchy" : "Hide hierarchy"}
+        onClick={onToggleLeft}
+        disabled={!onToggleLeft}
+      >
+        <IconSidebarLeft />
+      </button>
+
+      {showGizmo && (
+        <div className="eui-tool-group">
+          {TOOLS.map((t) => (
+            <button
+              key={t.id}
+              title={t.title}
+              aria-label={t.title}
+              aria-pressed={tool === t.id}
+              className={"eui-btn icon" + (tool === t.id ? " active" : "")}
+              onClick={() => onTool?.(t.id)}
+              disabled={!onTool}
+            >
+              <t.Icon />
+            </button>
+          ))}
+        </div>
+      )}
+
+      <div className="eui-tool-group">
+        {active ? (
+          <button
+            type="button"
+            className="eui-btn eui-run active"
+            title="Stop the preview and return to editing"
+            aria-label="Stop the preview and return to editing"
+            onClick={onStop}
+            disabled={!onStop}
+          >
+            <IconStopCircle />
+            Stop
+          </button>
+        ) : (
+          <button type="button" className="eui-btn eui-run" title="Run the scene" aria-label="Run the scene" onClick={onPlay} disabled={!onPlay}>
+            <IconRunCircle />
+            Run
+          </button>
+        )}
+        {playing && (
+          <button type="button" className="eui-btn icon" title={"Scene is running \u{2014} pause"} aria-label={"Scene is running \u{2014} pause"} onClick={onPause} disabled={!onPause}>
+            <IconPause />
+          </button>
+        )}
+        {paused && (
+          <button type="button" className="eui-btn icon" title="Resume the scene" aria-label="Resume the scene" onClick={onPlay} disabled={!onPlay}>
+            <IconPlay />
+          </button>
+        )}
+        {!playing && (
+          <button type="button" className="eui-btn icon" title="Advance one tick" aria-label="Advance one tick" onClick={onStep} disabled={!onStep}>
+            <IconStep />
+          </button>
+        )}
+        {!live && !active && onStop && (
+          <button
+            type="button"
+            className="eui-btn icon"
+            title="Restart the scene from tick 0"
+            aria-label="Restart the scene from tick 0"
+            onClick={onStop}
+          >
+            <IconStop />
+          </button>
+        )}
+        {onDebug && (
+          <button
+            type="button"
+            className={"eui-btn icon" + (debugActive ? " active" : "")}
+            title={"Debug \u{2014} freeze the run and step tick by tick"}
+            aria-label={"Debug \u{2014} freeze the run and step tick by tick"}
+            aria-pressed={debugActive}
+            onClick={onDebug}
+          >
+            <IconBug />
+          </button>
+        )}
+      </div>
+
+      {onCode && (
+        <div className="eui-tool-group">
+          <button
+            type="button"
+            className={`eui-btn icon${codeActive ? " active" : ""}`}
+            title="Edit code (file explorer + TypeScript editor)"
+            aria-label="Edit code"
+            aria-pressed={codeActive}
+            onClick={onCode}
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        </div>
+      )}
+
+      {onUIDesigner && <button type="button" className={`eui-btn${uiDesignerActive ? " active" : ""}`} aria-pressed={uiDesignerActive} onClick={onUIDesigner}>UI Designer</button>}
+
+      {onCamMode && (
+        <div ref={camRef} style={{ position: "relative", display: "flex" }}>
+          <button
+            className={"eui-btn icon" + (camOpen ? " active" : "")}
+            title="Camera mode"
+            aria-label="Camera mode"
+            aria-haspopup="menu"
+            aria-expanded={camOpen}
+            onClick={() => setCamOpen((v) => !v)}
+          >
+            <IconCamera />
+          </button>
+          {camOpen && (
+            <div className="eui-menu">
+              <div className="eui-menu-label">Camera</div>
+              <button className="eui-menu-item" onClick={() => { onCamMode("none"); setCamOpen(false); }}>
+                Player camera<span className="hint">{camMode === "none" ? "\u{25CF}" : ""}</span>
+              </button>
+              <button className="eui-menu-item" onClick={() => { onCamMode("free"); setCamOpen(false); }}>
+                Free fly<span className="hint">{camMode === "free" ? "\u{25CF}" : ""}</span>
+              </button>
+              <button className="eui-menu-item" onClick={() => { onCamMode("target"); setCamOpen(false); }}>
+                Orbit selection<span className="hint">{camMode === "target" ? "\u{25CF}" : ""}</span>
+              </button>
+              {onCameraSettings && (
+                <>
+                  <div className="eui-menu-sep" />
+                  <button className="eui-menu-item" onClick={() => { onCameraSettings(); setCamOpen(false); }}>
+                    Camera settings&#x2026;<span className="hint" style={{ textTransform: "capitalize" }}>{cameraPreset}</span>
+                  </button>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {!live && (
+        <span className={"eui-autosave " + chip.cls} title="Auto-save status">
+          <span className="dot" />
+          {chip.label}
+        </span>
+      )}
+
+      {!live && (
+        <button
+          className="eui-btn icon"
+          title="Camera and hierarchy options need a running engine"
+          aria-label="Camera and hierarchy options need a running engine"
+          disabled
+        >
+          <IconDots />
+        </button>
+      )}
+
+      <button
+        className={"eui-btn icon" + (hideRight ? " active" : "")}
+        title={hideRight ? "Show inspector" : "Hide inspector"}
+        aria-label={hideRight ? "Show inspector" : "Hide inspector"}
+        onClick={onToggleRight}
+        disabled={!onToggleRight}
+      >
+        <IconSidebarRight />
+      </button>
+    </div>
+  );
+}

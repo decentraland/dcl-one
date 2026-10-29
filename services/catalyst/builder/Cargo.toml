@@ -1,0 +1,45 @@
+[package]
+name = "catalyst-builder"
+version.workspace = true
+edition = "2024"
+description = "Builder: the scene builder's projects, pools, items and the creator plane's write gate"
+publish = false
+
+[dependencies]
+dcl-http = { workspace = true, features = ["db"] }
+dcl-auth.workspace = true
+catalyst-shared = { path = "../shared" }
+catalyst-storage = { path = "../storage" }
+catalyst-chain-index = { path = "../chain-index" }
+catalyst-content = { path = "../content" }
+tokio.workspace = true
+axum.workspace = true
+tower-http.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+bytes.workspace = true
+uuid.workspace = true
+hex.workspace = true
+alloy-primitives.workspace = true
+reqwest.workspace = true
+url.workspace = true
+alloy-sol-types.workspace = true
+ts-rs = { workspace = true, optional = true }
+
+[features]
+ts = ["dep:ts-rs", "catalyst-shared/ts", "catalyst-storage/ts", "catalyst-chain-index/ts", "catalyst-content/ts"]
+test-support = ["catalyst-shared/test-support", "catalyst-storage/test-support", "catalyst-chain-index/test-support", "catalyst-content/test-support"]
+
+[dev-dependencies]
+catalyst-shared = { path = "../shared", features = ["test-support"] }
+catalyst-storage = { path = "../storage", features = ["test-support"] }
+catalyst-chain-index = { path = "../chain-index", features = ["test-support"] }
+catalyst-content = { path = "../content", features = ["test-support"] }
+catalyst-db = { path = "../db", features = ["scratch"] }
+tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }
+alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }

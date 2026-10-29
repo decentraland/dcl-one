@@ -1,0 +1,28 @@
+{
+  "description": "POST /get-scene-adapter signed with realm{} but no top-level realmName: oldValidate refuses (\"no realmName\"). Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured POST https://comms-gatekeeper.decentraland.org/get-scene-adapter -> 401.",
+  "request": {
+    "method": "POST",
+    "path": "/get-scene-adapter",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/get-scene-adapter:1790364268003:{\\\"intent\\\":\\\"dcl:explorer:comms-handshake\\\",\\\"signer\\\":\\\"dcl:explorer\\\",\\\"isGuest\\\":false,\\\"realm\\\":{\\\"hostname\\\":\\\"realm-provider-ea.decentraland.org\\\",\\\"protocol\\\":\\\"v3\\\",\\\"serverName\\\":\\\"main\\\"},\\\"sceneId\\\":\\\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\\\",\\\"parcel\\\":\\\"-3,-2\\\"}\",\"signature\":\"0x1a86b93e3f2240adfa5d673482ed2c4cabdf62eba30fd0b2e774e74ad8ef590a266fb02e4d6bb6153c370a8cf429b890cd157cc5a4f69b8433d0c030c9afe2081c\"}",
+      "x-identity-timestamp": "1790364268003",
+      "x-identity-metadata": "{\"intent\":\"dcl:explorer:comms-handshake\",\"signer\":\"dcl:explorer\",\"isGuest\":false,\"realm\":{\"hostname\":\"realm-provider-ea.decentraland.org\",\"protocol\":\"v3\",\"serverName\":\"main\"},\"sceneId\":\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\",\"parcel\":\"-3,-2\"}",
+      "content-type": "application/json"
+    },
+    "body": {}
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Access denied, invalid signed-fetch request, no realmName"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/get-scene-adapter",
+  "captured_at": "2026-09-25T19:24:28Z",
+  "volatile_paths": []
+}

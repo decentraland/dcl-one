@@ -1,0 +1,14 @@
+[package]
+name = "catalyst-testing"
+version.workspace = true
+edition = "2024"
+description = "Conformance fixtures, diffing and volatility scrubs the catalyst tests share"
+publish = false
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+
+[features]
+ts = []
+test-support = []

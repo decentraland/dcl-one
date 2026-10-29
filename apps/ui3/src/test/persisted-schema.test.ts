@@ -1,0 +1,91 @@
+import { describe, expect, test } from "vitest";
+import {
+  RecentPlacesSchema,
+  StoredAuthIdentitySchema,
+} from "../data/persisted-schemas";
+
+function without<T extends object>(o: T, key: keyof T): Omit<T, keyof T> {
+  const copy = { ...o };
+  delete copy[key];
+  return copy;
+}
+
+const identity = (over: Record<string, unknown> = {}) => ({
+  ephemeralIdentity: { address: "0xeee", privateKey: "0xkey" },
+  expiration: "2099-01-01T00:00:00.000Z",
+  authChain: [
+    { type: "SIGNER", payload: "0xabc", signature: "" },
+    { type: "ECDSA_EPHEMERAL", payload: "Decentraland Login", signature: "0xsig" },
+  ],
+  ...over,
+});
+
+describe("stored identity validation", () => {
+  test("accepts what this build writes (plus extra keys) and rejects drifted auth links", () => {
+    const cases: [string, unknown, boolean][] = [
+      ["what this build writes", identity(), true],
+      [
+        "a writer that also stored the ephemeral public key",
+        identity({ ephemeralIdentity: { address: "0xeee", privateKey: "0xkey", publicKey: "0xpub" } }),
+        true,
+      ],
+      ["auth link renamed its payload field", identity({ authChain: [{ type: "SIGNER", message: "0xabc", signature: "" }] }), false],
+      [
+        "auth link carries a link type this build does not know",
+        identity({ authChain: [{ type: "ECDSA_SIGNED_ENTITY_V2", payload: "x", signature: "y" }] }),
+        false,
+      ],
+      [
+        "auth link signature became a structured signature",
+        identity({ authChain: [{ type: "SIGNER", payload: "0xabc", signature: { r: "1", s: "2" } }] }),
+        false,
+      ],
+      ["ephemeral address dropped", identity({ ephemeralIdentity: { privateKey: "0xkey" } }), false],
+    ];
+    const verdicts = cases.map(([name, value]) => [name, StoredAuthIdentitySchema.safeParse(value).success]);
+    expect(verdicts).toEqual(cases.map(([name, , shouldPass]) => [name, shouldPass]));
+  });
+});
+
+const place = (over: Record<string, unknown> = {}) => ({
+  id: "0,0",
+  title: "Plaza",
+  description: "",
+  image: "https://catalyst.example/content/contents/bafy",
+  coords: "0,0",
+  x: 0,
+  y: 0,
+  left: 50,
+  top: 50,
+  players: null,
+  live: false,
+  featured: false,
+  rating: 0,
+  favorites: 0,
+  likes: 0,
+  visits: 0,
+  parcels: 1,
+  categories: [],
+  creator: "Unknown creator",
+  world: false,
+  worldName: null,
+  updated: "\u{2014}",
+  hue: 12,
+  kind: "place",
+  ...over,
+});
+
+describe("recent places validation", () => {
+  test("accepts places this build wrote (with or without an image) and rejects older or drifted shapes", () => {
+    const cases: [string, unknown, boolean][] = [
+      ["a place this build wrote", [place()], true],
+      ["a place with no image, which JSON drops rather than stores", [without(place(), "image")], true],
+      ["an older build's list of ids", [{ id: "0,0" }], false],
+      ["coords stored as a pair instead of a string", [place({ coords: [0, 0] })], false],
+      ["worldName still under its API spelling", [{ ...without(place(), "worldName"), world_name: "shibuya.dcl.eth" }], false],
+      ["categories became objects rather than names", [place({ categories: [{ name: "game" }] })], false],
+    ];
+    const verdicts = cases.map(([name, value]) => [name, RecentPlacesSchema.safeParse(value).success]);
+    expect(verdicts).toEqual(cases.map(([name, , shouldPass]) => [name, shouldPass]));
+  });
+});

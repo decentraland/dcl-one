@@ -1,0 +1,2 @@
+.ch-metrics-nav { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 24px; padding-bottom: 16px; border-bottom: 1px solid var(--ui-border); }
+.ch-metrics-nav a { text-decoration: none; }

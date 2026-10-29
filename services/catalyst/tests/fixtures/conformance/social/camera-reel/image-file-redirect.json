@@ -1,0 +1,21 @@
+{
+  "description": "GET /api/images/{id}-{timestamp}.jpg: the redirect for the `url` the gallery hands out. Captured GET https://camera-reel-service.decentraland.org/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051-1790074770.jpg -> 307.",
+  "request": {
+    "method": "GET",
+    "path": "/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051-1790074770.jpg",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 307,
+    "headers": {
+      "location": "https://camera-reel-s3-bucket.decentraland.org/e9659dd5-0f87-4169-a9a6-1ec0d5faf051-1790074770.jpg",
+      "content-length": "0"
+    },
+    "body_bytes_b64": ""
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051-1790074770.jpg",
+  "captured_at": "2026-09-25T19:29:42Z",
+  "volatile_paths": []
+}

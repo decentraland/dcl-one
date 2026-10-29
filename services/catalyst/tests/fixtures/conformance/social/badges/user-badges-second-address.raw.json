@@ -1,0 +1,28 @@
+{
+  "method": "GET",
+  "url": "https://badges.decentraland.org/users/0xbcac4dafb7e215f2f6cb3312af6d5e4f9d9e7eda/badges",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 200,
+  "status_text": "OK",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c693fcc55e529-TXL",
+    "connection": "keep-alive",
+    "content-encoding": "br",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:48 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "transfer-encoding": "chunked",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:47Z",
+  "elapsed_ms": 151,
+  "body_bytes": 4556,
+  "body_file": "user-badges-second-address.raw.body",
+  "redacted": false
+}

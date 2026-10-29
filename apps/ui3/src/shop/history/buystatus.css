@@ -1,0 +1,131 @@
+/* from: marketplace@3bf3662f:webapp/src/components/BuyPage/StatusPage/StatusPage.css. Stars art copied from
+   marketplace@3bf3662f:webapp/src/images/buy-nfts-status-page-stars-{top,bottom}.svg. Scoped to .shop-buystatus. */
+.shop-buystatus {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  padding: 110px var(--shop-gutter, 16px) 64px;
+  color: #fcfcfc;
+}
+
+.shop-buystatus__card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  max-width: 400px;
+  text-align: center;
+}
+
+.shop-buystatus__card p {
+  margin: 0;
+}
+
+.shop-buystatus__img {
+  position: relative;
+  width: 240px;
+}
+
+.shop-buystatus__img::before,
+.shop-buystatus__img::after {
+  position: absolute;
+  z-index: 1;
+}
+
+.shop-buystatus__img::before {
+  content: url(./assets/buy-nfts-status-page-stars-top.svg);
+  top: -7%;
+  left: -7%;
+}
+
+.shop-buystatus__img::after {
+  content: url(./assets/buy-nfts-status-page-stars-bottom.svg);
+  right: -4%;
+  bottom: -8%;
+}
+
+.shop-buystatus__frame {
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: 16px;
+  background: radial-gradient(circle, #a09ba8 0%, #736e7d 100%);
+}
+
+.shop-buystatus__frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+.shop-buystatus__title {
+  margin: 40px 0 16px;
+  font-size: 2em;
+  font-weight: 600;
+  line-height: 1.28571429em;
+}
+
+.shop-buystatus__status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  column-gap: 8px;
+  margin-bottom: 16px;
+}
+
+.shop-buystatus__status p {
+  color: #cfcdd4;
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 26px;
+}
+
+.shop-buystatus__desc {
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 24px;
+}
+
+.shop-buystatus__desc a,
+.shop-buystatus__tx {
+  color: #ff2d55;
+}
+
+.shop-buystatus__tx {
+  margin-top: 16px;
+  font-size: 14px;
+}
+
+.shop-buystatus__cta {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 46px;
+  margin-top: 40px;
+  padding: 0 24px;
+  border: 2px solid #ff2d55;
+  border-radius: 6px;
+  color: #ff2d55;
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+
+.shop-buystatus__cta:hover {
+  background: rgba(255, 45, 85, 0.08);
+}
+
+.shop-buystatus__card[data-status="failed"] .shop-buystatus__title {
+  color: #ff7439;
+}
+
+@media (max-width: 768px) {
+  .shop-buystatus__card,
+  .shop-buystatus__img {
+    width: 100%;
+  }
+}

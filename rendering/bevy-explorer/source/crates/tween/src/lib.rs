@@ -1,0 +1,663 @@
+#[cfg(feature = "tween_debug")]
+mod tween_debug;
+
+use std::ops::Deref;
+
+use bevy::prelude::*;
+use common::sets::SceneSets;
+use dcl_component::{
+    proto_components::{
+        common::{texture_union::Tex, Texture},
+        sdk::components::{
+            pb_material, pb_tween::Mode, EasingFunction, PbMaterial, PbTween, PbTweenState,
+            TextureMovementType, TweenStateStatus,
+        },
+    },
+    transform_and_parent::DclTransformAndParent,
+    SceneComponentId, SceneEntityId,
+};
+use dcl_types::interface::{ComponentPosition, CrdtType};
+use scene_runner::{
+    renderer_context::{RendererSceneContext, FROZEN_BLOCK},
+    update_world::{material::PbMaterialComponent, AddCrdtInterfaceExt},
+    ContainerEntity, SceneEntity,
+};
+
+/// Rotation axis for RotateContinuous: the direction quaternion's normalized
+/// imaginary part. The identity quaternion encodes no axis; fall back to Y to
+/// match unity-explorer.
+fn rotate_continuous_axis(direction: dcl_component::proto_components::common::Quaternion) -> Vec3 {
+    let quat = direction.to_bevy_normalized();
+    Vec3::new(quat.x, quat.y, quat.z)
+        .try_normalize()
+        .unwrap_or(Vec3::Y)
+}
+
+#[derive(Debug, Component, Deref, DerefMut)]
+pub struct Tween(PbTween);
+
+impl From<PbTween> for Tween {
+    fn from(value: PbTween) -> Self {
+        Self(value)
+    }
+}
+
+impl Tween {
+    fn is_texture_move(&self) -> bool {
+        matches!(
+            &self.mode,
+            Some(Mode::TextureMove(_) | Mode::TextureMoveContinuous(_))
+        )
+    }
+
+    pub fn is_continuous(&self) -> bool {
+        matches!(
+            &self.0.mode,
+            Some(
+                Mode::RotateContinuous(_)
+                    | Mode::MoveContinuous(_)
+                    | Mode::TextureMoveContinuous(_)
+            )
+        )
+    }
+
+    fn easing_function(&self) -> fn(f32) -> f32 {
+        use simple_easing::*;
+        use EasingFunction::*;
+        match self.deref().easing_function() {
+            EfLinear => linear,
+            EfEaseinquad => quad_in,
+            EfEaseoutquad => quad_out,
+            EfEasequad => quad_in_out,
+            EfEaseinsine => sine_in,
+            EfEaseoutsine => sine_out,
+            EfEasesine => sine_in_out,
+            EfEaseinexpo => expo_in,
+            EfEaseoutexpo => expo_out,
+            EfEaseexpo => expo_in_out,
+            EfEaseinelastic => elastic_in,
+            EfEaseoutelastic => elastic_out,
+            EfEaseelastic => elastic_in_out,
+            EfEaseinbounce => bounce_in,
+            EfEaseoutbounce => bounce_out,
+            EfEasebounce => bounce_in_out,
+            EfEaseincubic => cubic_in,
+            EfEaseoutcubic => cubic_out,
+            EfEasecubic => cubic_in_out,
+            EfEaseinquart => quart_in,
+            EfEaseoutquart => quart_out,
+            EfEasequart => quart_in_out,
+            EfEaseinquint => quint_in,
+            EfEaseoutquint => quint_out,
+            EfEasequint => quint_in_out,
+            EfEaseincirc => circ_in,
+            EfEaseoutcirc => circ_out,
+            EfEasecirc => circ_in_out,
+            EfEaseinback => back_in,
+            EfEaseoutback => back_out,
+            EfEaseback => back_in_out,
+        }
+    }
+
+    fn apply(
+        &self,
+        tween_apply_update: TweenApplyUpdate,
+        transform: &mut Transform,
+        maybe_mat: Option<&mut PbMaterialComponent>,
+    ) {
+        let f = self.easing_function();
+
+        let ease_value = if self.is_continuous() {
+            // continuous tween uses the full speed
+            1.0
+        } else {
+            let factor = f(tween_apply_update.progress);
+            trace!(
+                "Time {} with easing function {:?} is {}",
+                tween_apply_update.progress,
+                self.deref().easing_function(),
+                factor
+            );
+            factor
+        };
+
+        match &self.mode {
+            Some(Mode::Move(data)) => {
+                let start = data.start.unwrap_or_default().world_vec_to_vec3();
+                let end = data.end.unwrap_or_default().world_vec_to_vec3();
+                Self::apply_translation(
+                    start,
+                    end,
+                    ease_value,
+                    data.face_direction == Some(true),
+                    tween_apply_update.progress,
+                    transform,
+                );
+            }
+            Some(Mode::Rotate(data)) => {
+                let start: Quat = data.start.unwrap_or_default().to_bevy_normalized();
+                let end = data.end.unwrap_or_default().to_bevy_normalized();
+                Self::apply_rotation(start, end, ease_value, transform);
+            }
+            Some(Mode::Scale(data)) => {
+                let start = data.start.unwrap_or_default().abs_vec_to_vec3();
+                let end = data.end.unwrap_or_default().abs_vec_to_vec3();
+                Self::apply_scale(start, end, ease_value, transform);
+            }
+            Some(Mode::MoveRotateScale(data)) => {
+                let move_start = data.position_start.unwrap_or_default().world_vec_to_vec3();
+                let move_end = data.position_end.unwrap_or_default().world_vec_to_vec3();
+                Self::apply_translation(move_start, move_end, ease_value, false, 0., transform);
+
+                let rotate_start = data.rotation_start.unwrap_or_default().to_bevy_normalized();
+                let rotate_end = data.rotation_end.unwrap_or_default().to_bevy_normalized();
+                Self::apply_rotation(rotate_start, rotate_end, ease_value, transform);
+
+                let scale_start = data.scale_start.unwrap_or_default().abs_vec_to_vec3();
+                let scale_end = data.scale_end.unwrap_or_default().abs_vec_to_vec3();
+                Self::apply_scale(scale_start, scale_end, ease_value, transform);
+            }
+            Some(Mode::TextureMove(data)) => {
+                let start: Vec2 = (&data.start.unwrap_or_default()).into();
+                let end: Vec2 = (&data.end.unwrap_or_default()).into();
+                let Some(material) = maybe_mat else {
+                    return;
+                };
+
+                match data.movement_type() {
+                    TextureMovementType::TmtOffset => {
+                        update_pb_material(
+                            &mut material.0,
+                            None,
+                            Some(start + ((end - start) * ease_value)),
+                            false,
+                        );
+                    }
+                    TextureMovementType::TmtTiling => {
+                        update_pb_material(
+                            &mut material.0,
+                            Some(start + ((end - start) * ease_value)),
+                            None,
+                            false,
+                        );
+                    }
+                }
+            }
+            Some(Mode::RotateContinuous(data)) => {
+                let Some(axis) = data.direction.map(rotate_continuous_axis) else {
+                    return;
+                };
+                // pre-multiply: the axis is in parent space (matches unity), so a
+                // tilted entity spins in place rather than swinging its own axes
+                transform.rotation = Quat::from_axis_angle(
+                    axis,
+                    ease_value * tween_apply_update.delta * -data.speed.to_radians(),
+                ) * transform.rotation;
+            }
+            Some(Mode::MoveContinuous(data)) => {
+                if let Some(direction) = data.direction {
+                    transform.translation += direction.world_vec_to_vec3()
+                        * data.speed
+                        * ease_value
+                        * tween_apply_update.delta;
+                }
+            }
+            Some(Mode::TextureMoveContinuous(data)) => {
+                let Some(material) = maybe_mat else {
+                    return;
+                };
+
+                let Some(direction) = data
+                    .direction
+                    .map(|dcl_vec2| Vec2::new(dcl_vec2.x, dcl_vec2.y))
+                else {
+                    return;
+                };
+
+                match data.movement_type() {
+                    TextureMovementType::TmtOffset => {
+                        update_pb_material(
+                            &mut material.0,
+                            None,
+                            Some(
+                                direction
+                                    * data.speed
+                                    * ease_value
+                                    * tween_apply_update.delta
+                                    * Vec2::new(1.0, -1.0),
+                            ),
+                            true,
+                        );
+                    }
+                    TextureMovementType::TmtTiling => {
+                        update_pb_material(
+                            &mut material.0,
+                            Some(direction * data.speed * ease_value * tween_apply_update.delta),
+                            None,
+                            true,
+                        );
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_translation(
+        start: Vec3,
+        end: Vec3,
+        ease_value: f32,
+        face_direction: bool,
+        progress: f32,
+        transform: &mut Transform,
+    ) {
+        if face_direction && progress == 0.0 {
+            let direction = end - start;
+            if direction == Vec3::ZERO {
+                // can't look nowhere
+            } else if direction * Vec3::new(1.0, 0.0, 1.0) != Vec3::ZERO {
+                // randomly assume +z is up for a vertical movement
+                transform.look_at(end - start, Vec3::Z);
+            } else {
+                transform.look_at(end - start, Vec3::Y);
+            }
+        }
+
+        transform.translation = start + (end - start) * ease_value;
+    }
+
+    fn apply_rotation(start: Quat, end: Quat, ease_value: f32, transform: &mut Transform) {
+        transform.rotation = start.slerp(end, ease_value);
+    }
+
+    fn apply_scale(start: Vec3, end: Vec3, ease_value: f32, transform: &mut Transform) {
+        transform.scale = start + ((end - start) * ease_value);
+    }
+}
+
+struct TweenApplyUpdate {
+    // Between 0 and 1 for bounded tweens
+    progress: f32,
+    // Time delta from last frame
+    delta: f32,
+}
+
+#[derive(Debug, PartialEq, Component, Deref, DerefMut)]
+pub struct TweenState(PbTweenState);
+
+#[derive(Event)]
+struct TweenUpdatedTexture(Entity);
+
+pub struct TweenPlugin;
+
+impl Plugin for TweenPlugin {
+    fn build(&self, app: &mut bevy::prelude::App) {
+        app.add_event::<TweenUpdatedTexture>();
+
+        app.add_crdt_lww_component::<PbTween, Tween>(
+            SceneComponentId::TWEEN,
+            ComponentPosition::EntityOnly,
+        );
+        app.add_systems(
+            Update,
+            (update_tween, transfer_material_to_scene)
+                .chain()
+                .in_set(SceneSets::PostLoop),
+        );
+        app.add_systems(
+            PostUpdate,
+            update_system_tween.before(TransformSystem::TransformPropagate),
+        );
+        app.add_observer(clean_scene_tween_state);
+
+        #[cfg(feature = "tween_debug")]
+        app.add_plugins(tween_debug::TweenDebugPlugin);
+    }
+}
+
+type TweenUpdateComponents<'a> = (
+    Entity,
+    Ref<'a, ContainerEntity>,
+    Ref<'a, ChildOf>,
+    Ref<'a, Tween>,
+    Mut<'a, Transform>,
+    Option<Mut<'a, TweenState>>,
+    Option<Mut<'a, PbMaterialComponent>>,
+);
+
+fn update_tween(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut tweens: Query<TweenUpdateComponents>,
+    mut scenes: Query<&mut RendererSceneContext>,
+    parents: Query<&SceneEntity>,
+    mut tween_updated_texture_writer: EventWriter<TweenUpdatedTexture>,
+) {
+    for (ent, scene_ent, parent, tween, mut transform, state, maybe_material) in tweens.iter_mut() {
+        let Ok(mut scene) = scenes.get_mut(scene_ent.root) else {
+            continue;
+        };
+
+        // a frozen scene (editor pause) holds its tweens where they are, without reporting them paused
+        let delta_secs = if scene.blocked.contains(FROZEN_BLOCK) {
+            0.0
+        } else {
+            time.delta_secs()
+        };
+        let playing = tween.playing.unwrap_or(true);
+        let unbounded_continuous = tween.is_continuous() && tween.duration <= 0.;
+        let delta = if playing {
+            if unbounded_continuous {
+                delta_secs
+            } else {
+                delta_secs * 1000.0 / tween.duration
+            }
+        } else {
+            0.0
+        };
+        trace!(
+            "Updating {} tween with delta of {}.",
+            if tween.is_continuous() {
+                "continuous"
+            } else {
+                "bounded"
+            },
+            delta
+        );
+
+        let updated_time = if tween.is_changed() {
+            tween.current_time()
+        } else {
+            let updated_time = state
+                .as_ref()
+                .map(|state| state.current_time + delta)
+                .unwrap_or(0.0);
+            if unbounded_continuous {
+                updated_time
+            } else {
+                updated_time.min(1.0)
+            }
+        };
+        trace!(
+            "{} tween now has time {}.",
+            if tween.is_continuous() {
+                "Continuous"
+            } else {
+                "Bounded"
+            },
+            updated_time
+        );
+
+        let updated_status = if playing && updated_time == 1.0 && !unbounded_continuous {
+            TweenStateStatus::TsCompleted
+        } else if playing {
+            TweenStateStatus::TsActive
+        } else {
+            TweenStateStatus::TsPaused
+        };
+        let updated_state = TweenState(PbTweenState {
+            state: updated_status as i32,
+            current_time: updated_time,
+        });
+
+        if state.as_deref() != Some(&updated_state) {
+            scene.update_crdt(
+                SceneComponentId::TWEEN_STATE,
+                CrdtType::LWW_ENT,
+                scene_ent.container_id,
+                &updated_state.0,
+            );
+
+            if let Some(mut state) = state {
+                state.0 = updated_state.0;
+            } else {
+                commands.entity(ent).try_insert(updated_state);
+            }
+
+            tween.apply(
+                TweenApplyUpdate {
+                    progress: updated_time,
+                    delta: delta_secs,
+                },
+                &mut transform,
+                if tween.is_texture_move() {
+                    maybe_material.map(Mut::into_inner)
+                } else {
+                    None
+                },
+            );
+
+            let parent_id = parents
+                .get(parent.parent())
+                .map(|p| p.id)
+                .unwrap_or_else(|_| {
+                    warn!("no parent for tweened ent {scene_ent:?}");
+                    SceneEntityId::ROOT
+                });
+
+            scene.update_crdt(
+                SceneComponentId::TRANSFORM,
+                CrdtType::LWW_ENT,
+                scene_ent.container_id,
+                &DclTransformAndParent::from_bevy_transform_and_parent(&transform, parent_id),
+            );
+
+            if tween.is_texture_move() {
+                tween_updated_texture_writer.write(TweenUpdatedTexture(ent));
+            }
+        }
+    }
+}
+
+/// Updates the tiling and offset of [`PbMaterial`] textures.
+///
+/// If `delta` is `true`, the values in `tiling` and `offset`
+/// are deltas and should be incremented to the existing
+/// value.
+fn update_pb_material(
+    pb_material: &mut PbMaterial,
+    tiling: Option<Vec2>,
+    offset: Option<Vec2>,
+    delta: bool,
+) {
+    let update_tex =
+        |texture_union: Option<&mut dcl_component::proto_components::common::TextureUnion>| {
+            let Some(Tex::Texture(texture)) =
+                texture_union.and_then(|texture_union| texture_union.tex.as_mut())
+            else {
+                return;
+            };
+            if delta {
+                increment_texture(texture, tiling, offset);
+            } else {
+                update_texture(texture, tiling, offset);
+            }
+        };
+
+    if let Some(material) = pb_material.material.as_mut() {
+        match material {
+            pb_material::Material::Pbr(pbr_material) => {
+                update_tex(pbr_material.texture.as_mut());
+                update_tex(pbr_material.alpha_texture.as_mut());
+                update_tex(pbr_material.emissive_texture.as_mut());
+                update_tex(pbr_material.bump_texture.as_mut());
+            }
+            pb_material::Material::Unlit(unlit_material) => {
+                update_tex(unlit_material.texture.as_mut());
+                update_tex(unlit_material.alpha_texture.as_mut());
+            }
+        };
+    }
+}
+
+fn transfer_material_to_scene(
+    mut tween_updated_texture: EventReader<TweenUpdatedTexture>,
+    mut tweens: Query<(&ContainerEntity, Option<&PbMaterialComponent>), With<Tween>>,
+    mut scenes: Query<&mut RendererSceneContext>,
+) {
+    for TweenUpdatedTexture(entity) in tween_updated_texture.read() {
+        let Ok((container_entity, maybe_pb_material_component)) = tweens.get_mut(*entity) else {
+            error!("TweenUpdatedTexture triggered for an entity that is not a tween.");
+            continue;
+        };
+        let Some(pb_material_component) = maybe_pb_material_component else {
+            debug!("Material not ready.");
+            continue;
+        };
+        let Ok(mut scene) = scenes.get_mut(container_entity.root) else {
+            error!("Entity in invalid scene.");
+            continue;
+        };
+
+        scene.update_crdt(
+            SceneComponentId::MATERIAL,
+            CrdtType::LWW_ENT,
+            container_entity.container_id,
+            &pb_material_component.0,
+        );
+    }
+}
+
+fn increment_texture(
+    texture: &mut Texture,
+    tiling_delta: Option<Vec2>,
+    offset_delta: Option<Vec2>,
+) {
+    if let Some(tiling_delta) = tiling_delta {
+        let tiling = texture.tiling.get_or_insert_default();
+        tiling.x += tiling_delta.x;
+        tiling.y += tiling_delta.y;
+    }
+
+    if let Some(offset_delta) = offset_delta {
+        let offset = texture.offset.get_or_insert_default();
+        offset.x += offset_delta.x;
+        offset.y += offset_delta.y;
+    }
+}
+
+fn update_texture(texture: &mut Texture, new_tiling: Option<Vec2>, new_offset: Option<Vec2>) {
+    if let Some(new_tiling) = new_tiling {
+        texture.tiling = Some(new_tiling.into());
+    }
+
+    if let Some(new_offset) = new_offset {
+        texture.offset = Some(new_offset.into());
+    }
+}
+
+// remove scene TWEEN_STATE data when TWEEN is removed
+fn clean_scene_tween_state(
+    trigger: Trigger<OnRemove, Tween>,
+    mut commands: Commands,
+    scene_ent: Query<&ContainerEntity>,
+    mut scenes: Query<&mut RendererSceneContext>,
+) {
+    let entity = trigger.target();
+    if let Ok(mut commands) = commands.get_entity(entity) {
+        commands.try_remove::<TweenState>();
+    }
+
+    let Ok(scene_ent) = scene_ent.get(entity) else {
+        return;
+    };
+    if let Ok(mut ctx) = scenes.get_mut(scene_ent.root) {
+        ctx.clear_crdt(
+            SceneComponentId::TWEEN_STATE,
+            CrdtType::LWW_ANY,
+            scene_ent.container_id,
+        );
+    }
+}
+
+#[derive(Component)]
+pub struct SystemTween {
+    pub target: Transform,
+    pub time: f32,
+    /// target perspective fov, tweened alongside the transform
+    pub fov: Option<f32>,
+}
+
+#[derive(Component)]
+pub struct SystemTweenData {
+    start_pos: Transform,
+    start_fov: Option<f32>,
+    start_time: f64,
+}
+
+fn perspective_fov(projection: Option<&Mut<Projection>>) -> Option<f32> {
+    match projection.map(|p| &**p) {
+        Some(Projection::Perspective(p)) => Some(p.fov),
+        _ => None,
+    }
+}
+
+fn set_perspective_fov(projection: &mut Option<Mut<Projection>>, fov: Option<f32>) {
+    if let (Some(Projection::Perspective(p)), Some(fov)) = (projection.as_deref_mut(), fov) {
+        if p.fov != fov {
+            p.fov = fov;
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+pub fn update_system_tween(
+    mut commands: Commands,
+    mut q: Query<(
+        Entity,
+        &mut Transform,
+        Option<&mut Projection>,
+        Ref<SystemTween>,
+        Option<&SystemTweenData>,
+    )>,
+    time: Res<Time>,
+) {
+    for (ent, mut transform, mut projection, tween, data) in q.iter_mut() {
+        match (tween.is_changed(), data) {
+            (true, _) | (_, None) => {
+                if tween.time <= 0.0 {
+                    debug!("system tween instant complete @ {:?}", tween.target);
+                    *transform = tween.target;
+                    set_perspective_fov(&mut projection, tween.fov);
+                } else {
+                    debug!("system tween starting {} @ {:?}", tween.time, tween.target);
+                    commands.entity(ent).try_insert(SystemTweenData {
+                        start_pos: *transform,
+                        start_fov: perspective_fov(projection.as_ref()),
+                        start_time: time.elapsed_secs_f64(),
+                    });
+                }
+            }
+            (false, Some(data)) => {
+                let elapsed = (time.elapsed_secs_f64() - data.start_time) as f32;
+                if elapsed >= tween.time {
+                    debug!("system tween complete @ {:?}", tween.target);
+                    *transform = tween.target;
+                    set_perspective_fov(&mut projection, tween.fov);
+                    commands
+                        .entity(ent)
+                        .remove::<SystemTween>()
+                        .remove::<SystemTweenData>();
+                } else {
+                    let ratio = simple_easing::quad_in_out(elapsed / tween.time);
+                    transform.translation = (1.0 - ratio) * data.start_pos.translation
+                        + ratio * tween.target.translation;
+                    transform.scale =
+                        (1.0 - ratio) * data.start_pos.scale + ratio * tween.target.scale;
+                    transform.rotation =
+                        data.start_pos.rotation.slerp(tween.target.rotation, ratio);
+                    if let (Some(start), Some(target)) = (data.start_fov, tween.fov) {
+                        set_perspective_fov(
+                            &mut projection,
+                            Some((1.0 - ratio) * start + ratio * target),
+                        );
+                    }
+                    debug!(
+                        "system tween partial {}/{} @ {:?}",
+                        elapsed, tween.time, transform
+                    );
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "harness-util"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wallet = { workspace = true }
+dcl_component = { workspace = true }
+livekit = { version = "0.9.7", features = ["native-tls"] }
+livekit-api = { version = "0.9.1", default-features = false, features = [
+  "access-token",
+] }
+prost = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "time"] }
+pico-args = "0.5.0"
+anyhow = { workspace = true }

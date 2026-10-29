@@ -1,0 +1,47 @@
+{
+  "description": "GET /api/places/{placeId}/images?limit=2&offset=2: the pagination variant. Captured GET https://camera-reel-service.decentraland.org/api/places/3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d/images?limit=2&offset=2 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/api/places/3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d/images",
+    "query": {
+      "limit": [
+        "2"
+      ],
+      "offset": [
+        "2"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "images": [
+        {
+          "id": "75adacb2-5426-490b-ac4e-a68ed9467cf1",
+          "url": "https://camera-reel-service.decentraland.org/api/images/75adacb2-5426-490b-ac4e-a68ed9467cf1-1789615158.jpg",
+          "thumbnailUrl": "https://camera-reel-service.decentraland.org/api/images/75adacb2-5426-490b-ac4e-a68ed9467cf1-thumbnail-1789615158.jpg",
+          "isPublic": true,
+          "dateTime": "1789615158"
+        },
+        {
+          "id": "adb1a87f-8cd4-4b8f-8b53-917d5130fc0b",
+          "url": "https://camera-reel-service.decentraland.org/api/images/adb1a87f-8cd4-4b8f-8b53-917d5130fc0b-1789555143.jpg",
+          "thumbnailUrl": "https://camera-reel-service.decentraland.org/api/images/adb1a87f-8cd4-4b8f-8b53-917d5130fc0b-thumbnail-1789555143.jpg",
+          "isPublic": true,
+          "dateTime": "1789555143"
+        }
+      ],
+      "maxImages": 523
+    }
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/places/3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d/images?limit=2&offset=2",
+  "captured_at": "2026-09-25T19:25:06Z",
+  "volatile_paths": [
+    "images.thumbnailUrl"
+  ]
+}

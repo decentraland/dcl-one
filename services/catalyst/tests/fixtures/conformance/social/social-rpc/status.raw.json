@@ -1,0 +1,30 @@
+{
+  "method": "GET",
+  "url": "https://rpc-social-service-ea.decentraland.org/status",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 200,
+  "status_text": "OK",
+  "response_headers": {
+    "access-control-allow-origin": "*",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a50b39c24b838e5b-EZE",
+    "connection": "keep-alive",
+    "content-encoding": "br",
+    "content-type": "application/json",
+    "date": "Mon, 26 Oct 2026 17:36:52 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "transfer-encoding": "chunked",
+    "uwebsockets": "20",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-10-26T17:36:51Z",
+  "elapsed_ms": 721,
+  "body_bytes": 105,
+  "body_file": "status.raw.body",
+  "redacted": false
+}

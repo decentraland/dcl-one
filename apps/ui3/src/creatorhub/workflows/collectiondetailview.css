@@ -1,0 +1,7 @@
+.creator-wearable-collection-detail-route {
+  --cwcd-surface: #161518;
+  --cwcd-surface-2: #221c2c;
+  --cwcd-border: rgba(255, 255, 255, 0.1);
+  --cwcd-text: rgba(255, 255, 255, 0.92);
+  --cwcd-muted: rgba(255, 255, 255, 0.6);
+}

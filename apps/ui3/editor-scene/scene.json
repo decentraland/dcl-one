@@ -1,0 +1,23 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "Scene editor",
+    "description": "The Creator Hub scene editor: selection, transform gizmos and the editor camera"
+  },
+  "owner": "",
+  "contact": {
+    "name": "",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": ["0,0"],
+    "base": "0,0"
+  },
+  "spawnPoints": [],
+  "featureToggles": {
+    "portableExperiences": "enabled"
+  }
+}

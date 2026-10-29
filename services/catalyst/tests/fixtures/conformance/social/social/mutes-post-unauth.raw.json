@@ -1,0 +1,28 @@
+{
+  "method": "POST",
+  "url": "https://social-api.decentraland.org/v1/mutes",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*",
+    "content-type": "application/json"
+  },
+  "request_body": {},
+  "status": 400,
+  "status_text": "Bad Request",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a50b5e446c0b1e96-EZE",
+    "connection": "keep-alive",
+    "content-length": "101",
+    "content-type": "application/json",
+    "date": "Mon, 26 Oct 2026 18:01:47 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-10-26T18:01:46Z",
+  "elapsed_ms": 324,
+  "body_bytes": 101,
+  "body_file": "mutes-post-unauth.raw.body",
+  "redacted": false
+}

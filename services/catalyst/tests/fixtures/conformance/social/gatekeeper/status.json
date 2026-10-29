@@ -1,0 +1,24 @@
+{
+  "description": "GET /status: the health document. Captured GET https://comms-gatekeeper.decentraland.org/status -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/status",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "version": "2.30.0",
+      "currentTime": 1790364264683,
+      "commitHash": "105df71d2ff434e6d9a0c3385494dd7367158abd"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/status",
+  "captured_at": "2026-09-25T19:24:24Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,19 @@
+[package]
+name = "catalyst-config"
+version.workspace = true
+edition = "2024"
+description = "Process configuration: the environment the node reads at startup and its typed settings"
+publish = false
+
+[dependencies]
+tracing-subscriber.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+uuid.workspace = true
+url.workspace = true
+
+[features]
+ts = []
+test-support = []
+
+[dev-dependencies]

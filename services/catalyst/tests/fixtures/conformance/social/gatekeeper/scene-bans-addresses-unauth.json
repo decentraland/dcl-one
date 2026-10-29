@@ -1,0 +1,23 @@
+{
+  "description": "GET /scene-bans/addresses without an auth chain. Captured GET https://comms-gatekeeper.decentraland.org/scene-bans/addresses -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/scene-bans/addresses",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": false,
+      "message": "Invalid Auth Chain"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/scene-bans/addresses",
+  "captured_at": "2026-09-25T19:24:32Z",
+  "volatile_paths": []
+}

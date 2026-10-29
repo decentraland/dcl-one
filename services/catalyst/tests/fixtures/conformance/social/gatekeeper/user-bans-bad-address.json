@@ -1,0 +1,24 @@
+{
+  "description": "GET /users/{address}/bans with a malformed address. Captured GET https://comms-gatekeeper.decentraland.org/users/not-an-address/bans -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/users/not-an-address/bans",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "isBanned": false
+      }
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/users/not-an-address/bans",
+  "captured_at": "2026-09-25T19:24:27Z",
+  "volatile_paths": []
+}

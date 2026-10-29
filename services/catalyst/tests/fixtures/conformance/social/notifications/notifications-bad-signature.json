@@ -1,0 +1,30 @@
+{
+  "description": "GET /notifications with a fresh timestamp and a signature that does not match the payload: the invalid-signature shape. Signed fetch with the run's throwaway key 0x8d6f63e382d73cf53858864f673f39e9ff915a1e (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://notifications.decentraland.org/notifications -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/notifications",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x8d6f63e382d73cf53858864f673f39e9ff915a1e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/notifications:1790364578096:{}\",\"signature\":\"0x111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111b\"}",
+      "x-identity-timestamp": "1790364578096",
+      "x-identity-metadata": "{}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Invalid signature: ERROR. Link type: ECDSA_SIGNED_ENTITY. Point is not on curve: Cannot find square root.",
+      "message": "This endpoint requires a signed fetch request. See ADR-44."
+    }
+  },
+  "captured_from": "https://notifications.decentraland.org/notifications",
+  "captured_at": "2026-09-25T19:29:38Z",
+  "volatile_paths": [
+    "error"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "method": "OPTIONS",
+  "url": "https://comms-gatekeeper.decentraland.org/get-scene-adapter",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*",
+    "origin": "https://decentraland.org",
+    "access-control-request-method": "POST",
+    "access-control-request-headers": "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-timestamp,x-identity-metadata"
+  },
+  "request_body": null,
+  "status": 204,
+  "status_text": "No Content",
+  "response_headers": {
+    "access-control-allow-headers": "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-timestamp,x-identity-metadata",
+    "access-control-allow-methods": "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+    "access-control-allow-origin": "*",
+    "access-control-max-age": "36000",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c690a4d31d933-TXL",
+    "connection": "keep-alive",
+    "date": "Fri, 25 Sep 2026 19:24:39 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "vary": "Access-Control-Request-Headers",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:39Z",
+  "elapsed_ms": 141,
+  "body_bytes": 0,
+  "body_file": "preflight-get-scene-adapter.raw.body",
+  "redacted": false
+}

@@ -1,0 +1,220 @@
+use std::marker::PhantomData;
+
+use bevy::{
+    app::{HierarchyPropagatePlugin, Propagate},
+    ecs::entity::Entities,
+    prelude::*,
+    render::mesh::MeshTag,
+};
+
+use common::{
+    sets::SceneSets,
+    structs::{AttachPoints, PrimaryUser},
+};
+use dcl_component::{
+    proto_components::sdk::components::{AvatarAnchorPointType, PbAvatarAttach},
+    SceneComponentId,
+};
+use dcl_types::interface::ComponentPosition;
+use scene_material::{
+    SceneMaterial, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG, SCENE_MATERIAL_NO_DITHERING_MESH_TAG,
+};
+use scene_runner::update_world::{
+    mesh_collider::DisableCollisions,
+    transform_and_parent::{AvatarAttachStage, ParentPositionSync},
+    visibility::VisibilityComponent,
+    AddCrdtInterfaceExt,
+};
+
+use crate::AvatarShape;
+
+pub struct AttachPlugin;
+
+impl Plugin for AttachPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_crdt_lww_component::<PbAvatarAttach, AvatarAttachment>(
+            SceneComponentId::AVATAR_ATTACHMENT,
+            ComponentPosition::Any,
+        );
+        app.add_systems(
+            Update,
+            (update_attached, undither_materials_on_attached_items).in_set(SceneSets::PostLoop),
+        );
+        app.add_plugins(HierarchyPropagatePlugin::<AttachedToPlayer>::default());
+    }
+}
+
+#[derive(Component, Clone, PartialEq)]
+pub struct AttachedToPlayer {
+    pub is_primary: bool,
+}
+
+#[derive(Component, Debug)]
+pub struct AvatarAttachment(pub PbAvatarAttach);
+
+impl From<PbAvatarAttach> for AvatarAttachment {
+    fn from(value: PbAvatarAttach) -> Self {
+        Self(value)
+    }
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn update_attached(
+    mut commands: Commands,
+    attachments: Query<(
+        Entity,
+        Ref<AvatarAttachment>,
+        Option<&ParentPositionSync<AvatarAttachStage>>,
+    )>,
+    mut removed_attachments: RemovedComponents<AvatarAttachment>,
+    visibility_component: Query<&VisibilityComponent>,
+    primary_user: Query<(Entity, &AttachPoints), With<PrimaryUser>>,
+    all_users: Query<(Entity, &AttachPoints, &AvatarShape, Has<PrimaryUser>)>,
+    // an avatar appeared or changed this frame: retry attachments that missed
+    // their target, or whose target has since despawned
+    changed_avatars: Query<(), Or<(Added<AttachPoints>, Changed<AvatarShape>)>>,
+    entities: &Entities,
+) {
+    for removed in removed_attachments.read() {
+        if let Ok(mut commands) = commands.get_entity(removed) {
+            commands.remove::<(
+                ParentPositionSync<AvatarAttachStage>,
+                DisableCollisions,
+                Propagate<AttachedToPlayer>,
+            )>();
+
+            //restore visiblity after it got overwritten by the attach-parent
+            let required_visibility = match visibility_component.get(removed) {
+                Ok(VisibilityComponent(inner)) => match inner.visible.unwrap_or(true) {
+                    true => Visibility::Visible,
+                    false => Visibility::Hidden,
+                },
+                Err(_) => Visibility::Inherited,
+            };
+
+            commands.try_insert(required_visibility);
+        }
+    }
+
+    let retry = !changed_avatars.is_empty();
+    for (ent, attach, current_sync) in attachments.iter() {
+        if !attach.is_changed()
+            && (!retry || current_sync.is_some_and(|sync| entities.contains(sync.sync_to)))
+        {
+            continue;
+        }
+        let (is_primary, player, attach_points) = match attach.0.avatar_id.as_ref() {
+            None => {
+                let Ok((player, data)) = primary_user.single() else {
+                    warn!("no primary user");
+                    continue;
+                };
+                (true, player, data)
+            }
+            Some(id) => {
+                let id = id.to_lowercase();
+                let Some((player, attach_points, _, has_primary)) = all_users
+                    .iter()
+                    .find(|(_, _, avatar_shape, _)| avatar_shape.0.id.to_lowercase() == id)
+                else {
+                    if attach.is_changed() {
+                        warn!("avatar shape id {:?} not found", id);
+                        warn!(
+                            "available avatar shapes: {:?}",
+                            all_users
+                                .iter()
+                                .map(|(_, _, avatar_shape, _)| &avatar_shape.0.id)
+                                .collect::<Vec<_>>()
+                        );
+                    }
+                    continue;
+                };
+                (has_primary, player, attach_points)
+            }
+        };
+
+        let sync_entity = match attach.0.anchor_point_id() {
+            AvatarAnchorPointType::AaptPosition => attach_points.position,
+            AvatarAnchorPointType::AaptNameTag => attach_points.nametag,
+            AvatarAnchorPointType::AaptHead => attach_points.head,
+            AvatarAnchorPointType::AaptNeck => attach_points.neck,
+            AvatarAnchorPointType::AaptSpine => attach_points.spine,
+            AvatarAnchorPointType::AaptSpine1 => attach_points.spine_1,
+            AvatarAnchorPointType::AaptSpine2 => attach_points.spine_2,
+            AvatarAnchorPointType::AaptHip => attach_points.hip,
+            AvatarAnchorPointType::AaptLeftShoulder => attach_points.left_shoulder,
+            AvatarAnchorPointType::AaptLeftArm => attach_points.left_arm,
+            AvatarAnchorPointType::AaptLeftForearm => attach_points.left_forearm,
+            AvatarAnchorPointType::AaptLeftHand => attach_points.left_hand,
+            AvatarAnchorPointType::AaptLeftHandIndex => attach_points.left_hand_index,
+            AvatarAnchorPointType::AaptRightShoulder => attach_points.right_shoulder,
+            AvatarAnchorPointType::AaptRightArm => attach_points.righ_arm,
+            AvatarAnchorPointType::AaptRightForearm => attach_points.right_forearm,
+            AvatarAnchorPointType::AaptRightHand => attach_points.right_hand,
+            AvatarAnchorPointType::AaptRightHandIndex => attach_points.right_hand_index,
+            AvatarAnchorPointType::AaptLeftUpLeg => attach_points.left_thigh,
+            AvatarAnchorPointType::AaptLeftLeg => attach_points.left_shin,
+            AvatarAnchorPointType::AaptLeftFoot => attach_points.left_foot,
+            AvatarAnchorPointType::AaptLeftToeBase => attach_points.left_toe_base,
+            AvatarAnchorPointType::AaptRightUpLeg => attach_points.right_thigh,
+            AvatarAnchorPointType::AaptRightLeg => attach_points.right_shin,
+            AvatarAnchorPointType::AaptRightFoot => attach_points.right_foot,
+            AvatarAnchorPointType::AaptRightToeBase => attach_points.right_toe_base,
+        };
+
+        let mut commands = commands.entity(ent);
+        commands.try_insert((
+            ParentPositionSync::<AvatarAttachStage>::new_with_scene_writeback(sync_entity, player),
+            DisableCollisions,
+            AttachedToPlayer { is_primary },
+        ));
+        debug!("syncing {ent:?} to {sync_entity:?}");
+    }
+}
+
+#[derive(Component)]
+struct DitheredMaterial<M: Asset> {
+    previous_mesh_tag: u32,
+    _phantom_data: PhantomData<M>,
+}
+
+#[allow(clippy::type_complexity)]
+fn undither_materials_on_attached_items(
+    mut commands: Commands,
+    mut new: Query<
+        (Entity, &mut MeshTag, &AttachedToPlayer),
+        (
+            With<MeshMaterial3d<SceneMaterial>>,
+            Without<DitheredMaterial<SceneMaterial>>,
+        ),
+    >,
+    mut old: Query<
+        (Entity, &mut MeshTag, &DitheredMaterial<SceneMaterial>),
+        (
+            With<MeshMaterial3d<SceneMaterial>>,
+            Without<AttachedToPlayer>,
+        ),
+    >,
+) {
+    for (ent, mut mesh_tag, attached) in new.iter_mut() {
+        commands
+            .entity(ent)
+            .try_insert(DitheredMaterial::<SceneMaterial> {
+                previous_mesh_tag: mesh_tag.0,
+                _phantom_data: PhantomData,
+            });
+
+        if attached.is_primary {
+            mesh_tag.0 |= SCENE_MATERIAL_NO_DITHERING_MESH_TAG;
+        } else {
+            mesh_tag.0 |= SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG;
+        }
+    }
+
+    for (ent, mut mesh_tag, dithered) in old.iter_mut() {
+        mesh_tag.0 = dithered.previous_mesh_tag;
+        commands
+            .entity(ent)
+            .try_remove::<DitheredMaterial<SceneMaterial>>();
+    }
+}

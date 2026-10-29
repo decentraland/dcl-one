@@ -1,0 +1,28 @@
+{
+  "method": "GET",
+  "url": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreifkus6iegxyerri7rbfzmxrj5c726prza7lqobufstyc54yuzxwpy/face.png",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 200,
+  "status_text": "OK",
+  "response_headers": {
+    "accept-ranges": "bytes",
+    "content-length": "35355",
+    "content-type": "image/png",
+    "date": "Fri, 25 Sep 2026 19:29:40 GMT",
+    "etag": "\"6eab3f8c5f240baeb804821ab464dbae\"",
+    "last-modified": "Thu, 28 Aug 2025 23:13:34 GMT",
+    "server": "AmazonS3",
+    "x-amz-id-2": "PU+EG9qjjTm0vHZ5G/gSyTyHuicLvn6x75L12jZ6NOdFt57XSf6HCh3b5dqfNICdb90ntU+Q9+4=",
+    "x-amz-request-id": "AME537Y8KVG5BHMD",
+    "x-amz-server-side-encryption": "AES256"
+  },
+  "captured_at": "2026-09-25T19:29:39Z",
+  "elapsed_ms": 174,
+  "body_bytes": 35355,
+  "body_file": "face-profile-1-object.raw.body",
+  "redacted": false
+}

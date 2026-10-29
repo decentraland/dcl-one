@@ -1,0 +1,21 @@
+[package]
+name = "collectibles"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+[dependencies]
+common = { workspace = true }
+console = { workspace = true }
+ipfs = { workspace = true }
+
+bevy = { workspace = true }
+bevy_kira_audio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+urn = { workspace = true }
+itertools = { workspace = true }
+once_cell = { workspace = true }
+fastrand = { workspace = true }

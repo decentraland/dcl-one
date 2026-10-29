@@ -1,0 +1,159 @@
+use std::collections::HashMap;
+
+use dcl_component::proto_components::common::Color3;
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AvatarSnapshots {
+    pub face256: String,
+    pub body: String,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AvatarEmote {
+    pub slot: u32,
+    pub urn: String,
+}
+
+#[derive(Serialize, Deserialize, Copy, Clone, Debug, Default)]
+pub struct AvatarColor {
+    pub color: Color3,
+}
+
+impl PartialEq for AvatarColor {
+    fn eq(&self, other: &Self) -> bool {
+        self.color == other.color
+    }
+}
+
+impl Eq for AvatarColor {}
+
+impl AvatarColor {
+    pub fn new(color: Color3) -> Self {
+        Self { color }
+    }
+}
+
+// Optional fields are omitted when absent, not serialized as `null`: other explorers
+// fail to parse present-but-null fields in deployed profiles.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct AvatarWireFormat {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body_shape: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub eyes: Option<AvatarColor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hair: Option<AvatarColor>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skin: Option<AvatarColor>,
+    pub wearables: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub force_render: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub emotes: Option<Vec<AvatarEmote>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshots: Option<AvatarSnapshots>,
+    // Load-bearing: this flatten field forces map-mode (named) encoding. Without it,
+    // rmp's compact `to_vec` (see rmp_encode) writes this struct as a positional array,
+    // and the `skip_serializing_if` fields above silently shorten it and shift the
+    // remaining slots, corrupting the native scene<->renderer IPC round-trip. As a
+    // bonus it preserves unknown avatar keys, mirroring SerializedProfile::extra_fields.
+    #[serde(flatten)]
+    pub extra: HashMap<String, serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+pub struct LambdaProfiles {
+    pub avatars: Vec<SerializedProfile>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SerializedProfile {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_id: Option<String>,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub version: i64,
+    pub eth_address: String,
+    #[serde(default)]
+    pub has_claimed_name: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_connected_web3: Option<bool>,
+    pub avatar: AvatarWireFormat,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name_color: Option<Color3>,
+    #[serde(flatten)]
+    pub extra_fields: HashMap<String, serde_json::Value>,
+}
+
+impl Default for SerializedProfile {
+    fn default() -> Self {
+        let avatar = serde_json::from_str("
+            {
+                \"bodyShape\":\"urn:decentraland:off-chain:base-avatars:BaseFemale\",
+                \"wearables\":[
+                    \"urn:decentraland:off-chain:base-avatars:f_sweater\",
+                    \"urn:decentraland:off-chain:base-avatars:f_jeans\",
+                    \"urn:decentraland:off-chain:base-avatars:bun_shoes\",
+                    \"urn:decentraland:off-chain:base-avatars:standard_hair\",
+                    \"urn:decentraland:off-chain:base-avatars:f_eyes_01\",
+                    \"urn:decentraland:off-chain:base-avatars:f_eyebrows_00\",
+                    \"urn:decentraland:off-chain:base-avatars:f_mouth_00\"
+                ],
+                \"emotes\":[
+                    {\"slot\": 0, \"urn\": \"handsair\" },
+                    {\"slot\": 1, \"urn\": \"wave\" },
+                    {\"slot\": 2, \"urn\": \"fistpump\" },
+                    {\"slot\": 3, \"urn\": \"dance\" },
+                    {\"slot\": 4, \"urn\": \"raisehand\" },
+                    {\"slot\": 5, \"urn\": \"clap\" },
+                    {\"slot\": 6, \"urn\": \"money\" },
+                    {\"slot\": 7, \"urn\": \"kiss\" },
+                    {\"slot\": 8, \"urn\": \"headexplode\" },
+                    {\"slot\": 9, \"urn\": \"shrug\" }
+                ],
+               \"snapshots\": {
+                    \"face256\":\"\",
+                    \"body\":\"\"
+                },
+                \"eyes\":{
+                    \"color\":{\"r\":0.3,\"g\":0.2235294133424759,\"b\":0.99,\"a\":1}
+                },
+                \"hair\":{
+                    \"color\":{\"r\":0.5960784554481506,\"g\":0.37254902720451355,\"b\":0.21568627655506134,\"a\":1}
+                },
+                \"skin\":{
+                    \"color\":{\"r\":0.4901960790157318,\"g\":0.364705890417099,\"b\":0.27843138575553894,\"a\":1}
+                }
+            }
+        ").unwrap();
+
+        //                     {\"slot\": 1, \"urn\": \"urn:decentraland:matic:collections-v2:0x9087f96750c4e7607454c67c4f0bcf357ae62a46:2\" }
+
+        Self {
+            user_id: Default::default(),
+            name: "Bevy_User".to_string(),
+            version: 0,
+            eth_address: "0x0000000000000000000000000000000000000000".to_owned(),
+            has_claimed_name: Default::default(),
+            has_connected_web3: Default::default(),
+            avatar,
+            name_color: None,
+            extra_fields: HashMap::from_iter([
+                (
+                    "description".to_owned(),
+                    serde_json::to_value(String::default()).unwrap(),
+                ),
+                (
+                    "tutorialStep".to_owned(),
+                    serde_json::to_value(0u32).unwrap(),
+                ),
+            ]),
+        }
+    }
+}

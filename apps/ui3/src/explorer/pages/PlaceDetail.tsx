@@ -1,0 +1,253 @@
+import ContentStatus from "../../components/ContentStatus";
+import type { CSSProperties } from "react";
+import { useEffect, useRef, useState } from "react";
+import Button from "../../atoms/Button";
+import Person from "../components/Person";
+import { setPlaceFavorite, setPlaceLike, type PlaceViewer } from "../../data/catalyst/places";
+import PlaceActionIcon from "../components/PlaceActionIcon";
+import { jumpUrl } from "../frames/Minimap";
+import "./placedetail.css";
+
+type PlaceDetailData = {
+  id?: string;
+  title: string;
+  coords: string;
+  parcels: number;
+  favorites: number;
+  views: number;
+  approval: number;
+  creator: string;
+  creatorAddress?: string | null;
+  categories?: string[];
+  updated: string;
+  description: string;
+  hue: number;
+  image?: string | null;
+  world?: boolean;
+  worldName?: string | null;
+};
+
+const PLACE: PlaceDetailData = {
+  title: "Genesis Plaza",
+  coords: "-3, -2",
+  parcels: 70,
+  favorites: 129,
+  views: 0,
+  approval: 100,
+  creator: "Decentraland Foundation",
+  updated: "16/06/2026",
+  description:
+    "Decentraland's official spawn point and your #1 place to meet new " +
+    "people, hang out, and stay up to date with what's happening in our " +
+    "virtual world.",
+  hue: 270,
+};
+
+type PlaceDetailProps = {
+  place?: PlaceDetailData;
+  viewer?: PlaceViewer | null;
+  notFound?: boolean;
+  loading?: boolean;
+  error?: boolean;
+  onRetry?: () => void;
+  onClose?: () => void;
+  onJumpIn?: () => void;
+  onLike?: (placeId: string, like: boolean | null) => Promise<unknown>;
+  onFavorite?: (placeId: string, favorite: boolean) => Promise<unknown>;
+};
+
+const CATEGORY_LABELS: Record<string, string> = { poi: "Point of interest", game: "Game", art: "Art", music: "Music", social: "Social", fashion: "Fashion", education: "Education", shop: "Shop", sports: "Sports", business: "Business", casino: "Casino", crypto: "Crypto" };
+
+function categoryLabel(key: string): string {
+  return CATEGORY_LABELS[key] ?? key.replace(/[_-]+/g, " ").replace(/^\w/, (c) => c.toUpperCase());
+}
+
+export default function PlaceDetail({ place, viewer = null, notFound = false, loading = false, error = false, onRetry, onClose, onJumpIn, onLike = setPlaceLike, onFavorite = setPlaceFavorite }: PlaceDetailProps = {}) {
+  const p = place ?? PLACE;
+  const [liked, setLiked] = useState<boolean | null>(viewer?.liked ?? null);
+  const [faved, setFaved] = useState(viewer?.favorite ?? false);
+  const pressed = useRef({ like: false, favorite: false });
+  const known = viewer !== null;
+  const knownLiked = viewer?.liked ?? null;
+  const knownFavorite = viewer?.favorite ?? false;
+  useEffect(() => {
+    if (!known) return;
+    if (!pressed.current.like) setLiked(knownLiked);
+    if (!pressed.current.favorite) setFaved(knownFavorite);
+  }, [known, knownLiked, knownFavorite]);
+  if (notFound) {
+    return (
+      <div className="ep__backdrop" onClick={onClose}>
+        <div
+          className="pld"
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            justifyContent: "center",
+            textAlign: "center",
+            gap: 8,
+            padding: "56px 32px",
+          }}
+        >
+          <h2 style={{ margin: 0 }}>Place not found</h2>
+          <p style={{ margin: 0, color: "var(--ink-7, #a09ba8)" }}>
+            This place doesn&apos;t exist, or its data is no longer in the catalog.
+          </p>
+        </div>
+      </div>
+    );
+  }
+  const like = (v: boolean) => {
+    pressed.current.like = true;
+    const prev = liked;
+    const next = liked === v ? null : v;
+    setLiked(next);
+    if (p.id) onLike(p.id, next).catch(() => setLiked(prev));
+  };
+  const favorite = () => {
+    pressed.current.favorite = true;
+    const prev = faved;
+    const next = !faved;
+    setFaved(next);
+    if (p.id) onFavorite(p.id, next).catch(() => setFaved(prev));
+  };
+  const heroStyle: CSSProperties & { "--hue": number; "--thumb-img"?: string } = {
+    "--hue": p.hue,
+    ...(p.image ? { "--thumb-img": `url("${p.image}")` } : null),
+  };
+  const showStats = p.views > 0 || p.approval > 0;
+  const categories = (p.categories ?? []).filter((c) => c && c !== "all");
+  return (
+    <div className="ep__backdrop" onClick={onClose}>
+      <div className="pld" onClick={(e) => e.stopPropagation()}>
+        <button className="pld__close" aria-label="Close" data-sb-linkto="Explorer/Pages/Places" onClick={onClose}>&#xD7;</button>
+
+        <div className="pld__top">
+          <div
+            className="pld__hero"
+            style={heroStyle}
+            aria-hidden="true"
+          />
+
+          <div className="pld__body">
+            <header className="pld__head">
+            <h2 className="pld__title">{p.title}</h2>
+            <div className="pld__creator">
+              <span className="pld__creatorby">Created by</span>
+              <Person address={p.creatorAddress} name={p.creator} />
+            </div>
+            {categories.length > 0 && (
+              <ul className="pld__tags" aria-label="Categories">
+                {categories.map((c) => <li key={c} className="pld__tag">{categoryLabel(c)}</li>)}
+              </ul>
+            )}
+          </header>
+
+          {loading && <ContentStatus pending message="Loading place details&hellip;" />}
+          {error && <ContentStatus message="Couldn't refresh place details." onRetry={onRetry} />}
+          <div className="pld__toolbar">
+            {showStats && <div className="pld__approval">
+              <span className="pld__stat-inline" title="Visits">
+                <svg viewBox="0 0 18 18" width="15" height="15" aria-hidden="true">
+                  <path d="M1 9s3-5 8-5 8 5 8 5-3 5-8 5-8-5-8-5z" fill="none" stroke="currentColor" strokeWidth="1.4" />
+                  <circle cx="9" cy="9" r="2.2" fill="currentColor" />
+                </svg>
+                {p.views}
+              </span>
+              <span className="pld__stat-inline" title="Likes">
+                <svg viewBox="0 0 18 18" width="15" height="15" aria-hidden="true">
+                  <path d="M5 8.5V15H3V8.5h2zm2 0L8.7 3.6c.2-.6.8-1 1.4-.9.7.1 1.2.8 1.1 1.5L10.7 7H14a1.4 1.4 0 011.4 1.7l-1 5A1.6 1.6 0 0112.8 15H7V8.5z"
+                    fill="currentColor" />
+                </svg>
+                {p.approval}%
+              </span>
+            </div>}
+            <div className="pld__icons">
+              <button className={"pld__iconbtn" + (liked === true ? " is-active" : "")} aria-label="Like" aria-pressed={liked === true} onClick={() => like(true)}>
+                <PlaceActionIcon name="like" on={liked === true} />
+              </button>
+              <button className={"pld__iconbtn" + (liked === false ? " is-active" : "")} aria-label="Dislike" aria-pressed={liked === false} onClick={() => like(false)}>
+                <PlaceActionIcon name="dislike" on={liked === false} />
+              </button>
+              <button className={"pld__iconbtn" + (faved ? " is-active" : "")} aria-label="Favorite" aria-pressed={faved} onClick={favorite}>
+                <PlaceActionIcon name="favorite" on={faved} />
+              </button>
+              <button
+                className="pld__iconbtn"
+                aria-label="Share"
+                onClick={() => void navigator.clipboard?.writeText(jumpUrl(p.coords, null)).catch(() => undefined)}
+              >
+                <PlaceActionIcon name="share" />
+              </button>
+            </div>
+          </div>
+
+          <div className="pld__actions">
+            <Button variant="primary" className="pld__jump" data-sb-linkto="Explorer/Workflows/SceneLoading" onClick={onJumpIn}>
+              JUMP IN
+              <svg viewBox="0 0 16 16" width="13" height="13" aria-hidden="true">
+                <path d="M3 8h8M8 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </Button>
+          </div>
+          </div>
+        </div>
+
+        <div className="pld__detail">
+            <section className="pld__section">
+              <h3 className="pld__sectitle">DESCRIPTION</h3>
+              <p className="pld__desc">{p.description}</p>
+            </section>
+
+            <div className="pld__rows">
+              <div className="pld__row">
+                <div className="pld__rowcell">
+                  <div className="pld__rowlabel">
+                    {p.world ? (
+                      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                        <circle cx="8" cy="8" r="6.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+                        <path d="M1.5 8h13M8 1.5c1.7 1.7 1.7 10.3 0 13M8 1.5c-1.7 1.7-1.7 10.3 0 13"
+                          fill="none" stroke="currentColor" strokeWidth="1.1" />
+                      </svg>
+                    ) : (
+                      <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                        <path d="M8 1.5c-2.5 0-4.5 2-4.5 4.5C3.5 9.5 8 14.5 8 14.5s4.5-5 4.5-8.5C12.5 3.5 10.5 1.5 8 1.5z"
+                          fill="none" stroke="currentColor" strokeWidth="1.3" />
+                        <circle cx="8" cy="6" r="1.6" fill="currentColor" />
+                      </svg>
+                    )}
+                    {p.world ? "REALM" : "LOCATION"}
+                  </div>
+                  <div className="pld__rowval">{p.world ? p.worldName || p.coords : p.coords}</div>
+                </div>
+                <div className="pld__rowcell">
+                  <div className="pld__rowlabel">
+                    <svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+                      <rect x="2.5" y="2.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.3" />
+                      <path d="M2.5 8h11M8 2.5v11" stroke="currentColor" strokeWidth="1.1" />
+                    </svg>
+                    PARCELS
+                  </div>
+                  <div className="pld__rowval">{p.parcels}</div>
+                </div>
+              </div>
+
+              <div className="pld__row pld__row--bottom">
+                <div className="pld__rowcell">
+                  <div className="pld__rowlabel pld__rowlabel--plain">FAVORITES</div>
+                  <div className="pld__rowval">{p.favorites.toLocaleString()}</div>
+                </div>
+                <div className="pld__rowcell">
+                  <div className="pld__rowlabel pld__rowlabel--plain">UPDATED</div>
+                  <div className="pld__rowval">{p.updated}</div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+  );
+}

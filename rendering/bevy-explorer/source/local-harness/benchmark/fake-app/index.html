@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Fake explorer (browser leg self-test)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <style>
+    html, body { margin: 0; min-height: 100%; background: #54098a; color: #fff; font: 15px/1.5 system-ui, sans-serif; }
+    main { max-width: 52rem; padding: 2rem 24px; }
+    h1 { font-size: 1.4rem; margin: 0 0 .5rem; }
+    pre { white-space: pre-wrap; background: #0003; padding: 1rem; border-radius: 6px; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Fake explorer</h1>
+  <p>
+    Stands in for the web explorer when the browser leg runner is checked: it speaks the
+    browser stream (page to runner, same origin) and nothing else. It streams a CSV and a log in
+    the formats the harness parses to <code>perfStream</code> (the CSV only when <code>perfCsv</code> is present), then ends the run.
+  </p>
+  <pre id="status"></pre>
+</main>
+<script type="module">
+// ?fake=<mode>   ok (default) | nocsv | header | hang | panic | protocol | shell | storage | giveup | miscount
+//   nocsv: asked to measure but never starts (no CSV, exit 1); header: the CSV header only, then no end;
+//   hang: part of the CSV, then no end; panic: an exception block, exit 101;
+//   shell: this page only embeds itself (as `ok`) in a same-origin iframe, as dcl-one's shell page embeds
+//   app.html, and the frame streams: proves the harness's headers let an origin's pages frame each other;
+//   giveup: part of the CSV, then the page gives the csv stream up as dcl-one's page does after too many failed
+//   requests, goes on to the end and ends with exit code 0 and `failed: true`;
+//   miscount: a complete run whose `end` reports more CSV bytes than it sent (`failed: false`);
+//   storage: plants one leftover of each kind a build can leave in the profile (see profileState) for the
+//   next run to look for; its service worker (sw.js) answers every navigation with this page, as an app
+//   shell worker does
+// ?perfStream=<path>  the stream: the log and `end` always, the CSV only with ?perfCsv (a measured run)
+// ?frames=<n>    CSV rows to stream (default 3000)
+// build-info.json next to this page, per build: { name, cpuMs, gpuMs, errors }
+const params = new URLSearchParams(location.search)
+const mode = params.get('fake') ?? 'ok'
+const streamPath = params.get('perfStream')
+const measuring = params.has('perfCsv')
+const frames = Number(params.get('frames') ?? 3000)
+const statusEl = document.getElementById('status')
+const say = (text) => { statusEl.textContent += text + '\n' }
+
+const info = await fetch('build-info.json', { cache: 'no-store' }).then((r) => (r.ok ? r.json() : {})).catch(() => ({}))
+const cpuMs = Number(info.cpuMs ?? 16.7)
+const gpuMs = Number(info.gpuMs ?? 0)
+const errors = Number(info.errors ?? 1)
+say(`build "${info.name ?? 'unnamed'}", mode ${mode}, autopilot ${params.has('autopilot')}, realm ${params.get('realm')}`)
+
+// What an earlier build left in the browser profile, and the local guest. The harness scrubs the profile
+// before every run but keeps the guest's root key (key and role as in dcl-one's shell/localGuest.ts: made
+// once, the same account in every later run). So at the start of a run: the guest is there once an earlier
+// run made it, and everything else a `storage` run planted must be gone.
+const ROOT_KEY = 'dcl-local-guest-root-key'
+const PLANT = 'planted-by-an-earlier-run'
+
+async function profileState() {
+  const count = (found) => (found ? 1 : 0)
+  const state = {
+    guestKey: count(localStorage.getItem(ROOT_KEY) !== null),
+    localStorage: Object.keys(localStorage).filter((key) => key !== ROOT_KEY).length,
+    cookie: count(document.cookie.includes(PLANT)),
+    indexedDB: (await indexedDB.databases()).filter((db) => db.name === PLANT).length,
+    cacheStorage: count(await caches.has(PLANT)),
+    opfs: count(await navigator.storage.getDirectory().then((dir) => dir.getFileHandle(PLANT)).then(() => true, () => false)),
+    // a storage bucket other than the default one, with data in it: Chrome keeps these under WebStorage
+    storageBucket: navigator.storageBuckets ? (await navigator.storageBuckets.keys()).filter((name) => name === PLANT).length : 0,
+    serviceWorker: (await navigator.serviceWorker.getRegistrations()).length
+  }
+  if (localStorage.getItem(ROOT_KEY) === null) localStorage.setItem(ROOT_KEY, 'fake-guest-' + crypto.randomUUID())
+  return state
+}
+
+// Each kind on its own, so one the browser refuses does not stop the others; what failed is logged.
+async function plant() {
+  const failed = []
+  const attempt = async (name, work) => {
+    try { await work() } catch (error) { failed.push(`${name}: ${error?.name}: ${error?.message}`) }
+  }
+  await attempt('localStorage', () => localStorage.setItem(PLANT, '1'))
+  await attempt('sessionStorage', () => sessionStorage.setItem(PLANT, '1'))
+  await attempt('cookie', () => { document.cookie = `${PLANT}=1; path=/; max-age=86400` })
+  await attempt('indexedDB', () => new Promise((resolve, reject) => {
+    const request = indexedDB.open(PLANT, 1)
+    request.onsuccess = () => { request.result.close(); resolve() }
+    request.onerror = () => reject(request.error)
+  }))
+  // a cache holding one entry (a fetched response): an empty one is not written to disk
+  await attempt('cacheStorage', async () => (await caches.open(PLANT)).put('build-info.json', await fetch('build-info.json')))
+  await attempt('opfs', async () => {
+    const file = await (await navigator.storage.getDirectory()).getFileHandle(PLANT, { create: true })
+    const writer = await file.createWritable()
+    await writer.write('1')
+    await writer.close()
+  })
+  // a bucket holding a database, so there is data of its own to find on disk
+  await attempt('storageBucket', async () => {
+    const bucket = await navigator.storageBuckets.open(PLANT)
+    await new Promise((resolve, reject) => {
+      const request = bucket.indexedDB.open(PLANT, 1)
+      request.onsuccess = () => { request.result.close(); resolve() }
+      request.onerror = () => reject(request.error)
+    })
+  })
+  await attempt('serviceWorker', async () => {
+    await navigator.serviceWorker.register('sw.js', { scope: '/' })
+    await navigator.serviceWorker.ready
+  })
+  return failed
+}
+
+const started = await profileState()
+const plantFailures = mode === 'storage' && window.parent === window ? await plant() : []
+
+const encoder = new TextEncoder()
+const concat = (parts) => {
+  const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0))
+  let at = 0
+  for (const p of parts) { out.set(p, at); at += p.length }
+  return out
+}
+const hex = (buffer) => [...new Uint8Array(buffer)].map((b) => b.toString(16).padStart(2, '0')).join('')
+
+async function postTo(url, offset, body, type = 'application/octet-stream') {
+  const headers = { 'Content-Type': type }
+  if (offset !== null) headers['X-Perf-Offset'] = String(offset)
+  const response = await fetch(url, { method: 'POST', headers, body })
+  return response.status
+}
+
+const post = (path, offset, body) => postTo(streamPath + path, offset, body)
+// `end` is JSON, as the real page sends it.
+const postEnd = (body) => postTo(streamPath + '/end', null, body, 'application/json')
+// The `end` of a run: the exit code, the bytes handed to each stream and whether one was given up.
+const endBody = (exitCode, csv, log, csvBytes = csv.written) =>
+  JSON.stringify({ exitCode, csvBytes, logBytes: log.written, failed: csv.failed || log.failed })
+
+// One request in flight per stream; each request carries everything written meanwhile (here
+// sometimes only a prefix of it, cut anywhere, to prove the harness stores bytes, not text).
+// A failed request is retried with the same offset. Sometimes a request that succeeded is sent
+// again, as a client whose answer was lost would.
+class Sender {
+  constructor(kind) {
+    this.kind = kind
+    this.queue = []
+    this.queued = 0
+    this.acked = 0
+    this.written = 0 // everything handed to this stream, sent or not: what `end` reports
+    this.failed = false // given up: later bytes are counted and dropped
+    this.duplicates = 0
+  }
+
+  write(bytes) {
+    this.written += bytes.length
+    if (this.failed) return
+    this.queue.push(bytes)
+    this.queued += bytes.length
+  }
+
+  async flush() {
+    if (this.queued === 0) return
+    const all = concat(this.queue)
+    const take = Math.random() < 0.5 ? 1 + Math.floor(Math.random() * all.length) : all.length
+    const body = all.slice(0, take)
+    this.queue = take < all.length ? [all.slice(take)] : []
+    this.queued = all.length - take
+
+    const offset = this.acked
+    for (let attempt = 1; ; attempt++) {
+      let status = 0
+      try { status = await post('/' + this.kind, offset, body) } catch { status = 0 }
+      if (status === 204) break
+      if (status === 409 || attempt >= 5) throw new Error(`${this.kind} at ${offset}: status ${status}`)
+    }
+    this.acked += body.length
+
+    if (Math.random() < 0.3) {
+      const status = await post('/' + this.kind, offset, body)
+      if (status !== 204) throw new Error(`duplicate ${this.kind} chunk at ${offset}: status ${status}, wanted 204`)
+      this.duplicates++
+    }
+  }
+
+  async drain() {
+    while (this.queued > 0) await this.flush()
+  }
+}
+
+const stamp = () => {
+  const d = new Date()
+  const pad = (n, w = 2) => String(n).padStart(w, '0')
+  return `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}.${pad(d.getUTCMilliseconds(), 3)}`
+}
+// the log's line shapes (crates/perf_output/src/format.rs)
+const entry = (category, message) => `${stamp()} - <color=#8CC8FF>[${category}]</color>: ${message}\n`
+const exception = (category, type, message, where) =>
+  entry(category, '') + `${type}: ${message}\n` + `  at ${where} DebugLogReportHandler:LogExceptionInternal\n`
+
+async function run() {
+  const csv = new Sender('csv')
+  const log = new Sender('log')
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+  const csvChunks = []
+  const emit = (sender, text) => sender.write(encoder.encode(text))
+
+  emit(log, entry('ENGINE', `fake explorer started: ${info.name ?? 'unnamed'} (é — 日本語 in a log line)`))
+  emit(log, entry('FAKE', `profile at the start: ${JSON.stringify(started)}`))
+  if (plantFailures.length > 0) emit(log, entry('FAKE', `could not plant: ${plantFailures.join(', ')}`))
+  emit(log, entry('autopilot', 'signed in, arriving'))
+  await log.flush()
+  await sleep(300)
+
+  if (measuring && mode !== 'nocsv') {
+    // Measuring starts: the first CSV byte creates the file.
+    const header = encoder.encode('"Frame","CPU Time","GPU Time"\r\n')
+    csvChunks.push(header)
+    csv.write(header)
+
+    if (mode === 'header') {
+      await csv.drain()
+      say('header: streamed the CSV header and no rows, never ends')
+      return
+    }
+
+    const perTick = 60
+    for (let frame = 1; frame <= frames; frame += perTick) {
+      let rows = ''
+      for (let f = frame; f < frame + perTick && f <= frames; f++) {
+        const cpu = cpuMs + (Math.random() - 0.5) * 2
+        rows += `${f},${cpu.toFixed(3)},${gpuMs.toFixed(3)}\r\n`
+      }
+      const bytes = encoder.encode(rows)
+      csvChunks.push(bytes)
+      csv.write(bytes)
+      if (mode === 'giveup' && frame > 600) csv.failed = true
+      await csv.flush()
+      if (Math.random() < 0.2) await log.flush()
+      await sleep(40)
+      if (mode === 'hang' && frame > 600) {
+        await csv.drain()
+        await log.drain()
+        say('hang: streamed part of the CSV, never ends')
+        return
+      }
+    }
+    await csv.drain()
+  }
+
+  const all = concat(csvChunks)
+  const digest = hex(await crypto.subtle.digest('SHA-256', all))
+  emit(log, entry('FAKE', `csv bytes=${all.length} sha256=${digest}`))
+
+  for (let i = 1; i <= errors; i++) emit(log, exception('FAKE', 'FakeError', `seeded error ${i}`, 'fake.js:1'))
+
+  if (mode === 'panic') {
+    emit(log, exception('PANIC', 'PanicException', 'index out of bounds: the len is 0 but the index is 1', 'src/lib.rs:1:1'))
+    await log.drain()
+    await postEnd(endBody(101, csv, log))
+    say('panic: ended with exit code 101')
+    return
+  }
+
+  emit(log, entry('autopilot', `[ExitUtils] Exit requested at ${new Date().toISOString()}`))
+  // Teardown noise after the marker: must not be counted.
+  emit(log, exception('FAKE', 'TeardownError', 'after the exit marker', 'fake.js:2'))
+  await log.drain()
+  await csv.drain()
+
+  const exitCode = measuring && mode === 'nocsv' ? 1 : 0
+  await postEnd(endBody(exitCode, csv, log, mode === 'miscount' ? csv.written + 100 : csv.written))
+  say(`${measuring ? 'measured run' : 'warm-up'}: ended with exit code ${exitCode}; ${csv.duplicates + log.duplicates} duplicate chunk(s) re-sent`)
+}
+
+// Scripted checks of the harness's side of the stream: status codes and stored bytes. Files
+// afterwards: csv "abcdefgh", log "ok é!" (the two bytes of the é sent in separate requests).
+// The exit code of `end` is the number of failed checks.
+async function protocol() {
+  const bytes = (text) => encoder.encode(text)
+  const e = encoder.encode('é')
+  const checks = []
+  const check = (name, status, wanted) => checks.push(`${status === wanted ? 'PASS' : 'FAIL'} ${name}: ${status}, wanted ${wanted}`)
+
+  check('first chunk creates the file', await post('/csv', 0, bytes('abc')), 204)
+  check('the same chunk again is not appended', await post('/csv', 0, bytes('abc')), 204)
+  check('the next chunk appends', await post('/csv', 3, bytes('def')), 204)
+  check('a gap is refused', await post('/csv', 10, bytes('x')), 409)
+  check('a chunk overlapping stored bytes appends its tail', await post('/csv', 4, bytes('efgh')), 204)
+  check('an overlap that differs is refused', await post('/csv', 2, bytes('zz')), 409)
+  check('a missing offset is refused', await post('/csv', null, bytes('q')), 400)
+  check('a negative offset is refused', await post('/csv', -1, bytes('q')), 400)
+  check('an empty first log chunk is fine', await post('/log', 0, new Uint8Array(0)), 204)
+  check('log: "ok " and the first byte of é', await post('/log', 0, concat([bytes('ok '), e.slice(0, 1)])), 204)
+  check('log: the second byte of é, then "!"', await post('/log', 4, concat([e.slice(1), bytes('!')])), 204)
+  check('an unknown stream is refused', await post('/other', 0, bytes('q')), 404)
+  check('end without an exit code is refused', await postEnd(bytes('{}')), 400)
+  check('end as text/plain is refused', await postTo(streamPath + '/end', null, bytes('{"exitCode":0}'), 'text/plain'), 415)
+  // the run's token is the path's last segment: another token reaches nothing
+  const elsewhere = streamPath.replace(/[^/]+$/, 'not-the-token')
+  check('a path without the run token is refused', await postTo(elsewhere + '/csv', 0, bytes('q')), 404)
+  check('the old path by build name is refused', await postTo('/__perf/change_build/end', null, bytes('{"exitCode":0}'), 'application/json'), 404)
+  check('end with a text byte total is refused', await postEnd(JSON.stringify({ exitCode: 0, csvBytes: '8' })), 400)
+  check('end with a negative byte total is refused', await postEnd(JSON.stringify({ exitCode: 0, logBytes: -1 })), 400)
+  check('end with a failed that is no boolean is refused', await postEnd(JSON.stringify({ exitCode: 0, failed: 'no' })), 400)
+
+  say(checks.join('\n'))
+  const failed = checks.filter((c) => c.startsWith('FAIL')).length
+  // the totals are what the checks above stored
+  await postEnd(JSON.stringify({ exitCode: failed, csvBytes: 8, logBytes: 6, failed: false }))
+}
+
+if (mode === 'shell' && window.parent === window) {
+  // The shell: embeds the app page, which here is this page again, in a frame.
+  const query = new URLSearchParams(location.search)
+  query.set('fake', 'ok')
+  const frame = document.createElement('iframe')
+  frame.src = 'index.html?' + query
+  frame.title = 'app'
+  frame.style.cssText = 'width:100%;height:12rem;border:0;background:#0003'
+  document.querySelector('main').append(frame)
+  say('shell: the app is the frame below; it streams.')
+} else if (streamPath === null) {
+  // Not launched by the harness: nothing to stream to.
+  say('no perfStream: nothing is streamed, and the run cannot be ended.')
+} else if (mode === 'protocol') {
+  await protocol()
+} else {
+  await run()
+}
+</script>
+</body>
+</html>

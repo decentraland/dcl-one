@@ -1,0 +1,23 @@
+{
+  "description": "GET /v1/communities/{id}/bans without an auth chain. Captured GET https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Invalid Auth Chain",
+      "message": "This endpoint requires a signed fetch request. See ADR-44."
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans",
+  "captured_at": "2026-09-25T19:24:15Z",
+  "volatile_paths": []
+}

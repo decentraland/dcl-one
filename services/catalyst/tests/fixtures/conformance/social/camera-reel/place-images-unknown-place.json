@@ -1,0 +1,23 @@
+{
+  "description": "GET /api/places/{placeId}/images for a uuid no place has. Captured GET https://camera-reel-service.decentraland.org/api/places/00000000-0000-4000-8000-000000000000/images -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/api/places/00000000-0000-4000-8000-000000000000/images",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "images": [],
+      "maxImages": 0
+    }
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/places/00000000-0000-4000-8000-000000000000/images",
+  "captured_at": "2026-09-25T19:25:06Z",
+  "volatile_paths": []
+}

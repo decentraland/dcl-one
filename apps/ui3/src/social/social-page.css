@@ -1,0 +1,25 @@
+.social-web .cs__body { padding: 0; }
+.social-web .soc, .social-web .soc * { box-sizing: border-box; }
+.social-web .soc { height: calc(100dvh - 72px); min-height: 480px; }
+.social-web .soc--site { grid-template-columns: 248px minmax(0, 1fr); }
+.social-web .soc__side--site { gap: 0; padding: 24px 16px; background: var(--site-nav-bg); border-right-color: var(--site-nav-line); }
+.social-web .soc__side--site .side-nav-item small { margin-left: auto; font-size: 11px; }
+.social-web .soc-requests form, .social-web .soc-request, .social-web .soc-request__actions { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.social-web .soc-requests form { margin-bottom: 24px; }
+.social-web .soc-requests label { display: grid; gap: 8px; flex: 1; min-width: 200px; }
+.social-web .soc-requests input { width: 100%; }
+.social-web .soc-request { padding: 16px 0; }
+.social-web .soc-request .soc__rowtext { flex: 1; min-width: 180px; overflow-wrap: anywhere; }
+.social-web .soc-posts form { display: grid; gap: 12px; margin-bottom: 24px; }
+.social-web .soc-posts label { display: grid; gap: 8px; }
+.social-web .soc-posts textarea { width: 100%; min-height: 100px; resize: vertical; padding: 12px; font: inherit; color: inherit; background: var(--ui-panel); border: 1px solid var(--ui-border); border-radius: 8px; }
+.social-web .soc-posts__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.social-web .soc-posts .soc__thread { width: 100%; }
+.social-web .soc-posts .soc__message > div { flex: 1; min-width: 0; }
+.social-web .soc-posts .soc__message p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.social-web .soc__list--managed .soc__member { gap: 8px; }
+.social-web .soc__list--managed .soc__rowtext { flex: 1; min-width: 0; }
+.social-web .soc__list--managed .soc__rowtext > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.social-web .soc__list--managed .compact-nav { flex: none; }
+.social-web .soc__list--managed .compact-nav__menu { left: auto; right: 0; }
+.social-web .cfd__body { overflow-wrap: anywhere; }

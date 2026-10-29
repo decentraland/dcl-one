@@ -1,0 +1,1538 @@
+{
+  "description": "GET /v1/communities with limit=abc: whether a non-numeric page size is rejected or defaulted. Captured GET https://social-api.decentraland.org/v1/communities?limit=abc -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities",
+    "query": {
+      "limit": [
+        "abc"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "results": [
+          {
+            "id": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "name": "Decentraland Foundation",
+            "description": "Your hub for official Decentraland updates and events. \n\nKeep up with All Hands, weekly rituals, and more—all in one place.",
+            "ownerAddress": "0xbcac4dafb7e215f2f6cb3312af6d5e4f9d9e7eda",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 1303,
+            "ownerName": "DCLOfficial",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "c1bf2ebe-d1d2-4edc-9488-1047689640cb",
+            "name": "Chiri Storytelling",
+            "description": "This space brings to life Chiri's adventures. Gathering cozy Social Gamers, Creators, Digi Fashion lovers, Virtual Citizens & more!\r\nWe will share different activities in Chiri's hood better known as the Impossible Dimension a balance of Nature, Technology and Magic. Here the story expands, and fam can follow Chiri's journey, sharing Weekly Chapters, Merch Drops, Online Cowork, Collabs, Art expos, Workshops, Treasure Hunt & lots of fun activities!\r\nThis is a gender inclusive safe space.",
+            "ownerAddress": "0xfbf7e572a63ca6a4e21a83720c0f23dd644e32e0",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 403,
+            "ownerName": "Chiri",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "3ca51536-f8aa-4f94-b172-d8ff9a6abfe4",
+            "name": "ABC Decentraland",
+            "description": "Adventures, learning Basics and Chill time in Decentraland!\n\nWe host a weekly tour around Decentraland (main event time is Saturdays 11 PM UTC with a second event time on Thursdays 10am UTC), exploring new and old scenes with your hosts Awedjob, BillyTeacoin and ToxicWaifu.",
+            "ownerAddress": "0x09bc69a986e1b37fb01ef36124f4c2e14fa0ab6b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 462,
+            "ownerName": "BillyTeacoin",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "375e83ce-680f-44d5-a8d0-568fa63fa360",
+            "name": "VTATV",
+            "description": "Here we share events shown in the metaverse in real time also we show case educational sessions. Media nights is a fun thing as well we do plus we offer job fair virtually. Please check out VTATV.io for more information or links at LINKTR.EE/VTATV you will find all information needed on these sites. \n\nWe will also post and share collabs avil with pay (irl,virtually or digitally).\n\nPlease email <<REDACTED:email>> for more questions and concerns.",
+            "ownerAddress": "0x60e7357de5ec8c3b07f8efb3a8c1325811eb7db0",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 198,
+            "ownerName": "BioMETA",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "55e64582-f8c6-4e81-a097-690dab5b4549",
+            "name": "AN TE LA (Community)",
+            "description": "An Té La is a creative community born in the Caribbean and open to the world through Web3. \nWe share our culture, our music, and our lifestyle to build bridges between people all around the globe.\n\n",
+            "ownerAddress": "0x5854cce95d5e25817b41f4c41f06b695a83bc495",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 115,
+            "ownerName": "sebga",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "427638bd-35c2-4592-bee3-7a33d0883d8a",
+            "name": "Toxic Events",
+            "description": "Stay in the loop with the hottest events in DCL! From Dogebusters madness, Toxic Tuesday chaos to W.T.F DCL vibes and community spotlights.. we’ve got it all💜",
+            "ownerAddress": "0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 626,
+            "ownerName": "ToxicWaifu",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "2b55a598-07cd-408e-a541-7407fffc4ebc",
+            "name": "Last Slice Creators",
+            "description": "We’re building a game from scratch on the largest Decentraland scene ever... 3,249 parcels on a 57x57 World! Join us every Thursday: Hour 1 features live building of game mechanics and the world, Hour 2 is open office hours for anyone wanting help creating their own Decentraland game.\n\nA 6-month buildathon, hackathon, free coding help, open sourced project building, giveaways, bounties, and so much more. \r\n\r\nSpectate and earn. Bounty and earn. Build and earn.  Play and earn. ",
+            "ownerAddress": "0xaabe0ecfaf9e028d63cf7ea7e772cf52d662691a",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 180,
+            "ownerName": "Lastraum",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "9ba90937-0ecd-4017-9240-0d41dbb8f2ce",
+            "name": "Meta GamiMall Play & Earn",
+            "description": "Welcome to our community—a hub for Web3 enthusiasts seeking both fun and earning opportunities. We will base in one of the most active scene in Decentraland, MetaGamiMall. And we share the latest trends, connect through discussions, and enjoy activities like wearable giveaway etc. Our goal is to blend insight, entertainment, and opportunity so members always leave with value.",
+            "ownerAddress": "0x797066a17f83425c1b4c7a8cca52d19095520a52",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 296,
+            "ownerName": "MetaDoge",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "eb8a4496-d08d-40af-85b9-5ca5cdca156c",
+            "name": "Old Guy BBQ",
+            "description": "The smoky heart of the metaverse where flavor meets friendship! Hang out with fellow barbecue lovers around a glowing virtual firepit, swap laughs, and perfect your digital ribs. Grab your apron (or NFT spatula), crack a beer, and join Old Guys BBQ — where the smoke never fades, the parties get wilder, and every event tastes like victory.",
+            "ownerAddress": "0xdb760099f0f3359131e08716848f23c014d35b9e",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 223,
+            "ownerName": "oldguy",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "1c71f864-fee9-4a67-947c-7954382fdf89",
+            "name": "Mug Club",
+            "description": "Mug Club is an onchain social club founded on Base in 2024 by juxton, the creator of Franky’s Tavern, Decentraland’s longest-running interactive bar.\n\nEach mug is your membership pass, unlocking access to the club and experiences across Decentraland and beyond.\n\nGrab a mug and join the club.\n\nMore information: https://mugclub.wtf",
+            "ownerAddress": "0xd4f20b86ab05e5e91cecfefe874657b0f7bfc87d",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 235,
+            "ownerName": "juxton",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "055a82a0-d8e2-42c6-a69c-0fe5d04e298d",
+            "name": "DCL Regenesis Labs",
+            "description": "A community space to discuss, follow updates, and contribute to Regenesis Labs, the execution arm of the Decentraland DAO.\r\nGet the latest info on mobile and web client development, creator tools, and community programs.",
+            "ownerAddress": "0xdfdc2ad5b38fa1f032c812719ef6c061e4d2def8",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 178,
+            "ownerName": "RegenesisLabs",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "f97cf917-92c3-4173-ac85-ea44cb818d18",
+            "name": "AFTER-HOURS",
+            "description": "METAVERSE AFTER-HOURS LIVE SATURDAYS 10PM EST / SUNDAYS 2AM UTC\n\nRESIDENT DJ: Austin De Chêne x Crypt0M1notaur\n\nPAST HEADLINERS: META DJ, CATEGORY FIVE, DJvAPED, SilvioDeCandia, MAKEANFT\n\nvisit: https://after-hours.vip/\n\nLATE NIGHTS WITH METAVERSE FRIENDS",
+            "ownerAddress": "0x7d750a5d27fb56cae1f57f33179f1e259cc2c9f9",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 151,
+            "ownerName": "Crypt0M1notaur",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "98f1f83c-818c-4177-95f5-072b4032850e",
+            "name": "Community Building DCL",
+            "description": "Decentraland's longest running X space going strong since May 2022! Join SinfulMeatStick and Canessa every Saturday morning at 9:00am PST/12:00pm EST for Community Building Decentraland on X (Twitter)! We talk all things Decentraland and stream live on Twitch and Parti. Everyone is welcome to join! If you are a new users to Decentraland, this is a great play to connect with other users. Also, join us on our Discord, and contact us on X at @Sinfulmeatstick, @CanessaDCL, & @CBDecentraland",
+            "ownerAddress": "0xd6eff8f07caf3443a1178407d3de4129149d6ef6",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 655,
+            "ownerName": "Canessa",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "75654c12-9326-4eb9-a597-b67ab606d966",
+            "name": "The ANTenna",
+            "description": "The ANTenna is a Decentraland-based Web3 business hub helping entrepreneurs, brands, and creators migrate into the metaverse. We provide business consultation, Web3 strategy, and digital growth solutions. Home to Gooni Milkshake, our urban & Web3 fashion brand, Building the future of business, fashion, and entertainment in Web3.",
+            "ownerAddress": "0x371e1de3d5faad620f84dfe4f84252667cb0d5de",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 54,
+            "ownerName": "DiyaoTheGod",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "77c7b8f8-1796-4f5b-bac8-81556013cf18",
+            "name": "AdventureLand",
+            "description": "Gaming hub for many DCL games to come!\nCurrently building Sci-Fi Parkour and Fighter Jet Plane Battle Games!\n/goto BattleZone.dcl.eth\n/goto SpaceRunner.dcl.eth\n\nhttps://x.com/AdventureLandX\n",
+            "ownerAddress": "0xfdbc134cb8f2a639938eea23758469885508b3b0",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 126,
+            "ownerName": "AdventureLand",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "8e51eb27-fcbb-425a-9340-d2c235bce3f0",
+            "name": "Breathwork & Meditation Corner",
+            "description": "Weekly Breathwork, meditation and ambient soundcapes with binaural beats. Hosted by Clyde Rouge. Yoga coming in 2026.\n\nParcel -127, 86",
+            "ownerAddress": "0xbd4865eaaa067171b549dd75b61b715ab9637f4f",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 67,
+            "ownerName": "ClydeRouge",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "2ff82653-5005-4788-a53c-71e6603b51fa",
+            "name": "Meta Beast Roaming Party FAM ",
+            "description": "The Meta Beast Roaming Party Fam : Come join in the MBRP Fam Your inside track to our Friday night events and more. Join Sinful, Pinch and your boy aKIDcalledMAKE as we start the next chapter of the adventure together",
+            "ownerAddress": "0x755faf85277b848ed6a290c268e95e7b510ac8ff",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 221,
+            "ownerName": "aKIDcalledMAKE",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "4b1c0a00-aa93-461f-b6e3-b6eac0e483fe",
+            "name": "PINK OASIS ",
+            "description": "✨ Peach Blossom Spring Reimagined\r\nPink Oasis draws from the ancient Chinese tale The Peach Blossom Spring — a hidden land untouched by the outside world. In this digital reimagining:\r\n\r\n🌸 Peach blossoms bloom as you dance\r\n🎨 The space reacts to avatar movement\r\n🧘‍♀️ The vibe is serene, immersive, and inclusive",
+            "ownerAddress": "0xce355d42efc49b840c1a796ea678655fdd43498c",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 193,
+            "ownerName": "LosCat",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "5d005d8c-fceb-4f47-92b5-5814109ab386",
+            "name": "UnMonday",
+            "description": "UnMonday is a weekly meetup inside Decentraland where the community gathers to unwind, connect, and share ideas. Hosted by Mr. Dhingia every Monday at 7 PM UTC, it flips the usual Monday routine into something fun and social. Each session brings music, conversation, and metaverse vibes — making Mondays a night to look forward to instead of dread.",
+            "ownerAddress": "0x447c9058be5c164e0c4aae380381e7a5215052d4",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 198,
+            "ownerName": "DHINGIA",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "71ecb56b-1b32-4f1c-ad4d-6fe28ba49e99",
+            "name": "MoFyah Crew",
+            "description": "The Stoney MoFyah Crew is all about good vibes and positive energy. We come together to create and enjoy music, celebrate wearables and NFTs, and share our love for all things Decentraland. Join us every week at Casa Roustan 37,-114 for MoFyah Monday and be part of the vibes!",
+            "ownerAddress": "0x082f2a8ea1d8e3ee24c20d12452b7e851ad0d5dd",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 191,
+            "ownerName": "StoneyEye",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "2544d998-ba44-4fa6-8e65-393ae415e45a",
+            "name": "Office Hours",
+            "description": "Office Hours Community is all about Decentraland creators. We host weekly events to show cool mechanics, highlight new features & answer your questions.",
+            "ownerAddress": "0xe2b6024873d218b2e83b462d3658d8d7c3f55a18",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 124,
+            "ownerName": "NicoE",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "503b364d-c8ef-46af-9488-79b60df7049e",
+            "name": "Amargo Cosmic Studios",
+            "description": "Cosmic stuff by Miguel Amargo",
+            "ownerAddress": "0xf91d3db4c0e9b0eda5069289ac3c631b58b82379",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 45,
+            "ownerName": "MigueIAmargo",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "3dfc91bd-c80e-4bde-8813-152871b0977a",
+            "name": "OAO",
+            "description": "OAO — Virtual Worlds, Real Souls. \nOAO - 虚拟的世界  现实的生活\n\nOAO\r\n是一个在链上持续记录自己成长的人。\r\nweb3.0  https://oao.eth\r\nweb2.0  https://oao.eth.limo\r\nweb2.0  https://oao.eth.link\n\n欢迎大家进入OAO社区。后期将会择机准备活动。\n请加入社区关注。谢谢哈！\n",
+            "ownerAddress": "0x6fb3307b14afe355014cf4190b4ab678b3b251e8",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 520,
+            "ownerName": "OAO",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "848749ff-8b02-4aff-911c-18fee2ee3502",
+            "name": "RAGE",
+            "description": "Rage Nightclub – Decentraland No Chants, No Borders, Just Sound\nVisit our website: Rageclub.fun",
+            "ownerAddress": "0xd736144c39dac0122d70a2ca6b1725a67b0fc00b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 346,
+            "ownerName": "MultiNFT",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "3b3e5859-a6ba-46cf-9f23-533bd19418c8",
+            "name": "Decentraland Japan",
+            "description": "This is a community for Decentraland users in Japan. English speakers are also welcome!",
+            "ownerAddress": "0x75b07e64161ace39d6eab54d25f25410ffd3d458",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 127,
+            "ownerName": "KENJI",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "f7d69445-4889-49a9-8b50-07100125cbdc",
+            "name": "Flagtag",
+            "description": "Flagtag is a multiplayer keepaway game with a flag that runs 5 minute rounds 24/7. \n\nThis community is all about finding other bored decentralanders to play with. \n\nVisit flagtag.dcl.eth to join the fun! ",
+            "ownerAddress": "0x1e93e534c5e26b01ed242410b43ae23dd0faa52b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 42,
+            "ownerName": "ile",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "1b89b7d2-fd01-4dcf-880b-154c522c4c97",
+            "name": "Soul Magic P2E Game",
+            "description": "Soul Magic is a magical play-to-earn game in Decentraland, and the story surrounds the magic school of Elswyth. Collect ores and magic stones from mining, farm plants and discover through digging. You can also trade resources for Gold Midas, the currency in the magical world. Soul can be recovered from meditation. Capture game cards, the trading card game of Soul Magic, are on-chain NFT assets that can be collected in-game and traded on marketplace. Unleash your magic power here!",
+            "ownerAddress": "0xd91db432d98d80e9467206cab3b9c46081795f0d",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 600,
+            "ownerName": "Mazzak",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "2e1c9148-6b1f-4a7d-87e7-54c063871142",
+            "name": "Creators Academy",
+            "description": "Empowering creators to shape Decentraland, one scene at a time. Join us every month for a special creators focused workshop!",
+            "ownerAddress": "0x3385c05ca0ddb46b51f9c2d99fc597cf6f0da891",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 138,
+            "ownerName": "KazeNoKai",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "5d7bd7b8-d16c-45a5-8497-ab2306e62f13",
+            "name": "La Cantina Village",
+            "description": "Welcome to La Cantina! Enjoy majestic views of the ocean while you get a virtual suntan! Take a tour of the caves or climb the lighthouse and whalewatch! Join us every Saturday morning at 9:00am PST/12:00pm EST for Community Building Decentraland, and every Tuesday for Builder Basics (teaching you how to build in Dentraland). Find us on X at @LaCantinaDCL and @CanessaDCL. Come see art from the SheFi co-hort on display now!",
+            "ownerAddress": "0xd6eff8f07caf3443a1178407d3de4129149d6ef6",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 563,
+            "ownerName": "Canessa",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "c5815049-5a02-4c22-a068-19cc44b1b8a4",
+            "name": "The Avatalks Talk Show",
+            "description": "The Avatalks brings together creators, entrepreneurs, and visionaries to explore how avatars, communities, and digital identities are transforming the way we connect, play, and do business.\nWhether you’re a curious newcomer or a seasoned builder in the metaverse, Avatalk offers insights, trends, and conversations that make sense of this fast-evolving space.",
+            "ownerAddress": "0x86e1a73a9ff9f8fd9a60612416a754bcf3443295",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 188,
+            "ownerName": "MetaRivers",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "fa46309f-e81b-45b2-8b19-0402ad7ad3df",
+            "name": "crypt0m1notaur",
+            "description": "gallery -97,107",
+            "ownerAddress": "0x7d750a5d27fb56cae1f57f33179f1e259cc2c9f9",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 49,
+            "ownerName": "Crypt0M1notaur",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "63978434-2c91-4431-9820-65c334176713",
+            "name": "Beyond The NFT",
+            "description": "Beyond The NFT is a weekly Talk Show hosted by SinfulMeatStick(Mods-Sinful-Mew) presented at Meta One Designs HQ. Where we highlight Decentraland community creators, web3 creators, and big names entering the space. Providing an opportunity for the Decentraland community to get to know them better and learn about all the incredible things they are doing within the Web3 space.\r\n\r\nCant make it to Decentraland?\r\n\r\nwe also stream to :\r\n\r\nTwitch: https://www.twitch.tv/sinfulmeatsticks\r\n\r\n",
+            "ownerAddress": "0x9dab43bc15bd29cfe3030ca1b7edb3eeb9f3b6c1",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 450,
+            "ownerName": "Mods",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "f5fe889b-2eb0-4a56-bdec-008c26d75cb8",
+            "name": "Super Elite Squad",
+            "description": "Party in DCL with the best ~~ <3 Empress Trash's community to share events, bulids, and vibes around Decentraland for THE most elite.",
+            "ownerAddress": "0x0745eeaf0e65e77a65f3fc6aadce51ca3317ca44",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 29,
+            "ownerName": "EmpressTrash",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "5d96fd89-ae4c-4215-a45a-9fa6cc969d24",
+            "name": "Knights of Antrom",
+            "description": "KOA Community",
+            "ownerAddress": "0xfe2d424af0df49bb3316cb2e9f574b0d09cf98ad",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 45,
+            "ownerName": "Stupid",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "a901d358-4f57-4694-9c1e-fc0f06a81c1e",
+            "name": " Sinsemilla Garden Club",
+            "description": "Greetings community,\r\nWelcome to SGC. Our mission is to\r\ngather and share knowledge and techniques focused on urban agriculture, regenerative farming and sustainable plant cultivation.  ",
+            "ownerAddress": "0x2ae9070b029d05d8e6516aec0475002c53595a9d",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 124,
+            "ownerName": "Tati",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "de9f0369-3dff-400d-95af-34cce625ad5b",
+            "name": "Immersive Arts",
+            "description": "A community for forward-thinking artists exploring how their practice can transform in Decentraland. Through weekly tours, workshops, and collaborative challenges, we create a supportive space to experiment with immersive tools, connect with curators and peers, and grow visibility in the evolving culture of virtual-native art. ",
+            "ownerAddress": "0xbcac4dafb7e215f2f6cb3312af6d5e4f9d9e7eda",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 120,
+            "ownerName": "DCLOfficial",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "c000df80-9b05-4416-ac2a-16ecf595c1b8",
+            "name": "CommuniTea",
+            "description": "For the tea lovers of Decentraland! A place for you to come spill the tea (but actually about tea).",
+            "ownerAddress": "0x09bc69a986e1b37fb01ef36124f4c2e14fa0ab6b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 76,
+            "ownerName": "BillyTeacoin",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "ffee8e51-7995-4521-adda-2d1b10e04e12",
+            "name": "The WIP Meetup",
+            "description": "WIP = Work in Progress. The longest-running web3 metaverse meetup brings builders, creators, and artists together every Thursday at 12 PM PT.",
+            "ownerAddress": "0xd4f20b86ab05e5e91cecfefe874657b0f7bfc87d",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 14,
+            "ownerName": "juxton",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "433eed50-6051-4d04-92a8-5cc6428837dc",
+            "name": "Audio Hot Lab",
+            "description": "Audio Hot Lab born as a music culture Crew - \nWe are hosting events every Wednesday in Decentraland \nwith many friends , artists and professionist from all of the world\n\nWe are hosting events in Slovenjia and north Italy  \nwith many projects which we are working on we so happy to have you in ours community for let growth our passion toghether! \n\nMusic producers, Draw Artists, Visionaire, artists of all genre are welcome in our community  \n\nAHL - Where the music takes your taste\n",
+            "ownerAddress": "0x9f0673ef1fab4b30ce6d5633498b4d3d4392ea82",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 208,
+            "ownerName": "RowsilMobile",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "4934a788-6565-4687-902e-2f87ac2572ac",
+            "name": "¡Hola DCL!",
+            "description": "Comunidad Hispanohablante en DCL 🌐✨\nTu punto de encuentro en Decentraland.\nConecta, crea y disfruta el metaverso en tu idioma.\n🎶 Música | 🎨 Arte | 👕 Moda | 🌐 Web3",
+            "ownerAddress": "0xe339ebc7ec708bf42eed1b54a4df852312db2c5b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 340,
+            "ownerName": "MeryElf",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "9d249bbc-6fc5-4b49-aff5-6eb7b446787c",
+            "name": "RedWolf",
+            "description": "🐺 REDWOLF SOUNDS\nA Web3 Virtual Music Institution\n\nRedWolf Sounds is a fully virtual Web3 music institution built inside the metaverse.\n\nWe operate exclusively in digital environments — empowering artists to create, perform, and build careers within Decentraland and other online platforms.\n\n",
+            "ownerAddress": "0xc9aacc91c83a07ef8fb0404e084651cee7deab62",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 180,
+            "ownerName": "Khamusique",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "d4737ddd-6027-4841-adaf-8323696acf9b",
+            "name": "WEAR /-/ WARRIORS",
+            "description": "Born inside the streets of Decentraland, forged through late-night sets, underground events, digital fashion drops, and community-driven chaos, the Warriors represent a new generation of creators who refuse to blend in.\n\nNo ego.\nNo gatekeepers.\nNo empty hype.\n\nOnly identity.\n\nEvery jacket tells a story. Every battle scar is earned. Every member carries the WEARHAUS frequency into the metaverse and beyond.",
+            "ownerAddress": "0xa737abb7f98ff5f73285a19eab3e359ff867db73",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 9,
+            "ownerName": "OxQuan",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "5d288d5e-0120-4cd8-85ee-a8127af6abf6",
+            "name": "META TRIBE PLAZA",
+            "description": "Meta Tribe Plaza is a community-driven project born in Decentraland. More than a place, it’s a concept that connects developers, musicians, Web3 fans, builders, and creators worldwide.\n\nTogether, we share ideas, collaborate, and craft experiences, shaping a vibrant hub where culture, technology, and creativity meet in the metaverse.",
+            "ownerAddress": "0x01d1caa915cbb6dea512537fa3e22578e9a5991b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 111,
+            "ownerName": "METAWOLF",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "2568fdd5-7819-47c7-8bb6-7e23123bd415",
+            "name": "Genesis Plaza Radio",
+            "description": "Welcome to Genesis Plaza Radio!\n\n",
+            "ownerAddress": "0xd82d005e8f8d5385db40ba23884a5c967bb1e8af",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 106,
+            "ownerName": "AlanHowick",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "3391fcc0-b7a6-44fc-8673-b036deff0947",
+            "name": "Web3.Career",
+            "description": "Land your next role in Web3 with Web3.career ",
+            "ownerAddress": "0x3726a1a047f6c383e81fb11fa7e94645c98a2bae",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 39,
+            "ownerName": "Web3Career",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "36c20081-2c05-4774-9cee-4177a66fe8bd",
+            "name": "Noob Plays Live!",
+            "description": "Join me, Noob, as I livestream popular Multiplayer games such as Roblox and Valorant after hours. From serious rounds, to seriously laughable ones, don't miss a livestream!\r\n\r\nRemember to click on the \"Interested\" icon and add it to your calendar!",
+            "ownerAddress": "0x8218a2445679e38f358e42f88fe2125c98440d59",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 13,
+            "ownerName": "Noob",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "01b2d901-d49a-4446-be09-d484e1e1cd3d",
+            "name": "Posers 📸",
+            "description": "Do you shine on/off camera? Love taking pics & vids in world? Do you love the spotlight & showcasing others? Then welcome in, Poser! This is a community for folks who agree to being the eyes and talent inside Decentraland! Powered by PoseLab Studio, our goal is to capture DCL in the best light and showcase our beautiful community!",
+            "ownerAddress": "0xa737abb7f98ff5f73285a19eab3e359ff867db73",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 35,
+            "ownerName": "OxQuan",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "2bf7f590-ee38-4823-80fa-28eac87bc79d",
+            "name": "METATIGER's Jungle",
+            "description": "Get the newest infos about my creations or partys first. In the metaverse jungle it's always good to have a Tiger as a guide.",
+            "ownerAddress": "0x4f7fe261619141ffa63fefee35bba886581292f4",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 56,
+            "ownerName": "METATIGER",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "a0625fb2-237d-420e-80d2-95c61a0fdedb",
+            "name": "Salento",
+            "description": "Salento: il sole, il mare, il vento.\nSalento: the sun, the sea, the wind.",
+            "ownerAddress": "0x7be33ff6d06f812cb261353022d27d72e8efa92d",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 67,
+            "ownerName": "PiZzArt",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "954dc447-6e75-485d-95ce-8663c932b274",
+            "name": "Viva la Calaca",
+            "description": "Viva la Calaca is the music festival of the Mexican day of the death.\nOnce a year, we open the doors of the Calaverse to the living and the dead, creating an interactive and vibrant blend of Mexican culture and cutting-edge technology.\r\n\r\nOur mission is simple yet bold: to celebrate, remember, and honor those who have passed to another realm through immersion in the metaverse enriched with music, art, and games.\r\n\r\n",
+            "ownerAddress": "0x8b4221b34efeb8f4ba874cf07d7f6c456c5cc347",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 67,
+            "ownerName": "MujerMaravilla",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "c2034850-9d2e-4945-9ce8-cbef4af52a0c",
+            "name": "Emerald Ring",
+            "description": "Not a secret society.",
+            "ownerAddress": "0x5985eb4a8e0e1f7bca9cc0d7ae81c2943fb205bd",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 11,
+            "ownerName": "Cuh",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "8bd89412-8531-4333-8c49-b9a1c770463e",
+            "name": "BAT Brigade",
+            "description": "A place for people who love using Brave browser to protect their privacy and earn Basic Attention Token to reward creators with.",
+            "ownerAddress": "0xf846fa7177bd5de7cdfb3b8b6df90056a1b1aeb1",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 42,
+            "ownerName": "Batearn",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "8f501340-10bb-430b-a6f8-77f80524c9ef",
+            "name": "BITNW MUSIC",
+            "description": "Welcome to BITNW MUSIC we are an music label with a total of three (3) original artists right now. Our current artists include: BITNW, GhostStitch and Nikki Cassidy Reese. Let's make and unfold the world of music together, 24/7 music, interviews and much more. In addition we'll be having live sessions with our artists from time to time which will be expected to be official announced events in and with Decentraland itself. ",
+            "ownerAddress": "0x3daedc995820f0c0cd42a0ab50ef316bfa0c8cf3",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 69,
+            "ownerName": "bitnwofficial",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "00cfe519-e38f-4f33-869a-dfa8d8395a4c",
+            "name": "4KR4H™",
+            "description": "Painting Sound",
+            "ownerAddress": "0x7955e3e0eacc79a7b4f380b1ca52ae489039651e",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 4,
+            "ownerName": "4KR4h",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "27d97c41-f8a6-44e8-b632-6d2a078add40",
+            "name": "The Radio",
+            "description": "An Té La - audio stream",
+            "ownerAddress": "0x5854cce95d5e25817b41f4c41f06b695a83bc495",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 24,
+            "ownerName": "sebga",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "7fc636ee-efe6-4b3d-8bc2-f25e0679fe89",
+            "name": "bosquegracias",
+            "description": "Live Art Residency at Patagonia Argentina",
+            "ownerAddress": "0xc17547cac2e3275b95730c3ca385ac47a6698c02",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 14,
+            "ownerName": "bosquegracias",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "547a3ca8-b7d8-4e2e-b49b-42dd573def8c",
+            "name": "CUMBIA KUMBIA DCL",
+            "description": "Un Grupo para Amantes del Cu-Cu-Cu-Cumbia en El Metaverso DCL,\nSonideros, Músicos y Bailarines",
+            "ownerAddress": "0xbf38f4174b1e86fb6baac287209bbc7b0524f9d9",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 17,
+            "ownerName": "BEATKOIN",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "dd80e63e-811b-444b-ae11-02344d5dc707",
+            "name": "The DCL Book Club",
+            "description": "Welcome to the Decentraland Book Club!\n\nWe’re a friendly, laid-back group that meets monthly to chit chat about a book one of us has picked. Discussions take place in English, but readers from all backgrounds are welcome. Come for the stories, stay for the community. ",
+            "ownerAddress": "0x10cc5a90c81f7645597e49605af04278974bc7f6",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 140,
+            "ownerName": "MastaWainzz",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "eef35f1b-e753-4df4-8103-6c33171bcec9",
+            "name": "JASMY Coin",
+            "description": "$JASMY Community in DCL!!!  Founded by LilBidMan & IcyAmphibian.\nThe OG JASMY Metaverse, created by OGs.",
+            "ownerAddress": "0xe5bd53326edf67fdc8bce36d82862dbae9346170",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 19,
+            "ownerName": "DecentraPunks",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "2d50a6c5-1c7d-4348-b17d-a01cc2ded2cc",
+            "name": "FreebieVerse",
+            "description": "Welcome to FreebieVerse — the ultimate destination(-65,-19) for free and affordable wearables, NFTs, and collectibles across Decentraland.\nExplore galleries, discover hidden drops, and claim exclusive giveaways from top creators.\nStep in, gear up, and join the freeverse!",
+            "ownerAddress": "0x6440350e4adb24c82874e6a34505425f8b66db80",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 214,
+            "ownerName": "FuckYouBitch",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "3514e3f6-6bbe-4325-8948-ff3fda828985",
+            "name": "SEVERUS SEVEN's HEADBANGERS",
+            "description": "Underground rave energy~ Hard techno, dubstep & speaker-breaking bass.",
+            "ownerAddress": "0xa82bc5f529f0f7411de9721c2d287d9b46e6413d",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 50,
+            "ownerName": "itsSEVERUS7",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "b33e277b-6702-4b0f-9619-a49726c04c2a",
+            "name": "SONIC PLANET",
+            "description": "SONIC PLANET=🌸 Argent's inmersive Music+Art+Game Project 🌸 \r\n\r\nLove to create storytelling immersive experiences, in a cyberpunk, dream, ethereal, surreal style. I'm a metaverse native, Barcelona-based multi-disciplinary artist. \n\nIn DCL: DCLMF23, MESHFAIR24, CBDbirthday23, ARTWEEK25\n\r\nOPPI is the part of me connected to music. A tribute to Mars robot Opportunity, who discover water in it years after its expiration date.\n\nStay tuned with latest releases, installations + events!",
+            "ownerAddress": "0x595044ab76a586ea82a9ed3684c0383a3c07046b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 36,
+            "ownerName": "Argent",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "a0b5e9a9-3c37-40b9-88ac-ca464dac27ed",
+            "name": "Versus Arena",
+            "description": "Free for all videogame tournaments.\nStay tuned for more news!!",
+            "ownerAddress": "0xd220ce71003ceee588e60f086f0a9185d7091b74",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 8,
+            "ownerName": "eziomenutti",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "7d624628-8b29-4e0c-b4ca-6c5e37bfc0da",
+            "name": "Designs by Emm",
+            "description": "✨ Welcome to Designs by Emm! ✨\nThis is your hub for limited-edition Decentraland wearables, sneak peeks at upcoming releases, and a community that lives for digital style. All crafted with interoperability in mind for cross-platform fashion. 🔗",
+            "ownerAddress": "0xa23aa5fce659a828ab52d62a708e29e3347b9eb7",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 184,
+            "ownerName": "InvaderZemm",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "e07f72d1-4628-4b6a-916a-98b9fe9c0040",
+            "name": "Unity Cafe",
+            "description": "Music, Dancing, Social, Networking, Friends, Meet new people, ask questions about Decentraland, and generally have a great time. Unity DJ music on Saturdays and Sundays, and monthly muisic festivalls -- see the Event Calendar.   The Unity Cafe is at 14,100",
+            "ownerAddress": "0x63f587fc66d140368be6f808785937d63b8e6fc4",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 74,
+            "ownerName": "CarlFravel",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "af744f15-264b-481b-9b8a-062482d66950",
+            "name": "DCL Perú",
+            "description": "Únete a nuestra comunidad amigable y ayuda a construir un espacio divertido para todos                                                                                                        ⭐ Explorar todo el mundo decentraland  ⭐ Asistir a eventos ⭐ Ir a juegos⭐Reuniones ⭐Compartir nuestras experiencias⭐Sorteos y muchas cosas mas ⭐                      ",
+            "ownerAddress": "0xeb0c682e1ca11e62eabe436ea36459d57616e5f1",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 42,
+            "ownerName": "OtoLam",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "d20a98ce-e30c-4bd0-8af9-57e3198b99cd",
+            "name": "RishiGirls Closet",
+            "description": "Just here slayin in Decentraland",
+            "ownerAddress": "0x29fb0d1b0836f9963f963b0bb07c49d2d61370b4",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 11,
+            "ownerName": "RishiGirl",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "d8ea1e5c-d161-4fca-932a-c9b029eff27b",
+            "name": "D8A - Chillin",
+            "description": "weekly meetups, games, etc... -140,-25 and 13,-1",
+            "ownerAddress": "0xb2223f4038def8a62a86e3c4b108cdfe00a74c4f",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 22,
+            "ownerName": "Chillin",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "c2194356-0c74-4ffa-a969-d32cce07ba81",
+            "name": "The Labyrinth of Riddles",
+            "description": "In The Labyrinth of Riddles, every door hides a challenge. Solve tricky riddles to unlock paths, avoid dead ends, and race against a relentless countdown. Choose wisely—each step could lead you closer to freedom or trap you in the maze forever. Can you escape before time runs out?",
+            "ownerAddress": "0x1b8ba74cc34c2927aac0a8af9c3b1ba2e61352f2",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 48,
+            "ownerName": "SantiHisteria",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "9d0a3774-ee38-4803-91ac-87e31c6314c3",
+            "name": "Bla Bla Bla - GP",
+            "description": "Just an open chanel to talk around the fire. ",
+            "ownerAddress": "0x5854cce95d5e25817b41f4c41f06b695a83bc495",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 18,
+            "ownerName": "sebga",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "e3db30fb-1141-426b-b260-9c8fc27de6f8",
+            "name": "Hockey Fans",
+            "description": "A place to coordinate hockey related meetups in Decentraland.",
+            "ownerAddress": "0xd4f20b86ab05e5e91cecfefe874657b0f7bfc87d",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 12,
+            "ownerName": "juxton",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "019b96c1-4d20-401b-86fe-f47f64c40ab6",
+            "name": "Chat Art",
+            "description": "🟧🟧⬛⬛⬛🟧🟧⬛🟧⬛⬛\n🟧⬛🟧⬛🟧⬛⬛⬛🟧⬛⬛\n🟧⬛🟧⬛🟧⬛⬛⬛🟧⬛⬛\n🟧⬛🟧⬛🟧⬛⬛⬛🟧⬛⬛\n🟧🟧🟧⬛⬛🟧🟧⬛🟧🟧🟧",
+            "ownerAddress": "0xfdbc134cb8f2a639938eea23758469885508b3b0",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 3,
+            "ownerName": "AdventureLand",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "9c5cd2eb-50db-418f-89eb-ad2183b4aef8",
+            "name": "SkeleFrenz",
+            "description": "💀 SkeleFrenz Community\n\nWelcome to the SkeleFrenz! 🦴💀\n\nA community for SkeleFrenz, friends, collectors, creators, and anyone who enjoys hanging out, exploring, and having fun together in Decentraland.\n\n🎮 Games & events                                    🎉 Parties & social meetups\n🎨 Creative experiences                          💀 SkeleFrenz community activities\n",
+            "ownerAddress": "0xa988612376214e731de1d2cbe9c16515374caeb2",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 9,
+            "ownerName": "Luvlee17",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "fbdb110b-28e5-4f2c-8b70-b9008d39fb52",
+            "name": "dcl_dust",
+            "description": "Made with Decentraland Creator Hub.\nShare your pictures while visiting dcl_dust!",
+            "ownerAddress": "0xd220ce71003ceee588e60f086f0a9185d7091b74",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 32,
+            "ownerName": "eziomenutti",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "7f594856-1876-4919-9411-a0a1eb4d3933",
+            "name": "EL MUNDO DE DAFU",
+            "description": "S",
+            "ownerAddress": "0xa7cdf25a0211c089a0338c0e5b204a34ac180489",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 6,
+            "ownerName": "Dafu",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "0d6ce867-4342-43ad-a64c-f5bcc1521405",
+            "name": "Cyberstar Productions",
+            "description": "In collaboration with iKaraoke, Virtual Expressions and Open Mic singing communities.",
+            "ownerAddress": "0xdab3e76b35279d3137ae7a5daf1df590cd8476fb",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 10,
+            "ownerName": "jeenacyberstar",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "effa0877-b527-4935-b46c-6c5f20b30568",
+            "name": "iKaraoke",
+            "description": "mobile online karaoke. iKaraoke Join me!. There's always an open mic. Let's kee the fun in singing...",
+            "ownerAddress": "0xdab3e76b35279d3137ae7a5daf1df590cd8476fb",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 17,
+            "ownerName": "jeenacyberstar",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "d88cea74-8dd1-4a47-8214-a85ca47f190e",
+            "name": "Virtual Expressions",
+            "description": "Virtual Expressions! Let's sing, singing together, dance, karaoke and iKaraoke, Open Mic!",
+            "ownerAddress": "0xdab3e76b35279d3137ae7a5daf1df590cd8476fb",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 10,
+            "ownerName": "jeenacyberstar",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "0017346e-f398-4076-a6bd-791b209a5688",
+            "name": "gamestudio",
+            "description": "hi here we tlked about video games cross all consol and also some movie tlk too. everyone welcome to join",
+            "ownerAddress": "0xe5104e449950180c459447f2971c8a760456b635",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 8,
+            "ownerName": "kurd",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "ec9fb878-fb81-401b-8652-aeec8b8b0708",
+            "name": "pink label",
+            "description": "asdsadsa test",
+            "ownerAddress": "0xe6776136c411e6620421b2c19bb8a6e45a37b998",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 6,
+            "ownerName": "DafneAbril",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "7acf259a-118a-49ce-a836-527dad99426c",
+            "name": "DecentraPunks",
+            "description": "DecentraPunks is an open community for all decentralized rebels who love breaking the system.  We love using web3 platforms and decoupling from the traditional internet.  From investments to original content, we love it all!\n\nLearn with Intent.  Build with Passion.  Invest with knowledge.",
+            "ownerAddress": "0xe5bd53326edf67fdc8bce36d82862dbae9346170",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 24,
+            "ownerName": "DecentraPunks",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "110f7acc-edf9-4c85-bc53-edbec4b3ae1d",
+            "name": "ESPAÑOL DLC",
+            "description": "¡Bienvenido a la comunidad hispanohablante de Decentraland! Aquí convergen artistas, desarrolladores y visionarios de España e Hispanoamérica, unidos por la pasión de construir un mundo virtual descentralizado y compartir aventuras en nuestra lengua materna.",
+            "ownerAddress": "0x65c21d49ee3aa836ff7c32cc69f5aee9a123f8b0",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 32,
+            "ownerName": "Kripties",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "b460c4f6-8158-439f-8071-28d65550729b",
+            "name": "Buddhist Sangha",
+            "description": "A metaverse community for buddhists of any tradition.",
+            "ownerAddress": "0xd4f20b86ab05e5e91cecfefe874657b0f7bfc87d",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 11,
+            "ownerName": "juxton",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "b29b5102-7614-4cb7-b420-06a9dc43bc6c",
+            "name": "TalkStory",
+            "description": "Casual conversations about Video and Music. Discussions of classic film, and other videos of interest. Erratic scheduling, and short notice. The meeting place is a \"speak easy\" so hangouts won't be on the Events Calendar. Location: Roots' TalkStory SpeakEasy (140,-40)",
+            "ownerAddress": "0x66b1488a32e21f2d2757713d16facd9d25ec977c",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 1,
+            "ownerName": "DCLRoots",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "4c6ff65f-868f-4040-a8a4-ad5edaee83bf",
+            "name": "Metahive Tribe",
+            "description": "Metahive Tribe: A decentralized community of friends who share, connect, and grow together. A space to chat, meet, support one another, and build something meaningful.. together!",
+            "ownerAddress": "0x4b538e1e044922aec2f428ec7e17a99f44205ff9",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 1,
+            "ownerName": "carlosmu",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "ae29f347-9a76-4fbc-a276-07b56ae5c3c9",
+            "name": "daf",
+            "description": "daf",
+            "ownerAddress": "0xa7cdf25a0211c089a0338c0e5b204a34ac180489",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 3,
+            "ownerName": "Dafu",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "99d106ad-c565-4a65-b275-b677092c5de4",
+            "name": "Party Voice Chat",
+            "description": "A place to have group voice chats with friends at parties/events or whenever! ",
+            "ownerAddress": "0x09bc69a986e1b37fb01ef36124f4c2e14fa0ab6b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 21,
+            "ownerName": "BillyTeacoin",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "d91a3e61-b8e2-418f-a690-7df986448fcf",
+            "name": "WaypointDCL Vocal Chat",
+            "description": "Vocal Chat is available for users who need help in Decentraland.\n\nLanguages: \nEnglish  & Français ",
+            "ownerAddress": "0x5854cce95d5e25817b41f4c41f06b695a83bc495",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 8,
+            "ownerName": "sebga",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "9e50562f-2f19-40f2-8701-63c71be6fa11",
+            "name": "Blockchain Education Arcade",
+            "description": "The Blockchain Education Arcade is a weekly meetup inside Decentraland and on X where learning meets fun. Each session combines gamified learning, quizzes, treasure hunts, guest speaker talks, and social activities that make blockchain less intimidating. Attendees can network with like-minded explorers, earn exclusive wearables and emotes, and expand their Web3 knowledge in an interactive, social environment.",
+            "ownerAddress": "0xb54b5d2ba7b43150d193bee98aabcf200e3eb0a7",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 112,
+            "ownerName": "Toluwa",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "82e348d6-1705-4346-aa27-4ad56112f742",
+            "name": "Club XIII",
+            "description": "Where the veil thins, the dice roll, and the bass never dies. \n\nStep beyond the ordinary and into Club XIII, a cross-dimensional venue where adventurers, artists, and the unholy rhythm of the void collide. \n\nEqual parts D&D tavern, music lounge, and Ethereal hangout, this is the nexus where campaigns begin, stories intertwine, and the beat never stops. Join community-driven events, live sets, and immersive tabletop nights—all under the pulse of neon runes and shifting soundscapes.",
+            "ownerAddress": "0xff3327cc139449fa111ad87351bb300e9cc7607c",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 10,
+            "ownerName": "XIII",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "d7c0559b-8143-46da-ad5d-e9d37d406011",
+            "name": "GM DCL",
+            "description": "A place to say GM and waffle!",
+            "ownerAddress": "0x5985eb4a8e0e1f7bca9cc0d7ae81c2943fb205bd",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 11,
+            "ownerName": "Cuh",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "0b61a385-301e-4ee9-92e2-f395848ecb02",
+            "name": "Metarivers",
+            "description": "Building is pointless if nobody can find you. Metarivers makes your space INSTANTLY discoverable\nPublish your Spaces today.\nFind active events, AMAs, and hubs.\nShowcase your creations, your fashion, or your gallery.\nList your Space or find new ones ",
+            "ownerAddress": "0x86e1a73a9ff9f8fd9a60612416a754bcf3443295",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 25,
+            "ownerName": "MetaRivers",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "b1e7a5d9-66f7-454f-936d-3c7dc0d95696",
+            "name": "Warplet",
+            "description": "A place for Farcasters and their little purple beasties to roam free.",
+            "ownerAddress": "0xe1eedbd1e08478707c794e7e8b1ee623f5fa6d64",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 8,
+            "ownerName": "AwedJob",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "a129f8cf-61c7-4dae-8ff1-23b7eac85f3c",
+            "name": "DOCTORdripp's Garage",
+            "description": "DCL WEARABLES & AUTOMOTIVE LED LIGHTING. Technical questions welcome here! Learn about what I'm building on and off screen\n\n",
+            "ownerAddress": "0x56d947fa1ae6d6293b307b489540c156af628f0f",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 177,
+            "ownerName": "Streetwear",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "9af41771-e385-490f-9c24-2c599f828c11",
+            "name": "All Hail The Cube",
+            "description": "Euclid drew the lines, Archimedes curved the world, Pythagoras found the harmony, now in Decentraland we hail the cube!!!",
+            "ownerAddress": "0x07b9d44ee599a14deea165e2fbf45699c9df7b51",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 34,
+            "ownerName": "ashc",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "309450a6-ca22-43bc-b17e-549b186e06c8",
+            "name": "Chrono T | AeonSmash",
+            "description": "This community is a source for the latest updates to the EPOCHS series and other Chrono T | AeonSmash productions. Welcome!",
+            "ownerAddress": "0x0429e043444e9c558df25c5eeed1dd7e46c453bd",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 1,
+            "ownerName": "ChronoT",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "43fe9fad-6797-40c2-ad3e-4a7df3d34251",
+            "name": "DECENTALAND ITALIA",
+            "description": "La Community Italiana su Decentraland",
+            "ownerAddress": "0x516323afcd3ec36ba309f54d05cdf6fb48fa993b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 13,
+            "ownerName": "The4rchitect",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "599dfa7a-557b-433e-991b-d940cf24685b",
+            "name": "FRANCE",
+            "description": "Si tu es français, rejoins cette communauté.\n",
+            "ownerAddress": "0x5854cce95d5e25817b41f4c41f06b695a83bc495",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 2,
+            "ownerName": "sebga",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "81980062-77df-4a51-82cb-42944809cf66",
+            "name": "GOLEMS WORLD",
+            "description": "Explore a vast 400x400m steampunk world, scavenge scrap with the Heat Radar, forge unique deterministic Golems, command your battle squad, send companions on automated expeditions, and compete in real-time Ladder Tournaments (1v1 & 2v2). https://golems.world",
+            "ownerAddress": "0x2aec06e4c3e85672b1bde46ca45fb6fb574791c2",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 1,
+            "ownerName": "baeza",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "cf7ccd30-498b-47b1-b80d-b665d5c44b77",
+            "name": "Metafox Crew",
+            "description": "Welcome to Metafox Crew 🦊 \nThe creative Decentraland community famous for the iconic fox mask wearables and unique artistic vibe. We host fun events, competitions, and parties where art, style, and imagination come alive. Whether you’re here to play, create, or just vibe with fellow foxes, there’s a spot for you. \nJoin the crew, wear the mask, and let’s shape the metaverse together!",
+            "ownerAddress": "0x594e569c3f8eb88787b5b203474c9b7a97895c8b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 73,
+            "ownerName": "MetafoxCrew",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          }
+        ],
+        "total": 143,
+        "page": 1,
+        "pages": 2,
+        "limit": 100
+      }
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities?limit=abc",
+  "captured_at": "2026-09-25T19:24:01Z",
+  "volatile_paths": [
+    "data.pages",
+    "data.results.membersCount",
+    "data.total",
+    "data.results[]"
+  ]
+}

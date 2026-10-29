@@ -1,0 +1,21 @@
+{
+  "description": "HEAD /entities/{cid}/face.png for the corpus CID. Captured HEAD https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png -> 301.",
+  "request": {
+    "method": "HEAD",
+    "path": "/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 301,
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "location": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png"
+    },
+    "body_bytes_b64": ""
+  },
+  "captured_from": "https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png",
+  "captured_at": "2026-09-25T19:24:57Z",
+  "volatile_paths": []
+}

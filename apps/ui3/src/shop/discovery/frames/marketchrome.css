@@ -1,0 +1,124 @@
+/* from: marketplace@3bf3662f:webapp/src/components/AnnouncementBar/AnnouncementBar.module.css (the live strip is
+   #a524b3, the source's #691fa9 is what it replaced; the live site wins); ui@8a63476:src/components/Footer/Footer.css,
+   src/themes/base-theme.css (--footer-height 56px). */
+.shop-mbar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 0 56px;
+  background-color: #a524b3;
+  color: #fff;
+  font-family: var(--shop-sans);
+}
+.shop-mbar__message {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: center;
+}
+.shop-mbar__highlight { font-weight: 600; }
+.shop-mbar__cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding: 8px 11px;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+.shop-mbar__cta:hover { background-color: rgba(255, 255, 255, 0.08); color: #fff; }
+.shop-mbar__ctalabel { text-decoration: underline; white-space: nowrap; }
+.shop-mbar__ctaicon {
+  flex-shrink: 0;
+  width: 18px;
+  height: 22px;
+  background: url("./assets/announcement-arrow.svg") 8.29px 5px / 7.41px 12px no-repeat;
+}
+.shop-mbar__close {
+  position: absolute;
+  top: 50%;
+  right: 29.23px;
+  transform: translateY(-50%);
+  width: 18.54px;
+  height: 18.54px;
+  padding: 0;
+  border: none;
+  background: url("./assets/announcement-close.svg") center / 100% 100% no-repeat;
+  cursor: pointer;
+}
+.shop-mbar__close:focus-visible,
+.shop-mbar__cta:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+@media (max-width: 991px) {
+  .shop-mbar { justify-content: flex-start; padding: 8px 0 8px 16px; }
+  .shop-mbar__message { flex: 1 0 0; min-width: 0; font-size: 14px; text-align: left; }
+  .shop-mbar__cta { font-size: 13px; }
+  .shop-mbar__close { display: none; }
+}
+
+.shop-mfooter {
+  box-sizing: border-box;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  min-height: 94px;
+  padding: 38px 24px 0;
+  background: #32134c;
+  color: #cfcdd4;
+  font-family: var(--shop-sans);
+  font-size: 15px;
+  line-height: 20px;
+}
+.shop-mfooter__main,
+.shop-mfooter__secondary {
+  display: flex;
+  align-items: center;
+  height: 56px;
+}
+.shop-mfooter__lang { display: inline-flex; align-items: center; gap: 8px; color: #fff; }
+.shop-mfooter__caret {
+  width: 0;
+  height: 0;
+  margin-left: 4px;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid currentColor;
+}
+.shop-mfooter__links { display: flex; flex-wrap: wrap; }
+.shop-mfooter__links a { margin-left: 16px; color: #cfcdd4; text-decoration: none; }
+.shop-mfooter__links a:hover { color: #fff; }
+.shop-mfooter__social { display: flex; align-items: center; margin-right: 24px; }
+.shop-mfooter__social a { display: inline-flex; color: #cfcdd4; }
+.shop-mfooter__social a + a { margin-left: 26px; }
+.shop-mfooter__social a:hover { color: #ff2d55; }
+.shop-mfooter__icon {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  background-color: currentColor;
+  -webkit-mask: var(--icon) center / contain no-repeat;
+  mask: var(--icon) center / contain no-repeat;
+}
+.shop-mfooter__icon[data-kind="discord"] { --icon: url("./assets/market-discord.svg"); }
+.shop-mfooter__icon[data-kind="reddit"] { --icon: url("./assets/market-reddit.svg"); }
+.shop-mfooter__icon[data-kind="github"] { --icon: url("./assets/market-github.svg"); }
+.shop-mfooter__icon[data-kind="twitter"] { --icon: url("./assets/market-twitter.svg"); }
+.shop-mfooter__copy { white-space: nowrap; }
+@media (max-width: 1024px) {
+  .shop-mfooter { flex-direction: column; justify-content: center; gap: 12px; padding: 32px 16px; }
+  .shop-mfooter__main,
+  .shop-mfooter__secondary { flex-direction: column; height: auto; gap: 12px; }
+  .shop-mfooter__links { justify-content: center; }
+  .shop-mfooter__links a { margin: 0 8px 8px; }
+  .shop-mfooter__social { margin-right: 0; }
+}

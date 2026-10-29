@@ -1,0 +1,48 @@
+.shop-flow-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--info);
+  border-radius: var(--r-control);
+  background: var(--fill-2);
+  color: var(--text);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+}
+
+.shop-flow-banner[data-tone="warning"],
+.shop-flow-banner[data-tone="outage"] {
+  border-left-color: var(--warning);
+}
+
+.shop-flow-banner[data-tone="error"] {
+  border-left-color: var(--error);
+}
+
+.shop-flow-banner[data-tone="success"] {
+  border-left-color: var(--success);
+}
+
+.shop-flow-banner__body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 240px;
+}
+
+.shop-flow-banner__title {
+  margin: 0;
+  font-weight: 700;
+}
+
+.shop-flow-banner__text p {
+  margin: 0;
+}
+
+.shop-flow-banner__text {
+  color: var(--ink-85);
+}

@@ -1,0 +1,2065 @@
+use std::{
+    f32::consts::PI,
+    marker::PhantomData,
+    num::ParseIntError,
+    ops::{Deref, Range},
+    str::FromStr,
+    sync::{atomic::AtomicU32, Arc},
+};
+
+use alloy_core::primitives::Address;
+use bevy::{
+    color::palettes,
+    math::DVec3,
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    render::{primitives::Aabb, view::RenderLayers},
+};
+use dcl_component::proto_components::{
+    sdk::{
+        components::common::CameraTransition,
+        development::{ws_scene_message, UpdateModelType},
+    },
+    social_service::v2::PrivateMessagePrivacySetting,
+};
+use serde::{Deserialize, Serialize};
+use system_api_types::SatelliteView;
+pub use system_api_types::{PermissionLevel, PermissionType, PermissionValue, PointerTargetType};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+
+use crate::inputs::{Action, InputIdentifier, InputMapSerialized, SystemAction};
+
+#[derive(Resource)]
+pub struct Version(pub String);
+
+// main user entity
+#[derive(Component, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PrimaryUser {
+    pub walk_speed: f32,
+    pub jog_speed: f32,
+    pub run_speed: f32,
+    pub jump_height: f32,
+    pub run_jump_height: f32,
+    pub block_all: bool,
+    pub block_run: bool,
+    pub block_walk: bool,
+    pub block_jump: bool,
+    pub block_emote: bool,
+}
+
+impl Default for PrimaryUser {
+    fn default() -> Self {
+        Self {
+            walk_speed: 2.5,
+            jog_speed: 8.18,
+            run_speed: 11.0,
+            jump_height: 1.9,
+            run_jump_height: 2.95,
+            block_all: false,
+            block_run: false,
+            block_walk: false,
+            block_jump: false,
+            block_emote: false,
+        }
+    }
+}
+
+#[derive(Component, Default, Debug)]
+pub struct PlayerModifiers {
+    pub hide: bool,
+    pub hide_profile: bool,
+    pub walk_speed: Option<f32>,
+    pub run_speed: Option<f32>,
+    pub friction: Option<f32>,
+    pub gravity: Option<f32>,
+    pub jump_height: Option<f32>,
+    pub fall_speed: Option<f32>,
+    pub control_type: Option<AvatarControl>,
+    pub turn_speed: Option<f32>,
+    pub block_all: bool,
+    pub block_run: bool,
+    pub block_walk: bool,
+    pub block_jump: bool,
+    pub block_emote: bool,
+    pub areas: Vec<ActiveAvatarArea>,
+}
+
+#[derive(Clone, Debug)]
+pub struct ActiveAvatarArea {
+    pub entity: Entity,
+    pub allow_locomotion: PermissionState,
+}
+
+impl PlayerModifiers {
+    pub fn combine(&self, user: &PrimaryUser) -> PrimaryUser {
+        PrimaryUser {
+            walk_speed: self.walk_speed.unwrap_or(user.walk_speed),
+            jog_speed: self.run_speed.unwrap_or(user.jog_speed),
+            run_speed: self.run_speed.unwrap_or(user.run_speed),
+            jump_height: self.jump_height.unwrap_or(user.jump_height),
+            run_jump_height: self.jump_height.unwrap_or(user.run_jump_height),
+            block_all: self.block_all || user.block_all,
+            block_run: self.block_run || user.block_run,
+            block_walk: self.block_walk || user.block_walk,
+            block_jump: self.block_jump || user.block_jump,
+            block_emote: self.block_emote || user.block_emote,
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PermissionState {
+    Resolved(bool),
+    NotRequested,
+    Pending,
+}
+
+// attachment points for local or foreign players
+#[derive(Component)]
+pub struct AttachPoints {
+    pub position: Entity,
+    pub nametag: Entity,
+    pub head: Entity,
+    pub neck: Entity,
+    pub spine: Entity,
+    pub spine_1: Entity,
+    pub spine_2: Entity,
+    pub hip: Entity,
+    pub left_shoulder: Entity,
+    pub left_arm: Entity,
+    pub left_forearm: Entity,
+    pub left_hand: Entity,
+    pub left_hand_index: Entity,
+    pub right_shoulder: Entity,
+    pub righ_arm: Entity,
+    pub right_forearm: Entity,
+    pub right_hand: Entity,
+    pub right_hand_index: Entity,
+    /// AAPT_LEFT_UP_LEG
+    pub left_thigh: Entity,
+    /// AAPT_LEFT_LEG
+    pub left_shin: Entity,
+    pub left_foot: Entity,
+    pub left_toe_base: Entity,
+    /// AAPT_RIGHT_UP_LEG
+    pub right_thigh: Entity,
+    /// AAPT_RIGHT_LEG
+    pub right_shin: Entity,
+    pub right_foot: Entity,
+    pub right_toe_base: Entity,
+}
+
+impl AttachPoints {
+    pub fn new(commands: &mut Commands) -> Self {
+        let inverted_transform = Transform::from_rotation(Quat::from_rotation_y(PI));
+        let default_visibility = Visibility::default();
+        let default_bundle = (inverted_transform, default_visibility);
+        Self {
+            position: commands
+                .spawn((Transform::default(), Visibility::default()))
+                .id(),
+            nametag: commands
+                .spawn((
+                    Transform::from_translation(Vec3::Y * 2.2),
+                    Visibility::default(),
+                ))
+                .id(),
+            head: commands
+                .spawn((
+                    default_bundle,
+                    // This Aabb roughly encloses the head
+                    Aabb::from_min_max(Vec3::new(-16., -21., -22.), Vec3::new(16., 21., 22.)),
+                ))
+                .id(),
+            neck: commands.spawn(default_bundle).id(),
+            spine: commands.spawn(default_bundle).id(),
+            spine_1: commands.spawn(default_bundle).id(),
+            spine_2: commands.spawn(default_bundle).id(),
+            hip: commands.spawn(default_bundle).id(),
+            left_shoulder: commands.spawn(default_bundle).id(),
+            left_arm: commands.spawn(default_bundle).id(),
+            left_forearm: commands.spawn(default_bundle).id(),
+            left_hand: commands.spawn(default_bundle).id(),
+            left_hand_index: commands.spawn(default_bundle).id(),
+            right_shoulder: commands.spawn(default_bundle).id(),
+            righ_arm: commands.spawn(default_bundle).id(),
+            right_forearm: commands.spawn(default_bundle).id(),
+            right_hand: commands.spawn(default_bundle).id(),
+            right_hand_index: commands.spawn(default_bundle).id(),
+            left_thigh: commands.spawn(default_bundle).id(),
+            left_shin: commands.spawn(default_bundle).id(),
+            left_foot: commands.spawn(default_bundle).id(),
+            left_toe_base: commands.spawn(default_bundle).id(),
+            right_thigh: commands.spawn(default_bundle).id(),
+            right_shin: commands.spawn(default_bundle).id(),
+            right_foot: commands.spawn(default_bundle).id(),
+            right_toe_base: commands.spawn(default_bundle).id(),
+        }
+    }
+
+    /// AttachPoints entities ordered by their protocol id
+    pub fn entities(&self) -> [Entity; 26] {
+        [
+            self.position,
+            self.nametag,
+            self.left_hand,
+            self.right_hand,
+            self.head,
+            self.neck,
+            self.spine,
+            self.spine_1,
+            self.spine_2,
+            self.hip,
+            self.left_shoulder,
+            self.left_arm,
+            self.left_forearm,
+            self.left_hand_index,
+            self.right_shoulder,
+            self.righ_arm,
+            self.right_forearm,
+            self.right_hand_index,
+            self.left_thigh,
+            self.left_shin,
+            self.left_foot,
+            self.left_toe_base,
+            self.right_thigh,
+            self.right_shin,
+            self.right_foot,
+            self.right_toe_base,
+        ]
+    }
+}
+
+/// Which bones an emote drives. Upper body = the `Avatar_Spine` subtree; hips and legs stay with
+/// locomotion so the player keeps walking. Scene-only (`triggerEmote` / `triggerSceneEmote` with
+/// `AvatarMask.AM_UPPER_BODY`); the wheel is always full body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum EmoteMask {
+    #[default]
+    FullBody,
+    UpperBody,
+}
+
+impl EmoteMask {
+    /// The wire enum (rfc4 / Pulse / `AvatarEmoteCommand`): `0`/absent full body, `1` upper body.
+    /// Not the sdk's `AvatarMask`, whose only value `AM_UPPER_BODY` is `0`.
+    pub fn to_wire(self) -> Option<i32> {
+        match self {
+            EmoteMask::FullBody => None,
+            EmoteMask::UpperBody => Some(1),
+        }
+    }
+
+    pub fn from_wire(mask: Option<i32>) -> Self {
+        match mask {
+            Some(1) => EmoteMask::UpperBody,
+            _ => EmoteMask::FullBody,
+        }
+    }
+}
+
+#[derive(Component, Clone, Debug, PartialEq, Default)]
+pub struct EmoteCommand {
+    pub urn: String,
+    pub timestamp: i64,
+    pub r#loop: bool,
+    pub mask: EmoteMask,
+}
+
+/// A transition in an avatar's triggered-emote playback, reported to scenes as an
+/// `AvatarEmoteCommand` entry by `avatar::emote_report`. Raised by `comms` from the wire (in wire
+/// order, so client and server report the same sequence) and by the avatar animator from
+/// playback; the reporter keeps the wire's word for foreign players and playback's for the rest.
+#[derive(Event, Clone, Debug)]
+pub struct EmoteLifecycleEvent {
+    pub avatar: Entity,
+    pub event: EmoteLifecycle,
+    pub source: EmoteLifecycleSource,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EmoteLifecycleSource {
+    Playback,
+    Wire,
+}
+
+/// One emote plays at a time, whatever its slot, so an end names no emote: it ends the last start.
+#[derive(Clone, Debug)]
+pub enum EmoteLifecycle {
+    /// `r#loop` is the flag known at trigger time; the emote's own metadata may still make it loop.
+    /// `mask` is the slot (full body / upper body) it plays in.
+    Started {
+        urn: String,
+        r#loop: bool,
+        mask: EmoteMask,
+    },
+    /// A one-shot ran to its end.
+    Finished,
+    /// Playback was cut short: movement, a scene animation, a stop from the wire.
+    Interrupted,
+}
+
+// Current scene-driven movement animation request for a player avatar. For the
+// primary player, written by the bridge system in `user_input` (after resolving
+// the scene-relative path against the active scene's content map). For foreign
+// players, written by the comms crate when a Movement packet with anim fields
+// arrives. Read by `animate` in the avatar crate uniformly for both.
+#[derive(Component, Default, Clone, Debug, PartialEq)]
+pub struct SceneDrivenAnim {
+    pub active: Option<SceneDrivenAnimationRequest>,
+}
+
+/// Build the render-only avatar tilt (lean) quaternion from pitch/roll in degrees.
+/// Composed as `Y * X * Z`, so `Quat::from_rotation_y(yaw) * avatar_tilt_quat(p, r)`
+/// equals `Quat::from_euler(EulerRot::YXZ, yaw, p_rad, r_rad)` — letting consumers recover
+/// the authoritative yaw with `to_euler(EulerRot::YXZ).0` even when tilt is present.
+pub fn avatar_tilt_quat(pitch_deg: f32, roll_deg: f32) -> bevy::math::Quat {
+    bevy::math::Quat::from_euler(
+        bevy::math::EulerRot::YXZ,
+        0.0,
+        pitch_deg.to_radians(),
+        roll_deg.to_radians(),
+    )
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct SceneDrivenAnimationRequest {
+    // scene-relative path (e.g. "assets/walk.glb") — used for feedback to the controlling
+    // scene. Empty for remote requests received over the network.
+    pub src: String,
+    // Pre-built scene-emote URN encoding scene_hash + content_hash. For local requests
+    // this is constructed by user_input; for remote requests it's reassembled from the
+    // hash pair received on the wire.
+    pub urn: String,
+    // The two hashes that compose the URN. Kept alongside `urn` so the broadcaster can
+    // ship them to remotes without repeating the fixed URN preamble on every packet.
+    pub scene_hash: String,
+    pub content_hash: String,
+    pub r#loop: bool,
+    pub speed: f32,
+    pub idle: bool,
+    pub transition_seconds: f32,
+    pub seek: Option<f32>,
+    // Scene-requested avatar-bus sound clips to play this update. Each entry is the
+    // content_hash of a file hosted in the same scene as the animation. The consumer
+    // dedups per-avatar so leaving identical entries across consecutive updates doesn't
+    // re-fire; the scene clears the list on frames it doesn't want sound.
+    pub sounds: Vec<String>,
+}
+
+// Current scene-driven animation playback state, written by `play_current_emote` in
+// the avatar crate and mirrored into `AvatarMovementInfo.active_animation_state` by
+// `broadcast_movement_info` in `user_input`.
+// `playback_time` freezes while a triggerSceneEmote overrides the animation.
+#[derive(Resource, Default)]
+pub struct SceneDrivenAnimationFeedback {
+    pub state: Option<SceneDrivenAnimationFeedbackState>,
+}
+
+/// Marker: present when the app has no render app. Render-only scene plugins are then
+/// skipped — nothing displays their output and none of them feed results back to the
+/// scene, so their components stay in the scene-side filtered store and never cross the
+/// IPC boundary. Insert it before `SceneRunnerPlugin`, which reads it at build time.
+///
+/// Absence is the normal case, so nothing needs to opt in and no default can be wrong.
+///
+/// Narrower than "headless": `impost.rs` disables winit and runs with no primary window,
+/// but keeps `DefaultPlugins` and a camera to bake imposters, so it must NOT insert this.
+/// Doing so would strip every imposter texture with no panic and no test failure.
+///
+/// Also distinct from [`server_mode`]: the headless binary never has a render app, but
+/// is only in server mode when run with --server-mode.
+#[derive(Resource)]
+pub struct NoRenderApp;
+
+static SERVER_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Latch this process as an authoritative scene server: scenes run in server role and
+/// `isServer()` returns true to scene JS. Set by the headless server binary before the
+/// app is built; irreversible by design.
+pub fn set_server_mode() {
+    SERVER_MODE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// True once [`set_server_mode`] has been called.
+pub fn server_mode() -> bool {
+    SERVER_MODE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+static MULTI_TENANT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Latch this process as a multi-tenant (orchestrated) scene server: every scene has its
+/// own room's crdt context, registered before the scene is queued. A standalone server
+/// (`--server-mode` without `--orchestrated`) is NOT multi-tenant — its single scene
+/// legitimately rides the shared context. Irreversible like [`set_server_mode`].
+pub fn set_multi_tenant() {
+    MULTI_TENANT.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// True once [`set_multi_tenant`] has been called.
+pub fn multi_tenant() -> bool {
+    MULTI_TENANT.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+#[derive(Debug, Clone)]
+pub struct SceneDrivenAnimationFeedbackState {
+    pub src: String,
+    pub r#loop: bool,
+    pub speed: f32,
+    pub idle: bool,
+    pub playback_time: f32,
+    pub duration: f32,
+    pub loop_count: u32,
+}
+
+/// vertical fov of the player camera, in radians (60 degrees). also the
+/// `PBVirtualCamera.fov` default, per the proto definition.
+pub const PLAYER_CAMERA_FOV: f32 = std::f32::consts::PI / 3.0;
+
+// main camera entity
+#[derive(Component)]
+pub struct PrimaryCamera {
+    // settings
+    pub distance: f32,
+    pub sensitivity: f32,
+    // impl details (todo: move to separate private struct)
+    pub initialized: bool,
+    pub yaw: f32,
+    pub pitch: f32,
+    pub roll: f32,
+    // override
+    pub scene_override: Option<CameraOverride>,
+}
+
+#[derive(Clone, Debug)]
+pub struct CinematicSettings {
+    pub origin: Entity,
+    pub allow_manual_rotation: bool,
+    pub yaw_range: Option<f32>,
+    pub pitch_range: Option<f32>,
+    pub roll_range: Option<f32>,
+    pub look_at_entity: Option<Entity>,
+    pub transition: Option<CameraTransition>,
+    /// vertical fov, in radians
+    pub fov: f32,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum AvatarControl {
+    None,
+    Relative,
+    Tank,
+}
+
+#[derive(Clone, Debug)]
+pub enum CameraOverride {
+    Distance(f32),
+    Cinematic(CinematicSettings),
+}
+
+impl CameraOverride {
+    pub fn effectively_equals(&self, other: &CameraOverride) -> bool {
+        match (self, other) {
+            (CameraOverride::Distance(x), CameraOverride::Distance(y)) => x == y,
+            (CameraOverride::Cinematic(c0), CameraOverride::Cinematic(c1)) => {
+                c0.origin == c1.origin
+            }
+            _ => false,
+        }
+    }
+}
+
+impl Default for PrimaryCamera {
+    fn default() -> Self {
+        Self {
+            sensitivity: 5.0,
+            initialized: Default::default(),
+            yaw: Default::default(),
+            pitch: Default::default(),
+            roll: Default::default(),
+            distance: 1.0,
+            scene_override: None,
+        }
+    }
+}
+
+#[derive(Resource)]
+pub struct PrimaryPlayerRes(pub Entity);
+
+#[derive(Resource)]
+pub struct PrimaryCameraRes(pub Entity);
+
+/// World-space head gaze angles, in degrees. On the local player, written each frame
+/// from the real camera (and zeroed/disabled when a scene-driven camera is active). On
+/// remote players, written from the incoming rfc4::Movement head-sync fields. The
+/// `*_enabled` flags drive the receive-side IK weight crossfade and gate the broadcast
+/// of valid angles for the local player.
+#[derive(Component, Default, Clone, Copy)]
+pub struct HeadSync {
+    pub yaw_deg: f32,
+    pub pitch_deg: f32,
+    pub yaw_enabled: bool,
+    pub pitch_enabled: bool,
+}
+
+/// World-space point-at state. On the local player, populated when the PointAt
+/// action fires and `WorldPointerTarget` has a hit; cleared when the latch
+/// expires. On remote players, populated from the incoming rfc4::Movement
+/// `point_at_*` / `is_pointing_at` fields. Coordinates are stored in DCL
+/// convention (Z mirrored from bevy world) so the same value flows over the
+/// wire and into the IK apply step without a per-site flip.
+#[derive(Component, Default, Clone, Copy)]
+pub struct PointAtSync {
+    pub target_world: Vec3,
+    pub is_pointing: bool,
+}
+
+// marker for the root ui component (full screen, used for checking pointer/mouse button events are not intercepted by any other ui component)
+#[derive(Component)]
+pub struct UiRoot;
+
+#[derive(PartialEq, Eq, Hash, PartialOrd, Ord, Clone, Copy)]
+pub enum TooltipSource {
+    Label(&'static str),
+    Entity(Entity),
+}
+
+#[derive(Resource, Default)]
+pub struct ToolTips(pub HashMap<TooltipSource, Vec<(String, bool)>>);
+
+// web3 authorization chain link
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ChainLink {
+    #[serde(rename = "type")]
+    pub ty: String,
+    pub payload: String,
+    pub signature: String,
+}
+
+// ephemeral identity info
+#[derive(Serialize, Deserialize, Clone)]
+pub struct PreviousLogin {
+    pub root_address: Address,
+    pub ephemeral_key: Vec<u8>,
+    pub auth: Vec<ChainLink>,
+    #[serde(default)]
+    pub guest_account: bool,
+}
+
+pub fn default_home_realm() -> String {
+    crate::base_domain::url(crate::base_domain::Service::RealmProvider, "/main")
+}
+// app configuration
+#[derive(Serialize, Deserialize, Resource, Clone)]
+#[serde(default)]
+pub struct AppConfig {
+    /// The pinned home scene. Written ONLY by SetHomeScene; None = never pinned, so the
+    /// home keeps tracking the base-domain-derived default. A pinned home persists (and
+    /// survives switching base domains) even when it happens to equal some domain's
+    /// default. --realm / --position are startup params (like the web's ?realm= /
+    /// ?position=) and are deliberately never merged in here — the config file is
+    /// rewritten wholesale on any settings change, which would silently persist a
+    /// one-off CLI target as home.
+    pub home_realm: Option<String>,
+    pub home_location: Option<IVec2>,
+    pub previous_login: Option<PreviousLogin>,
+    /// The root key of the benchmark autopilot's local guest (`wallet::local_guest`): it signs each
+    /// ephemeral identity, so an expired one is signed again for the same account. Nothing but the
+    /// autopilot reads it, and a person signing in leaves it: the guest keeps its address.
+    pub guest_root_key: Option<Vec<u8>>,
+    /// The [`TERMS_VERSION`] last accepted on this install, on the welcome page.
+    pub accepted_terms: Option<u32>,
+    pub graphics: GraphicsSettings,
+    pub audio: AudioSettings,
+    pub cache_bytes: u64,
+    pub scene_threads: usize,
+    pub scene_load_distance: f32,
+    pub scene_unload_extra_distance: f32,
+    pub scene_imposter_distances: Vec<f32>,
+    pub scene_imposter_multisample: bool,
+    pub scene_imposter_multisample_amount: f32,
+    pub scene_imposter_bake: SceneImposterBake,
+    pub parcel_grass_setting: ParcelGrassSetting,
+    pub sysinfo_visible: bool,
+    pub scene_log_to_console: bool,
+    pub max_avatars: usize,
+    pub constrain_scene_ui: bool,
+    pub player_settings: PrimaryUser,
+    pub max_videos: usize,
+    pub max_concurrent_remotes: usize,
+    pub user_id: String,
+    pub default_permissions: HashMap<PermissionType, PermissionValue>,
+    pub realm_permissions: HashMap<String, HashMap<PermissionType, PermissionValue>>,
+    pub scene_permissions: HashMap<String, HashMap<PermissionType, PermissionValue>>,
+    pub inputs: InputMapSerialized,
+    pub point_at_marker_visibility: PointAtMarkerVisibility,
+    /// Who may DM the local user. Owned by the social service, so never persisted here: the
+    /// slot mirrors the server value and the social crate upserts user changes to it. `None`
+    /// until either the user or the server has set it.
+    #[serde(skip)]
+    pub dm_privacy: Option<DmPrivacy>,
+    pub camera_smoothing: CameraSmoothing,
+    // field-level default (0) so configs saved before this field existed read as outdated,
+    // rather than taking the current generation from the container-level default
+    #[serde(default)]
+    pub settings_generation: u32,
+    #[serde(default)]
+    pub inputs_generation: u32,
+    /// set when the user_id was minted here rather than loaded, so startup saves the config to
+    /// keep it. never serialized; the field-level default keeps loaded configs false
+    #[serde(skip, default)]
+    pub is_fresh_user_id: bool,
+}
+
+/// bump to run one-time migrations of the preset-managed settings in existing configs
+/// (see [`AppConfig::reset_outdated_settings`])
+pub const SETTINGS_GENERATION: u32 = 2;
+
+/// bump to run one-time migrations of saved input binding tables
+/// (see [`AppConfig::migrate_inputs`])
+pub const INPUTS_GENERATION: u32 = 1;
+
+/// bump when the terms of use change, so every install accepts them again
+pub const TERMS_VERSION: u32 = 1;
+
+impl Default for AppConfig {
+    fn default() -> Self {
+        Self {
+            home_realm: None,
+            home_location: None,
+            previous_login: None,
+            guest_root_key: None,
+            accepted_terms: None,
+            graphics: Default::default(),
+            audio: Default::default(),
+            cache_bytes: 1024 * 1024 * 1024 * 10, // 10gb
+            scene_threads: 4,
+            scene_load_distance: 10.0,
+            scene_unload_extra_distance: 10.0,
+            scene_imposter_distances: vec![100.0, 200.0, 400.0, 800.0, 1600.0, 99999.0],
+            scene_imposter_multisample: false,
+            scene_imposter_multisample_amount: 0.0,
+            scene_imposter_bake: SceneImposterBake::Off,
+            parcel_grass_setting: Default::default(),
+            sysinfo_visible: false,
+            scene_log_to_console: false,
+            max_avatars: 20,
+            constrain_scene_ui: false,
+            player_settings: Default::default(),
+            max_videos: 1,
+            max_concurrent_remotes: 32,
+            user_id: uuid::Uuid::new_v4().to_string(),
+            default_permissions: Default::default(),
+            realm_permissions: Default::default(),
+            scene_permissions: Default::default(),
+            inputs: Default::default(),
+            point_at_marker_visibility: Default::default(),
+            dm_privacy: None,
+            camera_smoothing: Default::default(),
+            settings_generation: SETTINGS_GENERATION,
+            inputs_generation: INPUTS_GENERATION,
+            is_fresh_user_id: true,
+        }
+    }
+}
+
+impl AppConfig {
+    pub fn terms_accepted(&self) -> bool {
+        self.accepted_terms.is_some_and(|v| v >= TERMS_VERSION)
+    }
+
+    /// Parse a saved config. One that fails to parse (e.g. written by a newer build) falls back
+    /// to the default, keeping its user_id when that can still be read, in which case the file
+    /// is left alone rather than overwritten at startup.
+    pub fn from_json(json: &[u8]) -> Self {
+        #[derive(Deserialize)]
+        struct UserIdOnly {
+            user_id: String,
+        }
+
+        match serde_json::from_slice(json) {
+            Ok(config) => config,
+            Err(e) => {
+                warn!("failed to parse config.json: {e}");
+                let mut config = Self::default();
+                if let Ok(UserIdOnly { user_id }) = serde_json::from_slice(json) {
+                    config.user_id = user_id;
+                    config.is_fresh_user_id = false;
+                }
+                config
+            }
+        }
+    }
+
+    /// The effective home realm: the pinned value, else the base-domain-derived default.
+    pub fn home_realm(&self) -> String {
+        self.home_realm.clone().unwrap_or_else(default_home_realm)
+    }
+
+    /// The effective home parcel: the pinned value, else 0,0.
+    pub fn home_location(&self) -> IVec2 {
+        self.home_location.unwrap_or(IVec2::ZERO)
+    }
+
+    /// one-time migrations for configs saved with an older generation, keeping everything
+    /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
+    /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
+    pub fn reset_outdated_settings(&mut self) {
+        if self.settings_generation >= SETTINGS_GENERATION {
+            return;
+        }
+        let default = Self::default();
+        if self.settings_generation < 1 {
+            self.reset_preset_settings(&default);
+        }
+        if self.settings_generation < 2 && self.graphics.bloom == BloomSetting::High {
+            self.graphics.bloom = default.graphics.bloom;
+        }
+        self.settings_generation = SETTINGS_GENERATION;
+    }
+
+    fn reset_preset_settings(&mut self, default: &Self) {
+        self.graphics.msaa = default.graphics.msaa;
+        self.graphics.shadow_distance = default.graphics.shadow_distance;
+        self.graphics.shadow_settings = default.graphics.shadow_settings;
+        self.graphics.light_count = default.graphics.light_count;
+        self.graphics.shadow_caster_count = default.graphics.shadow_caster_count;
+        self.graphics.fog = default.graphics.fog;
+        self.graphics.bloom = default.graphics.bloom;
+        self.graphics.dof = default.graphics.dof;
+        self.graphics.ssao = default.graphics.ssao;
+        self.graphics.sky_reflections = default.graphics.sky_reflections;
+        self.graphics.oob = default.graphics.oob;
+        self.scene_load_distance = default.scene_load_distance;
+        self.scene_unload_extra_distance = default.scene_unload_extra_distance;
+        self.scene_imposter_distances = default.scene_imposter_distances.clone();
+        self.scene_imposter_multisample = default.scene_imposter_multisample;
+        self.scene_imposter_multisample_amount = default.scene_imposter_multisample_amount;
+        self.parcel_grass_setting = default.parcel_grass_setting;
+        self.max_avatars = default.max_avatars;
+        self.max_videos = default.max_videos;
+    }
+
+    /// migrate saved input tables: replace bindings still on changed old defaults
+    /// (RollLeft/RollRight KeyT/KeyG freed for ChatPanel/Gallery, quick emotes moved off
+    /// the Action 3-6 digits onto the numpad), and add defaults for any actions the saved
+    /// table doesn't mention
+    pub fn migrate_inputs(&mut self) {
+        if self.inputs_generation < INPUTS_GENERATION {
+            for (action, bindings) in self.inputs.0.iter_mut() {
+                let (old_default, new_default) = match action {
+                    Action::System(SystemAction::RollLeft) => (KeyCode::KeyT, None),
+                    Action::System(SystemAction::RollRight) => (KeyCode::KeyG, None),
+                    Action::System(SystemAction::QuickEmote0) => {
+                        (KeyCode::Digit0, Some(KeyCode::Numpad0))
+                    }
+                    Action::System(SystemAction::QuickEmote1) => {
+                        (KeyCode::Digit1, Some(KeyCode::Numpad1))
+                    }
+                    Action::System(SystemAction::QuickEmote2) => {
+                        (KeyCode::Digit2, Some(KeyCode::Numpad2))
+                    }
+                    Action::System(SystemAction::QuickEmote3) => {
+                        (KeyCode::Digit3, Some(KeyCode::Numpad3))
+                    }
+                    Action::System(SystemAction::QuickEmote4) => {
+                        (KeyCode::Digit4, Some(KeyCode::Numpad4))
+                    }
+                    Action::System(SystemAction::QuickEmote5) => {
+                        (KeyCode::Digit5, Some(KeyCode::Numpad5))
+                    }
+                    Action::System(SystemAction::QuickEmote6) => {
+                        (KeyCode::Digit6, Some(KeyCode::Numpad6))
+                    }
+                    Action::System(SystemAction::QuickEmote7) => {
+                        (KeyCode::Digit7, Some(KeyCode::Numpad7))
+                    }
+                    Action::System(SystemAction::QuickEmote8) => {
+                        (KeyCode::Digit8, Some(KeyCode::Numpad8))
+                    }
+                    Action::System(SystemAction::QuickEmote9) => {
+                        (KeyCode::Digit9, Some(KeyCode::Numpad9))
+                    }
+                    _ => continue,
+                };
+                if *bindings == [InputIdentifier::Key(old_default)] {
+                    *bindings = new_default.map(InputIdentifier::Key).into_iter().collect();
+                }
+            }
+            self.inputs_generation = INPUTS_GENERATION;
+        }
+        // ShowProfile is legacy (see the SystemAction variant): drop saved rows so the dead
+        // action neither lingers in tables nor resurfaces anywhere.
+        self.inputs
+            .0
+            .retain(|(action, _)| *action != Action::System(SystemAction::ShowProfile));
+        for (action, bindings) in InputMapSerialized::default().0 {
+            if !self
+                .inputs
+                .0
+                .iter()
+                .any(|(existing, _)| *existing == action)
+            {
+                self.inputs.0.push((action, bindings));
+            }
+        }
+        // fixed bindings can never be removed — re-add any a saved table has lost.
+        for (action, id) in crate::inputs::FIXED_BINDINGS {
+            match self.inputs.0.iter_mut().find(|(a, _)| *a == action) {
+                Some((_, bindings)) => {
+                    if !bindings.contains(&id) {
+                        bindings.push(id);
+                    }
+                }
+                None => self.inputs.0.push((action, vec![id])),
+            }
+        }
+    }
+
+    pub fn get_permission(
+        &self,
+        ty: PermissionType,
+        realm: impl AsRef<str>,
+        scene: impl AsRef<str>,
+        is_portable: bool,
+    ) -> PermissionValue {
+        self.scene_permissions
+            .get(scene.as_ref())
+            .and_then(|map| map.get(&ty))
+            .or_else(|| {
+                if !is_portable {
+                    self.realm_permissions
+                        .get(realm.as_ref())
+                        .and_then(|map| map.get(&ty))
+                } else {
+                    None
+                }
+            })
+            .or_else(|| self.default_permissions.get(&ty))
+            .copied()
+            .unwrap_or_else(|| Self::default_permission(ty))
+    }
+
+    pub const fn default_permission(ty: PermissionType) -> PermissionValue {
+        match ty {
+            PermissionType::MovePlayer
+            | PermissionType::ForceCamera
+            | PermissionType::PlayEmote
+            | PermissionType::SetLocomotion
+            | PermissionType::HideAvatarsNametags
+            | PermissionType::DisableVoice
+            | PermissionType::OpenExplorerUi => PermissionValue::Allow,
+            _ => PermissionValue::Ask,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+#[serde(default)]
+pub struct GraphicsSettings {
+    pub vsync: bool,
+    pub log_fps: bool,
+    pub msaa: AaSetting,
+    pub fps_target: usize,
+    pub shadow_distance: f32,
+    pub shadow_settings: ShadowSetting,
+    pub light_count: usize,
+    pub shadow_caster_count: usize,
+    pub window: WindowSetting,
+    // removed until bevy window resizing bugs are fixed
+    // pub fullscreen_res: FullscreenResSetting,
+    pub fog: FogSetting,
+    pub bloom: BloomSetting,
+    pub dof: DofSetting,
+    pub ssao: SsaoSetting,
+    pub sky_reflections: SkyReflectionSetting,
+    pub oob: f32,
+    pub ambient_brightness: i32,
+    /// cel-shade avatars (toon shading) instead of standard PBR
+    pub cel_shading: bool,
+    /// draw the dark edge outline around avatars
+    pub avatar_outline: bool,
+    pub gpu_bytes_per_frame: usize,
+    /// share of the screen's device pixels the web canvas renders at
+    pub render_scale: f32,
+}
+
+impl Default for GraphicsSettings {
+    fn default() -> Self {
+        Self {
+            vsync: false,
+            log_fps: !cfg!(target_arch = "wasm32"),
+            msaa: AaSetting::FxaaLow,
+            fps_target: 60,
+            shadow_distance: 20.0,
+            shadow_settings: ShadowSetting::Low,
+            light_count: 4,
+            shadow_caster_count: 0,
+            window: WindowSetting::Windowed,
+            // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
+            fog: FogSetting::Atmospheric,
+            bloom: BloomSetting::Low,
+            dof: DofSetting::High,
+            ssao: SsaoSetting::Off,
+            sky_reflections: SkyReflectionSetting::High,
+            oob: 2.0,
+            ambient_brightness: 50,
+            cel_shading: true,
+            avatar_outline: true,
+            gpu_bytes_per_frame: if cfg!(target_arch = "wasm32") {
+                10_000_000
+            } else {
+                0
+            },
+            render_scale: 1.0,
+        }
+    }
+}
+
+/// Graphics a host page sets for this session only, such as the scene editor's viewport: never
+/// saved, and each one that is set wins over the player's own setting.
+#[derive(Resource, Default, Debug, Clone, PartialEq)]
+pub struct SessionGraphics {
+    pub fps_target: Option<usize>,
+    pub parcel_grass: Option<ParcelGrassSetting>,
+    pub render_scale: Option<f32>,
+}
+
+impl SessionGraphics {
+    /// The lowest render scale a host can set. It is below the player's Render Resolution floor
+    /// (50%) on purpose: a player needs the world sharp enough to play in, while a host such as
+    /// the editor on a weak machine may trade more sharpness for frame rate.
+    pub const MIN_RENDER_SCALE: f32 = 0.25;
+
+    pub fn fps_target(&self, config: &AppConfig) -> usize {
+        self.fps_target.unwrap_or(config.graphics.fps_target)
+    }
+
+    pub fn parcel_grass(&self, config: &AppConfig) -> ParcelGrassSetting {
+        self.parcel_grass.unwrap_or(config.parcel_grass_setting)
+    }
+
+    pub fn render_scale(&self, config: &AppConfig) -> f32 {
+        self.render_scale.unwrap_or(config.graphics.render_scale)
+    }
+}
+
+#[derive(Debug)]
+pub enum AudioType {
+    Voice,
+    Scene,
+    System,
+    Avatar,
+}
+
+#[derive(Resource, Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct AudioSettings {
+    pub master: i32, // 0-100
+    pub voice: i32,
+    pub scene: i32,
+    pub system: i32,
+    pub avatar: i32,
+}
+
+impl Default for AudioSettings {
+    fn default() -> Self {
+        Self {
+            master: 100,
+            voice: 100,
+            scene: 100,
+            system: 100,
+            avatar: 100,
+        }
+    }
+}
+
+impl AudioSettings {
+    pub fn voice(&self) -> f32 {
+        (self.voice * self.master) as f32 / 10_000.0
+    }
+    pub fn scene(&self) -> f32 {
+        (self.scene * self.master) as f32 / 10_000.0
+    }
+    pub fn system(&self) -> f32 {
+        (self.system * self.master) as f32 / 10_000.0
+    }
+    pub fn avatar(&self) -> f32 {
+        (self.avatar * self.master) as f32 / 10_000.0
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ShadowSetting {
+    Off,
+    Low,
+    High,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum AaSetting {
+    Off,
+    FxaaLow,
+    FxaaHigh,
+    Msaa2x,
+    Msaa4x,
+    Msaa8x,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WindowSetting {
+    #[cfg(not(target_arch = "wasm32"))]
+    Fullscreen,
+    Windowed,
+    Borderless,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FullscreenResSetting(pub UVec2);
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FogSetting {
+    Off,
+    Basic,
+    Atmospheric,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BloomSetting {
+    Off,
+    Low,
+    High,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DofSetting {
+    Off,
+    Low,
+    High,
+}
+
+#[derive(Component)]
+// (sensor height, extra focal distance)
+pub struct DofConfig {
+    pub default_sensor_height: f32,
+    pub extra_focal_distance: f32,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SsaoSetting {
+    Off,
+    Low,
+    High,
+}
+
+/// The sky environment map: the sky's reflections and ambient light.
+#[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SkyReflectionSetting {
+    /// one colour per direction: sky, horizon and ground
+    Low,
+    /// filtered reflections of the sky
+    High,
+}
+
+#[derive(Debug)]
+pub enum AudioDecoderError {
+    StreamClosed,
+    Other(String),
+}
+
+#[derive(Resource)]
+pub struct SceneLoadDistance {
+    pub load: f32,
+    pub unload: f32, // additional
+    pub load_imposter: f32,
+}
+
+#[derive(Debug)]
+pub struct IVec2Arg(pub IVec2);
+
+impl FromStr for IVec2Arg {
+    type Err = ParseIntError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut chars = s.chars().peekable();
+
+        let skip = |chars: &mut std::iter::Peekable<std::str::Chars>, numeric: bool| {
+            while numeric
+                == chars
+                    .peek()
+                    .map_or(!numeric, |c| c.is_numeric() || *c == '-')
+            {
+                chars.next();
+            }
+        };
+
+        let parse = |chars: &std::iter::Peekable<std::str::Chars>| {
+            chars
+                .clone()
+                .take_while(|c| c.is_numeric() || *c == '-')
+                .collect::<String>()
+                .parse::<i32>()
+        };
+
+        skip(&mut chars, false);
+        let x = parse(&chars)?;
+        skip(&mut chars, true);
+        skip(&mut chars, false);
+        let y = parse(&chars)?;
+
+        Ok(IVec2Arg(IVec2::new(x, y)))
+    }
+}
+
+// scene metadata
+#[derive(Deserialize, Debug, Clone)]
+pub struct SpawnPosition {
+    x: serde_json::Value,
+    y: serde_json::Value,
+    z: serde_json::Value,
+}
+
+impl SpawnPosition {
+    pub fn bounding_box(&self) -> (Vec3, Vec3) {
+        let parse_val = |v: &serde_json::Value| -> Option<Range<f32>> {
+            if let Some(val) = v.as_f64() {
+                Some(val as f32..val as f32)
+            } else if let Some(array) = v.as_array() {
+                if let Some(mut start) = array.first().and_then(|s| s.as_f64()) {
+                    let mut end = array.get(1).and_then(|e| e.as_f64()).unwrap_or(start);
+                    if end < start {
+                        (start, end) = (end, start);
+                    }
+                    Some(start as f32..end as f32)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        let x = parse_val(&self.x).unwrap_or(0.0..16.0);
+        let y = parse_val(&self.y).unwrap_or(0.0..0.0);
+        let z = parse_val(&self.z).unwrap_or(0.0..16.0);
+
+        (
+            Vec3::new(x.start, y.start, z.start),
+            Vec3::new(x.end, y.end, z.end),
+        )
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct SpawnPoint {
+    pub name: Option<String>,
+    #[serde(default)]
+    pub default: bool,
+    pub position: SpawnPosition,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct SceneMetaScene {
+    pub base: String,
+    pub parcels: Vec<String>,
+}
+
+#[derive(Deserialize, Debug)]
+pub struct SceneDisplay {
+    pub title: Option<String>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SkyboxConfig {
+    pub fixed_time: Option<f32>,
+}
+
+#[derive(Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneMeta {
+    pub owner: Option<String>,
+    pub display: Option<SceneDisplay>,
+    pub main: String,
+    pub scene: SceneMetaScene,
+    pub runtime_version: Option<String>,
+    pub spawn_points: Option<Vec<SpawnPoint>>,
+    pub skybox_config: Option<SkyboxConfig>,
+    pub authoritative_multiplayer: Option<bool>,
+}
+
+pub trait PermissionStrings {
+    fn active(&self) -> &str;
+    fn passive(&self) -> &str;
+    fn title(&self) -> &str;
+    fn request(&self) -> String;
+    fn on_success(&self, portable: Option<&str>, additional: Option<&str>) -> String;
+
+    fn on_fail(&self, portable: Option<&str>) -> String;
+    fn description(&self) -> String;
+}
+
+impl PermissionStrings for PermissionType {
+    fn title(&self) -> &str {
+        match self {
+            PermissionType::MovePlayer => "Move Avatar",
+            PermissionType::ForceCamera => "Force Camera",
+            PermissionType::PlayEmote => "Play Emote",
+            PermissionType::SetLocomotion => "Set Locomotion",
+            PermissionType::HideAvatarsNametags => {
+                "Hide Avatars and/or Nametags, and/or disables Passports"
+            }
+            PermissionType::DisableVoice => "Disable Voice",
+            PermissionType::Teleport => "Teleport",
+            PermissionType::ChangeRealm => "Change Realm",
+            PermissionType::SpawnPortable => "Spawn Portable Experience",
+            PermissionType::KillPortables => "Manage Portable Experiences",
+            PermissionType::Web3 => "Web3 Transaction",
+            PermissionType::Fetch => "Fetch Data",
+            PermissionType::Websocket => "Open Websocket",
+            PermissionType::OpenUrl => "Open Url",
+            PermissionType::CopyToClipboard => "Copy to Clipboard",
+            PermissionType::OpenExplorerUi => "Open Explorer Menu",
+        }
+    }
+
+    fn request(&self) -> String {
+        format!("The scene wants permission to {}", self.passive())
+    }
+
+    fn description(&self) -> String {
+        format!(
+            "This permission is requested when scene attempts to {}",
+            self.passive()
+        )
+    }
+
+    fn on_success(&self, portable: Option<&str>, additional: Option<&str>) -> String {
+        format!(
+            "{} is {}{}(click to manage)",
+            match portable {
+                Some(portable) => format!("The portable scene {portable}"),
+                None => "The scene".to_owned(),
+            },
+            self.active(),
+            additional
+                .map(|add| format!(": {add} "))
+                .unwrap_or_default(),
+        )
+    }
+    fn on_fail(&self, portable: Option<&str>) -> String {
+        format!(
+            "{} was blocked from {} (click to manage)",
+            match portable {
+                Some(portable) => format!("The portable scene {portable}"),
+                None => "The scene".to_owned(),
+            },
+            self.active()
+        )
+    }
+
+    fn passive(&self) -> &str {
+        match self {
+            PermissionType::MovePlayer => "move your avatar within the scene bounds",
+            PermissionType::ForceCamera => "temporarily change the camera view",
+            PermissionType::PlayEmote => "make your avatar perform an emote",
+            PermissionType::SetLocomotion => "temporarily modify your avatar's locomotion settings",
+            PermissionType::HideAvatarsNametags => {
+                "temporarily hide player avatars and/or nametags, and/or disables passports"
+            }
+            PermissionType::DisableVoice => "temporarily disable voice chat",
+            PermissionType::Teleport => "teleport you to a new location",
+            PermissionType::ChangeRealm => "move you to a new realm",
+            PermissionType::SpawnPortable => "spawn a portable experience",
+            PermissionType::KillPortables => "manage your active portable experiences",
+            PermissionType::Web3 => "initiate a web3 transaction with your wallet",
+            PermissionType::Fetch => "fetch data from a remote server",
+            PermissionType::Websocket => "open a web socket to communicate with a remote server",
+            PermissionType::OpenUrl => "open a url in your browser",
+            PermissionType::CopyToClipboard => "copy text into the clipboard",
+            PermissionType::OpenExplorerUi => {
+                "open an explorer menu panel (map, backpack, settings, ...)"
+            }
+        }
+    }
+
+    fn active(&self) -> &str {
+        match self {
+            PermissionType::MovePlayer => "moving your avatar",
+            PermissionType::ForceCamera => "enforcing the camera view",
+            PermissionType::PlayEmote => "making your avatar perform an emote",
+            PermissionType::SetLocomotion => "enforcing your locomotion settings",
+            PermissionType::HideAvatarsNametags => {
+                "hiding some avatars and/or nametags, and/or disables passports"
+            }
+            PermissionType::DisableVoice => "disabling voice communications",
+            PermissionType::Teleport => "teleporting you to a new location",
+            PermissionType::ChangeRealm => "teleporting you to a new realm",
+            PermissionType::SpawnPortable => "spawning a portable experience",
+            PermissionType::KillPortables => "managing your active portables",
+            PermissionType::Web3 => "initiating a web3 transaction",
+            PermissionType::Fetch => "fetching remote data",
+            PermissionType::Websocket => "opening a websocket",
+            PermissionType::OpenUrl => "opening a url in your browser",
+            PermissionType::CopyToClipboard => "copying text into the clipboard",
+            PermissionType::OpenExplorerUi => "opening an explorer menu panel",
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Event)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionUsed {
+    pub ty: PermissionType,
+    pub additional: Option<String>,
+    pub scene: String,
+    pub was_allowed: bool,
+}
+
+#[derive(Resource)]
+pub struct ActiveDialog(Arc<Semaphore>);
+
+impl Default for ActiveDialog {
+    fn default() -> Self {
+        Self(Arc::new(Semaphore::new(1)))
+    }
+}
+
+impl ActiveDialog {
+    pub fn try_acquire(&self) -> Option<DialogPermit> {
+        self.0
+            .clone()
+            .try_acquire_owned()
+            .ok()
+            .map(|p| DialogPermit { _p: Some(p) })
+    }
+
+    pub fn in_use(&self) -> bool {
+        self.0.available_permits() == 0
+    }
+}
+
+#[derive(Component)]
+pub struct DialogPermit {
+    _p: Option<OwnedSemaphorePermit>,
+}
+
+impl DialogPermit {
+    pub fn take(&mut self) -> Self {
+        Self {
+            _p: Some(self._p.take().unwrap()),
+        }
+    }
+}
+
+#[derive(Event, Clone)]
+pub struct SystemAudio(pub String);
+
+impl From<&str> for SystemAudio {
+    fn from(value: &str) -> Self {
+        Self(value.to_owned())
+    }
+}
+
+impl From<String> for SystemAudio {
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&String> for SystemAudio {
+    fn from(value: &String) -> Self {
+        Self(value.to_owned())
+    }
+}
+
+// render layers
+// 0 is default
+// - normally 0 and 1 is used for the player, when in first person only 1 is used for the player
+// - world lights target both 0 and 1, the main camera uses 0
+// - this allows shadows to be cast by the player without the player being visible
+pub const PRIMARY_AVATAR_LIGHT_LAYER_INDEX: usize = 1;
+pub const PRIMARY_AVATAR_LIGHT_LAYER: RenderLayers =
+    RenderLayers::layer(PRIMARY_AVATAR_LIGHT_LAYER_INDEX);
+// layer for profile content
+pub const PROFILE_UI_RENDERLAYER: RenderLayers = RenderLayers::layer(3);
+// layer for ground
+pub const GROUND_RENDERLAYER: RenderLayers = RenderLayers::layer(4);
+
+#[derive(PartialEq, Eq, Clone, Copy, Serialize, Deserialize)]
+pub enum SceneImposterBake {
+    Off,
+    FullSpeed,
+    HalfSpeed,
+    QuarterSpeed,
+}
+
+impl SceneImposterBake {
+    pub fn as_mult(&self) -> f32 {
+        match self {
+            SceneImposterBake::Off => panic!(),
+            SceneImposterBake::FullSpeed => 1.0,
+            SceneImposterBake::HalfSpeed => 0.5,
+            SceneImposterBake::QuarterSpeed => 0.25,
+        }
+    }
+}
+
+#[derive(Resource, Default)]
+pub struct CursorLocks(pub HashSet<&'static str>);
+
+/// Controls engine-level overrides to avatar movement, independent of scene-driven movement.
+#[derive(Resource, Default)]
+pub struct EngineMovementControl {
+    /// Non-empty means collision/clipping is disabled (e.g. "noclip" from /idnoclip)
+    pub suppress_clipping: HashSet<&'static str>,
+    /// Non-empty means avatar physics movement systems are suppressed (e.g. "move_player_to" during interpolation)
+    pub suppress_avatar_physics: HashSet<&'static str>,
+    /// Scene-driven `AvatarMovement` is ignored (physics suppressed) until a tick
+    /// initiated strictly after this time (engine dispatch clock, `last_sent` secs)
+    /// is received. Set by `movePlayerTo` when it imposes a facing, so the imposed
+    /// orientation survives until the controller scene reads the new transform and
+    /// echoes it back, rather than being clobbered by an in-flight stale tick.
+    pub accept_movement_after: f64,
+    /// Set by `movePlayerTo` (teleport or interpolation end): the scene deliberately
+    /// placed the player here, possibly inside a collider (sit-on-chair emotes).
+    /// While set, depenetration is not applied in x/z and the sweep ignores colliders
+    /// the player starts inside; movement is only clamped to not go deeper. Cleared
+    /// by `resolve_collisions` once no correction is required.
+    pub deliberate_penetration: bool,
+    /// While `deliberate_penetration` is set: the per-axis depenetration bounds
+    /// (min, max) relative to the current transform, refreshed each frame by
+    /// `resolve_collisions`. `min.axis > 0` means the eject direction is +axis.
+    pub penetration_bounds: (DVec3, DVec3),
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum MoveKind {
+    #[default]
+    Idle,
+    Walk,
+    Jog,
+    Run,
+    Jump,
+    /// In-air second jump. Set on foreign avatars when the incoming rfc4::Movement
+    /// reports jump_count >= 2 and there's no scene-driven animation to take
+    /// precedence; the velocity picker emits the `double_jump` emote for it.
+    DoubleJump,
+    Falling,
+    LongFalling,
+    /// Gliding state. Set on foreign avatars when rfc4::Movement.glide_state is
+    /// OPENING_PROP or GLIDING and there's no scene-driven animation; the
+    /// velocity picker emits the `glide` emote.
+    Glide,
+    Emote,
+}
+
+#[derive(Component, Default)]
+pub struct AvatarDynamicState {
+    pub velocity: Vec3,
+    pub ground_height: f32,
+    pub jump_time: f64,
+    pub move_kind: MoveKind,
+}
+
+#[derive(Event)]
+pub enum PreviewCommand {
+    ReloadScene {
+        hash: String,
+    },
+    ReloadModel {
+        hash: String,
+        src: String,
+        scene_id: String,
+    },
+    RemoveModel {
+        hash: String,
+        src: String,
+        scene_id: String,
+    },
+}
+
+impl From<ws_scene_message::Message> for PreviewCommand {
+    fn from(value: ws_scene_message::Message) -> Self {
+        match value {
+            ws_scene_message::Message::UpdateScene(update_scene) => Self::ReloadScene {
+                hash: update_scene.scene_id.to_owned(),
+            },
+            ws_scene_message::Message::UpdateModel(update_model) => match update_model.r#type() {
+                UpdateModelType::UmtChange => Self::ReloadModel {
+                    hash: update_model.hash.to_owned(),
+                    src: update_model.src.to_owned(),
+                    scene_id: update_model.scene_id.to_owned(),
+                },
+                UpdateModelType::UmtRemove => Self::RemoveModel {
+                    hash: update_model.hash.to_owned(),
+                    src: update_model.src.to_owned(),
+                    scene_id: update_model.scene_id.to_owned(),
+                },
+            },
+        }
+    }
+}
+
+/// The local player was instantly repositioned — a durationless `move_player_to`, a `teleport_player`,
+/// or a spawn snap — rather than walking there. Comms turns this into a Pulse `TeleportRequest` so peers
+/// snap to the new position instead of interpolating across the gap. `position` is Bevy world space.
+#[derive(Event)]
+pub struct PlayerTeleported {
+    pub position: Vec3,
+}
+
+/// Marks the local player as behind the loading screen — teleported or spawning, with a provisional
+/// position — until the destination scene resolves and they're placed in-world. Lives here (rather
+/// than `scene_runner`) so lower-level crates like `comms` can read it; `scene_runner` re-exports it.
+#[derive(Component)]
+pub struct OutOfWorld;
+
+/// The player is let back into the world (`OutOfWorld` removed), and why: the parcel scene is
+/// ready (or there is none), or it never will be and they go in regardless.
+#[derive(Event, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReturnedToWorld {
+    SceneReady,
+    /// the parcel scene hung past the not-responding timeout, errored or was unreachable
+    SceneBroken,
+    /// the parcel scene failed to load
+    SceneLoadFailed,
+}
+
+/// Holds the world back for a lobby shown before it: the realm is resolved (so sign-in, profiles
+/// and wearables work) and system scenes run, but no realm scenes or realm comms load. Released
+/// by the first successful realm change request.
+#[derive(Resource)]
+pub struct WorldHold;
+
+pub struct StartupScene {
+    pub source: String,
+    pub super_user: bool,
+    pub preview: bool,
+    pub hot_reload: Option<tokio::sync::mpsc::UnboundedSender<PreviewCommand>>,
+    pub hash: Option<String>,
+    /// the source didn't resolve: the scene is never coming
+    pub failed: bool,
+}
+
+#[derive(Resource)]
+pub struct StartupScenes {
+    pub scenes: Vec<StartupScene>,
+}
+
+#[derive(Resource, Default, Clone, Debug, PartialEq)]
+pub struct SceneGlobalLight {
+    pub source: Option<Entity>,
+    pub dir_color: Color,
+    pub dir_illuminance: f32,
+    pub dir_direction: Vec3,
+    /// the sun as the sky draws it. the same as the directional light by day, but it keeps
+    /// setting below the horizon at night while the light follows the moon
+    pub sun_illuminance: f32,
+    pub sun_direction: Vec3,
+    /// the ambient light the sky env map is levelled towards: white at the ambient brightness
+    /// setting unless a scene overrides it, as a tint and a multiplier
+    pub ambient_color: Color,
+    pub ambient_brightness: f32,
+    pub layers: RenderLayers,
+}
+
+#[derive(Resource)]
+pub struct TimeOfDay {
+    /// secs since midnight
+    pub time: f32,
+}
+
+impl TimeOfDay {
+    pub fn elapsed_secs(&self) -> f32 {
+        self.time
+    }
+}
+
+/// Vertical FOV of the active player camera, in radians. Pushed to scene
+/// workers via the GlobalCrdtState channel — defaulted on the worker side and
+/// updated when the renderer's camera projection changes.
+#[derive(Resource, Default, Clone, Copy, Debug)]
+pub struct CameraFov(pub f32);
+
+/// Fixed time defined on `scene.json` `skyboxConfig`
+#[derive(Component)]
+#[component(immutable)]
+pub struct SceneTime {
+    /// secs since midnight
+    pub time: f32,
+}
+
+// porting aid, used to be one component
+pub type TextStyle = (TextFont, TextColor);
+
+// non-spatial audio
+#[derive(Component, Debug)]
+pub struct AudioEmitter {
+    pub handle: Handle<bevy_kira_audio::AudioSource>,
+    pub playing: bool,
+    pub playback_speed: f32,
+    pub r#loop: bool,
+    pub volume: f32,
+    pub global: bool,
+    pub seek_time: Option<f32>,
+    pub ty: AudioType,
+}
+
+impl Default for AudioEmitter {
+    fn default() -> Self {
+        Self {
+            handle: default(),
+            playing: true,
+            playback_speed: 1.0,
+            r#loop: false,
+            volume: 1.0,
+            global: false,
+            seek_time: None,
+            ty: AudioType::System,
+        }
+    }
+}
+
+// despawns the `AudioEmitter` entity once its (non-looping) sound has finished playing
+#[derive(Component, Debug, Default)]
+pub struct OneShotAudio;
+
+#[derive(Clone, Copy)]
+#[repr(i32)]
+pub enum ZOrder {
+    Crosshair = -65536,
+    // PortableScene -> -65535 <= value <= -1
+    // default 0 => appear in world, under scene ui
+    PointAtMarker = 1,
+    OutOfWorldBackdrop,
+    SceneUi,
+    SceneUiOverlay,
+    SystemSceneUi,
+    SystemSceneUiOverlay,
+    MouseInteractionComponent,
+    SceneLoadingDialog,
+    ChatBubble,
+    NftDialog,
+    EmoteSelect,
+    ProfileView,
+    Login,
+    Minimap,
+    SystemUi,
+    ToolTip,
+    Backpack,
+    BackpackPopup,
+    Toast,
+    Permission,
+    DefaultComboPopup,
+}
+
+impl ZOrder {
+    pub fn default(self) -> GlobalZIndex {
+        GlobalZIndex(self as i32)
+    }
+}
+
+#[derive(Event, Debug)]
+pub enum AppError {
+    NetworkFailure(anyhow::Error),
+}
+
+#[derive(Resource, Default, Serialize, Deserialize, Clone)]
+pub struct MicState {
+    pub available: bool,
+    pub enabled: bool,
+}
+
+#[derive(Debug, Resource, Default)]
+pub struct PreviewMode {
+    pub server: Option<String>,
+    pub is_preview: bool,
+    pub preview_parcel: Option<IVec2>,
+}
+
+/// Render out-of-bounds geometry (dithered) instead of culling it. Set at startup
+/// (preview, a loopback realm, or editor mode — never a public realm); read by
+/// scene_material's show-outside-bounds observer.
+#[derive(Debug, Resource, Default)]
+pub struct ShowOutOfBounds(pub bool);
+
+/// True when the explorer is embedded in a scene editor (the explicit `--editor` arg /
+/// `editor` web boot param — the editor host is expected to unfreeze scenes when the
+/// user hits play). Set once at startup; freezes a scene after main() has run once so
+/// the initial state is deterministic. Default false; NOT implied by preview or a
+/// loopback realm — plain previews must free-run.
+#[derive(Debug, Resource, Default)]
+pub struct EditorMode(pub bool);
+
+// resource into which systems can add debug info
+#[derive(Resource, Default, Debug)]
+pub struct DebugInfo {
+    pub info: HashMap<&'static str, String>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub enum GlobalCrdtStateUpdate {
+    Crdt(Vec<u8>, dcl_component::Localizer),
+    Time(f32),
+    /// Vertical FOV of the active camera, in radians. Pushed when the value
+    /// changes (camera zoom etc.).
+    CameraFov(f32),
+}
+
+// used for responses to scenes which require strict monotonic timestamps
+// by convention we use T = the protobuf struct containing the timestamp (e.g. PbPointerEventsResult, PbTriggerAreaResult)
+#[derive(Resource)]
+pub struct MonotonicTimestamp<T>(AtomicU32, PhantomData<fn() -> T>);
+
+impl<T> Default for MonotonicTimestamp<T> {
+    fn default() -> Self {
+        Self(Default::default(), Default::default())
+    }
+}
+
+impl<T> MonotonicTimestamp<T> {
+    pub fn next_timestamp(&self) -> u32 {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ParcelGrassSetting {
+    Off,
+    #[default]
+    Low,
+    Mid,
+    High,
+}
+
+impl Deref for ParcelGrassSetting {
+    type Target = ParcelGrassConfig;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Off => &ParcelGrassConfig {
+                layers: 0,
+                subdivisions: 32,
+                y_displacement: 0.04,
+                root_color: Color::Srgba(ParcelGrassConfig::ROOT_COLOR),
+                tip_color: Color::Srgba(ParcelGrassConfig::TIP_COLOR),
+            },
+            Self::Low => &ParcelGrassConfig {
+                layers: 8,
+                subdivisions: 32,
+                y_displacement: 0.02,
+                root_color: Color::Srgba(ParcelGrassConfig::ROOT_COLOR),
+                tip_color: Color::Srgba(ParcelGrassConfig::TIP_COLOR),
+            },
+            Self::Mid => &ParcelGrassConfig {
+                layers: 16,
+                subdivisions: 32,
+                y_displacement: 0.02,
+                root_color: Color::Srgba(ParcelGrassConfig::ROOT_COLOR),
+                tip_color: Color::Srgba(ParcelGrassConfig::TIP_COLOR),
+            },
+            Self::High => &ParcelGrassConfig {
+                layers: 32,
+                subdivisions: 32,
+                y_displacement: 0.01,
+                root_color: Color::Srgba(ParcelGrassConfig::ROOT_COLOR),
+                tip_color: Color::Srgba(ParcelGrassConfig::TIP_COLOR),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Copy, Resource, Serialize, Deserialize)]
+pub struct ParcelGrassConfig {
+    pub layers: u32,
+    pub subdivisions: u32,
+    pub y_displacement: f32,
+    pub root_color: Color,
+    pub tip_color: Color,
+}
+
+impl ParcelGrassConfig {
+    pub const ROOT_COLOR: Srgba = palettes::tailwind::LIME_800;
+    pub const TIP_COLOR: Srgba = palettes::tailwind::LIME_600;
+}
+
+impl Default for ParcelGrassConfig {
+    fn default() -> Self {
+        Self {
+            layers: 32,
+            subdivisions: 32,
+            y_displacement: 0.01,
+            root_color: Self::ROOT_COLOR.into(),
+            tip_color: Self::TIP_COLOR.into(),
+        }
+    }
+}
+
+#[derive(Resource, Default, Debug)]
+pub struct CurrentRealm {
+    pub about_url: String,
+    pub address: String,
+    pub connected: bool,
+    pub config: ServerConfiguration,
+    pub comms: Option<CommsConfig>,
+    pub public_url: String,
+}
+
+impl CurrentRealm {
+    /// Serves a project being developed (a `dcl start` server, or the web editor's preview), which
+    /// it signals by listing the project's parcels in its `about`.
+    pub fn is_local(&self) -> bool {
+        self.config
+            .local_scene_parcels
+            .as_ref()
+            .is_some_and(|parcels| !parcels.is_empty())
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CommsConfig {
+    pub healthy: bool,
+    pub protocol: String,
+    pub fixed_adapter: Option<String>,
+    pub adapter: Option<String>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ServerConfiguration {
+    pub scenes_urn: Option<Vec<String>>,
+    pub realm_name: Option<String>,
+    pub network_id: Option<u32>,
+    pub city_loader_content_server: Option<String>,
+    pub map: Option<MapData>,
+    pub local_scene_parcels: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MapData {
+    pub minimap_enabled: Option<bool>,
+    #[serde(default, deserialize_with = "lenient_satellite_view")]
+    pub satellite_view: Option<SatelliteView>,
+    pub sizes: Vec<Region>,
+}
+
+// A malformed satellite view is treated as absent rather than failing the whole `/about`.
+fn lenient_satellite_view<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<SatelliteView>, D::Error> {
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).ok())
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Region {
+    pub left: i32,
+    pub right: i32,
+    pub top: i32,
+    pub bottom: i32,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PointAtMarkerVisibility {
+    #[default]
+    All,
+    Friends,
+    None,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CameraSmoothing {
+    Raw,
+    #[default]
+    Smoothed,
+    Drunk,
+}
+
+impl CameraSmoothing {
+    /// exponential smoothing rate; `None` means no smoothing
+    pub fn rate(&self) -> Option<f32> {
+        match self {
+            CameraSmoothing::Raw => None,
+            CameraSmoothing::Smoothed => Some(15.0),
+            CameraSmoothing::Drunk => Some(5.0),
+        }
+    }
+}
+
+#[derive(Event)]
+pub struct PointAtMarkerVisibilityChanged;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn migrate_inputs_updates_old_tables() {
+        // a table saved before Places/Gallery/etc existed, with old roll defaults and
+        // one deliberate user customization
+        let mut config = AppConfig {
+            inputs: InputMapSerialized(
+                vec![
+                    (
+                        Action::System(SystemAction::RollLeft),
+                        vec![InputIdentifier::Key(KeyCode::KeyT)],
+                    ),
+                    (
+                        Action::System(SystemAction::RollRight),
+                        vec![InputIdentifier::Key(KeyCode::KeyR)],
+                    ),
+                    // a fixed binding the user managed to strip (older build)
+                    (Action::System(SystemAction::ScrollUp), vec![]),
+                    // legacy action from an old default table
+                    (
+                        Action::System(SystemAction::ShowProfile),
+                        vec![InputIdentifier::Gamepad(
+                            bevy::input::gamepad::GamepadButton::North,
+                        )],
+                    ),
+                    // quick emote still on its old digit default, and one rebound
+                    (
+                        Action::System(SystemAction::QuickEmote3),
+                        vec![InputIdentifier::Key(KeyCode::Digit3)],
+                    ),
+                    (
+                        Action::System(SystemAction::QuickEmote4),
+                        vec![InputIdentifier::Key(KeyCode::KeyX)],
+                    ),
+                ],
+                Default::default(),
+            ),
+            inputs_generation: 0,
+            ..Default::default()
+        };
+
+        config.migrate_inputs();
+
+        fn get(config: &AppConfig, action: SystemAction) -> Option<Vec<InputIdentifier>> {
+            config
+                .inputs
+                .0
+                .iter()
+                .find(|(a, _)| *a == Action::System(action))
+                .map(|(_, bindings)| bindings.clone())
+        }
+
+        // old default cleared, user customization preserved
+        assert_eq!(get(&config, SystemAction::RollLeft), Some(vec![]));
+        assert_eq!(
+            get(&config, SystemAction::RollRight),
+            Some(vec![InputIdentifier::Key(KeyCode::KeyR)])
+        );
+        // missing actions merged in with their defaults
+        assert_eq!(
+            get(&config, SystemAction::Places),
+            Some(vec![InputIdentifier::Key(KeyCode::KeyZ)])
+        );
+        assert_eq!(config.inputs_generation, INPUTS_GENERATION);
+        // fixed bindings restored: the wheel always scrolls
+        assert_eq!(
+            get(&config, SystemAction::ScrollUp),
+            Some(vec![InputIdentifier::Analog(
+                crate::inputs::AxisIdentifier::MouseWheel,
+                crate::inputs::InputDirection::Up
+            )])
+        );
+        // the legacy ShowProfile row is stripped, not merged back
+        assert_eq!(get(&config, SystemAction::ShowProfile), None);
+        // quick emotes: old digit default remapped to the numpad, a rebind preserved
+        assert_eq!(
+            get(&config, SystemAction::QuickEmote3),
+            Some(vec![InputIdentifier::Key(KeyCode::Numpad3)])
+        );
+        assert_eq!(
+            get(&config, SystemAction::QuickEmote4),
+            Some(vec![InputIdentifier::Key(KeyCode::KeyX)])
+        );
+
+        // re-running after a deliberate rebind back to KeyT doesn't clear it again
+        let roll_left = config
+            .inputs
+            .0
+            .iter_mut()
+            .find(|(a, _)| *a == Action::System(SystemAction::RollLeft))
+            .unwrap();
+        roll_left.1 = vec![InputIdentifier::Key(KeyCode::KeyT)];
+        config.migrate_inputs();
+        assert_eq!(
+            get(&config, SystemAction::RollLeft),
+            Some(vec![InputIdentifier::Key(KeyCode::KeyT)])
+        );
+    }
+
+    #[test]
+    fn malformed_satellite_view_is_absent() {
+        let parse = |map: &str| serde_json::from_str::<MapData>(map).unwrap().satellite_view;
+
+        let genesis = parse(
+            r#"{"minimapEnabled":true,"sizes":[],"satelliteView":{"version":"v1","baseUrl":"https://genesis.city/map/latest","suffixUrl":".jpg","topLeftOffset":{"x":-2,"y":-6}}}"#,
+        )
+        .unwrap();
+        assert_eq!(genesis.base_url, "https://genesis.city/map/latest");
+        assert_eq!(genesis.top_left_offset.y, -6.0);
+
+        assert!(parse(r#"{"minimapEnabled":false,"sizes":[]}"#).is_none());
+        assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":null}}"#).is_none());
+        assert!(parse(r#"{"sizes":[],"satelliteView":{"topLeftOffset":{"x":1}}}"#).is_none());
+        assert!(parse(r#"{"sizes":[],"satelliteView":{"version":1}}"#).is_none());
+    }
+}
+
+/// Who may DM a user.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DmPrivacy {
+    #[default]
+    All,
+    OnlyFriends,
+}
+
+impl From<PrivateMessagePrivacySetting> for DmPrivacy {
+    fn from(value: PrivateMessagePrivacySetting) -> Self {
+        match value {
+            PrivateMessagePrivacySetting::All => DmPrivacy::All,
+            PrivateMessagePrivacySetting::OnlyFriends => DmPrivacy::OnlyFriends,
+        }
+    }
+}
+
+impl From<DmPrivacy> for PrivateMessagePrivacySetting {
+    fn from(value: DmPrivacy) -> Self {
+        match value {
+            DmPrivacy::All => PrivateMessagePrivacySetting::All,
+            DmPrivacy::OnlyFriends => PrivateMessagePrivacySetting::OnlyFriends,
+        }
+    }
+}
+
+/// Another user's DM privacy, as returned by `GetPrivateMessagesSettings`.
+#[derive(Clone, Debug)]
+pub struct DmPrivacyOf {
+    pub address: String,
+    pub privacy: DmPrivacy,
+}
+
+/// A scene's javascript, as loaded from its content
+#[derive(Asset, Debug, Clone, TypePath)]
+pub struct SceneJsFile(pub Arc<String>);
+
+/// A world password the HUD must ask for (see `ipfs::world_access`); answered with the password,
+/// or `None` when the player gives up. Dropped unanswered when the realm change no longer needs it.
+pub struct WorldPasswordPrompt {
+    pub world: String,
+    /// Why the previous answer was refused; `None` on the first ask
+    pub error: Option<String>,
+    pub answer: tokio::sync::oneshot::Sender<Option<String>>,
+}
+
+/// Where world password prompts go, installed by whatever shows them (the system bridge). Without
+/// it a password-protected world can't be entered.
+#[derive(Resource, Clone)]
+pub struct WorldPasswordPrompter(pub tokio::sync::mpsc::UnboundedSender<WorldPasswordPrompt>);

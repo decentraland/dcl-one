@@ -1,0 +1,16 @@
+{
+  // The Explorer HUD (src/play) under the compiler profile it was written for upstream:
+  // strict, but without the index-access, implicit-return and override checks the rest of
+  // UI3 adds. Sites type-checks what it imports from here with its own profile.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noUncheckedIndexedAccess": false,
+    "noImplicitReturns": false,
+    "noImplicitOverride": false,
+    "allowUnreachableCode": true,
+    "allowImportingTsExtensions": true,
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src/play"],
+  "exclude": []
+}

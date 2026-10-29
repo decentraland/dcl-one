@@ -1,0 +1,480 @@
+use sha2::{Digest, Sha256};
+
+use super::cid::{cid_v0_to_string, cid_v1_to_string, encode_cid_v1};
+use super::unixfs;
+
+const CHUNK_SIZE: usize = 262_144;
+
+const MAX_CHILDREN: usize = 174;
+
+pub fn hash_bytes(data: &[u8]) -> String {
+    let digest = Sha256::digest(data);
+    cid_v0_to_string(&digest)
+}
+
+pub fn hash_bytes_v1(data: &[u8]) -> String {
+    if data.len() <= CHUNK_SIZE {
+        let digest = Sha256::digest(data);
+        cid_v1_to_string(0x55, &digest)
+    } else {
+        hash_chunked(data)
+    }
+}
+
+pub fn hash_bytes_v0_unixfs(data: &[u8]) -> String {
+    if data.len() <= CHUNK_SIZE {
+        return cid_v0_to_string(&unixfs_leaf_node(data).cid_bytes[2..]);
+    }
+    let leaves: Vec<TreeNode> = data.chunks(CHUNK_SIZE).map(unixfs_leaf_node).collect();
+    let root = balanced_reduce_with(leaves, build_interior_node_v0);
+    cid_v0_to_string(&root.cid_bytes[2..])
+}
+
+fn multihash_sha256(digest: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(34);
+    out.push(0x12);
+    out.push(0x20);
+    out.extend_from_slice(digest);
+    out
+}
+
+fn unixfs_leaf_node(chunk: &[u8]) -> TreeNode {
+    let block = unixfs::encode_pb_node(&unixfs::encode_file_leaf(chunk), &[]);
+    let digest = Sha256::digest(&block);
+    TreeNode {
+        cid_bytes: multihash_sha256(&digest),
+        file_size: chunk.len() as u64,
+        tsize: block.len() as u64,
+    }
+}
+
+struct TreeNode {
+    cid_bytes: Vec<u8>,
+    file_size: u64,
+    tsize: u64,
+}
+
+fn hash_chunked(data: &[u8]) -> String {
+    let leaves: Vec<TreeNode> = data.chunks(CHUNK_SIZE).map(leaf_node).collect();
+
+    let root = balanced_reduce(leaves);
+
+    cid_v1_to_string_from_bytes(&root.cid_bytes)
+}
+
+fn leaf_node(chunk: &[u8]) -> TreeNode {
+    let digest = Sha256::digest(chunk);
+    TreeNode {
+        cid_bytes: encode_cid_v1(0x55, &digest),
+        file_size: chunk.len() as u64,
+        tsize: chunk.len() as u64,
+    }
+}
+
+/// [`hash_bytes_v1`] over content that arrives in pieces.
+///
+/// The CID depends only on the byte string, never on how it was fed: leaf boundaries are fixed at
+/// `CHUNK_SIZE` and this buffers across `update` calls to honour them. So a verifier streaming a
+/// 768 MB snapshot in 64 KB reads gets the same answer as `hash_bytes_v1` on the whole file, which
+/// is the only reason it can be trusted to contradict a stored key.
+#[derive(Default)]
+pub struct HashV1Writer {
+    leaves: Vec<TreeNode>,
+    pending: Vec<u8>,
+    total: u64,
+}
+
+impl HashV1Writer {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn update(&mut self, mut data: &[u8]) {
+        self.total += data.len() as u64;
+
+        while !data.is_empty() {
+            if self.pending.len() == CHUNK_SIZE {
+                self.leaves.push(leaf_node(&self.pending));
+                self.pending.clear();
+            }
+            let take = (CHUNK_SIZE - self.pending.len()).min(data.len());
+            self.pending.extend_from_slice(&data[..take]);
+            data = &data[take..];
+        }
+    }
+
+    pub fn finish(mut self) -> String {
+        if self.total <= CHUNK_SIZE as u64 {
+            let digest = Sha256::digest(&self.pending);
+            return cid_v1_to_string(0x55, &digest);
+        }
+
+        if !self.pending.is_empty() {
+            self.leaves.push(leaf_node(&self.pending));
+        }
+
+        cid_v1_to_string_from_bytes(&balanced_reduce(self.leaves).cid_bytes)
+    }
+}
+
+fn balanced_reduce(nodes: Vec<TreeNode>) -> TreeNode {
+    balanced_reduce_with(nodes, build_interior_node)
+}
+
+fn balanced_reduce_with(mut nodes: Vec<TreeNode>, build: fn(&[TreeNode]) -> TreeNode) -> TreeNode {
+    while nodes.len() > 1 {
+        let mut parents = Vec::new();
+        for batch in nodes.chunks(MAX_CHILDREN) {
+            parents.push(build(batch));
+        }
+        nodes = parents;
+    }
+    nodes.into_iter().next().expect("non-empty input")
+}
+
+fn build_interior_node(children: &[TreeNode]) -> TreeNode {
+    interior_node(children, |digest| encode_cid_v1(0x70, digest))
+}
+
+fn build_interior_node_v0(children: &[TreeNode]) -> TreeNode {
+    interior_node(children, multihash_sha256)
+}
+
+fn interior_node(children: &[TreeNode], cid: impl Fn(&[u8]) -> Vec<u8>) -> TreeNode {
+    let block_sizes: Vec<u64> = children.iter().map(|c| c.file_size).collect();
+    let total_file_size: u64 = block_sizes.iter().sum();
+
+    let unixfs_data = unixfs::encode_file_node(total_file_size, &block_sizes);
+
+    let links: Vec<unixfs::PBLink> = children
+        .iter()
+        .map(|c| unixfs::PBLink {
+            hash: &c.cid_bytes,
+            name: "",
+            tsize: c.tsize,
+        })
+        .collect();
+    let pb_node = unixfs::encode_pb_node(&unixfs_data, &links);
+
+    let digest = Sha256::digest(&pb_node);
+    let cid_bytes = cid(&digest);
+
+    let children_tsize_sum: u64 = children.iter().map(|c| c.tsize).sum();
+    let tsize = pb_node.len() as u64 + children_tsize_sum;
+
+    TreeNode {
+        cid_bytes,
+        file_size: total_file_size,
+        tsize,
+    }
+}
+
+fn cid_v1_to_string_from_bytes(cid_bytes: &[u8]) -> String {
+    super::cid::multibase_base32lower(cid_bytes)
+}
+
+pub fn is_canonical_cid(s: &str) -> bool {
+    if s.is_empty() || s.len() > 100 {
+        return false;
+    }
+
+    let cidv0 = s.len() == 46
+        && s.starts_with("Qm")
+        && s[2..].chars().all(|c| {
+            matches!(c,
+                '1'..='9' | 'A'..='H' | 'J'..='N' | 'P'..='Z' | 'a'..='k' | 'm'..='z')
+        });
+
+    let cidv1 = s.starts_with("ba")
+        && s.len() >= 58
+        && s[2..].chars().all(|c| matches!(c, 'a'..='z' | '2'..='7'));
+    cidv0 || cidv1
+}
+
+pub fn verify_hash(data: &[u8], expected: &str) -> bool {
+    if !is_canonical_cid(expected) {
+        return false;
+    }
+    if expected.starts_with("Qm") {
+        hash_bytes(data) == expected
+    } else if expected.starts_with("ba") {
+        hash_bytes_v1(data) == expected
+    } else {
+        false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn streamed(data: &[u8], piece: usize) -> String {
+        let mut w = HashV1Writer::new();
+        for part in data.chunks(piece.max(1)) {
+            w.update(part);
+        }
+        w.finish()
+    }
+
+    /// The streaming writer is only useful if it can be trusted to contradict a stored key, and it
+    /// can only be trusted if it never disagrees with `hash_bytes_v1` for a reason as incidental as
+    /// read size. The sizes straddle every boundary that changes the shape of the tree: the raw/
+    /// chunked switch at one chunk, the single-level fanout limit at 174 leaves, and the point past
+    /// it where interior nodes gain a level.
+    #[test]
+    fn streaming_matches_whole_buffer_at_every_tree_shape() {
+        let sizes = [
+            0,
+            1,
+            CHUNK_SIZE - 1,
+            CHUNK_SIZE,
+            CHUNK_SIZE + 1,
+            CHUNK_SIZE * 2,
+            CHUNK_SIZE * MAX_CHILDREN,
+            CHUNK_SIZE * MAX_CHILDREN + 1,
+            CHUNK_SIZE * (MAX_CHILDREN + 3),
+        ];
+
+        for size in sizes {
+            let data: Vec<u8> = (0..size).map(|i| (i % 251) as u8).collect();
+            let want = hash_bytes_v1(&data);
+
+            for piece in [1usize, 7, 4096, CHUNK_SIZE - 1, CHUNK_SIZE, CHUNK_SIZE + 5] {
+                if piece > size.max(1) {
+                    continue;
+                }
+                assert_eq!(
+                    streamed(&data, piece),
+                    want,
+                    "size {size} streamed in {piece}-byte reads"
+                );
+            }
+
+            assert_eq!(
+                streamed(&data, size.max(1)),
+                want,
+                "size {size} in one read"
+            );
+        }
+    }
+
+    #[test]
+    fn cidv0_unixfs_matches_ipfs_add_for_single_block_files() {
+        assert_eq!(
+            hash_bytes_v0_unixfs(b""),
+            "QmbFMke1KXqnYyBBWxB74N4c5SBnJMVAiMNRcGu6x1AwQH"
+        );
+        assert_eq!(
+            hash_bytes_v0_unixfs(b"hello world"),
+            "Qmf412jQZiuVUtdgnB36FXFX7xg5V6KEbSJ4dpQuhkLyfD"
+        );
+        assert_ne!(
+            hash_bytes_v0_unixfs(b"hello world"),
+            hash_bytes(b"hello world")
+        );
+    }
+
+    #[test]
+    fn cidv0_unixfs_matches_ipfs_add_for_chunked_files() {
+        let pattern = |n: usize| -> Vec<u8> { (0..n).map(|i| (i % 251) as u8).collect() };
+        assert_eq!(
+            hash_bytes_v0_unixfs(&pattern(CHUNK_SIZE + 1)),
+            "QmUSjGawaz4ptvREcMKSMJneWCa5j8dAz2wSAAvHtW2rnB"
+        );
+        assert_eq!(
+            hash_bytes_v0_unixfs(&pattern(CHUNK_SIZE * 3)),
+            "QmSuzytMNMmTQC6hL7FG7CtoqWKoZpDiMHbcGeoDakJvAg"
+        );
+        assert_eq!(
+            hash_bytes_v0_unixfs(&pattern(CHUNK_SIZE * (MAX_CHILDREN + 1))),
+            "Qmbp67kThKoJFnWu7pUgwCu81WttemMnD13oG4uj9DiY5E"
+        );
+    }
+
+    #[test]
+    fn cidv0_empty() {
+        let hash = hash_bytes(b"");
+        assert!(
+            hash.starts_with("Qm"),
+            "CIDv0 should start with Qm, got {hash}"
+        );
+    }
+
+    #[test]
+    fn cidv1_empty() {
+        let hash = hash_bytes_v1(b"");
+        assert!(
+            hash.starts_with("bafkrei"),
+            "CIDv1 raw leaf should start with bafkrei, got {hash}"
+        );
+        assert_eq!(
+            hash,
+            "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku"
+        );
+    }
+
+    #[test]
+    fn cidv0_known_vector() {
+        let hash = hash_bytes(b"");
+        assert_eq!(hash, "QmdfTbBqBPQ7VNxZEYEj14VmRuZBkqFbiwReogJgS1zR1n");
+    }
+
+    #[test]
+    fn cidv1_small_data() {
+        let hash = hash_bytes_v1(b"hello world");
+        assert_eq!(
+            hash,
+            "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e"
+        );
+    }
+
+    #[test]
+    fn cidv0_hello_world() {
+        let hash = hash_bytes(b"hello world");
+        assert_eq!(hash, "QmaozNR7DZHQK1ZcU9p7QdrshMvXqWK6gpu5rmrkPdT3L4");
+    }
+
+    #[test]
+    fn roundtrip_small() {
+        let data = b"some entity content";
+        let v0 = hash_bytes(data);
+        let v1 = hash_bytes_v1(data);
+        assert!(v0.starts_with("Qm"));
+        assert!(v1.starts_with("bafkrei"));
+        assert_ne!(v0, v1);
+    }
+
+    #[test]
+    fn cidv1_multi_chunk_produces_dagpb_cid() {
+        let data = vec![0x42u8; 300_000];
+        let hash = hash_bytes_v1(&data);
+        assert!(
+            hash.starts_with("bafy"),
+            "Multi-chunk CIDv1 should start with 'bafy' (dag-pb), got {hash}"
+        );
+        assert!(
+            !hash.starts_with("bafkrei"),
+            "Multi-chunk CIDv1 must NOT be a raw leaf (bafkrei), got {hash}"
+        );
+        assert_eq!(hash, hash_bytes_v1(&data));
+    }
+
+    #[test]
+    fn cidv1_empty_known_value() {
+        let hash = hash_bytes_v1(b"");
+        assert_eq!(
+            hash, "bafkreihdwdcefgh4dqkjv67uzcmw7ojee6xedzdetojuzjevtenxquvyku",
+            "Empty file CIDv1 does not match expected value"
+        );
+    }
+
+    #[test]
+    fn cidv1_boundary_at_chunk_size() {
+        let data = vec![0xAAu8; CHUNK_SIZE];
+        let hash = hash_bytes_v1(&data);
+        assert!(
+            hash.starts_with("bafkrei"),
+            "Exactly CHUNK_SIZE bytes should be a single raw leaf, got {hash}"
+        );
+
+        let data_plus_one = vec![0xAAu8; CHUNK_SIZE + 1];
+        let hash_chunked = hash_bytes_v1(&data_plus_one);
+        assert!(
+            hash_chunked.starts_with("bafy"),
+            "CHUNK_SIZE+1 bytes should be dag-pb (chunked), got {hash_chunked}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod multilevel_tests {
+    use super::*;
+
+    #[test]
+    fn cidv1_multi_level_dag_golden() {
+        let n = 175 * CHUNK_SIZE + 7;
+        let data: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
+        let hash = hash_bytes_v1(&data);
+        assert!(
+            hash.starts_with("bafy"),
+            "175 chunks must be dag-pb, got {hash}"
+        );
+        assert_eq!(
+            hash, "bafybeihh7afuh5inawukv67gg6vxlpvb3zgw6rkpw7tymous2idoydpxpi",
+            "multi-level (>{MAX_CHILDREN} chunks) UnixFS CID regressed; interior nodes must use \
+             children file_size for blocksizes/filesize, not DAG tsize"
+        );
+    }
+
+    #[test]
+    fn single_vs_multi_level_boundary() {
+        let one_level = vec![7u8; MAX_CHILDREN * CHUNK_SIZE];
+        let two_level = vec![7u8; (MAX_CHILDREN + 1) * CHUNK_SIZE];
+        assert!(hash_bytes_v1(&one_level).starts_with("bafy"));
+        assert!(hash_bytes_v1(&two_level).starts_with("bafy"));
+        assert_ne!(hash_bytes_v1(&one_level), hash_bytes_v1(&two_level));
+    }
+}
+
+#[cfg(test)]
+mod verify_tests {
+    use super::*;
+
+    #[test]
+    fn verify_cidv0_match() {
+        assert!(verify_hash(
+            b"hello world",
+            "QmaozNR7DZHQK1ZcU9p7QdrshMvXqWK6gpu5rmrkPdT3L4"
+        ));
+    }
+
+    #[test]
+    fn verify_cidv0_mismatch() {
+        assert!(!verify_hash(
+            b"hello world",
+            "QmaozNR7DZHQK1ZcU9p7QdrshMvXqWK6gpu5rmrkPdAAAA"
+        ));
+    }
+
+    #[test]
+    fn verify_cidv1_match() {
+        assert!(verify_hash(
+            b"hello world",
+            "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e"
+        ));
+    }
+
+    #[test]
+    fn verify_cidv1_mismatch() {
+        assert!(!verify_hash(
+            b"hello world",
+            "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36AAA"
+        ));
+    }
+
+    #[test]
+    fn verify_unknown_prefix() {
+        assert!(!verify_hash(b"hello", "z2foobar"));
+    }
+
+    #[test]
+    fn verify_rejects_short_qm_prefix() {
+        assert!(!verify_hash(b"hello", "Qmshort"));
+    }
+
+    #[test]
+    fn verify_rejects_short_ba_prefix() {
+        assert!(!verify_hash(b"hello", "bashort"));
+    }
+
+    #[test]
+    fn verify_rejects_path_chars() {
+        assert!(!verify_hash(b"hello", "Qm/../etc/passwd"));
+        assert!(!verify_hash(b"hello", "ba/../etc/passwd"));
+    }
+
+    #[test]
+    fn verify_rejects_nul_byte() {
+        assert!(!verify_hash(b"hello", "Qm\0evil"));
+    }
+}

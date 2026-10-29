@@ -1,0 +1,21 @@
+{
+  "description": "GET /entities/{cid}/body.png for public profile 0 (the corpus CID). Captured GET https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/body.png -> 301.",
+  "request": {
+    "method": "GET",
+    "path": "/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/body.png",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 301,
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "location": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/body.png"
+    },
+    "body_bytes_b64": "PGh0bWw+DQo8aGVhZD48dGl0bGU+MzAxIE1vdmVkIFBlcm1hbmVudGx5PC90aXRsZT48L2hlYWQ+DQo8Ym9keT4NCjxjZW50ZXI+PGgxPjMwMSBNb3ZlZCBQZXJtYW5lbnRseTwvaDE+PC9jZW50ZXI+DQo8aHI+PGNlbnRlcj5jbG91ZGZsYXJlPC9jZW50ZXI+DQo8L2JvZHk+DQo8L2h0bWw+DQo="
+  },
+  "captured_from": "https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/body.png",
+  "captured_at": "2026-09-25T19:24:54Z",
+  "volatile_paths": []
+}

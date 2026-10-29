@@ -1,0 +1,94 @@
+/* from: shop@2d3bf62:app/src/components/CampaignBanner/CampaignBanner.styles.ts */
+.shop-campaign {
+  position: relative;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  aspect-ratio: 1920 / 300;
+  max-height: 300px;
+  margin-bottom: 32px;
+  overflow: hidden;
+  background: #14161b;
+  width: 100vw;
+  margin-inline: calc(50% - 50vw);
+  padding-inline: calc(50vw - 50%);
+  border-radius: 0;
+}
+@media (min-width: 1920px) {
+  .shop-campaign::before,
+  .shop-campaign::after {
+    content: "";
+    position: absolute;
+    top: -6%;
+    bottom: -6%;
+    z-index: 0;
+    background-image: var(--banner-art);
+    background-size: 600% 100%;
+    filter: blur(32px);
+    pointer-events: none;
+  }
+  .shop-campaign::before { left: -6%; right: 50%; background-position: left center; }
+  .shop-campaign::after { left: 50%; right: -6%; background-position: right center; }
+}
+@media (max-width: 768px) {
+  .shop-campaign {
+    aspect-ratio: 1 / 1;
+    max-height: none;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 43px;
+  }
+}
+.shop-campaign__bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center right;
+}
+@media (min-width: 1920px) {
+  .shop-campaign__bg {
+    left: 0;
+    right: 0;
+    width: 1920px;
+    margin-inline: auto;
+    z-index: 1;
+    -webkit-mask-image: linear-gradient(to right, transparent, #000 140px, #000 calc(100% - 140px), transparent);
+    mask-image: linear-gradient(to right, transparent, #000 140px, #000 calc(100% - 140px), transparent);
+  }
+}
+.shop-campaign__inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+@media (max-width: 768px) {
+  .shop-campaign__inner { align-items: center; text-align: center; }
+}
+.shop-campaign__inner h2 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(22px, 2.6vw, 34px);
+  font-weight: 700;
+  line-height: 1.235;
+}
+.shop-campaign__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 44px;
+  padding: 0 28px;
+  border-radius: 8px;
+  background: var(--shop-buy-btn, linear-gradient(90deg, #ff7439, #ff2d55));
+  color: #fcfcfc;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+.shop-campaign__cta:hover { filter: brightness(1.08); }

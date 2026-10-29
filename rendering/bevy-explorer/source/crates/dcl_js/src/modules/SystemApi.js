@@ -1,0 +1,729 @@
+// system api module
+
+const { 
+    op_check_for_update, op_motd, 
+    op_get_current_login, op_get_previous_login, op_login_previous, op_login_new_code, op_login_new_success, op_login_cancel, op_login_guest, op_logout,
+    op_settings, op_set_setting,
+} = Deno.core.ops;
+
+// (description: option<string>, url: option<string>)
+module.exports.checkForUpdate = async function() {
+    const [description, url] = await op_check_for_update();
+    return {
+        description,
+        url
+    }
+}
+
+// (message: string)
+module.exports.messageOfTheDay = async function() {
+    return {
+        message: await op_motd()
+    }
+}
+
+// (currentLogin: option<string>)
+module.exports.getCurrentLogin = function() {
+    return {
+        current_login: op_get_current_login()
+    }
+}
+
+// (userId: option<string>)
+module.exports.getPreviousLogin = async function() {
+    return {
+        userId: await op_get_previous_login()
+    }
+}
+
+// (success: bool, error: option<string>)
+module.exports.loginPrevious = async function() {
+    return await op_login_previous()
+}
+
+// (code: Promise<option<string>>, success: Promise<(success: bool, error: option<string>)>)
+module.exports.loginNew = function() {
+    return {
+        code: op_login_new_code(),
+        success: op_login_new_success(),
+    }
+}
+
+// nothing
+module.exports.loginGuest = function() {
+    op_login_guest()
+}
+
+// nothing
+module.exports.loginCancel = function() {
+    op_login_cancel()
+}
+
+// nothing
+module.exports.logout = function() {
+    op_logout()
+}
+
+// array of {
+//   name: string, 
+//   category: string, 
+//   description: string,
+//   minValue: number, 
+//   maxValue: number, 
+//   namedVariants: [(variantName: string, variantDescription: string)]
+//   value: number,
+//   default: number,
+// }
+module.exports.getSettings = async function() {
+    return await op_settings();
+}
+
+module.exports.setSetting = async function(name, value) {
+    await op_set_setting(name, value);
+}
+
+module.exports.kernelFetch = async function (body) { 
+    const headers = await Deno.core.ops.op_kernel_fetch_headers(body.url, body.init?.method, body.meta);
+
+    if (!body.init) {
+        body.init = { headers: {} };
+    }
+
+    if (!body.init.hasOwnProperty("headers")) {
+        body.init.headers = {};
+    }
+
+    for (var i=0; i< headers.length; i++) {
+        body.init.headers[headers[i][0]] = headers[i][1];
+    }
+
+    let response = await fetch(body.url, body.init);
+    let text = await response.text();
+
+    return {
+        ok: response.ok,
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+        body: text,
+    };
+}
+
+// avatar { 
+//   base?: PBAvatarBase, 
+//   equip?: PBAvatarEquippedData,
+//   hasClaimedName?: bool,
+//   profileExtras?: {field: value}
+//   nameColor: Color3
+// }
+// => deployed version
+module.exports.setAvatar = async function(avatar) {
+    return await Deno.core.ops.op_set_avatar(avatar)
+}
+
+// any user's full profile (own, nearby or remote), resolved through the engine's profile cache
+// and fetch cascade. Rejects if the address can't be resolved.
+// address: string => SerializedProfile
+module.exports.getUserProfile = async function(address) {
+    return await Deno.core.ops.op_get_user_profile(address);
+}
+
+// get the next key/button pressed by the user, identified as a string
+// -> string
+module.exports.getNativeInput = async function() {
+    return await Deno.core.ops.op_native_input()
+}
+
+// get current key bindings
+// -> {
+//   bindings: (string, string[])[]
+// }
+module.exports.getInputBindings = async function() {
+    return await Deno.core.ops.op_get_bindings()
+}
+
+// set current key bindings
+// arg: {
+//   bindings: (string, string[])[]
+// }
+module.exports.setInputBindings = async function(bindings) {
+    await Deno.core.ops.op_set_bindings(bindings)
+}
+
+// declare HUD focus state
+// arg: {
+//   ui: bool,     // a HUD surface (menu/popup) is active: input is reserved above scenes,
+//                 // but the system-action stream keeps flowing
+//   text: bool,   // a HUD text field has keyboard focus: keys are typing, no actions resolve
+//   scroll: bool, // the cursor is over a scrollable HUD element: the Scroll actions are
+//                 // reserved, so every input bound to them stands down for world consumers
+//                 // while the action stream still resolves Scroll for the HUD to consume
+//   covered: bool, // a full-screen HUD surface (menu page, loading overlay) hides the world:
+//                  // scenes are told they are hidden (EngineInfo.scene_hidden)
+//   menu: string | null, // the open full-screen menu page, by the SystemAction that toggles it
+//                        // ("Map", "Backpack", ...): backs the scene-facing openExplorerUi action
+// }
+module.exports.setUiFocus = async function(focus) {
+    Deno.core.ops.op_set_ui_focus(focus?.ui ?? false, focus?.text ?? false, focus?.scroll ?? false, focus?.covered ?? false, focus?.menu ?? null)
+}
+
+
+/// reload 
+// hash: string | undefined
+// if hash is provided, that specific scene is reloaded
+// if unspecified, all scenes are reloaded
+module.exports.reload = async function(hash) {
+    await Deno.core.ops.op_console_command("reload", hash !== undefined ? [hash] : [])
+}
+
+// show_ui
+// {
+//   hash: string | undefined,
+//   show: bool | undefined
+// }
+//
+// if hash is undefined, all scenes are modified
+// if show is undefined, acts as a toggle
+// returns: visible bool 
+// note: doesn't hide/show the system ui scene
+module.exports.showUi = async function(args) {
+  let argsArray = [args?.hash ?? "all"]
+  if (args?.show !== undefined) {
+    argsArray.push(args.show ? "true" : "false")
+  }
+
+  const reply = await Deno.core.ops.op_console_command("show_ui", argsArray)
+  const value = reply.split(":").pop()?.trim().toLowerCase();
+  return value === "true";
+}
+
+// run an arbitrary console command and await its reply via the per-invocation
+// response channel.
+// cmd: string (command name, without the leading slash)
+// args: string[] (positional arguments)
+// returns: the command's reply string on success; rejects with the failure message
+module.exports.consoleCommand = async function(cmd, args) {
+    return await Deno.core.ops.op_console_command(cmd, args ?? [])
+}
+
+// [{
+//     hash: string,
+//     base_url?: string,
+//     title: string,
+//     parcels: [Vector2],
+//     isPortable: bool,
+//     isBroken: bool,
+//     isBlocked: bool,
+//     isSuper: bool,
+//     sdkVersion: string,
+// }]
+module.exports.liveSceneInfo = async function() {
+    return await Deno.core.ops.op_live_scene_info()
+}
+
+// { 
+//   realm: string, // about_url (e.g. `realm-provider.decentraland.org/main`)
+//   parcel: Vector2,
+// }
+module.exports.getHomeScene = async function() {
+    return await Deno.core.ops.op_get_home_scene()
+}
+
+// { 
+//   realm: string, // about_url (e.g. `realm-provider.decentraland.org/main`)
+//   parcel: Vector2,
+// }
+module.exports.setHomeScene = async function(args) {
+    await Deno.core.ops.op_set_home_scene(args.realm, args.parcel)
+}
+
+// {
+//   terms: boolean, // the terms aren't accepted on this install; the world is held until they are
+//   newProfile: boolean, // the account has no profile; its new one deploys with the next setAvatar
+//                        // once the terms are accepted
+// }
+module.exports.getWelcome = async function() {
+    return await Deno.core.ops.op_get_welcome()
+}
+
+// the welcome page's accept: records the terms for this install
+module.exports.acceptTerms = async function() {
+    await Deno.core.ops.op_accept_terms()
+}
+
+// the current realm's `configurations.map.satelliteView`; null (native) or undefined (wasm)
+// when it has none
+// {
+//   version: string,
+//   baseUrl: string,
+//   suffixUrl: string,
+//   topLeftOffset: Vector2,
+// }
+module.exports.getSatelliteView = async function() {
+    return await Deno.core.ops.op_get_satellite_view()
+}
+
+// get system actions as a stream
+// type SystemAction = {
+//   action: string,
+//   pressed: boolean,
+// }
+module.exports.getSystemActionStream = async function() {
+  const rid = await Deno.core.ops.op_get_system_action_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_system_action_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// get chat messages as a stream
+// type ChatMessage = {
+//   senderAddress: string,
+//   message: string,
+//   channel: string,
+//   message_id: string, // what reactions name it by; empty for system messages
+// }
+module.exports.getChatStream = async function() {
+  const rid = await Deno.core.ops.op_get_chat_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_chat_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// send a chat message
+// { 
+//   message: string,
+//   channel?: string
+// }
+module.exports.sendChat = async function(message, channel) {
+    Deno.core.ops.op_send_chat(message, channel ?? "Nearby")
+}
+
+// get reactions to chat messages (the local user's included) as a stream
+// type ChatReaction = {
+//   channel: string, // "Nearby" or the DM partner's wallet
+//   message_id: string,
+//   emoji: string,
+//   from: string,
+//   remove: boolean,
+// }
+module.exports.getChatReactionStream = async function() {
+  const rid = await Deno.core.ops.op_get_chat_reaction_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_chat_reaction_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// add or remove the local user's reaction to a chat message
+module.exports.sendChatReaction = function(channel, messageId, emoji, remove) {
+  Deno.core.ops.op_send_chat_reaction(channel, messageId, emoji, remove ?? false)
+}
+
+module.exports.quit = function() {
+    Deno.core.ops.op_quit();
+}
+
+module.exports.getPermissionRequestStream = async function() {
+  const rid = await Deno.core.ops.op_get_permission_request_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_permission_request_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+module.exports.getPermissionUsedStream = async function() {
+  const rid = await Deno.core.ops.op_get_permission_used_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_permission_used_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+module.exports.setSinglePermission = function(body) {
+    Deno.core.ops.op_set_single_permission(body.id, body.allow);
+}
+
+module.exports.setPermanentPermission = function(body) {
+    Deno.core.ops.op_set_permanent_permission(body.level, body.value, body.ty, body.allow)
+}
+
+module.exports.getPermanentPermissions = async function(body) {
+    return await Deno.core.ops.op_get_permanent_permissions(body.level, body.value);
+}
+
+module.exports.getPermissionTypes = function() {
+    return Deno.core.ops.getPermissionTypes();
+}
+
+module.exports.setInteractableArea = function(body) {
+    Deno.core.ops.op_set_interactable_area(body.left, body.top, body.right, body.bottom);
+}
+
+module.exports.getMicState = function() {
+    return Deno.core.ops.op_get_mic_state();
+}
+
+module.exports.setMicEnabled = function(enabled) {
+    Deno.core.ops.op_set_mic_enabled(enabled);
+}
+
+// [{ userId: string, hideAvatar: bool, hideProfile: bool }]
+module.exports.getAvatarModifiers = async function() {
+    return await Deno.core.ops.op_get_avatar_modifiers();
+}
+
+// get voice stream / mic activations as a stream
+// type MicActivation = {
+//   senderAddress: string,
+//   active: bool,
+// }
+module.exports.getVoiceStream = async function() {
+  const rid = await Deno.core.ops.op_get_voice_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_voice_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// get hover events as a stream
+// type HoverAction = {
+//   enabled: bool,
+//   ...pb_pointer_events::Entry
+// }
+// type HoverEvent = {
+//   entered: bool,
+//   targetType: PointerTargetType, 0 = world, 1 = ui, 2 = avatar
+//   actions: HoverAction[],
+// }
+module.exports.getHoverStream = async function() {
+  const rid = await Deno.core.ops.op_get_hover_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_hover_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// world password prompts as a stream (see ipfs::world_access)
+// type WorldAccessEvent =
+//   | { type: "passwordRequest", world: string, error: string | null }
+//   | { type: "cancelled" }
+module.exports.getWorldAccessStream = async function() {
+  const rid = await Deno.core.ops.op_get_world_access_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_world_access_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// answer the password prompt; password null = the player gave up
+module.exports.setWorldPassword = function(body) {
+    Deno.core.ops.op_set_world_password(body.password ?? null);
+}
+
+// get proximity events as a stream
+// type ProximityEvent = {
+//   entered: bool,
+//   entity: number,            // session-stable opaque id; matches enter/leave
+//   entityPosition: Vector3,   // entity transform origin in world space (stable anchor)
+//   actions: HoverAction[],
+// }
+module.exports.getProximityStream = async function() {
+  const rid = await Deno.core.ops.op_get_proximity_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_proximity_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// profile changes (any player the engine holds a profile for, including the local player) as a stream
+// type ProfileChangedEvent = {
+//   address: string,   // lowercase 0x address
+//   version: number,   // the profile version now held; re-read with getUserProfile if yours is older
+// }
+module.exports.getProfileChangedStream = async function() {
+  const rid = await Deno.core.ops.op_get_profile_changed_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_profile_changed_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// Social / Friends
+
+module.exports.social = {
+  // get friendship events as a stream
+  // type FriendshipEventUpdate = {
+  //   type: "request" | "accept" | "reject" | "cancel" | "delete" | "block",
+  //   address: string,
+  //   // only for "request":
+  //   name?: string,
+  //   hasClaimedName?: bool,
+  //   profilePictureUrl?: string,
+  //   nameColor?: { r: number, g: number, b: number },
+  //   createdAt?: number,
+  //   message?: string,
+  //   id?: string,
+  // }
+  getFriendshipEventStream: async function() {
+    const rid = await Deno.core.ops.op_get_friendship_event_stream();
+
+    async function* streamGenerator() {
+      while (true) {
+        const next = await Deno.core.ops.op_read_friendship_event_stream(rid);
+        if (next === null) break;
+        yield next;
+      }
+    }
+
+    return streamGenerator();
+  },
+
+  // returns { address: string, name: string, hasClaimedName: bool, profilePictureUrl: string, nameColor?: { r: number, g: number, b: number } }[]
+  getFriends: async function() {
+      return await Deno.core.ops.op_get_friends();
+  },
+
+  // returns { address: string, name: string, hasClaimedName: bool, profilePictureUrl: string, nameColor?: { r: number, g: number, b: number } }[]
+  getMutualFriends: async function(address) {
+      return await Deno.core.ops.op_get_mutual_friends(address);
+  },
+
+  // returns { address: string, name: string, hasClaimedName: bool, profilePictureUrl: string, nameColor?: { r: number, g: number, b: number }, createdAt: number, message?: string, id: string }[]
+  getSentFriendRequests: async function() {
+      return await Deno.core.ops.op_get_sent_friend_requests();
+  },
+
+  // returns { address: string, name: string, hasClaimedName: bool, profilePictureUrl: string, nameColor?: { r: number, g: number, b: number }, createdAt: number, message?: string, id: string }[]
+  getReceivedFriendRequests: async function() {
+      return await Deno.core.ops.op_get_received_friend_requests();
+  },
+
+  // returns { address: string, name: string, hasClaimedName: bool, profilePictureUrl: string, nameColor?: { r: number, g: number, b: number }, status: "online" | "offline" | "away" }[]
+  getOnlineFriends: async function() {
+      return await Deno.core.ops.op_get_online_friends();
+  },
+
+  // get friend connectivity updates as a stream
+  // type FriendConnectivityEvent = {
+  //   address: string,
+  //   name: string,
+  //   hasClaimedName: bool,
+  //   profilePictureUrl: string,
+  //   nameColor?: { r: number, g: number, b: number },
+  //   status: "online" | "offline" | "away",
+  // }
+  getFriendConnectivityStream: async function() {
+    const rid = await Deno.core.ops.op_get_friend_connectivity_stream();
+
+    async function* streamGenerator() {
+      while (true) {
+        const next = await Deno.core.ops.op_read_friend_connectivity_stream(rid);
+        if (next === null) break;
+        yield next;
+      }
+    }
+
+    return streamGenerator();
+  },
+
+  // returns bool
+  getSocialInitialized: async function() {
+      return await Deno.core.ops.op_get_social_initialized();
+  },
+
+  // address: string, message?: string
+  sendFriendRequest: async function(address, message) {
+      await Deno.core.ops.op_send_friend_request(address, message);
+  },
+
+  // address: string
+  acceptFriendRequest: async function(address) {
+      await Deno.core.ops.op_accept_friend_request(address);
+  },
+
+  // address: string
+  rejectFriendRequest: async function(address) {
+      await Deno.core.ops.op_reject_friend_request(address);
+  },
+
+  // address: string
+  cancelFriendRequest: async function(address) {
+      await Deno.core.ops.op_cancel_friend_request(address);
+  },
+
+  // address: string
+  deleteFriend: async function(address) {
+      await Deno.core.ops.op_delete_friend(address);
+  },
+
+  // address: string
+  blockUser: async function(address) {
+      await Deno.core.ops.op_block_user(address);
+  },
+
+  // address: string
+  unblockUser: async function(address) {
+      await Deno.core.ops.op_unblock_user(address);
+  },
+
+  // returns { address: string, name: string, hasClaimedName: bool, profilePictureUrl: string, nameColor?: { r: number, g: number, b: number } }[]
+  getBlockedUsers: async function() {
+      return await Deno.core.ops.op_get_blocked_users();
+  },
+
+  // returns { blockedUsers: string[], blockedByUsers: string[] } (addresses only)
+  getBlockingStatus: async function() {
+      return await Deno.core.ops.op_get_blocking_status();
+  },
+
+  // get block updates as a stream (someone blocked / unblocked the local user)
+  // type BlockUpdateData = {
+  //   address: string,
+  //   isBlocked: bool,
+  // }
+  getBlockUpdateStream: async function() {
+    const rid = await Deno.core.ops.op_get_block_update_stream();
+
+    async function* streamGenerator() {
+      while (true) {
+        const next = await Deno.core.ops.op_read_block_update_stream(rid);
+        if (next === null) break;
+        yield next;
+      }
+    }
+
+    return streamGenerator();
+  },
+
+  // DM state of `address`: emitted now, then on change. Several may be open at once. The
+  // stream's close() ends it (a pending read resolves done); async generator return() would
+  // only run after that read, so it is not enough on its own.
+  // type DmUserStateData = { address: string, state: string, online: boolean }
+  getDmUserStateStream: function(address) {
+    const rid = Deno.core.ops.op_get_dm_user_state_stream(address);
+
+    async function* streamGenerator() {
+      try {
+        while (true) {
+          const next = await Deno.core.ops.op_read_dm_user_state_stream(rid);
+          if (next === null) break;
+          yield next;
+        }
+      } finally {
+        Deno.core.ops.op_close_dm_user_state_stream(rid);
+      }
+    }
+
+    const stream = streamGenerator();
+    stream.close = () => Deno.core.ops.op_close_dm_user_state_stream(rid);
+    return stream;
+  },
+
+  // local DM history. Which conversations are shown is the HUD's own state.
+  // type DmHistoryEntryData = { from: string, message: string, timestamp: number, receivedAt: number }
+  getDmHistory: async function(address) {
+    return await Deno.core.ops.op_get_dm_history(address);
+  },
+  deleteDmHistory: function(address) {
+    Deno.core.ops.op_delete_dm_history(address);
+  }
+}
+
+// get scene loading UI state as a stream
+// type SceneLoadingUi = {
+//   visible: boolean,
+//   realmConnected: boolean,
+//   title: string,
+//   pendingAssets: number | null,
+// }
+module.exports.getSceneLoadingUIStream = async function() {
+  const rid = await Deno.core.ops.op_get_scene_loading_ui_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_scene_loading_ui_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}
+
+// the engine's own analytics events as they are queued for Segment
+// type AnalyticsEvent = { event: string, properties: any }
+module.exports.getAnalyticsEventStream = async function() {
+  const rid = await Deno.core.ops.op_get_analytics_event_stream();
+
+  async function* streamGenerator() {
+    while (true) {
+      const next = await Deno.core.ops.op_read_analytics_event_stream(rid);
+      if (next === null) break;
+      yield next;
+    }
+  }
+
+  return streamGenerator();
+}

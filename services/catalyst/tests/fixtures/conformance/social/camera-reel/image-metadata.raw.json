@@ -1,0 +1,30 @@
+{
+  "method": "GET",
+  "url": "https://camera-reel-service.decentraland.org/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051/metadata",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 200,
+  "status_text": "OK",
+  "response_headers": {
+    "access-control-expose-headers": "content-type",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c70731d7138d9-TXL",
+    "connection": "keep-alive",
+    "content-encoding": "br",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:29:43 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "transfer-encoding": "chunked",
+    "vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:29:42Z",
+  "elapsed_ms": 152,
+  "body_bytes": 5612,
+  "body_file": "image-metadata.raw.body",
+  "redacted": false
+}

@@ -1,0 +1,31 @@
+{
+  "method": "GET",
+  "url": "https://notifications.decentraland.org/subscription/opt-outs/planet/00000000-0000-4000-8000-000000000000",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*",
+    "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+    "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/subscription/opt-outs/planet/00000000-0000-4000-8000-000000000000:1790364284682:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x0e8b25c476f37ad5d334aae992e06f78a89e4a0406c04389c770655d45620952259d522ef343ba2beff9dac433735c6c944bc022270d9c0ae2042eeddc01d91d1b\"}",
+    "x-identity-timestamp": "1790364284682",
+    "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+  },
+  "request_body": null,
+  "status": 400,
+  "status_text": "Bad Request",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c692dabae4ae6-TXL",
+    "connection": "keep-alive",
+    "content-length": "49",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:45 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:45Z",
+  "elapsed_ms": 161,
+  "body_bytes": 49,
+  "body_file": "opt-outs-bad-scope-signed.raw.body",
+  "redacted": false
+}

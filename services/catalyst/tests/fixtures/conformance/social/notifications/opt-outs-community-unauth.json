@@ -1,0 +1,23 @@
+{
+  "description": "GET /subscription/opt-outs/community/{communityId} without an auth chain. Captured GET https://notifications.decentraland.org/subscription/opt-outs/community/e99471aa-31c4-4952-abf6-99905445f43b -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/subscription/opt-outs/community/e99471aa-31c4-4952-abf6-99905445f43b",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Invalid Auth Chain",
+      "message": "This endpoint requires a signed fetch request. See ADR-44."
+    }
+  },
+  "captured_from": "https://notifications.decentraland.org/subscription/opt-outs/community/e99471aa-31c4-4952-abf6-99905445f43b",
+  "captured_at": "2026-09-25T19:24:43Z",
+  "volatile_paths": []
+}

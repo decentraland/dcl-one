@@ -1,0 +1,21 @@
+{
+  "description": "GET /ping. Captured GET https://comms-gatekeeper.decentraland.org/ping -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/ping",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "content-length": "5"
+    },
+    "body_bytes_b64": "L3Bpbmc="
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/ping",
+  "captured_at": "2026-09-25T19:24:25Z",
+  "volatile_paths": []
+}

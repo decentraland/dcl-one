@@ -1,0 +1,30 @@
+/* from: shop@94584a5c:app/src/components/SaleTimer/SaleTimer.styles.ts, app/src/components/OfferStock/OfferStock.styles.ts */
+.shop-saletimer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--warning);
+}
+.shop-offerstock {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--ui-muted);
+}
+.shop-offerstock__head {
+  display: flex;
+  justify-content: space-between;
+}
+.shop-offerstock__track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--fill-3, rgba(255, 255, 255, 0.08));
+  overflow: hidden;
+}
+.shop-offerstock__track span {
+  display: block;
+  height: 100%;
+  background: var(--brand, #ff2d55);
+}

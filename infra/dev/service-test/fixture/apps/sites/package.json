@@ -1,0 +1,11 @@
+{
+  "name": "fixture-sites",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host \"$HOST\" --port \"$PORT\" --strictPort"
+  },
+  "devDependencies": {
+    "vite": "8.3.4"
+  }
+}

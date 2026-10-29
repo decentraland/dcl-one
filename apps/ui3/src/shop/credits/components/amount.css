@@ -1,0 +1,16 @@
+.shop-amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.shop-amount__value {
+  font-weight: 600;
+}
+
+.shop-amount__unit {
+  color: var(--ink-6);
+  font-size: 0.86em;
+}

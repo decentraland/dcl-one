@@ -1,0 +1,31 @@
+[package]
+name = "dcl-http"
+version = "0.1.0"
+edition = "2024"
+description = "HTTP plumbing shared by the catalyst domains and dcl-scene-cli: API errors, bodies, JSON-RPC, the outbound client"
+publish = false
+workspace = "../../services/catalyst"
+
+[dependencies]
+tokio.workspace = true
+axum.workspace = true
+sqlx = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+bytes.workspace = true
+reqwest.workspace = true
+url.workspace = true
+
+[features]
+default = ["db"]
+# `api_error`, the database errors' API answers. dcl-auth goes without
+# it, so dcl-scene-cli links no database driver.
+db = ["dep:sqlx"]
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

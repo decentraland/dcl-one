@@ -1,0 +1,52 @@
+{
+  "note": "Read-only eth_call results recorded 2026-09-25 for the Shop payment rule tests. Live configuration, not a test contract; the manager's flags are admin-mutable (updateSecondarySalesAllowed). The full deployed state (both NAME executors, the publication call, roles) is docs/shop/CONTRACTS.md.",
+  "polygon": {
+    "rpc": "https://polygon-bor-rpc.publicnode.com",
+    "block": 94421639,
+    "creditsManager": {
+      "address": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
+      "source": "offchain-marketplace-contract@87350c63 broadcast/DeployCreditsManagerPolygon.s.sol/137/run-latest.json; transactions-server@deae074c src/logic/auditedDomains.ts label CreditsManager",
+      "primarySalesAllowed": true,
+      "secondarySalesAllowed": false,
+      "maxManaCreditedPerHour": "1000000000000000000000",
+      "mana": "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4",
+      "legacyMarketplace": "0x480a0f4e360e8964e68858dd231c2922f1df45ef",
+      "collectionStore": "0x214ffc0f0103735728dc66b61a22e4f163e275ae",
+      "marketplaces": {
+        "0x540fb08edb56aae562864b390542c97f562825ba": true,
+        "0xa40b1d129b8906888720686f3a01921ddf37716f": true,
+        "0xe38ef22abe871513555cba89adfe45ab4f548ada": true
+      },
+      "allowedCustomExternalCalls": [
+        {"target": "0xc9a9c416fbfd424d09e3f905142799abb10c2fa7", "label": "NAME cross-chain executor (offchain-marketplace-contract broadcast/DeployRegisterNameCrossChainExecutor.s.sol/137)", "selector": "0xfd165a73", "allowed": true}
+      ]
+    },
+    "deprecatedCreditsManager": {
+      "address": "0xe9f961e6ded4e1476bbee4faab886d63a2493eb9",
+      "primarySalesAllowed": true,
+      "secondarySalesAllowed": false,
+      "allowedCustomExternalCalls": [
+        {"target": "0xc9a9c416fbfd424d09e3f905142799abb10c2fa7", "selector": "0xfd165a73", "allowed": false}
+      ]
+    }
+  },
+  "ethereum": {
+    "rpc": "https://ethereum-rpc.publicnode.com",
+    "block": 26054336,
+    "dclRegistrar": "0x2a187453064356c898cae034eaed119e1663acb8",
+    "getTokenId": {"Nacho": "0x2d3e1ff5ca46ab8fa2142019c7bd004b3a220beed1ab6c87214975beec275ceb"}
+  },
+  "selectors": {
+    "primarySalesAllowed()": "0x55c81e2c",
+    "secondarySalesAllowed()": "0x3c0b1267",
+    "marketplaces(address)": "0x6a56b359",
+    "allowedCustomExternalCalls(address,bytes4)": "0xa1b3130b",
+    "useCredits(((uint256,uint256,bytes32)[],bytes[],(address,bytes4,bytes,uint256,bytes32),bytes,uint256,uint256))": "0x1863572d",
+    "accept((address,bytes,(uint256,uint256,uint256,bytes32,uint256,uint256,bytes32,bytes32[],(address,bytes4,bytes,bool)[]),(uint256,address,uint256,address,bytes)[],(uint256,address,uint256,address,bytes)[])[])": "0x961a547e",
+    "buy((address,uint256[],uint256[],address[])[])": "0xa4fdc78a",
+    "executeOrder(address,uint256,uint256)": "0xae7b0333",
+    "execute((address,bytes,bytes))": "0xfd165a73",
+    "executeMetaTransaction(address,bytes,bytes)": "0xd8ed1acc",
+    "getTokenId(string)": "0x1e7663bc"
+  }
+}

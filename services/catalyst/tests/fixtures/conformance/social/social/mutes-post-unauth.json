@@ -1,0 +1,25 @@
+{
+  "description": "POST /v1/mutes without an auth chain and with a body lacking muted_address: pins which check answers first (the signed-fetch gate refuses before any write). Captured POST https://social-api.decentraland.org/v1/mutes -> 400.",
+  "request": {
+    "method": "POST",
+    "path": "/v1/mutes",
+    "query": {},
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {}
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Invalid Auth Chain",
+      "message": "This endpoint requires a signed fetch request. See ADR-44."
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/mutes",
+  "captured_at": "2026-10-26T18:01:46Z",
+  "volatile_paths": []
+}

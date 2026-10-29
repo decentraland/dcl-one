@@ -1,0 +1,193 @@
+/* from: shop@2d3bf62:app/src/components/FilterBar/FilterBar.styles.ts (Toolbar, Count, Chips, Chip, ClearAll,
+   Right, FiltersPill), app/src/components/Dropdown/Dropdown.styles.ts (Trigger, Menu, Option). */
+.shop-filterbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.shop-filterbar__count {
+  order: 1;
+  margin: 0;
+  color: #ecebed;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.43;
+  white-space: nowrap;
+}
+.shop-filterbar__shimmer {
+  display: inline-block;
+  width: 72px;
+  height: 14px;
+  border-radius: 6px;
+  vertical-align: middle;
+  background: rgba(255, 255, 255, 0.08);
+}
+.shop-filterbar__chips {
+  order: 2;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.shop-filterbar__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 6px 12px;
+  border: 0;
+  border-radius: 50px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font: inherit;
+  font-weight: 400;
+  font-size: 12px;
+  line-height: 1.43;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.shop-filterbar__chip:hover { background: #161518; }
+.shop-filterbar__chip:focus-visible,
+.shop-filterbar__clear:focus-visible,
+.shop-filterbar__pill:focus-visible {
+  outline: 2px solid #691fa9;
+  outline-offset: 2px;
+}
+.shop-filterbar__clear {
+  padding: 0 4px;
+  border: 0;
+  background: none;
+  color: #cfcdd4;
+  font: inherit;
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.43;
+  text-decoration: underline;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.shop-filterbar__clear:hover { color: #fff; }
+.shop-filterbar__right {
+  order: 4;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+}
+
+.shop-filterbar__sort {
+  position: relative;
+  display: inline-block;
+}
+.shop-filterbar__sorttrigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  height: 40px;
+  padding: 4px 4px 4px 12px;
+  background: rgba(0, 0, 0, 0.12);
+  border: 0.5px solid #a09ba8;
+  border-radius: 8px;
+  color: #ecebed;
+  font: inherit;
+  font-weight: 600;
+  font-size: 12px;
+  line-height: 1.43;
+  text-transform: uppercase;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.shop-filterbar__sorttrigger:hover { border-color: #fff; }
+.shop-filterbar__sorttrigger:focus-visible { outline: 0; border-color: #691fa9; }
+.shop-filterbar__sorttrigger .shop-ico { color: #fcfcfc; transition: transform 0.15s ease; }
+.shop-filterbar__sorttrigger[data-open] .shop-ico { transform: rotate(180deg); }
+.shop-filterbar__sortmenu {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 40;
+  min-width: 174px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  overflow: hidden;
+  background: #fff;
+  border-radius: 8px;
+  box-shadow: 0 4px 25px 5px rgba(0, 0, 0, 0.25);
+}
+.shop-filterbar__sortmenu button {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 40px;
+  padding: 4px 4px 4px 8px;
+  border: 0;
+  background: #fff;
+  color: #43404a;
+  font: inherit;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.43;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.shop-filterbar__sortmenu button:hover { background: #f5f4f7; }
+.shop-filterbar__sortmenu button[data-active] { background: #ecebed; }
+
+.shop-filterbar__pill {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 8px 8px 8px 12px;
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid #fcfcfc;
+  border-radius: 32px;
+  color: #fcfcfc;
+  font: inherit;
+  font-weight: 500;
+  font-size: 12px;
+  line-height: 1.43;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.shop-filterbar__pill:hover { background: rgba(255, 255, 255, 0.12); }
+
+@media (max-width: 900px) {
+  .shop-filterbar__count {
+    flex: 0 0 auto;
+    font-size: 12px;
+    line-height: 1;
+    color: #cfcdd4;
+  }
+  .shop-filterbar__chips {
+    order: 4;
+    flex-basis: 100%;
+    gap: 4px;
+  }
+  .shop-filterbar__chip { font-size: 10px; }
+  .shop-filterbar__right {
+    order: 2;
+    flex: 1 1 auto;
+    min-width: 0;
+    justify-content: flex-end;
+    flex-wrap: wrap;
+  }
+  .shop-filterbar__sorttrigger {
+    height: 36px;
+    padding: 8px 8px 8px 12px;
+    gap: 4px;
+    border-radius: 32px;
+    border: 1px solid #fcfcfc;
+    color: #fcfcfc;
+    background: rgba(255, 255, 255, 0.1);
+    font-weight: 500;
+    text-transform: none;
+  }
+  .shop-filterbar__sorttrigger .shop-ico { width: 20px; height: 20px; }
+  .shop-filterbar__pill { display: inline-flex; }
+}

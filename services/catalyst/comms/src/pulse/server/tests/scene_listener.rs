@@ -1,0 +1,1330 @@
+use super::*;
+
+use std::collections::HashSet;
+
+use crate::protocol::pulse::decentraland::pulse::{
+    ParcelRect, SceneListenerAoi, SceneListenerHandshakeRequest, SceneListenerUpdate,
+};
+use crate::pulse::hardening::{
+    DEFAULT_DISCRETE_BURST, DEFAULT_SCENE_LISTENER_MAX_PARCELS, GameplayRateLimiter, IpWhitelist,
+    SCENE_LISTENER_EXEMPT_MAX_AOI_BYTES, SCENE_LISTENER_REALM_BUDGET_COST,
+};
+use crate::pulse::interest::{SceneListenerCellMapper, SceneListenerState};
+
+#[tokio::test]
+async fn listener_connection_cap_moves_only_after_valid_auth_and_aoi() {
+    let mut srv = PulseServer::new();
+    srv.ip_limiter_options.enabled = true;
+    srv.ip_limiter_options.scene_listener_max_concurrency = 1;
+    let (base, _, now_ms) = signed_handshake_request().await;
+    let bytes = one_realm_msg(&base, "realm", vec![rect(0, 0, 0, 0)], 0);
+    for peer in [1, 2] {
+        assert!(
+            srv.ip_limiter
+                .acquire(peer, "192.0.2.1", &srv.ip_limiter_options)
+        );
+        let mut state = PeerState::new(PeerConnectionState::PendingAuth, 0);
+        state.ip = Some("192.0.2.1".into());
+        srv.peers.insert(peer, state);
+    }
+    assert!(matches!(
+        srv.dispatch(1, channel::RELIABLE, &bytes, now_ms, 0),
+        Action::AuthenticatedListener { .. }
+    ));
+    // Independent valid signed handshake: disable replay enforcement here to isolate the IP cap.
+    srv.replay_policy = HandshakeReplayPolicy::new(false, 60_000, 100);
+    assert!(
+        matches!(srv.dispatch(2, channel::RELIABLE, &bytes, now_ms, 0), Action::Reject { reason, .. } if reason.code() == 18)
+    );
+    srv.ip_limiter.release(1);
+    // The refused move leaves peer 2 player-classed until its disconnect.
+    srv.ip_limiter.release(2);
+    srv.peers.remove(&2);
+    assert!(
+        srv.ip_limiter
+            .acquire(3, "192.0.2.1", &srv.ip_limiter_options)
+    );
+    assert!(
+        srv.ip_limiter
+            .reclassify_listener(3, &srv.ip_limiter_options)
+    );
+}
+
+#[tokio::test]
+async fn whitelist_never_bypasses_listener_authentication() {
+    let mut srv = PulseServer::new();
+    srv.ip_limiter_options.whitelist = IpWhitelist::parse("192.0.2.1").unwrap();
+    let mut state = PeerState::new(PeerConnectionState::PendingAuth, 0);
+    state.ip = Some("192.0.2.1".into());
+    srv.peers.insert(1, state);
+    let bytes = client_msg(client_message::Message::SceneListenerHandshake(
+        SceneListenerHandshakeRequest {
+            auth_chain: b"invalid auth".to_vec(),
+            aoi: vec![aoi("realm", vec![rect(0, 0, 10, 10)])],
+            protocol_features: 0,
+        },
+    ));
+    let action = srv.dispatch(1, channel::RELIABLE, &bytes, 0, 0);
+    assert!(matches!(
+        action,
+        Action::Reply(ServerMessage {
+            message: Some(server_message::Message::Handshake(HandshakeResponse {
+                success: false,
+                ..
+            }))
+        })
+    ));
+    assert!(!srv.is_authenticated(1));
+}
+
+#[tokio::test]
+async fn whitelist_never_bypasses_listener_wallet_bans() {
+    let mut srv = PulseServer::new();
+    srv.ip_limiter_options.whitelist = IpWhitelist::parse("192.0.2.1").unwrap();
+    let mut state = PeerState::new(PeerConnectionState::PendingAuth, 0);
+    state.ip = Some("192.0.2.1".into());
+    srv.peers.insert(1, state);
+    let (base, wallet, now) = signed_handshake_request().await;
+    srv.ban_list.replace([wallet]);
+    let bytes = one_realm_msg(&base, "realm", vec![rect(0, 0, 0, 0)], 0);
+    assert!(matches!(
+        srv.dispatch(1, channel::RELIABLE, &bytes, now, 0),
+        Action::Reject {
+            reason: DisconnectReason::Banned,
+            ..
+        }
+    ));
+    assert!(!srv.is_authenticated(1));
+}
+
+fn rect(min_x: i32, min_z: i32, max_x: i32, max_z: i32) -> ParcelRect {
+    ParcelRect {
+        min_x,
+        min_z,
+        max_x,
+        max_z,
+    }
+}
+
+fn aoi(realm: &str, rects: Vec<ParcelRect>) -> SceneListenerAoi {
+    SceneListenerAoi {
+        realm: realm.into(),
+        parcel_rects: rects,
+    }
+}
+
+fn single_realm(srv: &PulseServer, realm: &str, parcels: &[i32]) -> SceneListenerState {
+    SceneListenerState::from_parcels(
+        [(realm.to_string(), parcels.iter().copied().collect())]
+            .into_iter()
+            .collect(),
+        &srv.encoder,
+        &SceneListenerCellMapper::new(&srv.grids, &srv.encoder),
+    )
+}
+
+fn listener(srv: &mut PulseServer, peer: u32, wallet: &str, realm: &str, parcels: &[i32]) {
+    let mut st = PeerState::new(PeerConnectionState::Authenticated, 0);
+    st.wallet_id = Some(wallet.into());
+    st.scene_listener = Some(Arc::new(single_realm(srv, realm, parcels)));
+    srv.peers.insert(peer, st);
+    srv.identity.set(peer, wallet.into());
+}
+
+fn scene_listener_msg(base: &[u8], aoi: Vec<SceneListenerAoi>, features: u32) -> Vec<u8> {
+    let auth_chain = match ClientMessage::decode(base).unwrap().message {
+        Some(client_message::Message::Handshake(h)) => h.auth_chain,
+        _ => panic!("base must be a player handshake"),
+    };
+    client_msg(client_message::Message::SceneListenerHandshake(
+        SceneListenerHandshakeRequest {
+            auth_chain,
+            aoi,
+            protocol_features: features,
+        },
+    ))
+}
+
+fn one_realm_msg(base: &[u8], realm: &str, rects: Vec<ParcelRect>, features: u32) -> Vec<u8> {
+    scene_listener_msg(base, vec![aoi(realm, rects)], features)
+}
+
+fn update_msg(aoi: Vec<SceneListenerAoi>) -> Vec<u8> {
+    client_msg(client_message::Message::SceneListenerUpdate(
+        SceneListenerUpdate { aoi },
+    ))
+}
+
+fn parcels_of<'a>(srv: &'a PulseServer, peer: u32, realm: &str) -> &'a HashSet<i32> {
+    &srv.peers[&peer]
+        .scene_listener
+        .as_ref()
+        .unwrap()
+        .parcels_by_realm[realm]
+}
+
+fn encoded(srv: &PulseServer, coords: &[(i32, i32)]) -> HashSet<i32> {
+    coords
+        .iter()
+        .map(|&(x, z)| srv.encoder.encode(x, z))
+        .collect()
+}
+
+async fn handshake_case(max_parcels: usize, aoi: Vec<SceneListenerAoi>) -> Action {
+    let mut srv = PulseServer::new();
+    srv.max_scene_listener_parcels = max_parcels;
+    srv.peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    let (base, _w, now_ms) = signed_handshake_request().await;
+    let bytes = scene_listener_msg(&base, aoi, 0);
+    srv.dispatch(1, channel::RELIABLE, &bytes, now_ms, 0)
+}
+
+fn expect_handshake_reject(action: Action) {
+    match action {
+        Action::Reject { reply, reason } => {
+            assert_eq!(reason, DisconnectReason::InvalidHandshakeField);
+            assert!(reply.is_none(), "a field reject sends no HandshakeResponse");
+        }
+        other => panic!("expected Reject(InvalidHandshakeField), got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn committed_listener_handshake_is_idempotent_without_changing_aoi() {
+    let mut server = PulseServer::with_config(4, 2, &[50], false);
+    server
+        .peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    let (base, _, now_ms) = signed_handshake_request().await;
+    let bytes = one_realm_msg(&base, "realm-a", vec![rect(0, 0, 0, 0)], 0);
+    let admitted = match server.dispatch(1, channel::RELIABLE, &bytes, now_ms, 0) {
+        Action::AuthenticatedListener {
+            wallet,
+            session,
+            listener,
+            ..
+        } => {
+            server.identity.set_with_session(1, wallet.clone(), session);
+            let state = server.peers.get_mut(&1).unwrap();
+            state.wallet_id = Some(wallet);
+            state.connection_state = PeerConnectionState::Authenticated;
+            state.scene_listener = Some(listener.clone());
+            listener
+        }
+        other => panic!("expected listener admission: {other:?}"),
+    };
+    assert_eq!(
+        server.dispatch(1, channel::RELIABLE, &bytes, now_ms + 7_000, 7_000),
+        Action::Reply(handshake_response(true, None))
+    );
+    assert!(Arc::ptr_eq(
+        server.peers[&1].scene_listener.as_ref().unwrap(),
+        &admitted
+    ));
+    assert_eq!(server.peers[&1].handshake_attempts, 1);
+    let changed = one_realm_msg(&base, "realm-b", vec![rect(0, 0, 0, 0)], 0);
+    assert_eq!(
+        server.dispatch(1, channel::RELIABLE, &changed, now_ms, 0),
+        Action::Ignore
+    );
+    assert!(Arc::ptr_eq(
+        server.peers[&1].scene_listener.as_ref().unwrap(),
+        &admitted
+    ));
+}
+
+#[test]
+fn scene_listener_forbidden_messages_are_dropped_and_counted() {
+    let mut srv = PulseServer::new();
+    listener(&mut srv, 7, "0xabc", "realm-a", &[10]);
+
+    let forbidden: Vec<Vec<u8>> = vec![
+        client_msg(client_message::Message::Input(PlayerStateInput {
+            state: Some(valid_state(3)),
+        })),
+        client_msg(client_message::Message::Teleport(teleport_request(
+            3, "realm-a",
+        ))),
+        client_msg(client_message::Message::EmoteStart(
+            crate::protocol::pulse::decentraland::pulse::EmoteStart {
+                emote_id: "wave".into(),
+                duration_ms: None,
+                player_state: Some(valid_state(3)),
+                mask: None,
+            },
+        )),
+        client_msg(client_message::Message::EmoteStop(
+            crate::protocol::pulse::decentraland::pulse::EmoteStop {},
+        )),
+        client_msg(client_message::Message::ProfileAnnouncement(
+            ProfileVersionAnnouncement { version: 4 },
+        )),
+        client_msg(client_message::Message::Handshake(
+            crate::protocol::pulse::decentraland::pulse::HandshakeRequest {
+                auth_chain: b"x".to_vec(),
+                profile_version: 0,
+                initial_state: None,
+                protocol_features: 0,
+            },
+        )),
+        one_realm_msg(
+            &client_msg(client_message::Message::Handshake(
+                crate::protocol::pulse::decentraland::pulse::HandshakeRequest {
+                    auth_chain: b"x".to_vec(),
+                    profile_version: 0,
+                    initial_state: None,
+                    protocol_features: 0,
+                },
+            )),
+            "realm-a",
+            vec![rect(0, 0, 0, 0)],
+            0,
+        ),
+    ];
+
+    let mut expected = 0u64;
+    for bytes in &forbidden {
+        assert_eq!(
+            srv.dispatch(7, channel::RELIABLE, bytes, 0, 0),
+            Action::Ignore
+        );
+        expected += 1;
+        assert_eq!(srv.scene_listener_forbidden_drops, expected);
+    }
+
+    let resync = client_msg(client_message::Message::Resync(ResyncRequest {
+        subject_id: 1,
+        known_seq: 0,
+    }));
+    assert_eq!(
+        srv.dispatch(7, channel::RELIABLE, &resync, 0, 0),
+        Action::Applied
+    );
+    assert_eq!(
+        srv.scene_listener_forbidden_drops, expected,
+        "resync is never a forbidden drop"
+    );
+    assert!(srv.peers[&7].resync_requests.is_some());
+
+    let update = update_msg(vec![aoi("realm-a", vec![rect(0, 0, 0, 0)])]);
+    assert_eq!(
+        srv.dispatch(7, channel::RELIABLE, &update, 0, 0),
+        Action::Applied
+    );
+    assert_eq!(
+        srv.scene_listener_forbidden_drops, expected,
+        "the listener's own AoI is the one thing it may change"
+    );
+}
+
+#[test]
+fn scene_listener_application_dispatch_keeps_avatar_state_read_only() {
+    let mut srv = PulseServer::new();
+    listener(&mut srv, 7, "0xabc", "realm-a", &[10]);
+    srv.peers.get_mut(&7).unwrap().features = FEATURE_APPLICATION_RELAY;
+    let join = client_message::Message::ApplicationJoin(
+        crate::protocol::pulse::decentraland::pulse::ApplicationJoin {
+            request_id: 1,
+            jwt_header_payload: "header.payload".into(),
+            proof: vec![0; 32],
+        },
+    );
+    assert_eq!(
+        srv.dispatch(7, channel::RELIABLE, &client_msg(join.clone()), 0, 0),
+        Action::Application(join),
+        "dispatch requests independent room authorization; it does not grant publication"
+    );
+    let input = client_msg(client_message::Message::Input(PlayerStateInput {
+        state: Some(valid_state(3)),
+    }));
+    assert_eq!(
+        srv.dispatch(7, channel::UNRELIABLE_SEQUENCED, &input, 0, 0),
+        Action::Ignore
+    );
+    assert_eq!(srv.scene_listener_forbidden_drops, 1);
+    assert!(srv.is_scene_listener(7));
+    assert_eq!(parcels_of(&srv, 7, "realm-a"), &HashSet::from([10]));
+}
+
+#[test]
+fn scene_listener_application_dispatch_requires_auth_negotiation_and_reliable_channel() {
+    for message in [
+        client_message::Message::ApplicationJoin(
+            crate::protocol::pulse::decentraland::pulse::ApplicationJoin {
+                request_id: 1,
+                jwt_header_payload: "header.payload".into(),
+                proof: vec![0; 32],
+            },
+        ),
+        client_message::Message::ApplicationLeave(
+            crate::protocol::pulse::decentraland::pulse::ApplicationLeave { room_id: 1 },
+        ),
+        client_message::Message::ApplicationSend(
+            crate::protocol::pulse::decentraland::pulse::ApplicationSend {
+                room_id: 1,
+                recipient_id: 0,
+                payload: vec![1],
+                unreliable: false,
+                roster_version: 0,
+            },
+        ),
+    ] {
+        let bytes = client_msg(message.clone());
+        let mut srv = PulseServer::new();
+        listener(&mut srv, 7, "0xabc", "realm-a", &[10]);
+        assert_eq!(
+            srv.dispatch(7, channel::RELIABLE, &bytes, 0, 0),
+            Action::Ignore
+        );
+        srv.peers.get_mut(&7).unwrap().features = FEATURE_APPLICATION_RELAY;
+        srv.peers.get_mut(&7).unwrap().connection_state = PeerConnectionState::PendingAuth;
+        assert_eq!(
+            srv.dispatch(7, channel::RELIABLE, &bytes, 0, 0),
+            Action::Ignore
+        );
+        srv.peers.get_mut(&7).unwrap().connection_state = PeerConnectionState::Authenticated;
+        assert_eq!(
+            srv.dispatch(7, channel::UNRELIABLE_UNSEQUENCED, &bytes, 0, 0),
+            Action::Ignore
+        );
+        assert_eq!(
+            srv.dispatch(7, channel::RELIABLE, &bytes, 0, 0),
+            Action::Application(message)
+        );
+    }
+}
+
+#[test]
+fn scene_listener_choke_never_gates_players_or_unknown_peers() {
+    let mut srv = PulseServer::new();
+    authed(&mut srv, 8, "0xplayer");
+    let input = client_msg(client_message::Message::Input(PlayerStateInput {
+        state: Some(valid_state(3)),
+    }));
+    assert_eq!(
+        srv.dispatch(8, channel::UNRELIABLE_SEQUENCED, &input, 0, 0),
+        Action::Applied
+    );
+    assert_eq!(
+        srv.dispatch(999, channel::UNRELIABLE_SEQUENCED, &input, 0, 0),
+        Action::Ignore,
+        "unknown peer falls through the normal auth gate, not the choke"
+    );
+    assert_eq!(srv.scene_listener_forbidden_drops, 0);
+}
+
+#[tokio::test]
+async fn scene_listener_handshake_accepts_and_is_never_a_subject() {
+    let mut srv = PulseServer::new();
+    srv.peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    let (base, wallet, now_ms) = signed_handshake_request().await;
+    let bytes = one_realm_msg(&base, "realm-a", vec![rect(0, 0, 1, 1)], 0);
+
+    match srv.dispatch(1, channel::RELIABLE, &bytes, now_ms, 0) {
+        Action::AuthenticatedListener {
+            wallet: w,
+            session,
+            duplicate_of,
+            listener,
+            features,
+        } => {
+            assert_ne!(
+                session, w,
+                "a delegated chain names its ephemeral as the session"
+            );
+            assert_eq!(w, wallet);
+            assert_eq!(duplicate_of, None);
+            assert_eq!(features, 0);
+            assert_eq!(listener.realm_count(), 1);
+            assert_eq!(
+                listener.parcels_by_realm["realm-a"],
+                encoded(&srv, &[(0, 0), (1, 0), (0, 1), (1, 1)]),
+                "2x2 rect expands to 4 parcels"
+            );
+            assert_eq!(listener.parcel_count(), 4);
+        }
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    }
+    assert!(
+        srv.board.try_read(1).is_none(),
+        "handshake path creates no board slot for a listener"
+    );
+}
+
+#[tokio::test]
+async fn scene_listener_handshake_negotiates_features() {
+    let mut srv = PulseServer::new();
+    srv.peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    let (base, _wallet, now_ms) = signed_handshake_request().await;
+    let bytes = one_realm_msg(&base, "realm-a", vec![rect(0, 0, 0, 0)], 0xFFFF_FFFF);
+
+    match srv.dispatch(1, channel::RELIABLE, &bytes, now_ms, 0) {
+        Action::AuthenticatedListener { features, .. } => {
+            assert_eq!(
+                features, SERVER_FEATURES,
+                "unknown bits masked to SERVER_FEATURES"
+            )
+        }
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn scene_listener_handshake_expands_per_realm() {
+    let srv = PulseServer::new();
+    let action = handshake_case(
+        DEFAULT_SCENE_LISTENER_MAX_PARCELS,
+        vec![
+            aoi("world-a", vec![rect(0, 0, 0, 0)]),
+            aoi("world-b", vec![rect(0, 0, 1, 0)]),
+        ],
+    )
+    .await;
+    match action {
+        Action::AuthenticatedListener { listener, .. } => {
+            assert_eq!(listener.realm_count(), 2);
+            assert_eq!(
+                listener.parcels_by_realm["world-a"],
+                encoded(&srv, &[(0, 0)])
+            );
+            assert_eq!(
+                listener.parcels_by_realm["world-b"],
+                encoded(&srv, &[(0, 0), (1, 0)])
+            );
+            assert_eq!(listener.parcel_count(), 3);
+            assert!(listener.observes(Some("world-a"), srv.encoder.encode(0, 0)));
+            assert!(listener.observes(Some("world-b"), srv.encoder.encode(1, 0)));
+            assert!(
+                !listener.observes(Some("world-a"), srv.encoder.encode(1, 0)),
+                "a parcel announced for one realm is not observed in another"
+            );
+            assert!(!listener.observes(None, srv.encoder.encode(0, 0)));
+        }
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn scene_listener_announcement_covers_cells_not_parcels() {
+    let mut srv = PulseServer::new();
+    srv.peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    let (base, _w, now_ms) = signed_handshake_request().await;
+    let bytes = one_realm_msg(&base, "main", vec![rect(0, 0, 63, 62)], 0);
+    let listener = match srv.dispatch(1, channel::RELIABLE, &bytes, now_ms, 0) {
+        Action::AuthenticatedListener { listener, .. } => listener,
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    };
+    assert_eq!(listener.parcel_count(), 4032);
+    assert!(
+        listener.parcel_count() + SCENE_LISTENER_REALM_BUDGET_COST
+            <= DEFAULT_SCENE_LISTENER_MAX_PARCELS
+    );
+    assert_eq!(listener.cell_count(), 121);
+    let mut expected = HashSet::new();
+    srv.cell_mapper
+        .add_covering_cells(&mut expected, 0, 0, 63, 62);
+    assert_eq!(
+        listener.cell_keys().iter().copied().collect::<HashSet<_>>(),
+        expected,
+        "the descriptor carries exactly the mapper's cover of the announced rect"
+    );
+
+    let mut st = PeerState::new(PeerConnectionState::Authenticated, 0);
+    st.scene_listener = Some(listener);
+    srv.peers.insert(1, st);
+    srv.gameplay_limiter = GameplayRateLimiter::new(20, 16, 5, DEFAULT_DISCRETE_BURST);
+    assert_eq!(
+        srv.dispatch(
+            1,
+            channel::RELIABLE,
+            &update_msg(vec![aoi("main", vec![rect(5, 5, 5, 5)])]),
+            0,
+            1000
+        ),
+        Action::Applied
+    );
+    let updated = srv.peers[&1].scene_listener.as_ref().unwrap();
+    assert_eq!(updated.parcel_count(), 1);
+    assert_eq!(
+        updated.cell_count(),
+        1,
+        "parcel (5,5) spans world [80,96)^2, inside one 100-unit cell"
+    );
+}
+
+#[tokio::test]
+async fn scene_listener_handshake_budget_spans_realms_and_charges_each_realm() {
+    assert!(
+        matches!(
+            handshake_case(16, vec![aoi("a", vec![rect(0, 0, 2, 3)])]).await,
+            Action::AuthenticatedListener { .. }
+        ),
+        "one realm of 12 parcels spends exactly the cap"
+    );
+    expect_handshake_reject(handshake_case(16, vec![aoi("a", vec![rect(0, 0, 3, 3)])]).await);
+
+    assert!(
+        matches!(
+            handshake_case(
+                16,
+                vec![
+                    aoi("a", vec![rect(10, 10, 11, 11)]),
+                    aoi("b", vec![rect(10, 10, 11, 11)]),
+                ]
+            )
+            .await,
+            Action::AuthenticatedListener { .. }
+        ),
+        "two realms of 2x2 spend 2 x (4 + 4) = 16"
+    );
+    expect_handshake_reject(
+        handshake_case(
+            16,
+            vec![
+                aoi("a", vec![rect(10, 10, 11, 11)]),
+                aoi("b", vec![rect(10, 10, 11, 11)]),
+                aoi("c", vec![rect(20, 20, 20, 20)]),
+            ],
+        )
+        .await,
+    );
+
+    assert!(
+        matches!(
+            handshake_case(
+                16,
+                vec![
+                    aoi("a", vec![rect(0, 0, 0, 0)]),
+                    aoi("b", vec![rect(1, 0, 1, 0)]),
+                    aoi("c", vec![rect(2, 0, 2, 0)]),
+                ]
+            )
+            .await,
+            Action::AuthenticatedListener { .. }
+        ),
+        "three single-parcel realms spend 3 x (4 + 1) = 15"
+    );
+    expect_handshake_reject(
+        handshake_case(
+            16,
+            vec![
+                aoi("a", vec![rect(0, 0, 0, 0)]),
+                aoi("b", vec![rect(1, 0, 1, 0)]),
+                aoi("c", vec![rect(2, 0, 2, 0)]),
+                aoi("d", vec![rect(3, 0, 3, 0)]),
+            ],
+        )
+        .await,
+    );
+
+    match handshake_case(
+        16,
+        vec![aoi("a", vec![rect(10, 10, 11, 11), rect(10, 10, 11, 11)])],
+    )
+    .await
+    {
+        Action::AuthenticatedListener { listener, .. } => {
+            assert_eq!(
+                listener.parcel_count(),
+                4,
+                "overlapping rects are budgeted by sum (4 + 8 = 12) but expanded as a union"
+            );
+        }
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn scene_listener_handshake_field_rejects() {
+    let cases: Vec<Vec<SceneListenerAoi>> = vec![
+        vec![],
+        vec![aoi("realm-a", vec![])],
+        vec![aoi("", vec![rect(0, 0, 0, 0)])],
+        vec![aoi("realm-a", vec![rect(1, 0, 0, 0)])],
+        vec![aoi("realm-a", vec![rect(9999, 0, 9999, 0)])],
+        vec![aoi("realm-a", vec![rect(i32::MIN, 0, i32::MIN, 0)])],
+        vec![
+            aoi("realm-a", vec![rect(0, 0, 0, 0)]),
+            aoi("realm-a", vec![rect(1, 1, 1, 1)]),
+        ],
+    ];
+    for case in cases {
+        expect_handshake_reject(handshake_case(DEFAULT_SCENE_LISTENER_MAX_PARCELS, case).await);
+    }
+}
+
+#[tokio::test]
+async fn scene_listener_handshake_rejects_overlong_realm() {
+    let mut srv = PulseServer::new();
+    srv.max_realm_length = 4;
+    srv.peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    let (base, _w, now_ms) = signed_handshake_request().await;
+    let bytes = one_realm_msg(&base, "abcde", vec![rect(0, 0, 0, 0)], 0);
+    expect_handshake_reject(srv.dispatch(1, channel::RELIABLE, &bytes, now_ms, 0));
+    assert!(!srv.is_authenticated(1));
+}
+
+#[tokio::test]
+async fn scene_listener_handshake_duplicate_wallet_evicts() {
+    let mut srv = PulseServer::new();
+    let (base, wallet, now_ms) = signed_handshake_request().await;
+    authed(&mut srv, 3, &wallet);
+    srv.peers
+        .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+    let bytes = one_realm_msg(&base, "realm-a", vec![rect(0, 0, 0, 0)], 0);
+
+    match srv.dispatch(1, channel::RELIABLE, &bytes, now_ms, 0) {
+        Action::AuthenticatedListener {
+            wallet: w,
+            duplicate_of,
+            ..
+        } => {
+            assert_eq!(w, wallet);
+            assert_eq!(
+                duplicate_of,
+                Some(3),
+                "duplicate session across player/listener"
+            );
+        }
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn scene_listener_handshake_does_not_convert_authenticated_player() {
+    let mut srv = PulseServer::new();
+    let (base, wallet, now_ms) = signed_handshake_request().await;
+    authed(&mut srv, 1, &wallet);
+    let bytes = one_realm_msg(&base, "realm-a", vec![rect(0, 0, 0, 0)], 0);
+
+    assert_eq!(
+        srv.dispatch(1, channel::RELIABLE, &bytes, now_ms, 0),
+        Action::Ignore,
+        "an authenticated player cannot convert itself into a listener in place"
+    );
+    assert!(srv.peers[&1].scene_listener.is_none());
+    assert_eq!(
+        srv.peers[&1].connection_state,
+        PeerConnectionState::Authenticated
+    );
+}
+
+#[test]
+fn scene_listener_update_replaces_parcel_set_in_place() {
+    let mut srv = PulseServer::new();
+    let origin = srv.encoder.encode(0, 0);
+    listener(&mut srv, 7, "0xabc", "realm-a", &[origin]);
+
+    let update = update_msg(vec![aoi("realm-a", vec![rect(5, 5, 6, 6)])]);
+    assert_eq!(
+        srv.dispatch(7, channel::RELIABLE, &update, 0, 1000),
+        Action::Applied
+    );
+    assert_eq!(
+        parcels_of(&srv, 7, "realm-a"),
+        &encoded(&srv, &[(5, 5), (6, 5), (5, 6), (6, 6)])
+    );
+    assert_eq!(
+        srv.peers[&7]
+            .scene_listener
+            .as_ref()
+            .unwrap()
+            .parcel_count(),
+        4
+    );
+    assert_eq!(
+        srv.peers[&7].connection_state,
+        PeerConnectionState::Authenticated,
+        "the connection and identity stay; only the descriptor is swapped"
+    );
+    assert_eq!(srv.identity.wallet_by_peer(7), Some("0xabc"));
+
+    let narrower = update_msg(vec![aoi("realm-a", vec![rect(5, 5, 5, 5)])]);
+    assert_eq!(
+        srv.dispatch(7, channel::RELIABLE, &narrower, 0, 1000),
+        Action::Applied
+    );
+    assert_eq!(
+        parcels_of(&srv, 7, "realm-a"),
+        &encoded(&srv, &[(5, 5)]),
+        "an update replaces the set rather than extending it"
+    );
+}
+
+#[test]
+fn scene_listener_update_replaces_the_realm_set() {
+    let mut srv = PulseServer::new();
+    let origin = srv.encoder.encode(0, 0);
+    listener(&mut srv, 7, "0xabc", "realm-a", &[origin]);
+
+    let update = update_msg(vec![aoi("world-b", vec![rect(5, 5, 5, 5)])]);
+    assert_eq!(
+        srv.dispatch(7, channel::RELIABLE, &update, 0, 1000),
+        Action::Applied
+    );
+    let state = srv.peers[&7].scene_listener.as_ref().unwrap();
+    assert_eq!(
+        state.parcels_by_realm.keys().collect::<Vec<_>>(),
+        vec!["world-b"],
+        "realms absent from the update are no longer observed"
+    );
+    assert!(state.observes(Some("world-b"), srv.encoder.encode(5, 5)));
+    assert!(!state.observes(Some("realm-a"), srv.encoder.encode(0, 0)));
+}
+
+#[test]
+fn scene_listener_update_invalid_disconnects_and_leaves_aoi_in_force() {
+    let cases: Vec<Vec<SceneListenerAoi>> = vec![
+        vec![],
+        vec![aoi("realm-a", vec![])],
+        vec![aoi("", vec![rect(5, 5, 5, 5)])],
+        vec![aoi("realm-a", vec![rect(6, 6, 5, 5)])],
+        vec![aoi("realm-a", vec![rect(0, 0, 100, 100)])],
+        vec![aoi("realm-a", vec![rect(i32::MIN, 0, i32::MIN, 0)])],
+        vec![
+            aoi("realm-a", vec![rect(0, 0, 0, 0)]),
+            aoi("realm-a", vec![rect(1, 1, 1, 1)]),
+        ],
+    ];
+    for case in cases {
+        let mut srv = PulseServer::new();
+        srv.max_scene_listener_parcels = 16;
+        let origin = srv.encoder.encode(0, 0);
+        listener(&mut srv, 7, "0xabc", "realm-a", &[origin]);
+        let before = srv.peers[&7].scene_listener.clone();
+
+        assert_eq!(
+            srv.dispatch(7, channel::RELIABLE, &update_msg(case.clone()), 0, 1000),
+            Action::Reject {
+                reply: None,
+                reason: DisconnectReason::InvalidSceneListenerField,
+            },
+            "case {case:?}"
+        );
+        assert_eq!(
+            srv.peers[&7].scene_listener, before,
+            "the AoI in force when the bad update arrived is left untouched"
+        );
+        assert_eq!(
+            srv.peers[&7].connection_state,
+            PeerConnectionState::PendingDisconnect,
+            "it is the connection that goes, not the previous announcement"
+        );
+    }
+}
+
+#[test]
+fn scene_listener_update_rejects_overlong_realm() {
+    let mut srv = PulseServer::new();
+    srv.max_realm_length = 4;
+    let origin = srv.encoder.encode(0, 0);
+    listener(&mut srv, 7, "0xabc", "main", &[origin]);
+    assert_eq!(
+        srv.dispatch(
+            7,
+            channel::RELIABLE,
+            &update_msg(vec![aoi("abcde", vec![rect(5, 5, 5, 5)])]),
+            0,
+            1000
+        ),
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::InvalidSceneListenerField,
+        }
+    );
+    assert_eq!(parcels_of(&srv, 7, "main"), &encoded(&srv, &[(0, 0)]));
+}
+
+#[test]
+fn scene_listener_update_from_player_is_dropped_before_the_rate_limiter() {
+    let mut srv = PulseServer::new();
+    authed(&mut srv, 8, "0xplayer");
+    let update = update_msg(vec![aoi("realm-a", vec![rect(5, 5, 5, 5)])]);
+
+    let attempts = DEFAULT_DISCRETE_BURST as u64 + 5;
+    for _ in 0..attempts {
+        assert_eq!(
+            srv.dispatch(8, channel::RELIABLE, &update, 0, 1000),
+            Action::Ignore
+        );
+    }
+    assert!(
+        srv.peers[&8].scene_listener.is_none(),
+        "a player never becomes a listener after the handshake"
+    );
+    assert_eq!(
+        srv.peers[&8].connection_state,
+        PeerConnectionState::Authenticated,
+        "a client bug, not an attack surface: no disconnect"
+    );
+    assert_eq!(
+        srv.scene_listener_forbidden_drops, attempts,
+        "counted, in both directions of the role check"
+    );
+
+    let teleport = client_msg(client_message::Message::Teleport(teleport_request(
+        3, "realm-a",
+    )));
+    assert_eq!(
+        srv.dispatch(8, channel::RELIABLE, &teleport, 0, 1000),
+        Action::Applied,
+        "dropped ahead of the limiter, the updates spent none of the player's discrete budget"
+    );
+}
+
+#[test]
+fn scene_listener_update_from_unauthenticated_peer_is_ignored() {
+    let mut srv = PulseServer::new();
+    let origin = srv.encoder.encode(0, 0);
+    let mut st = PeerState::new(PeerConnectionState::PendingAuth, 0);
+    st.scene_listener = Some(Arc::new(single_realm(&srv, "main", &[origin])));
+    srv.peers.insert(7, st);
+
+    assert_eq!(
+        srv.dispatch(
+            7,
+            channel::RELIABLE,
+            &update_msg(vec![aoi("main", vec![rect(5, 5, 5, 5)])]),
+            0,
+            1000
+        ),
+        Action::Ignore
+    );
+    assert_eq!(parcels_of(&srv, 7, "main"), &encoded(&srv, &[(0, 0)]));
+    assert_eq!(
+        srv.scene_listener_forbidden_drops, 0,
+        "pre-auth traffic is the auth gate's business, not the role check's"
+    );
+}
+
+#[test]
+fn scene_listener_update_rides_the_discrete_bucket() {
+    let mut srv = PulseServer::new();
+    srv.gameplay_limiter = GameplayRateLimiter::new(20, 16, 1, 1);
+    let origin = srv.encoder.encode(0, 0);
+    listener(&mut srv, 7, "0xabc", "main", &[origin]);
+
+    assert_eq!(
+        srv.dispatch(
+            7,
+            channel::RELIABLE,
+            &update_msg(vec![aoi("main", vec![rect(5, 5, 5, 5)])]),
+            0,
+            1000
+        ),
+        Action::Applied
+    );
+    assert_eq!(
+        srv.dispatch(
+            7,
+            channel::RELIABLE,
+            &update_msg(vec![aoi("main", vec![rect(7, 7, 7, 7)])]),
+            0,
+            1000
+        ),
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::DiscreteEventRateExceeded
+        },
+        "the second update in the same instant is throttled like any discrete event"
+    );
+    assert_eq!(
+        parcels_of(&srv, 7, "main"),
+        &encoded(&srv, &[(5, 5)]),
+        "the throttled update never reached the AoI; the accepted one is still in force"
+    );
+    assert_eq!(
+        srv.scene_listener_forbidden_drops, 0,
+        "throttling is not a role violation"
+    );
+    assert_eq!(
+        srv.peers[&7].connection_state,
+        PeerConnectionState::PendingDisconnect
+    );
+    let before = srv.peers[&7].scene_listener.clone();
+    assert_eq!(
+        srv.dispatch(
+            7,
+            channel::RELIABLE,
+            &update_msg(vec![aoi("other", vec![rect(9, 9, 9, 9)])]),
+            0,
+            3000
+        ),
+        Action::Ignore
+    );
+    assert_eq!(srv.peers[&7].scene_listener, before);
+}
+
+#[tokio::test]
+async fn scene_listener_default_budget_matches_upstream() {
+    assert_eq!(
+        DEFAULT_SCENE_LISTENER_MAX_PARCELS, 4096,
+        "upstream Pulse SceneListenerOptions.MaxParcels"
+    );
+    let single_realm_max = DEFAULT_SCENE_LISTENER_MAX_PARCELS - SCENE_LISTENER_REALM_BUDGET_COST;
+    let full = || rect(0, 0, 43, 92);
+    assert_eq!(44 * 93, single_realm_max);
+
+    match handshake_case(
+        DEFAULT_SCENE_LISTENER_MAX_PARCELS,
+        vec![aoi("a", vec![full()])],
+    )
+    .await
+    {
+        Action::AuthenticatedListener { listener, .. } => assert_eq!(
+            listener.parcel_count(),
+            single_realm_max,
+            "one realm of 4092 parcels plus its 4-parcel charge spends the default exactly"
+        ),
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    }
+    expect_handshake_reject(
+        handshake_case(
+            DEFAULT_SCENE_LISTENER_MAX_PARCELS,
+            vec![aoi("a", vec![full(), rect(50, 50, 50, 50)])],
+        )
+        .await,
+    );
+    expect_handshake_reject(
+        handshake_case(
+            DEFAULT_SCENE_LISTENER_MAX_PARCELS,
+            vec![aoi("a", vec![full()]), aoi("b", vec![rect(0, 0, 0, 0)])],
+        )
+        .await,
+    );
+}
+
+#[tokio::test]
+async fn scene_listener_realm_expansion_stops_once_it_covers_the_world() {
+    let world = PulseServer::new().encoder.max_index_exclusive() as usize;
+    let opts = ParcelEncoderOptions::default();
+    let whole = || {
+        rect(
+            opts.min_parcel_x - opts.padding,
+            opts.min_parcel_z - opts.padding,
+            opts.max_parcel_x + opts.padding,
+            opts.max_parcel_z + opts.padding,
+        )
+    };
+    let split = (opts.min_parcel_x - opts.padding + opts.max_parcel_x + opts.padding) / 2;
+    let left = || {
+        rect(
+            opts.min_parcel_x - opts.padding,
+            opts.min_parcel_z - opts.padding,
+            split,
+            opts.max_parcel_z + opts.padding,
+        )
+    };
+    let right = || {
+        rect(
+            split + 1,
+            opts.min_parcel_z - opts.padding,
+            opts.max_parcel_x + opts.padding,
+            opts.max_parcel_z + opts.padding,
+        )
+    };
+    let rects = || vec![left(), right(), whole(), rect(0, 0, 0, 0)];
+    let priced = SCENE_LISTENER_REALM_BUDGET_COST + world * 2 + 1;
+
+    let whole_cells = match handshake_case(
+        SCENE_LISTENER_REALM_BUDGET_COST + world,
+        vec![aoi("a", vec![whole()])],
+    )
+    .await
+    {
+        Action::AuthenticatedListener { listener, .. } => {
+            assert_eq!(listener.parcel_count(), world);
+            listener.cell_count()
+        }
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    };
+
+    match handshake_case(priced, vec![aoi("a", rects())]).await {
+        Action::AuthenticatedListener { listener, .. } => {
+            assert_eq!(
+                listener.parcel_count(),
+                world,
+                "the halves union to the world, and the rects behind them add nothing"
+            );
+            assert_eq!(
+                listener.cell_count(),
+                whole_cells,
+                "a world-covering union still yields the whole world's cell cover"
+            );
+        }
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    }
+
+    expect_handshake_reject(handshake_case(priced - 1, vec![aoi("a", rects())]).await);
+}
+
+async fn handshake_from(
+    max_parcels: usize,
+    whitelist: &str,
+    ip: Option<&str>,
+    aoi: Vec<SceneListenerAoi>,
+) -> Action {
+    let mut srv = PulseServer::new();
+    srv.max_scene_listener_parcels = max_parcels;
+    srv.ip_limiter_options.whitelist = IpWhitelist::parse(whitelist).unwrap();
+    let mut state = PeerState::new(PeerConnectionState::PendingAuth, 0);
+    state.ip = ip.map(Into::into);
+    srv.peers.insert(1, state);
+    let (base, _w, now_ms) = signed_handshake_request().await;
+    let bytes = scene_listener_msg(&base, aoi, 0);
+    srv.dispatch(1, channel::RELIABLE, &bytes, now_ms, 0)
+}
+
+#[tokio::test]
+async fn whitelisted_source_ip_is_exempt_from_both_budget_charges_on_handshake() {
+    let area_over = || vec![aoi("a", vec![rect(0, 0, 9, 9)])];
+    let realms_over = || {
+        ["a", "b", "c", "d", "e"]
+            .iter()
+            .enumerate()
+            .map(|(i, r)| aoi(r, vec![rect(i as i32, 0, i as i32, 0)]))
+            .collect::<Vec<_>>()
+    };
+    for ip in ["10.0.0.7", "::ffff:10.0.0.7"] {
+        match handshake_from(16, "10.0.0.7", Some(ip), area_over()).await {
+            Action::AuthenticatedListener { listener, .. } => {
+                assert_eq!(
+                    listener.parcel_count(),
+                    100,
+                    "{ip}: 4 + 100 > 16 is not priced"
+                )
+            }
+            other => panic!("{ip}: expected AuthenticatedListener, got {other:?}"),
+        }
+        match handshake_from(16, "10.0.0.7", Some(ip), realms_over()).await {
+            Action::AuthenticatedListener { listener, .. } => assert_eq!(
+                listener.realm_count(),
+                5,
+                "{ip}: the per-realm charge 5 x (4 + 1) > 16 is waived with the area"
+            ),
+            other => panic!("{ip}: expected AuthenticatedListener, got {other:?}"),
+        }
+    }
+    for (whitelist, ip) in [
+        ("10.0.0.7", Some("10.0.0.8")),
+        ("10.0.0.7", None),
+        ("10.0.0.7", Some("")),
+        ("", Some("10.0.0.7")),
+    ] {
+        expect_handshake_reject(handshake_from(16, whitelist, ip, area_over()).await);
+        expect_handshake_reject(handshake_from(16, whitelist, ip, realms_over()).await);
+    }
+}
+
+#[tokio::test]
+async fn whitelisted_source_ip_still_obeys_every_other_aoi_rule() {
+    let overlong = "r".repeat(DEFAULT_MAX_REALM_LENGTH + 1);
+    let cases: Vec<Vec<SceneListenerAoi>> = vec![
+        vec![],
+        vec![aoi("realm-a", vec![])],
+        vec![aoi("", vec![rect(0, 0, 0, 0)])],
+        vec![aoi(&overlong, vec![rect(0, 0, 0, 0)])],
+        vec![aoi("realm-a", vec![rect(1, 0, 0, 0)])],
+        vec![aoi("realm-a", vec![rect(9999, 0, 9999, 0)])],
+        vec![aoi("realm-a", vec![rect(i32::MIN, 0, i32::MIN, 0)])],
+        vec![
+            aoi("realm-a", vec![rect(0, 0, 0, 0)]),
+            aoi("realm-a", vec![rect(1, 1, 1, 1)]),
+        ],
+    ];
+    for case in cases {
+        expect_handshake_reject(handshake_from(16, "10.0.0.7", Some("10.0.0.7"), case).await);
+    }
+}
+
+#[tokio::test]
+async fn whitelisted_listener_expansion_is_bounded_by_the_world_not_the_nominal_sum() {
+    let world = PulseServer::new().encoder.max_index_exclusive() as usize;
+    let opts = ParcelEncoderOptions::default();
+    let whole = || {
+        rect(
+            opts.min_parcel_x - opts.padding,
+            opts.min_parcel_z - opts.padding,
+            opts.max_parcel_x + opts.padding,
+            opts.max_parcel_z + opts.padding,
+        )
+    };
+    let announcement = vec![
+        aoi("a", (0..64).map(|_| whole()).collect()),
+        aoi("b", vec![whole(), whole()]),
+    ];
+    match handshake_from(
+        DEFAULT_SCENE_LISTENER_MAX_PARCELS,
+        "10.0.0.7",
+        Some("10.0.0.7"),
+        announcement,
+    )
+    .await
+    {
+        Action::AuthenticatedListener { listener, .. } => {
+            assert_eq!(listener.parcels_by_realm["a"].len(), world);
+            assert_eq!(listener.parcels_by_realm["b"].len(), world);
+        }
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn whitelisted_announcement_past_the_frame_ceiling_is_priced_as_usual() {
+    let many = || {
+        vec![aoi(
+            "a",
+            (100..150)
+                .flat_map(|x| (100..110).map(move |z| rect(x, z, x, z)))
+                .collect(),
+        )]
+    };
+    let bytes: usize = many().iter().map(prost::Message::encoded_len).sum();
+    assert!(bytes > SCENE_LISTENER_EXEMPT_MAX_AOI_BYTES, "{bytes}");
+
+    expect_handshake_reject(handshake_from(16, "10.0.0.7", Some("10.0.0.7"), many()).await);
+    match handshake_from(
+        SCENE_LISTENER_REALM_BUDGET_COST + 500,
+        "10.0.0.7",
+        Some("10.0.0.7"),
+        many(),
+    )
+    .await
+    {
+        Action::AuthenticatedListener { listener, .. } => assert_eq!(
+            listener.parcel_count(),
+            500,
+            "past the ceiling it is priced, not refused"
+        ),
+        other => panic!("expected AuthenticatedListener, got {other:?}"),
+    }
+}
+
+#[test]
+fn listener_budget_exemption_reads_the_live_list_on_every_update() {
+    let mut srv = PulseServer::new();
+    srv.max_scene_listener_parcels = 16;
+    let origin = srv.encoder.encode(0, 0);
+    listener(&mut srv, 7, "0xabc", "realm-a", &[origin]);
+    srv.peers.get_mut(&7).unwrap().ip = Some("::ffff:10.0.0.7".into());
+    let wide = || {
+        update_msg(vec![
+            aoi("realm-a", vec![rect(0, 0, 9, 9)]),
+            aoi("realm-b", vec![rect(0, 0, 0, 0)]),
+        ])
+    };
+
+    srv.ip_limiter_options.whitelist = IpWhitelist::parse("10.0.0.7").unwrap();
+    assert_eq!(
+        srv.dispatch(7, channel::RELIABLE, &wide(), 0, 1000),
+        Action::Applied,
+        "an entry added after connect reaches the listener's next update"
+    );
+    assert_eq!(parcels_of(&srv, 7, "realm-a").len(), 100);
+
+    assert_eq!(
+        srv.dispatch(
+            7,
+            channel::RELIABLE,
+            &update_msg(vec![aoi("realm-a", vec![rect(6, 6, 5, 5)])]),
+            0,
+            1000
+        ),
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::InvalidSceneListenerField,
+        },
+        "the exemption lifts the budget, not the shape rules"
+    );
+
+    let mut srv = PulseServer::new();
+    srv.max_scene_listener_parcels = 16;
+    listener(&mut srv, 7, "0xabc", "realm-a", &[origin]);
+    srv.peers.get_mut(&7).unwrap().ip = Some("10.0.0.7".into());
+    srv.ip_limiter_options.whitelist = IpWhitelist::parse("10.0.0.7").unwrap();
+    assert_eq!(
+        srv.dispatch(7, channel::RELIABLE, &wide(), 0, 1000),
+        Action::Applied
+    );
+    srv.ip_limiter_options.whitelist = IpWhitelist::new();
+    assert_eq!(
+        srv.dispatch(7, channel::RELIABLE, &wide(), 0, 1000),
+        Action::Reject {
+            reply: None,
+            reason: DisconnectReason::InvalidSceneListenerField,
+        },
+        "an entry removed after connect re-prices the very next update"
+    );
+    assert_eq!(
+        parcels_of(&srv, 7, "realm-a").len(),
+        100,
+        "the AoI in force when the priced update arrived is left untouched"
+    );
+}
+
+#[tokio::test]
+async fn baseline_input_boundaries_listener_utf16_and_terminal_rejections() {
+    let (base, _, now_ms) = signed_handshake_request().await;
+    for (realm, accepted) in [
+        ("a".repeat(255), true),
+        ("a".repeat(256), false),
+        (format!("{}a", "\u{1f600}".repeat(127)), true),
+        ("\u{1f600}".repeat(128), false),
+        (String::new(), false),
+    ] {
+        let mut srv = PulseServer::new();
+        srv.peers
+            .insert(1, PeerState::new(PeerConnectionState::PendingAuth, 0));
+        let bytes = one_realm_msg(&base, &realm, vec![rect(0, 0, 0, 0)], 0);
+        let action = srv.dispatch(1, channel::RELIABLE, &bytes, now_ms, 1000);
+        assert_eq!(
+            matches!(action, Action::AuthenticatedListener { .. }),
+            accepted
+        );
+        if !accepted {
+            assert!(matches!(
+                action,
+                Action::Reject {
+                    reason: DisconnectReason::InvalidHandshakeField,
+                    ..
+                }
+            ));
+        }
+        let mut srv = PulseServer::new();
+        let parcel = srv.encoder.encode(0, 0);
+        listener(&mut srv, 7, "wallet", "original", &[parcel]);
+        let before = srv.peers[&7].scene_listener.clone();
+        let update = update_msg(vec![aoi(&realm, vec![rect(1, 1, 1, 1)])]);
+        let action = srv.dispatch(7, channel::RELIABLE, &update, 0, 1000);
+        assert_eq!(matches!(action, Action::Applied), accepted);
+        if !accepted {
+            assert_eq!(
+                action,
+                Action::Reject {
+                    reply: None,
+                    reason: DisconnectReason::InvalidSceneListenerField
+                }
+            );
+            assert_eq!(
+                srv.peers[&7].connection_state,
+                PeerConnectionState::PendingDisconnect
+            );
+            assert_eq!(
+                srv.dispatch(
+                    7,
+                    channel::RELIABLE,
+                    &update_msg(vec![aoi("other", vec![rect(2, 2, 2, 2)])]),
+                    0,
+                    2000
+                ),
+                Action::Ignore
+            );
+            assert_eq!(srv.peers[&7].scene_listener, before);
+        }
+    }
+}

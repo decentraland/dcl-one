@@ -1,0 +1,2116 @@
+use std::{collections::VecDeque, f32::consts::PI, path::PathBuf, time::Duration};
+
+use attach::AttachPlugin;
+use avatar_texture::AvatarTexturePlugin;
+use bevy::{
+    animation::{AnimationTarget, AnimationTargetId},
+    asset::{AsyncReadExt, RenderAssetUsages},
+    gltf::Gltf,
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    render::{
+        mesh::{skinning::SkinnedMesh, MeshTag},
+        primitives::Aabb,
+        view::RenderLayers,
+    },
+    scene::InstanceId,
+    tasks::{IoTaskPool, Task},
+};
+use bevy_console::ConsoleCommand;
+use collectibles::{
+    base_wearables,
+    wearables::{UsedWearables, Wearable, WearableCategory, WearableModel, WearableUrn},
+    CollectibleError, CollectibleManager, Emote, EmoteUrn,
+};
+use colliders::AvatarColliderPlugin;
+use console::DoAddConsoleCommand;
+use npc_dynamics::NpcMovementPlugin;
+use scene_material::{
+    SceneBound, SceneBounds, SceneMaterial, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
+    SCENE_MATERIAL_NO_DITHERING_MESH_TAG, SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG,
+    SCENE_MATERIAL_TOON_MESH_TAG,
+};
+
+pub mod animate;
+pub mod attach;
+pub mod avatar_texture;
+pub mod colliders;
+mod dynamic_nametag;
+pub mod emote_report;
+pub mod foot_ik;
+pub mod foreign_dynamics;
+pub mod head_ik;
+pub mod mask_material;
+pub mod material_cache;
+pub mod npc_dynamics;
+pub mod point_at_ik;
+pub mod point_at_marker;
+mod two_bone_ik;
+
+use common::{
+    asset_cache::{clean_asset_cache, AssetCache},
+    sets::SetupSets,
+    structs::{AppConfig, AttachPoints, EmoteCommand, EmoteMask, MonotonicTimestamp, PrimaryUser},
+    util::{JoinRelativeExt, SceneSpawnerPlus, TaskExt, TryPushChildrenEx},
+};
+use comms::{
+    global_crdt::{ForeignPlayer, GlobalCrdtState},
+    profile::UserProfile,
+};
+use dcl_component::{
+    proto_components::{
+        common::Color3,
+        sdk::components::{
+            common::LoadingState, PbAssetLoadLoadingState, PbAvatarBase, PbAvatarEquippedData,
+            PbAvatarShape, PbGltfContainerLoadingState,
+        },
+        Color3DclToBevy,
+    },
+    SceneComponentId, SceneEntityId,
+};
+use dcl_types::interface::{ComponentPosition, CrdtType};
+use ipfs::{
+    ipfs_path::{IpfsPath, IpfsType},
+    EntityDefinition, IpfsAssetServer,
+};
+use scene_runner::{
+    renderer_context::RendererSceneContext,
+    update_world::{animation::Clips, AddCrdtInterfaceExt},
+    util::ConsoleRelay,
+    ContainingScene, SceneEntity,
+};
+use world_ui::spawn_world_ui_view;
+
+use crate::{
+    animate::{AvatarAnimPlayer, LOWER_BODY_BONES, LOWER_BODY_MASK_GROUP},
+    dynamic_nametag::DynamicNametagPlugin,
+    foot_ik::FootIkPlugin,
+    head_ik::HeadIkPlugin,
+    material_cache::{bounds_bits, AvatarMaskKey, AvatarMatKey, BoundsBits},
+    point_at_ik::PointAtIkPlugin,
+    point_at_marker::PointAtMarkerPlugin,
+};
+
+use self::{
+    animate::AvatarAnimationPlugin,
+    emote_report::EmoteReportPlugin,
+    foreign_dynamics::PlayerMovementPlugin,
+    mask_material::{MaskMaterial, MaskMaterialPlugin},
+};
+
+/// The render-free part of the avatar stack: what a headless server needs from foreign players
+/// (their bevy transforms, their profile in scene crdt, their emotes reported to scenes) without
+/// spawning an avatar. `AvatarPlugin` builds on it; the headless binary adds it alone.
+pub struct AvatarCorePlugin;
+
+impl Plugin for AvatarCorePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(PlayerMovementPlugin);
+        app.add_plugins(EmoteReportPlugin);
+        app.add_systems(Update, update_avatar_info);
+    }
+}
+
+pub struct AvatarPlugin;
+
+impl Plugin for AvatarPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(AvatarCorePlugin);
+        app.add_plugins(MaskMaterialPlugin);
+        app.add_plugins(NpcMovementPlugin);
+        app.add_plugins(AvatarAnimationPlugin);
+        app.add_plugins(AttachPlugin);
+        app.add_plugins(AvatarColliderPlugin);
+        app.add_plugins(AvatarTexturePlugin);
+        app.add_plugins(DynamicNametagPlugin);
+        app.add_plugins(FootIkPlugin);
+        app.add_plugins(HeadIkPlugin);
+        app.add_plugins(PointAtIkPlugin);
+        app.add_plugins(PointAtMarkerPlugin);
+        app.init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>();
+        app.init_resource::<AssetCache<AvatarMaskKey, MaskMaterial>>();
+        app.add_systems(
+            PostUpdate,
+            (
+                clean_asset_cache::<AvatarMatKey, SceneMaterial>,
+                clean_asset_cache::<AvatarMaskKey, MaskMaterial>,
+            ),
+        );
+        app.add_systems(
+            Update,
+            (
+                update_base_avatar_shape,
+                select_avatar,
+                update_render_avatar,
+                spawn_scenes,
+                process_avatar.after(update_render_avatar),
+                set_avatar_visibility,
+                retag_avatars_on_style_change,
+            ),
+        );
+
+        app.insert_resource(AvatarWorldUi {
+            view: Entity::PLACEHOLDER,
+            ui_root: Entity::PLACEHOLDER,
+        });
+        app.add_systems(Startup, setup.in_set(SetupSets::Main));
+
+        app.add_crdt_lww_component::<PbAvatarShape, AvatarShape>(
+            SceneComponentId::AVATAR_SHAPE,
+            ComponentPosition::Any,
+        );
+
+        app.add_preview_console_command::<DebugDumpAvatar, _>(debug_dump_avatar);
+
+        app.add_observer(add_attach_points_to_avatar_shape);
+        app.add_observer(remove_attach_points_from_avatar_shape);
+    }
+}
+
+#[derive(Resource)]
+struct AvatarWorldUi {
+    view: Entity,
+    ui_root: Entity,
+}
+
+fn setup(mut commands: Commands, images: ResMut<Assets<Image>>, mut view: ResMut<AvatarWorldUi>) {
+    view.view = spawn_world_ui_view(&mut commands, images.into_inner(), None).0;
+    view.ui_root = commands
+        .spawn((
+            Node {
+                width: Val::Px(0.0),
+                min_width: Val::Px(0.0),
+                max_width: Val::Px(0.0),
+                max_height: Val::Px(0.0),
+                flex_direction: FlexDirection::Row,
+                flex_wrap: FlexWrap::Wrap,
+                ..Default::default()
+            },
+            UiTargetCamera(view.view),
+        ))
+        .id();
+}
+
+/// Send player avatar info into scene crdts — a foreign player's into their own context,
+/// the local player's (`PLAYER`) into the client's single context (a multi-context
+/// server has no real local player: skip). Also registered directly by the headless
+/// server, where the rest of AvatarPlugin (render-bound) is omitted.
+pub fn update_avatar_info(
+    updated_players: Query<(Option<&ForeignPlayer>, &UserProfile), Changed<UserProfile>>,
+    mut contexts: Query<&mut GlobalCrdtState>,
+) {
+    for (player, profile) in &updated_players {
+        let Some(mut state) = (match player {
+            Some(player) => contexts.get_mut(player.context).ok(),
+            None => contexts.single_mut().ok(),
+        }) else {
+            continue;
+        };
+        let avatar = &profile.content.avatar;
+        state.update_crdt(
+            SceneComponentId::AVATAR_BASE,
+            CrdtType::LWW_ANY,
+            player.map(|p| p.scene_id).unwrap_or(SceneEntityId::PLAYER),
+            &PbAvatarBase {
+                name: profile.content.name.clone(),
+                // Voice activity is not reported to scenes by this engine yet.
+                talking: None,
+                skin_color: avatar.skin.map(|c| c.color),
+                eyes_color: avatar.eyes.map(|c| c.color),
+                hair_color: avatar.hair.map(|c| c.color),
+                body_shape_urn: avatar
+                    .body_shape
+                    .as_deref()
+                    .map(ToString::to_string)
+                    .unwrap_or(base_wearables::default_bodyshape_urn().to_string()),
+            },
+        );
+        state.update_crdt(
+            SceneComponentId::AVATAR_EQUIPPED_DATA,
+            CrdtType::LWW_ANY,
+            player.map(|p| p.scene_id).unwrap_or(SceneEntityId::PLAYER),
+            &PbAvatarEquippedData {
+                wearable_urns: avatar.wearables.to_vec(),
+                emote_urns: (0..10)
+                    .map(|ix| {
+                        avatar
+                            .emotes
+                            .as_ref()
+                            .unwrap_or(&Vec::default())
+                            .iter()
+                            .find(|emote| emote.slot == ix)
+                            .map(|emote| emote.urn.clone())
+                            .unwrap_or_default()
+                    })
+                    .collect(),
+                force_render: avatar.force_render.clone().unwrap_or_default(),
+            },
+        )
+    }
+}
+
+#[derive(Component, Clone)]
+pub struct AvatarShape(pub PbAvatarShape);
+
+impl From<PbAvatarShape> for AvatarShape {
+    fn from(value: PbAvatarShape) -> Self {
+        Self(value)
+    }
+}
+
+impl From<&UserProfile> for AvatarShape {
+    fn from(profile: &UserProfile) -> Self {
+        AvatarShape(PbAvatarShape {
+            id: profile.content.eth_address.clone(),
+            // add label only for foreign players
+            name: Some(profile.content.name.to_owned()),
+            body_shape: Some(
+                profile
+                    .content
+                    .avatar
+                    .body_shape
+                    .to_owned()
+                    .unwrap_or(base_wearables::default_bodyshape_urn().to_string()),
+            ),
+            skin_color: Some(
+                profile
+                    .content
+                    .avatar
+                    .skin
+                    .map(|skin| skin.color)
+                    .unwrap_or(Color3 {
+                        r: 0.6,
+                        g: 0.462,
+                        b: 0.356,
+                    }),
+            ),
+            hair_color: Some(
+                profile
+                    .content
+                    .avatar
+                    .hair
+                    .map(|hair| hair.color)
+                    .unwrap_or(Color3 {
+                        r: 0.283,
+                        g: 0.142,
+                        b: 0.0,
+                    }),
+            ),
+            eye_color: Some(
+                profile
+                    .content
+                    .avatar
+                    .eyes
+                    .map(|eye| eye.color)
+                    .unwrap_or(Color3 {
+                        r: 0.6,
+                        g: 0.462,
+                        b: 0.356,
+                    }),
+            ),
+            expression_trigger_id: None,
+            expression_trigger_timestamp: None,
+            talking: None,
+            wearables: profile.content.avatar.wearables.to_vec(),
+            emotes: profile
+                .content
+                .avatar
+                .emotes
+                .as_ref()
+                .map(|emotes| {
+                    let mut vec = vec![Default::default(); 10];
+                    for emote in emotes.iter() {
+                        if (emote.slot as usize) < vec.len() {
+                            vec[emote.slot as usize] = emote.urn.clone()
+                        }
+                    }
+                    vec
+                })
+                .unwrap_or_default(),
+            force_render: profile
+                .content
+                .avatar
+                .force_render
+                .clone()
+                .unwrap_or_default(),
+            show_only_wearables: None,
+        })
+    }
+}
+
+// set (foreign) user's default avatar shape based on profile data
+fn update_base_avatar_shape(
+    mut commands: Commands,
+    root_avatar_defs: Query<(Entity, Option<&ForeignPlayer>, &UserProfile), Changed<UserProfile>>,
+) {
+    for (ent, maybe_player, profile) in &root_avatar_defs {
+        let id = match maybe_player {
+            Some(player) => player.scene_id,
+            None => SceneEntityId::PLAYER,
+        };
+
+        debug!("updating default avatar for {id}");
+
+        let mut avatar_shape = AvatarShape::from(profile);
+
+        // show label only for other players
+        if maybe_player.is_none() {
+            avatar_shape.0.name = None;
+        }
+
+        commands.entity(ent).try_insert(avatar_shape);
+    }
+}
+
+#[derive(Component)]
+pub struct AvatarSelection {
+    scene: Option<Entity>,
+    shape: AvatarShape,
+    automatic_delete: bool,
+    disable_dither: bool,
+}
+
+// choose the avatar shape based on current scene of the player
+#[allow(clippy::type_complexity)]
+fn select_avatar(
+    mut commands: Commands,
+    mut root_avatar_defs: Query<
+        (
+            Entity,
+            Option<&ForeignPlayer>,
+            &AvatarShape,
+            Ref<AvatarShape>,
+            Option<&mut AvatarSelection>,
+        ),
+        Or<(With<ForeignPlayer>, With<PrimaryUser>)>,
+    >,
+    scene_avatar_defs: Query<(Entity, &SceneEntity, &AvatarShape, Ref<AvatarShape>)>,
+    orphaned_avatar_selections: Query<(Entity, &AvatarSelection), Without<AvatarShape>>,
+    containing_scene: ContainingScene,
+) {
+    struct AvatarUpdate {
+        base_name: String,
+        update_shape: Option<AvatarShape>,
+        active_scenes: HashSet<Entity>,
+        prev_source: Option<Entity>,
+        current_source: Option<Entity>,
+    }
+
+    let mut updates = HashMap::new();
+
+    // set up initial state
+    for (entity, maybe_player, base_shape, ref_avatar, maybe_prev_selection) in
+        root_avatar_defs.iter()
+    {
+        let id = maybe_player
+            .map(|p| p.scene_id)
+            .unwrap_or(SceneEntityId::PLAYER);
+        updates.insert(
+            id,
+            AvatarUpdate {
+                base_name: base_shape.0.name.clone().unwrap_or_else(|| "Guest".into()),
+                update_shape: ref_avatar.is_changed().then_some(base_shape.clone()),
+                active_scenes: containing_scene.get(entity),
+                prev_source: maybe_prev_selection
+                    .as_ref()
+                    .map(|prev| prev.scene)
+                    .unwrap_or_default(),
+                current_source: None,
+            },
+        );
+    }
+
+    for (ent, scene_ent, scene_avatar_shape, ref_avatar) in scene_avatar_defs.iter() {
+        let Some(update) = updates.get_mut(&scene_ent.id) else {
+            // this is an NPC avatar, attach selection immediately
+            if ref_avatar.is_changed() {
+                commands.entity(ent).try_insert(AvatarSelection {
+                    scene: Some(scene_ent.root),
+                    shape: AvatarShape(scene_avatar_shape.0.clone()),
+                    automatic_delete: true,
+                    disable_dither: false,
+                });
+
+                debug!("npc avatar {:?}", scene_ent);
+            }
+
+            continue;
+        };
+
+        if !update.active_scenes.contains(&scene_ent.root) {
+            continue;
+        }
+
+        // this is the source
+        update.current_source = Some(ent);
+
+        if ref_avatar.is_changed() || update.prev_source != update.current_source {
+            // and it needs to be updated
+            update.update_shape = Some(AvatarShape(PbAvatarShape {
+                name: Some(
+                    scene_avatar_shape
+                        .0
+                        .name
+                        .clone()
+                        .unwrap_or_else(|| update.base_name.clone()),
+                ),
+                ..scene_avatar_shape.0.clone()
+            }));
+        } else {
+            // doesn't need to be updated, even if the base shape changed
+            // TODO this probably won't pick up name changes though ?
+            update.update_shape = None;
+        }
+    }
+
+    // update avatar selection on foreign players
+    for (entity, maybe_player, base_shape, _, maybe_prev_selection) in root_avatar_defs.iter_mut() {
+        let id = maybe_player
+            .map(|p| p.scene_id)
+            .unwrap_or(SceneEntityId::PLAYER);
+        let Some(update) = updates.remove(&id) else {
+            error!("apparently i never inserted {id}?!");
+            continue;
+        };
+        let needs_update =
+            update.current_source != update.prev_source || update.update_shape.is_some();
+
+        if needs_update {
+            debug!(
+                "updating selected avatar for {} -> {:?}",
+                id, update.current_source
+            );
+
+            let shape = update.update_shape.unwrap_or(base_shape.clone());
+            if let Some(mut selection) = maybe_prev_selection {
+                selection.shape = shape;
+                selection.scene = update.current_source;
+            } else {
+                commands.entity(entity).try_insert(AvatarSelection {
+                    scene: update.current_source,
+                    shape,
+                    automatic_delete: true,
+                    disable_dither: maybe_player.is_none(), // disable for primary avatar only
+                });
+            }
+        }
+    }
+
+    // remove any orphans
+    for (entity, selection) in &orphaned_avatar_selections {
+        if selection.automatic_delete {
+            if let Ok(mut commands) = commands.get_entity(entity) {
+                commands.remove::<AvatarSelection>();
+            }
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct AvatarDefinition {
+    render: AvatarRenderDefinition,
+    /// played once the avatar is processed. a change of emote alone is applied to the avatar
+    /// as it stands, without a rebuild
+    emote: Option<EmoteCommand>,
+}
+
+/// everything the built avatar is made from: a change here means a rebuild
+#[derive(PartialEq)]
+pub struct AvatarRenderDefinition {
+    body: Wearable,
+    body_shape: String,
+    skin_color: Color,
+    hair_color: Color,
+    eyes_color: Color,
+    wearables: Vec<Wearable>,
+    hides: HashSet<WearableCategory>,
+    bounds: SceneBounds,
+    disable_dither: bool,
+    cel_shading: bool,
+    avatar_outline: bool,
+}
+
+#[derive(Component)]
+pub struct RetryRenderAvatar;
+
+// when an avatar style setting (cel shading, outline) is toggled, re-render every
+// avatar so their meshes are respawned with the right mesh tags. the tags are set
+// once at mesh creation in process_avatar, so an in-place flip isn't enough.
+fn retag_avatars_on_style_change(
+    config: Res<AppConfig>,
+    mut prev: Local<Option<(bool, bool)>>,
+    avatars: Query<Entity, With<AvatarSelection>>,
+    mut commands: Commands,
+) {
+    let cur = (config.graphics.cel_shading, config.graphics.avatar_outline);
+    if *prev != Some(cur) {
+        if prev.is_some() {
+            for entity in &avatars {
+                commands.entity(entity).try_insert(RetryRenderAvatar);
+            }
+        }
+        *prev = Some(cur);
+    }
+}
+
+// load wearables and create renderable avatar entity once all loaded
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn update_render_avatar(
+    mut commands: Commands,
+    query: Query<
+        (
+            Entity,
+            &AvatarSelection,
+            Option<&Children>,
+            Option<&AttachPoints>,
+            Option<&SceneEntity>,
+            Option<&PreviousAvatar>,
+        ),
+        Or<(Changed<AvatarSelection>, With<RetryRenderAvatar>)>,
+    >,
+    mut removed_selections: RemovedComponents<AvatarSelection>,
+    children: Query<(&Children, &AttachPoints)>,
+    mut avatar_render_entities: Query<(&mut AvatarDefinition, Has<AvatarProcessed>)>,
+    mut wearable_loader: CollectibleManager<Wearable>,
+    mut scenes: Query<&mut RendererSceneContext>,
+    ipfas: IpfsAssetServer,
+    timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
+    config: Res<AppConfig>,
+) {
+    // remove renderable entities when avatar selection is removed
+    for entity in removed_selections.read() {
+        if let Ok((children, attach_points)) = children.get(entity) {
+            // reparent attach points
+            commands
+                .entity(entity)
+                .try_push_children(&attach_points.entities());
+            for render_child in children
+                .iter()
+                .filter(|child| avatar_render_entities.get(*child).is_ok())
+            {
+                commands.entity(render_child).despawn();
+            }
+        }
+    }
+
+    for (entity, selection, maybe_children, maybe_attach_points, maybe_scene_ent, maybe_prev) in
+        &query
+    {
+        commands.entity(entity).try_remove::<RetryRenderAvatar>();
+
+        debug!("updating render avatar");
+
+        // get body shape
+        let body_urn = selection
+            .shape
+            .0
+            .body_shape
+            .as_ref()
+            .and_then(|b| WearableUrn::new(b).ok())
+            .unwrap_or(base_wearables::default_bodyshape_urn());
+
+        let body = match wearable_loader.get_representation(&body_urn, body_urn.as_str()) {
+            Ok(body) => body.clone(),
+            Err(CollectibleError::Loading) => {
+                debug!("waiting for hash from body {body_urn}");
+                commands.entity(entity).try_insert(RetryRenderAvatar);
+                continue;
+            }
+            Err(other) => {
+                warn!("failed to resolve body {body_urn}: {other:?}");
+                if let Some(scene_ent) = maybe_scene_ent {
+                    report_avatar_load(
+                        &mut scenes,
+                        &timestamp,
+                        scene_ent,
+                        LoadingState::FinishedWithError,
+                        body_urn.as_str(),
+                    );
+                }
+                // don't retry
+                let data = wearable_loader.get_data(&body_urn);
+                debug!("data: {data:?}");
+                continue;
+            }
+        };
+
+        // get wearables
+        let mut all_loaded = true;
+        let specified_wearables: Vec<_> = selection
+            .shape
+            .0
+            .wearables
+            .iter()
+            .flat_map(|w| WearableUrn::new(w).ok())
+            .flat_map(|wearable| {
+                match wearable_loader.get_representation(&wearable, body_urn.as_str()) {
+                    Ok(data) => Some((data.category, (data.clone(), wearable))),
+                    Err(CollectibleError::Loading) => {
+                        debug!("waiting for wearable {wearable:?}");
+                        all_loaded = false;
+                        None
+                    }
+                    Err(other) => {
+                        debug!("skipping failed wearable {wearable:?}: {other:?}");
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        // take only the first item for each category and build a category map
+        let mut wearables = HashMap::new();
+        for (category, data) in specified_wearables {
+            if !wearables.contains_key(&category) && category != WearableCategory::BODY_SHAPE {
+                wearables.insert(category, data);
+            }
+        }
+
+        // add defaults
+        let defaults: Vec<_> = base_wearables::default_wearables(&body_urn)
+            .flat_map(|default| {
+                match wearable_loader.get_representation(default.base(), body_urn.as_str()) {
+                    Ok(data) => Some((data.clone(), default.base().to_owned())),
+                    _ => {
+                        debug!("waiting for {default:?}");
+                        all_loaded = false;
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        if !all_loaded {
+            commands.entity(entity).try_insert(RetryRenderAvatar);
+            continue;
+        }
+
+        for (default, default_urn) in defaults {
+            if !wearables.contains_key(&default.category) {
+                debug!("adding default {default:?}");
+                wearables.insert(default.category, (default, default_urn));
+            }
+        }
+
+        // calculate what is hidden
+        let mut hides_first_pass: HashSet<WearableCategory, _> = HashSet::new();
+
+        debug!("calculating hides phase 1");
+        for category in WearableCategory::hides_order() {
+            if hides_first_pass.contains(category) {
+                debug!("skip {:?}, already hidden", category);
+                continue;
+            }
+
+            if let Some((wearable, _)) = wearables.get(category) {
+                hides_first_pass.extend(wearable.hides.iter());
+                debug!(
+                    "add {:?} = {:?} -> {:?}",
+                    category, wearable.hides, hides_first_pass
+                );
+            }
+
+            hides_first_pass
+                .retain(|cat| !selection.shape.0.force_render.iter().any(|h| h == cat.slot));
+        }
+
+        debug!("calculating hides phase 2");
+        let mut hides: HashSet<WearableCategory, _> = HashSet::new();
+        for category in WearableCategory::hides_order() {
+            if hides_first_pass.contains(category) {
+                debug!("skip {:?}, hidden", category);
+                continue;
+            }
+
+            if let Some((wearable, _)) = wearables.get(category) {
+                hides.extend(wearable.hides.iter());
+                debug!("add {:?} = {:?} -> {:?}", category, wearable.hides, hides);
+            }
+
+            hides.retain(|cat| !selection.shape.0.force_render.iter().any(|h| h == cat.slot));
+        }
+
+        if selection.shape.0.show_only_wearables() {
+            hides.insert(WearableCategory::BODY_SHAPE);
+        }
+
+        let initial_count = wearables.len();
+        wearables.retain(|cat, _| !hides.contains(cat));
+        debug!(
+            "hides {} / {} categories, leaves {}/{} wearables",
+            hides.len(),
+            WearableCategory::iter().count(),
+            wearables.len(),
+            initial_count
+        );
+
+        let (mut wearables, mut urns): (Vec<_>, HashSet<_>) = wearables.into_values().unzip();
+        // a fixed order, so an unchanged definition compares equal
+        wearables.sort_by_key(|wearable| wearable.category);
+
+        urns.insert(body_urn.clone());
+
+        debug!("avatar definition loaded: {wearables:?}");
+        let definition = AvatarDefinition {
+            render: AvatarRenderDefinition {
+                body,
+                body_shape: body_urn.as_str().to_owned(),
+                wearables,
+                hides,
+                skin_color: selection
+                    .shape
+                    .0
+                    .skin_color
+                    .unwrap_or(Color3 {
+                        r: 0.6,
+                        g: 0.462,
+                        b: 0.356,
+                    })
+                    .convert_srgb(),
+                hair_color: selection
+                    .shape
+                    .0
+                    .hair_color
+                    .unwrap_or(Color3 {
+                        r: 0.283,
+                        g: 0.142,
+                        b: 0.0,
+                    })
+                    .convert_srgb(),
+                eyes_color: selection
+                    .shape
+                    .0
+                    .eye_color
+                    .unwrap_or(Color3 {
+                        r: 0.6,
+                        g: 0.462,
+                        b: 0.356,
+                    })
+                    .convert_srgb(),
+                bounds: maybe_scene_ent
+                    .and_then(|se| scenes.get(se.root).ok())
+                    .map(|ctx| ctx.scene_bounds.clone())
+                    .unwrap_or_default(),
+                disable_dither: selection.disable_dither,
+                cel_shading: config.graphics.cel_shading,
+                avatar_outline: config.graphics.avatar_outline,
+            },
+            emote: selection
+                .shape
+                .0
+                .expression_trigger_id
+                .as_ref()
+                // a cleared trigger on a scene-sourced shape stops the emote: an empty
+                // command. profile-derived shapes never carry a trigger.
+                .or(selection.scene.is_some().then_some(&String::new()))
+                .and_then(|e| {
+                    let urn = if e.is_empty() {
+                        String::new()
+                    } else if e.starts_with("urn:") {
+                        e.clone()
+                    } else {
+                        // File path emote (e.g. "models/emotes/foo.glb") — resolve
+                        // through the scene's content map to build a scene-emote URN,
+                        // mirroring the logic in op_scene_emote.
+                        let scene_emote = maybe_scene_ent
+                            .and_then(|se| scenes.get(se.root).ok())
+                            .and_then(|ctx| {
+                                let scene_hash = &ctx.hash;
+                                let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
+                                    scene_hash.to_string(),
+                                    e.to_lowercase(),
+                                ));
+                                let ipfs_context = ipfas.ipfs().context.blocking_read();
+                                let emote_hash = ipfs_path.hash(&ipfs_context)?;
+                                Some(format!(
+                                    "urn:decentraland:off-chain:scene-emote:{scene_hash}-{emote_hash}-false"
+                                ))
+                            });
+
+                        // otherwise a bare emote name ("robot"), kept as written: the
+                        // collection it comes from is only known once it resolves. content
+                        // map first because a file path is also a valid single-segment urn.
+                        // base emote names are all alphanumeric, so anything else the
+                        // content map missed is a missing file, not an emote name.
+                        match scene_emote.or_else(|| {
+                            e.chars()
+                                .all(|c| c.is_ascii_alphanumeric())
+                                .then(|| e.clone())
+                        }) {
+                            Some(urn) => urn,
+                            None => {
+                                warn!("ignoring avatar shape emote '{e}': not in the scene content map, and not a base emote name");
+                                return None;
+                            }
+                        }
+                    };
+                    Some(EmoteCommand {
+                        urn,
+                        r#loop: false,
+                        timestamp: selection
+                            .shape
+                            .0
+                            .expression_trigger_timestamp
+                            .unwrap_or_default(),
+                        mask: EmoteMask::FullBody,
+                    })
+                }),
+        };
+
+        // an unchanged render definition (a profile change that doesn't show, like its
+        // snapshots) keeps the avatar already built, or still loading. a new emote alone goes
+        // to the avatar as it stands: played now once it's processed, else when it is
+        let current = maybe_children.and_then(|children| {
+            children.iter().rfind(|child| {
+                maybe_prev.is_none_or(|prev| prev.0 != *child)
+                    && avatar_render_entities.contains(*child)
+            })
+        });
+        if let Some(Ok((mut current, processed))) =
+            current.map(|current| avatar_render_entities.get_mut(current))
+        {
+            if current.render == definition.render {
+                if current.emote != definition.emote {
+                    debug!("avatar emote changed");
+                    if let Some(emote) = definition.emote.as_ref().filter(|_| processed) {
+                        commands.entity(entity).try_insert(emote.clone());
+                    }
+                    current.emote = definition.emote;
+                } else {
+                    debug!("avatar definition unchanged");
+                }
+                continue;
+            }
+        }
+
+        if let Some(attach_points) = maybe_attach_points {
+            // reparent attach points
+            commands
+                .entity(entity)
+                .try_push_children(&attach_points.entities());
+        }
+
+        if let Some(scene_ent) = maybe_scene_ent {
+            report_avatar_load(
+                &mut scenes,
+                &timestamp,
+                scene_ent,
+                LoadingState::Loading,
+                body_urn.as_str(),
+            );
+            // update gltf state
+            if let Ok(mut ctx) = scenes.get_mut(scene_ent.root) {
+                ctx.update_crdt(
+                    SceneComponentId::GLTF_CONTAINER_LOADING_STATE,
+                    CrdtType::LWW_ENT,
+                    scene_ent.id,
+                    &PbGltfContainerLoadingState {
+                        current_state: LoadingState::Loading as i32,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+        commands.entity(entity).try_with_children(|commands| {
+            commands.spawn((
+                Transform::from_rotation(Quat::from_rotation_y(PI)),
+                Visibility::default(),
+                definition,
+                UsedWearables(urns),
+            ));
+        });
+
+        // remove existing children
+        let mut chose_existing = false;
+        if let Some(children) = maybe_children {
+            for render_child in children
+                .iter()
+                .filter(|child| avatar_render_entities.get(*child).is_ok())
+            {
+                if maybe_prev.is_some_and(|e| e.0 != render_child) {
+                    debug!("despawn {render_child:?} as prev is already {maybe_prev:?}");
+                    commands.entity(render_child).despawn();
+                } else {
+                    debug!("set prev -> {render_child:?}");
+                    if chose_existing {
+                        panic!();
+                    }
+                    chose_existing = true;
+                    commands
+                        .entity(entity)
+                        .try_insert(PreviousAvatar(render_child));
+                }
+            }
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct AvatarLoaded {
+    body_instance: InstanceId,
+    wearable_instances: Vec<Option<InstanceId>>,
+    skin_materials: HashSet<Handle<StandardMaterial>>,
+    hair_materials: HashSet<Handle<StandardMaterial>>,
+}
+#[derive(Component)]
+pub struct AvatarProcessed;
+
+/// Tells a scene how the avatar on one of its entities is loading, as the AssetLoad loading
+/// state of that entity (a grow-only set the scene reads in order): Loading once the look's
+/// files are being fetched, Finished once it renders, FinishedWithError when it never will.
+fn report_avatar_load(
+    contexts: &mut Query<&mut RendererSceneContext>,
+    timestamp: &MonotonicTimestamp<PbAssetLoadLoadingState>,
+    scene_ent: &SceneEntity,
+    state: LoadingState,
+    body_shape: &str,
+) {
+    let Ok(mut context) = contexts.get_mut(scene_ent.root) else {
+        return;
+    };
+    context.update_crdt(
+        SceneComponentId::ASSET_LOAD_LOADING_STATE,
+        CrdtType::GO_ANY,
+        scene_ent.id,
+        &PbAssetLoadLoadingState {
+            current_state: state as i32,
+            asset: body_shape.to_owned(),
+            timestamp: timestamp.next_timestamp(),
+        },
+    );
+}
+
+// instantiate avatar gltfs
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn spawn_scenes(
+    mut commands: Commands,
+    query: Query<
+        (Entity, &AvatarDefinition, &ChildOf),
+        (Without<AvatarLoaded>, Without<AvatarProcessed>),
+    >,
+    asset_server: Res<AssetServer>,
+    gltfs: Res<Assets<Gltf>>,
+    mut scene_spawner: ResMut<SceneSpawner>,
+    scene_ents: Query<&SceneEntity>,
+    mut contexts: Query<&mut RendererSceneContext>,
+    timestamp: Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
+) {
+    for (ent, def, parent) in query.iter() {
+        let def = &def.render;
+        let report_failure = |contexts: &mut Query<&mut RendererSceneContext>| {
+            if let Ok(scene_ent) = scene_ents.get(parent.parent()) {
+                report_avatar_load(
+                    contexts,
+                    &timestamp,
+                    scene_ent,
+                    LoadingState::FinishedWithError,
+                    &def.body_shape,
+                );
+            }
+        };
+        let any_loading = def
+            .body
+            .model
+            .iter()
+            .chain(
+                def.wearables
+                    .iter()
+                    .flat_map(|wearable| wearable.model.as_ref()),
+            )
+            .any(|model| {
+                let h_model = &model.gltf;
+                matches!(
+                    asset_server.get_load_state(h_model),
+                    Some(bevy::asset::LoadState::Loading)
+                )
+            });
+
+        if any_loading {
+            continue;
+        }
+
+        let Some(gltf) = def
+            .body
+            .model
+            .as_ref()
+            .and_then(|model| gltfs.get(&model.gltf))
+        else {
+            match def
+                .body
+                .model
+                .as_ref()
+                .and_then(|model| asset_server.get_load_state(&model.gltf))
+            {
+                Some(bevy::asset::LoadState::Loading) | Some(bevy::asset::LoadState::NotLoaded) => {
+                    // nothing to do
+                }
+                otherwise => {
+                    warn!("failed to load body gltf: {otherwise:?}");
+                    commands.entity(ent).try_insert(AvatarProcessed);
+                    report_failure(&mut contexts);
+                }
+            }
+            continue;
+        };
+
+        let Some(h_scene) = gltf.default_scene.as_ref() else {
+            warn!("body gltf has no default scene");
+            commands.entity(ent).try_insert(AvatarProcessed);
+            report_failure(&mut contexts);
+            continue;
+        };
+
+        // store skin/hair materials to update with color on spawned instance
+        let mut skin_materials = HashSet::default();
+        let mut hair_materials = HashSet::default();
+
+        skin_materials.extend(
+            gltf.named_materials
+                .iter()
+                .filter(|(name, _)| name.to_lowercase().contains("skin"))
+                .map(|(_, h)| h.clone_weak()),
+        );
+
+        hair_materials.extend(
+            gltf.named_materials
+                .iter()
+                .filter(|(name, _)| name.to_lowercase().contains("hair"))
+                .map(|(_, h)| h.clone_weak()),
+        );
+
+        let body_instance = scene_spawner.spawn_as_child(h_scene.clone(), ent);
+
+        let instances = def
+            .wearables
+            .iter()
+            .flat_map(|wearable| &wearable.model)
+            .flat_map(|model| {
+                let h_gltf = &model.gltf;
+                match asset_server.get_load_state(h_gltf) {
+                    Some(bevy::asset::LoadState::Loaded) => (),
+                    otherwise => {
+                        // keep the slot so `wearable_instances` stays aligned with the
+                        // wearables that have models
+                        warn!("wearable gltf didn't work out: {otherwise:?}");
+                        return Some(None);
+                    }
+                }
+
+                let gltf = gltfs.get(h_gltf).unwrap();
+                let gltf_scene_handle = gltf.default_scene.as_ref();
+
+                // store skin/hair materials
+                skin_materials.extend(
+                    gltf.named_materials
+                        .iter()
+                        .filter(|(name, _)| name.to_lowercase().contains("skin"))
+                        .map(|(_, h)| h.clone_weak()),
+                );
+                hair_materials.extend(
+                    gltf.named_materials
+                        .iter()
+                        .filter(|(name, _)| name.to_lowercase().contains("hair"))
+                        .map(|(_, h)| h.clone_weak()),
+                );
+
+                Some(
+                    gltf_scene_handle
+                        .map(|h_scene| scene_spawner.spawn_as_child(h_scene.clone(), ent)),
+                )
+            });
+
+        debug!("avatar files loaded");
+        commands.entity(ent).try_insert((
+            AvatarLoaded {
+                body_instance,
+                wearable_instances: instances.collect(),
+                skin_materials,
+                hair_materials,
+            },
+            Visibility::Hidden,
+        ));
+    }
+}
+
+#[derive(Component)]
+pub struct AvatarMaterials(pub HashSet<AssetId<SceneMaterial>>);
+
+#[derive(Component, Debug)]
+pub struct PreviousAvatar(Entity);
+
+const AVATAR_EMISSIVE_MULTIPLIER: f32 = 4.0;
+/// The camera-to-player dither's base opacity for avatars: an avatar fades as a whole, by the
+/// worst point of its capsule, so all of it shows the floor. Higher than text's for that reason.
+const AVATAR_DITHER_BASE_OPACITY: f32 = 0.5;
+
+// update materials and hide base parts
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn process_avatar(
+    mut commands: Commands,
+    query: Query<
+        (
+            Entity,
+            &GlobalTransform,
+            &AvatarDefinition,
+            &AvatarLoaded,
+            &ChildOf,
+        ),
+        Without<AvatarProcessed>,
+    >,
+    scene_spawner: SceneSpawnerPlus,
+    mut instance_ents: Query<(
+        &mut Visibility,
+        &ChildOf,
+        &GlobalTransform,
+        Option<&MeshMaterial3d<StandardMaterial>>,
+        Option<&Mesh3d>,
+        Option<&AnimationPlayer>,
+    )>,
+    named_ents: Query<&Name>,
+    mut skins: Query<&mut SkinnedMesh>,
+    standard_materials: Res<Assets<StandardMaterial>>,
+    mut scene_materials: ResMut<Assets<SceneMaterial>>,
+    mut mask_materials: ResMut<Assets<MaskMaterial>>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    gltfs: Res<Assets<Gltf>>,
+    attach_points: Query<&AttachPoints>,
+    (config, mut mat_cache, mut mask_cache): (
+        Res<AppConfig>,
+        ResMut<AssetCache<AvatarMatKey, SceneMaterial>>,
+        ResMut<AssetCache<AvatarMaskKey, MaskMaterial>>,
+    ),
+    mut emote_loader: CollectibleManager<Emote>,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
+    (name_and_parent, previous_avatar, scene_ent, previous_animator, mut contexts, timestamp): (
+        Query<(&Name, &ChildOf)>,
+        Query<&PreviousAvatar>,
+        Query<&SceneEntity>,
+        Query<
+            (),
+            (
+                With<AnimationPlayer>,
+                With<AnimationGraphHandle>,
+                With<Clips>,
+                With<AnimationTransitions>,
+            ),
+        >,
+        Query<&mut RendererSceneContext>,
+        Res<MonotonicTimestamp<PbAssetLoadLoadingState>>,
+    ),
+) {
+    for (avatar_ent, root_gt, def, loaded_avatar, root_player_entity) in query.iter() {
+        let (def, emote) = (&def.render, &def.emote);
+        let not_loaded = !scene_spawner.instance_is_really_ready(loaded_avatar.body_instance)
+            || loaded_avatar
+                .wearable_instances
+                .iter()
+                .any(|maybe_instance| {
+                    maybe_instance
+                        .is_some_and(|instance| !scene_spawner.instance_is_really_ready(instance))
+                });
+
+        if not_loaded {
+            debug!("not loaded...");
+            continue;
+        }
+
+        // https://docs.decentraland.org/creator/wearables/creating-wearables/#max-width-height-and-depth-dimension-of-the-wearables
+        let aabb_bounds = (
+            Vec3::new(-1.24, 0.0, -0.7) + root_gt.translation(),
+            Vec3::new(1.24, 2.42, 0.7) + root_gt.translation(),
+        );
+
+        // style avatar meshes per the settings in the definition; toggling either
+        // re-renders avatars (see retag_avatars_on_style_change)
+        let toon_tag = if def.cel_shading {
+            SCENE_MATERIAL_TOON_MESH_TAG
+        } else {
+            0
+        };
+        // wearables can opt out of the outline via `outlineCompatible: false`
+        let outline_tag = |model: &WearableModel| {
+            if def.avatar_outline && model.outline_compatible {
+                SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG
+            } else {
+                0
+            }
+        };
+        // body model is guaranteed by spawn_scenes
+        let body_outline_tag = def.body.model.as_ref().map(outline_tag).unwrap_or(0);
+
+        let bounds_key = bounds_bits(&def.bounds);
+        let mut instance_scene_materials = HashMap::new();
+        let mut armature_node = None;
+        let mut target_armature_entities = HashMap::new();
+
+        // a fresh graph gets its lower-body mask group once the bone targets are known below
+        let mut new_graph = None;
+        if previous_animator.get(root_player_entity.parent()).is_err() {
+            let mut player = AnimationPlayer::default();
+            let mut graph = AnimationGraph::new();
+            let mut clips = Clips::default();
+            let mut transitions = AnimationTransitions::default();
+            // play default idle anim to avoid t-posing
+            if let Some(clip) = emote_loader
+                .get_representation(EmoteUrn::new("Idle_Male").unwrap(), &def.body_shape)
+                .ok()
+                .and_then(|rep| rep.avatar_animation(&gltfs).ok())
+                .flatten()
+            {
+                let ix = graph.add_clip(clip, 1.0, graph.root);
+                clips.named.insert("Idle_Male".into(), (ix, 0.0));
+                transitions.play(&mut player, ix, Duration::from_secs_f32(0.2));
+            }
+            let graph = graphs.add(graph);
+            new_graph = Some(graph.clone());
+            commands.entity(root_player_entity.parent()).try_insert((
+                player,
+                transitions,
+                clips,
+                AnimationGraphHandle(graph),
+            ));
+        }
+
+        if let Some(emote) = emote {
+            debug!("set emote -> {emote:?}");
+            commands
+                .entity(root_player_entity.parent())
+                .try_insert(emote.clone());
+        }
+
+        // record the node with the animator
+        commands
+            .entity(root_player_entity.parent())
+            .try_insert(AvatarAnimPlayer(root_player_entity.parent()));
+
+        // hide and colour the base model
+        for scene_ent in scene_spawner.iter_instance_entities(loaded_avatar.body_instance) {
+            let Ok((mut vis, parent, gt, maybe_h_mat, maybe_h_mesh, maybe_player)) =
+                instance_ents.get_mut(scene_ent)
+            else {
+                continue;
+            };
+
+            if maybe_player.is_some() {
+                commands.entity(scene_ent).remove::<AnimationPlayer>();
+            }
+
+            let Ok(name) = named_ents.get(scene_ent) else {
+                continue;
+            };
+            let name = name.to_lowercase();
+
+            // add animation player to armature root
+            if name == "armature" && armature_node.is_none() {
+                armature_node = Some(scene_ent);
+            }
+
+            // record bone entities
+            if name.to_lowercase().starts_with("avatar_") {
+                target_armature_entities.insert(name.to_lowercase(), scene_ent);
+            }
+
+            if let Some(h_mesh) = maybe_h_mesh {
+                if def.hides.contains(&WearableCategory::BODY_SHAPE) {
+                    commands.entity(scene_ent).try_insert(Visibility::Hidden);
+                }
+
+                if name.contains("head") && def.hides.contains(&WearableCategory::HEAD) {
+                    commands.entity(scene_ent).try_insert(Visibility::Hidden);
+                }
+
+                if name.contains("hands") && def.hides.contains(&WearableCategory::HANDS) {
+                    commands.entity(scene_ent).try_insert(Visibility::Hidden);
+                }
+
+                if let Some(mesh) = meshes.get(h_mesh) {
+                    if mesh.asset_usage == RenderAssetUsages::MAIN_WORLD {
+                        if let Some(mesh_data) = meshes.get_mut(h_mesh) {
+                            mesh_data.normalize_joint_weights();
+                            mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
+                        }
+                    }
+                }
+
+                commands.entity(scene_ent).try_insert(calculate_local_aabb(
+                    aabb_bounds.0,
+                    aabb_bounds.1,
+                    gt,
+                ));
+            }
+
+            if let Some(h_mat) = maybe_h_mat {
+                commands
+                    .entity(scene_ent)
+                    .remove::<MeshMaterial3d<StandardMaterial>>();
+
+                if let Some(mat) = standard_materials.get(h_mat) {
+                    let instance_mat = instance_scene_materials
+                        .entry(h_mat.clone_weak())
+                        .or_insert_with(|| {
+                            derived_scene_material(
+                                mat,
+                                h_mat,
+                                def,
+                                loaded_avatar,
+                                -5000.0, // make base model appear under any wearables at the same position, like skinpaint
+                                &bounds_key,
+                                config.graphics.oob,
+                                &mut mat_cache,
+                                &mut scene_materials,
+                            )
+                        });
+                    commands.entity(scene_ent).try_insert((
+                        MeshMaterial3d(instance_mat.clone()),
+                        MeshTag(
+                            body_outline_tag
+                                | (if def.disable_dither {
+                                    SCENE_MATERIAL_NO_DITHERING_MESH_TAG
+                                } else {
+                                    0
+                                })
+                                | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
+                                | toon_tag,
+                        ),
+                    ));
+                }
+            }
+
+            let masks = [
+                ("mask_eyes", def.eyes_color, WearableCategory::EYES, true),
+                (
+                    "mask_eyebrows",
+                    def.hair_color,
+                    WearableCategory::EYEBROWS,
+                    false,
+                ),
+                ("mask_mouth", def.skin_color, WearableCategory::MOUTH, false),
+            ];
+
+            let Ok(parent_name) = named_ents.get(parent.parent()) else {
+                continue;
+            };
+            let parent_name = parent_name.to_lowercase();
+
+            debug!("parent: {parent_name}");
+
+            for (suffix, color, category, no_mask_means_ignore_color) in masks.into_iter() {
+                if parent_name.ends_with(suffix) {
+                    *vis = Visibility::Hidden;
+
+                    if let Some(wearable) = def.wearables.iter().find(|w| w.category == category) {
+                        debug!("setting {suffix} color {:?}", color);
+                        if let Some(mask) = wearable.mask.as_ref() {
+                            debug!("using mask for {suffix}");
+                            let texture = wearable.texture.clone().unwrap();
+                            let key = AvatarMaskKey::new(
+                                texture.id(),
+                                mask.id(),
+                                color,
+                                bounds_key.clone(),
+                                config.graphics.oob,
+                            );
+                            let mask_material =
+                                mask_cache.get_or_add(key, &mut mask_materials, || {
+                                    MaskMaterial::new(
+                                        color,
+                                        texture,
+                                        mask.clone(),
+                                        &def.bounds,
+                                        config.graphics.oob,
+                                    )
+                                });
+                            commands
+                                .entity(scene_ent)
+                                .try_insert(MeshMaterial3d(mask_material))
+                                .remove::<MeshMaterial3d<SceneMaterial>>();
+                        } else {
+                            debug!("no mask for {suffix}");
+                            let base_color = if no_mask_means_ignore_color {
+                                Color::WHITE
+                            } else {
+                                color
+                            };
+                            let key = AvatarMatKey::new(
+                                None,
+                                wearable.texture.as_ref().map(|t| t.id()),
+                                base_color,
+                                LinearRgba::BLACK,
+                                0.0,
+                                bounds_key.clone(),
+                                config.graphics.oob,
+                            );
+                            let material =
+                                mat_cache.get_or_add(key, &mut scene_materials, || SceneMaterial {
+                                    base: StandardMaterial {
+                                        base_color,
+                                        base_color_texture: wearable.texture.clone(),
+                                        alpha_mode: AlphaMode::Blend,
+                                        ..Default::default()
+                                    },
+                                    extension: SceneBound::new(&def.bounds, config.graphics.oob)
+                                        .with_base_opacity(AVATAR_DITHER_BASE_OPACITY)
+                                        .with_capsule_dither(),
+                                });
+                            commands.entity(scene_ent).try_insert((
+                                MeshMaterial3d(material),
+                                MeshTag(
+                                    body_outline_tag
+                                        | (if def.disable_dither {
+                                            SCENE_MATERIAL_NO_DITHERING_MESH_TAG
+                                        } else {
+                                            0
+                                        })
+                                        | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
+                                        | toon_tag,
+                                ),
+                            ));
+                        };
+                        *vis = Visibility::Inherited;
+                    }
+                }
+            }
+
+            let hiders = [
+                ("ubody_basemesh", WearableCategory::UPPER_BODY),
+                ("lbody_basemesh", WearableCategory::LOWER_BODY),
+                ("feet_basemesh", WearableCategory::FEET),
+                // ("head", WearableCategory::HEAD),
+                // ("head_basemesh", WearableCategory::HEAD),
+                // ("mask_eyes", WearableCategory::HEAD),
+                // ("mask_eyebrows", WearableCategory::HEAD),
+                // ("mask_mouth", WearableCategory::HEAD),
+            ];
+
+            for (hidename, category) in hiders {
+                if parent_name.ends_with(hidename) {
+                    // todo construct hides better so we don't need to scan the wearables here
+                    if def.hides.contains(&category)
+                        || def
+                            .wearables
+                            .iter()
+                            .any(|w| w.category == WearableCategory::SKIN || w.category == category)
+                    {
+                        *vis = Visibility::Hidden;
+                    }
+                }
+            }
+        }
+
+        let Some(armature_node) = armature_node else {
+            warn!("no armature node!");
+            continue;
+        };
+
+        if target_armature_entities.is_empty() {
+            warn!("boneless body!");
+            continue;
+        } else {
+            // reparent hands
+            if let Ok(attach_points) = attach_points.get(root_player_entity.parent()) {
+                for (key, attach_point) in [
+                    ("avatar_head", attach_points.head),
+                    ("avatar_neck", attach_points.neck),
+                    ("avatar_spine", attach_points.spine),
+                    ("avatar_spine1", attach_points.spine_1),
+                    ("avatar_spine2", attach_points.spine_2),
+                    ("avatar_hips", attach_points.hip),
+                    ("avatar_leftshoulder", attach_points.left_shoulder),
+                    ("avatar_leftarm", attach_points.left_arm),
+                    ("avatar_leftforearm", attach_points.left_forearm),
+                    ("avatar_lefthand", attach_points.left_hand),
+                    ("avatar_lefthandindex1", attach_points.left_hand_index),
+                    ("avatar_rightshoulder", attach_points.right_shoulder),
+                    ("avatar_rightarm", attach_points.righ_arm),
+                    ("avatar_rightforearm", attach_points.right_forearm),
+                    ("avatar_righthand", attach_points.right_hand),
+                    ("avatar_righthandindex1", attach_points.right_hand_index),
+                    ("avatar_leftupleg", attach_points.left_thigh),
+                    ("avatar_leftleg", attach_points.left_shin),
+                    ("avatar_leftfoot", attach_points.left_foot),
+                    ("avatar_lefttoebase", attach_points.left_toe_base),
+                    ("avatar_rightupleg", attach_points.right_thigh),
+                    ("avatar_rightleg", attach_points.right_shin),
+                    ("avatar_rightfoot", attach_points.right_foot),
+                    ("avatar_righttoebase", attach_points.right_toe_base),
+                ] {
+                    reparent_attach_point(
+                        &mut commands,
+                        &target_armature_entities,
+                        key,
+                        attach_point,
+                    );
+                }
+            } else {
+                warn!("no attach points");
+            }
+
+            // add AnimationTargets
+            for (bone, ent) in target_armature_entities.iter() {
+                let mut path = VecDeque::default();
+                let mut e = *ent;
+                loop {
+                    let (name, parent) = name_and_parent.get(e).unwrap();
+                    path.push_front(name);
+                    if name.to_lowercase() == "armature" {
+                        break;
+                    }
+                    e = parent.parent();
+                }
+                let id = AnimationTargetId::from_names(path.into_iter());
+
+                // hips and legs stay with locomotion under an upper-body emote (`MaskedEmote`)
+                if LOWER_BODY_BONES.contains(&bone.as_str()) {
+                    if let Some(graph) = new_graph.as_ref().and_then(|graph| graphs.get_mut(graph))
+                    {
+                        graph.add_target_to_mask_group(id, LOWER_BODY_MASK_GROUP);
+                    }
+                }
+
+                commands.entity(*ent).try_insert(AnimationTarget {
+                    id,
+                    player: root_player_entity.parent(),
+                });
+            }
+
+            commands.entity(armature_node).try_insert(AnimationTarget {
+                id: AnimationTargetId::from_name(&Name::new("Armature")),
+                player: root_player_entity.parent(),
+            });
+        }
+
+        // color the components of wearables
+        // wearable_instances is built from the wearables with models, in order
+        let wearable_models = def.wearables.iter().filter_map(|w| w.model.as_ref());
+        for (instance, model) in loaded_avatar.wearable_instances.iter().zip(wearable_models) {
+            let Some(instance) = instance else {
+                warn!("failed to load instance for wearable");
+                continue;
+            };
+
+            let mut armature_map = HashMap::new();
+            // defer despawn until after we've reparented any springbones
+            let mut wearable_armature_to_despawn = HashSet::new();
+
+            for scene_ent in scene_spawner.iter_instance_entities(*instance) {
+                let Ok((_, parent, gt, maybe_h_mat, maybe_h_mesh, maybe_player)) =
+                    instance_ents.get_mut(scene_ent)
+                else {
+                    continue;
+                };
+
+                if maybe_player.is_some() {
+                    commands.entity(scene_ent).remove::<AnimationPlayer>();
+                }
+
+                let Ok(parent_name) = named_ents.get(parent.parent()) else {
+                    continue;
+                };
+                let parent_name = parent_name.to_lowercase();
+
+                let Ok(name) = named_ents.get(scene_ent) else {
+                    continue;
+                };
+                let name = name.to_lowercase();
+
+                // record bone entities so we can remap them, and delete this instance
+                if name.to_lowercase().starts_with("avatar_") {
+                    if let Some(target) = target_armature_entities.get(&name.to_lowercase()) {
+                        armature_map.insert(scene_ent, target);
+                    }
+                    if parent_name == "armature" {
+                        wearable_armature_to_despawn.insert(scene_ent);
+                    }
+                    continue;
+                }
+
+                // move children of the root to the body mesh
+                if parent_name.to_lowercase() == "armature" {
+                    commands
+                        .entity(scene_ent)
+                        .try_insert(ChildOf(armature_node));
+                }
+
+                if let Some(h_mesh) = maybe_h_mesh {
+                    if let Some(mesh) = meshes.get(h_mesh) {
+                        if mesh.asset_usage == RenderAssetUsages::MAIN_WORLD {
+                            if let Some(mesh_data) = meshes.get_mut(h_mesh) {
+                                mesh_data.normalize_joint_weights();
+                                mesh_data.asset_usage |= RenderAssetUsages::RENDER_WORLD;
+                            }
+                        }
+                    }
+                    commands.entity(scene_ent).try_insert(calculate_local_aabb(
+                        aabb_bounds.0,
+                        aabb_bounds.1,
+                        gt,
+                    ));
+                }
+
+                if let Some(h_mat) = maybe_h_mat {
+                    commands
+                        .entity(scene_ent)
+                        .remove::<MeshMaterial3d<StandardMaterial>>();
+
+                    if let Some(mat) = standard_materials.get(h_mat) {
+                        let instance_mat = instance_scene_materials
+                            .entry(h_mat.clone_weak())
+                            .or_insert_with(|| {
+                                derived_scene_material(
+                                    mat,
+                                    h_mat,
+                                    def,
+                                    loaded_avatar,
+                                    mat.depth_bias,
+                                    &bounds_key,
+                                    config.graphics.oob,
+                                    &mut mat_cache,
+                                    &mut scene_materials,
+                                )
+                            });
+                        commands.entity(scene_ent).try_insert((
+                            MeshMaterial3d(instance_mat.clone()),
+                            MeshTag(
+                                outline_tag(model)
+                                    | (if def.disable_dither {
+                                        SCENE_MATERIAL_NO_DITHERING_MESH_TAG
+                                    } else {
+                                        0
+                                    })
+                                    | SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG
+                                    | toon_tag,
+                            ),
+                        ));
+                    }
+                }
+            }
+
+            // remap bones
+            for scene_ent in scene_spawner.iter_instance_entities(*instance) {
+                if let Ok(mut skin) = skins.get_mut(scene_ent) {
+                    let joints = skin
+                        .joints
+                        .iter()
+                        .map(|joint| {
+                            *armature_map.get(joint).unwrap_or_else(|| {
+                                let original_name = named_ents.get(*joint);
+                                warn!(
+                                    "missing armature node in wearable mapping: {original_name:?}"
+                                );
+
+                                // try and reparent the node to an armature parent
+                                if let Some(armature_entity) = name_and_parent
+                                    .get(*joint)
+                                    .and_then(|(_, parent)| named_ents.get(parent.parent()))
+                                    .ok()
+                                    .and_then(|parent_name| {
+                                        target_armature_entities
+                                            .get(&parent_name.as_str().to_ascii_lowercase())
+                                    })
+                                {
+                                    commands
+                                        .entity(*joint)
+                                        .try_insert(ChildOf(*armature_entity));
+                                }
+
+                                &joint
+                            })
+                        })
+                        .copied()
+                        .collect();
+                    skin.joints = joints;
+                }
+            }
+
+            // despawn wearable's own armature
+            for scene_ent in wearable_armature_to_despawn {
+                commands.entity(scene_ent).despawn();
+            }
+        }
+
+        let wearable_models = def.wearables.iter().filter(|w| w.model.is_some()).count();
+        let wearable_texs = def.wearables.iter().filter(|w| w.model.is_none()).count();
+
+        debug!(
+            "avatar processed, 1+{} models, {} textures. hides: {:?}, skin mats: {:?}, hair mats: {:?}, used mats: {:?}",
+            wearable_models, wearable_texs, def.hides, loaded_avatar.skin_materials.len(), loaded_avatar.hair_materials.len(), instance_scene_materials.len()
+        );
+
+        commands
+            .entity(avatar_ent)
+            .try_insert((AvatarProcessed, Visibility::Inherited));
+
+        commands
+            .entity(root_player_entity.parent())
+            .try_insert(AvatarMaterials(
+                instance_scene_materials.values().map(|h| h.id()).collect(),
+            ));
+
+        // remove previous
+        if let Ok(prev) = previous_avatar.get(root_player_entity.parent()) {
+            debug!("new {avatar_ent:?} done, remove prev -> {prev:?}");
+            if let Ok(mut commands) = commands.get_entity(prev.0) {
+                commands.despawn();
+            }
+            commands
+                .entity(root_player_entity.parent())
+                .remove::<PreviousAvatar>();
+        }
+
+        // announce state
+        if let Ok(scene_ent) = scene_ent.get(root_player_entity.parent()) {
+            report_avatar_load(
+                &mut contexts,
+                &timestamp,
+                scene_ent,
+                LoadingState::Finished,
+                &def.body_shape,
+            );
+            if let Ok(mut ctx) = contexts.get_mut(scene_ent.root) {
+                ctx.update_crdt(
+                    SceneComponentId::GLTF_CONTAINER_LOADING_STATE,
+                    CrdtType::LWW_ENT,
+                    scene_ent.id,
+                    &PbGltfContainerLoadingState {
+                        current_state: LoadingState::Finished as i32,
+                        ..Default::default()
+                    },
+                );
+            }
+        }
+    }
+}
+
+// derive the scene material for an avatar's gltf material, sharing the asset
+// with every other avatar that derives an identical material so they can batch
+#[allow(clippy::too_many_arguments)]
+fn derived_scene_material(
+    mat: &StandardMaterial,
+    h_mat: &MeshMaterial3d<StandardMaterial>,
+    def: &AvatarRenderDefinition,
+    loaded_avatar: &AvatarLoaded,
+    depth_bias: f32,
+    bounds_key: &BoundsBits,
+    oob: f32,
+    mat_cache: &mut AssetCache<AvatarMatKey, SceneMaterial>,
+    scene_materials: &mut Assets<SceneMaterial>,
+) -> Handle<SceneMaterial> {
+    let base_color = if loaded_avatar.skin_materials.contains(&h_mat.0) {
+        def.skin_color
+    } else if loaded_avatar.hair_materials.contains(&h_mat.0) {
+        def.hair_color
+    } else {
+        mat.base_color
+    };
+
+    let emissive_color_specified =
+        mat.emissive.red != 0.0 || mat.emissive.green != 0.0 || mat.emissive.blue != 0.0;
+    let emissive = if emissive_color_specified {
+        LinearRgba {
+            red: mat.emissive.red * AVATAR_EMISSIVE_MULTIPLIER,
+            green: mat.emissive.green * AVATAR_EMISSIVE_MULTIPLIER,
+            blue: mat.emissive.blue * AVATAR_EMISSIVE_MULTIPLIER,
+            alpha: mat.emissive.alpha,
+        }
+    } else {
+        mat.emissive
+    };
+
+    let key = AvatarMatKey::new(
+        Some(h_mat.0.id()),
+        mat.base_color_texture.as_ref().map(|t| t.id()),
+        base_color,
+        emissive,
+        depth_bias,
+        bounds_key.clone(),
+        oob,
+    );
+    mat_cache.get_or_add(key, scene_materials, || SceneMaterial {
+        base: StandardMaterial {
+            base_color,
+            emissive,
+            depth_bias,
+            ..mat.clone()
+        },
+        extension: SceneBound::new(&def.bounds, oob)
+            .with_base_opacity(AVATAR_DITHER_BASE_OPACITY)
+            .with_capsule_dither(),
+    })
+}
+
+fn reparent_attach_point(
+    commands: &mut Commands,
+    target_armature_entities: &HashMap<String, Entity>,
+    key: &str,
+    attach_point: Entity,
+) {
+    if let Some(bone) = target_armature_entities.get(key) {
+        commands.entity(*bone).try_push_children(&[attach_point]);
+    } else {
+        #[cfg(not(debug_assertions))]
+        warn!("no {}", key,);
+        #[cfg(debug_assertions)]
+        warn!(
+            "no {}, available: {:#?}",
+            key,
+            target_armature_entities.keys()
+        );
+    }
+}
+
+fn calculate_local_aabb(
+    global_min: Vec3,
+    global_max: Vec3,
+    global_transform: &GlobalTransform,
+) -> Aabb {
+    let transform_matrix = global_transform.compute_matrix();
+    let inverse_transform = transform_matrix.inverse();
+
+    let corners = [
+        Vec3::new(global_min.x, global_min.y, global_min.z),
+        Vec3::new(global_max.x, global_min.y, global_min.z),
+        Vec3::new(global_min.x, global_max.y, global_min.z),
+        Vec3::new(global_max.x, global_max.y, global_min.z),
+        Vec3::new(global_min.x, global_min.y, global_max.z),
+        Vec3::new(global_max.x, global_min.y, global_max.z),
+        Vec3::new(global_min.x, global_max.y, global_max.z),
+        Vec3::new(global_max.x, global_max.y, global_max.z),
+    ];
+
+    let mut local_min = Vec3::splat(f32::MAX);
+    let mut local_max = Vec3::splat(f32::MIN);
+
+    for corner in corners {
+        let local_point = inverse_transform.transform_point3(corner);
+        local_min = local_min.min(local_point);
+        local_max = local_max.max(local_point);
+    }
+
+    let center = (local_min + local_max) * 0.5;
+    let half_extents = (local_max - local_min) * 0.5;
+
+    Aabb {
+        center: center.into(),
+        half_extents: half_extents.into(),
+    }
+}
+
+fn set_avatar_visibility(
+    mut q: Query<(&GlobalTransform, &mut Visibility, Option<&RenderLayers>), With<AvatarProcessed>>,
+    player: Query<&GlobalTransform, With<PrimaryUser>>,
+    config: Res<AppConfig>,
+) {
+    let Ok(player_pos) = player.single().map(|gt| gt.translation()) else {
+        return;
+    };
+
+    let default_layer = RenderLayers::layer(0);
+    let mut distances = q
+        .iter()
+        .filter(|(_, _, maybe_layer)| {
+            maybe_layer.is_none_or(|layer| layer.intersects(&default_layer))
+        })
+        .map(|(t, ..)| (t.translation() - player_pos).length_squared())
+        .collect::<Vec<_>>();
+    // only the (max_avatars)-th distance matters; partition instead of sorting
+    let cutoff = if distances.len() > config.max_avatars {
+        *distances
+            .select_nth_unstable_by(config.max_avatars, |a, b| {
+                a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Less)
+            })
+            .1
+    } else {
+        f32::MAX
+    };
+
+    for (t, mut vis, maybe_layer) in q.iter_mut() {
+        let is_root_layer = maybe_layer.is_none_or(|layer| layer.intersects(&default_layer));
+        let new_vis = if is_root_layer && (t.translation() - player_pos).length_squared() >= cutoff
+        {
+            Visibility::Hidden
+        } else {
+            Visibility::Inherited
+        };
+        // avoid dirtying Visibility (and the propagation pass) when unchanged
+        vis.set_if_neq(new_vis);
+    }
+}
+
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/debug_dump_avatar")]
+struct DebugDumpAvatar;
+
+#[allow(clippy::too_many_arguments)]
+fn debug_dump_avatar(
+    mut input: ConsoleCommand<DebugDumpAvatar>,
+    player: Query<&AvatarShape, With<PrimaryUser>>,
+    ipfas: IpfsAssetServer,
+    entity_definitions: Res<Assets<EntityDefinition>>,
+    mut tasks: Local<Vec<Task<()>>>,
+    console_relay: Res<ConsoleRelay>,
+    mut wearables: CollectibleManager<Wearable>,
+    mut emotes: CollectibleManager<Emote>,
+    mut store: Local<HashSet<Handle<EntityDefinition>>>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        let Ok(shape) = player.single() else {
+            return;
+        };
+
+        let wearable_hashes: Vec<String> = shape
+            .0
+            .wearables
+            .iter()
+            .flat_map(|w| WearableUrn::new(w).ok())
+            .flat_map(|wearable| wearables.get_hash(wearable).ok())
+            .collect();
+
+        let emote_hashes: Vec<_> = shape
+            .0
+            .emotes
+            .iter()
+            .inspect(|e| {
+                info!("0 {e:?}");
+            })
+            .flat_map(|e| EmoteUrn::new(e).ok())
+            .inspect(|e| {
+                info!("1 {e:?}");
+            })
+            .flat_map(|emote| emotes.get_hash(emote).ok())
+            .inspect(|e| {
+                info!("2 {e:?}");
+            })
+            .collect();
+
+        for (scene_hash, folder) in wearable_hashes
+            .into_iter()
+            .zip(std::iter::repeat("wearables"))
+            .chain(emote_hashes.into_iter().zip(std::iter::repeat("emotes")))
+        {
+            let h_scene = ipfas.load_hash::<EntityDefinition>(&scene_hash);
+            let Some(def) = entity_definitions.get(&h_scene) else {
+                input.reply_failed("can't resolve wearable handle - try again in a few seconds");
+                store.insert(h_scene);
+                continue;
+            };
+
+            let dump_folder = ipfas
+                .ipfs()
+                .cache_path()
+                .to_owned()
+                .unwrap()
+                .join("scene_dump")
+                .join(folder)
+                .join(&scene_hash);
+            std::fs::create_dir_all(&dump_folder).unwrap();
+
+            // total / succeed / fail
+            let count = std::sync::Arc::new(std::sync::Mutex::new((0, 0, 0)));
+
+            for content_file in def.content.files() {
+                count.lock().unwrap().0 += 1;
+                let ipfs_path = IpfsPath::new(IpfsType::new_content_file(
+                    scene_hash.to_owned(),
+                    content_file.to_owned(),
+                ));
+
+                let path = PathBuf::from(&ipfs_path);
+
+                let ipfs = ipfas.ipfs().clone();
+                let content_file = content_file.clone();
+                let dump_folder = dump_folder.clone();
+                let count = count.clone();
+                let send = console_relay.send.clone();
+                tasks.push(IoTaskPool::get().spawn(async move {
+                    let report = |fail: Option<String>| {
+                        let mut count = count.lock().unwrap();
+                        if let Some(fail) = fail {
+                            count.2 += 1;
+                            let _ = send.send(fail);
+                        } else {
+                            count.1 += 1;
+                        }
+                        if count.0 == count.1 + count.2 {
+                            if count.2 == 0 {
+                                let _ = send.send(format!("[ok] {} files downloaded", count.0));
+                            } else {
+                                let _ = send.send(format!(
+                                    "[failed] {}/{} files downloaded",
+                                    count.1, count.0
+                                ));
+                            }
+                        }
+                    };
+
+                    let Ok(mut reader) = ipfs.read(&path).await else {
+                        report(Some(format!(
+                            "{content_file} failed: couldn't load bytes\n"
+                        )));
+                        return;
+                    };
+                    let mut bytes = Vec::default();
+                    if let Err(e) = reader.read_to_end(&mut bytes).await {
+                        report(Some(format!("{content_file} failed: {e}")));
+                        return;
+                    }
+
+                    // the key is the deployer's string and may still carry `..`
+                    let Some(file) = dump_folder.join_relative(&content_file) else {
+                        report(Some(format!(
+                            "{content_file} failed: escapes the dump folder"
+                        )));
+                        return;
+                    };
+                    if let Some(parent) = file.parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            report(Some(format!(
+                                "{content_file} failed: couldn't create parent: {e}"
+                            )));
+                            return;
+                        }
+                    }
+                    if let Err(e) = std::fs::write(file, bytes) {
+                        report(Some(format!("{content_file} failed: {e}")));
+                        return;
+                    }
+
+                    report(None);
+                }));
+            }
+
+            input.reply(format!(
+                "scene hash {}, downloading {} files",
+                scene_hash,
+                tasks.len()
+            ));
+        }
+    }
+
+    tasks.retain_mut(|t| t.complete().is_none());
+}
+
+fn add_attach_points_to_avatar_shape(trigger: Trigger<OnAdd, AvatarShape>, mut commands: Commands) {
+    let entity = trigger.target();
+
+    let attach_points = AttachPoints::new(&mut commands);
+
+    commands
+        .entity(entity)
+        .try_push_children(&attach_points.entities())
+        .try_insert(attach_points);
+}
+
+fn remove_attach_points_from_avatar_shape(
+    trigger: Trigger<OnRemove, AvatarShape>,
+    mut commands: Commands,
+    attach_points_query: Query<&AttachPoints>,
+) {
+    let entity = trigger.target();
+
+    if let Ok(attach_points) = attach_points_query.get(entity) {
+        for attach_point in attach_points.entities() {
+            commands.entity(attach_point).try_despawn();
+        }
+        commands.entity(entity).try_remove::<AttachPoints>();
+    }
+}

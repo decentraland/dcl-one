@@ -1,0 +1,230 @@
+use bevy::prelude::*;
+use bevy_console::ConsoleCommand;
+use console::{DoAddConsoleCommand, PendingConsoleResponses};
+
+use crate::{LiveSceneInfo, NewAccountPick, SystemApi};
+
+pub struct AgentCommandsPlugin;
+
+impl Plugin for AgentCommandsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_console_command::<LoginGuestCommand, _>(login_guest_cmd);
+        app.add_console_command::<LoginPreviousCommand, _>(login_previous_cmd);
+        app.add_console_command::<LoginLocalGuestCommand, _>(login_local_guest_cmd);
+        app.add_console_command::<LoginIdentityCommand, _>(login_identity_cmd);
+        app.add_console_command::<LogoutCommand, _>(logout_cmd);
+        app.add_console_command::<LiveScenesCommand, _>(live_scenes_cmd);
+        app.add_console_command::<ChatCommand, _>(chat_cmd);
+    }
+}
+
+// --- /login_guest ---
+
+/// Login as guest (session-only, profile will not persist)
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/login_guest")]
+struct LoginGuestCommand;
+
+fn login_guest_cmd(
+    mut input: ConsoleCommand<LoginGuestCommand>,
+    mut events: EventWriter<SystemApi>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        events.write(SystemApi::LoginGuest);
+        input.reply_ok("logging in as guest");
+    }
+}
+
+// --- /login_previous ---
+
+/// Login using previously saved credentials
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/login_previous")]
+struct LoginPreviousCommand {
+    /// if the current profile can't be fetched, continue with (and deploy) a default
+    /// profile — this overwrites the server-side profile
+    #[arg(long)]
+    default_on_error: bool,
+}
+
+fn login_previous_cmd(
+    mut input: ConsoleCommand<LoginPreviousCommand>,
+    mut events: EventWriter<SystemApi>,
+    mut pending: ResMut<PendingConsoleResponses>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        let (sx, rx) = common::rpc::RpcResultSender::<Result<(), String>>::channel();
+        events.write(SystemApi::LoginPrevious(command.default_on_error, sx));
+        let responder = input.take_responder();
+        pending.push_receiver(
+            rx,
+            |result| match result {
+                Ok(()) => Ok("logged in with previous credentials".to_string()),
+                Err(e) => Err(e),
+            },
+            responder,
+        );
+    }
+}
+
+// --- /login_local_guest ---
+
+/// Login as the guest account kept in this install's config (made the first time): the
+/// benchmark autopilot's guest, with a new identity each run that is not stored as the previous
+/// login. Refused without `--autopilot`, and on the web
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/login_local_guest")]
+struct LoginLocalGuestCommand;
+
+fn login_local_guest_cmd(
+    mut input: ConsoleCommand<LoginLocalGuestCommand>,
+    mut events: EventWriter<SystemApi>,
+    mut pending: ResMut<PendingConsoleResponses>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        let (sx, rx) = common::rpc::RpcResultSender::<Result<(), String>>::channel();
+        events.write(SystemApi::LoginLocalGuest(sx));
+        let responder = input.take_responder();
+        pending.push_receiver(
+            rx,
+            |result| match result {
+                Ok(()) => Ok("logged in as the local guest".to_string()),
+                Err(e) => Err(e),
+            },
+            responder,
+        );
+    }
+}
+
+// --- /login_identity ---
+
+/// Login with an AuthIdentity the web page already holds (base64-encoded AuthIdentity JSON).
+/// The web page reads it from localStorage and forwards it; the identity is the same however
+/// the user signed in (wallet, social, OTP, magic), so this is not login-method-specific.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/login_identity")]
+struct LoginIdentityCommand {
+    /// base64(JSON) of the stored AuthIdentity.
+    payload: String,
+    /// if the current profile can't be fetched, continue with (and deploy) a default
+    /// profile — this overwrites the server-side profile
+    #[arg(long)]
+    default_on_error: bool,
+    /// the identity is a guest account
+    #[arg(long)]
+    guest: bool,
+    /// the name a first login's new profile takes (alphanumeric, at most 15 characters)
+    #[arg(long)]
+    name: Option<String>,
+    /// the curated default look a first login's new profile wears, 1-based
+    #[arg(long)]
+    look: Option<u32>,
+    /// the lambdas endpoint to fetch the account's profile from (the catalyst the sign-in
+    /// deployed it to), else the realm's
+    #[arg(long)]
+    profiles: Option<String>,
+}
+
+fn login_identity_cmd(
+    mut input: ConsoleCommand<LoginIdentityCommand>,
+    mut events: EventWriter<SystemApi>,
+    mut pending: ResMut<PendingConsoleResponses>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        let (sx, rx) = common::rpc::RpcResultSender::<Result<(), String>>::channel();
+        let pick = (command.name.is_some() || command.look.is_some()).then(|| NewAccountPick {
+            name: command.name.clone(),
+            look: command.look,
+        });
+        events.write(SystemApi::LoginWithIdentity(
+            command.payload.clone(),
+            command.default_on_error,
+            command.guest,
+            pick,
+            command.profiles.clone(),
+            sx,
+        ));
+        let responder = input.take_responder();
+        pending.push_receiver(
+            rx,
+            |result| match result {
+                Ok(()) => Ok("logged in with identity".to_string()),
+                Err(e) => Err(e),
+            },
+            responder,
+        );
+    }
+}
+
+// --- /logout ---
+
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/logout")]
+struct LogoutCommand;
+
+fn logout_cmd(mut input: ConsoleCommand<LogoutCommand>, mut events: EventWriter<SystemApi>) {
+    if let Some(Ok(_)) = input.take() {
+        events.write(SystemApi::Logout);
+        input.reply_ok("");
+    }
+}
+
+// --- /live_scenes ---
+
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/live_scenes")]
+struct LiveScenesCommand;
+
+fn live_scenes_cmd(
+    mut input: ConsoleCommand<LiveScenesCommand>,
+    mut events: EventWriter<SystemApi>,
+    mut pending: ResMut<PendingConsoleResponses>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        let (response, rx) = common::rpc::RpcResultSender::<Vec<LiveSceneInfo>>::channel();
+        events.write(SystemApi::LiveSceneInfo(response));
+        let responder = input.take_responder();
+        pending.push_receiver(
+            rx,
+            |scenes| {
+                if scenes.is_empty() {
+                    Ok("no scenes loaded".to_string())
+                } else {
+                    Ok(scenes
+                        .iter()
+                        .map(|s| {
+                            format!(
+                                "{} [{}{}{}]",
+                                s.title,
+                                s.hash,
+                                if s.is_portable { ", portable" } else { "" },
+                                if s.is_broken { ", broken" } else { "" },
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n"))
+                }
+            },
+            responder,
+        );
+    }
+}
+
+// --- /chat ---
+
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/chat")]
+struct ChatCommand {
+    channel: String,
+    message: String,
+}
+
+fn chat_cmd(mut input: ConsoleCommand<ChatCommand>, mut events: EventWriter<SystemApi>) {
+    if let Some(Ok(command)) = input.take() {
+        events.write(SystemApi::SendChat(
+            command.message.clone(),
+            command.channel.clone(),
+        ));
+        input.reply_ok(format!("[{}] {}", command.channel, command.message));
+    }
+}

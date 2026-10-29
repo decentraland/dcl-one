@@ -1,0 +1,1161 @@
+{
+  "version": 1,
+  "scope": "Provisional source-derived wire baseline; no interoperability or deployment claim",
+  "pins": {
+    "protocol": "694568db455b07e0eca2c119d9e916a4c5581c69",
+    "dotnet_pulse": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+    "target": "a1ac04c01e9c64aa8feb424b1808c52ac8af850c"
+  },
+  "artifacts_sha256": {
+    "proto/decentraland/pulse/pulse_client.proto": "90901cf36102111dc2a1bf5e24f02e10e097f2c31fb23bef18f6517f4c1a0d41",
+    "proto/decentraland/pulse/pulse_server.proto": "ae800b1f34d697b9fdcb126f530617720a6437ad49b7bab2ec842a062c107078",
+    "proto/decentraland/pulse/pulse_shared.proto": "a142c364357d477ecbb82a6290156d445b49eda32a1fd248d74f730e410cccc2",
+    "src/Protocol/Generated/PulseClient.cs": "02f6c31b57bfc99884d2c7d33fc7e0c575a47031182702ffcbf7bccb25e9afa2",
+    "src/Protocol/Generated/PulseServer.cs": "19bb5f38a7fb5dcc80ec203caebdbb0dae7576d1232b533c38e23369742de06b",
+    "src/Protocol/Generated/PulseShared.cs": "be7d6e57ddc4c36b4fd88b83be54b18bfab63131e832369e32678a3e5cb4234d"
+  },
+  "capture_status": "Hand-composed source-derived original inputs; no shipped-client encoding or live capture. Pinned generated C# independently decoded and re-encoded all 36 inputs; see executed_validation.",
+  "release_blockers": {
+    "admitted_versions": "unverified; deployment evidence required",
+    "executable_image_hashes": "unverified; deployment evidence required",
+    "pulse_dual_channel_flags": "unverified; deployment evidence required",
+    "endpoint_routing": "unverified; deployment evidence required",
+    "nats_permissions": "unverified; deployment evidence required",
+    "livekit_version_mode": "unverified; deployment evidence required",
+    "primary_replica_topology": "unverified; deployment evidence required"
+  },
+  "lanes": [
+    {
+      "lane": "Unity `dev` `dddb9108ff54329d2ce4e2273f8be5a7ead638ca`",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "Proved Pulse player + ENet + v3 `/ws` + LiveKit use",
+      "required_checks": "Unproven; current source lane, feature enabled and startup fallback disabled/enabled"
+    },
+    {
+      "lane": "Unity `v0.191.0-alpha` `aa291e9c4c91126317f1a0bc0991c15c46fd9f18`",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "Proved use; selected runtime files match dev",
+      "required_checks": "Unproven; published 2026-10-22"
+    },
+    {
+      "lane": "Unity `v0.190.0-alpha` `550966769f423ac5cc1c8b6224df86503d10e28d`",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "Proved use; selected runtime files match dev",
+      "required_checks": "Unproven; published 2026-10-20"
+    },
+    {
+      "lane": "Unity `v0.189.0-alpha` `7d193e3dd2f0a095178c52942cf003b485807a97`",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "Proved use; older overlapping-registration handling",
+      "required_checks": "Unproven; published 2026-10-16; separate same-wallet/reconnect lane"
+    },
+    {
+      "lane": "Godot `main` `6c306176142a59b982ddb35344449e6e90867c3b`",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "Proved Pulse player + ENet + v3 `/ws` + LiveKit use",
+      "required_checks": "Unproven; exercise Pulse off, on, and dual-channel behavior"
+    },
+    {
+      "lane": "Godot `v0.32.0-alpha` `984c4cc82203a75a648815a005f8c3a8074e1094`",
+      "coverage": "no use found",
+      "compatibility": "unproven",
+      "evidence": "No direct Pulse use found in complete tree; LiveKit/Archipelago lane",
+      "required_checks": "Unproven indirect compatibility; published 2025-08-05"
+    },
+    {
+      "lane": "Upstream Bevy archived `main` `e4f379bed110e65d7c13f9e605c7f18b4ae2f77e`",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "Proved Pulse player/listener and separate LiveKit use",
+      "required_checks": "Unproven; native ENet and browser WebTransport lanes"
+    },
+    {
+      "lane": "Upstream Bevy release `alpha-2026-07-13-18-11-58`, `71ec46402dfc8afbfc2d23df64e6c2405074d9dc`",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "No Pulse module in complete tree; proved Archipelago/LiveKit path",
+      "required_checks": "Unproven indirect compatibility; include if still admitted"
+    },
+    {
+      "lane": "Integrated Bevy at target dcl-one SHA",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "Proved Pulse player/listener; sends `protocol_features=0`",
+      "required_checks": "Unproven; must work on baseline contract despite schemas containing private extensions"
+    },
+    {
+      "lane": "SDK7 `@dcl/sdk` and creator CLI `@dcl/sdk-commands` **7.31.0**, `06bfc6c91343ebe71a3abc9aa9a9be06a9bda47b`",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "Proved indirect SDK communications; no direct Pulse caller found in scoped search",
+      "required_checks": "Unproven room/scene behavior. Public npm `latest` and `gitHead` verified on review date"
+    },
+    {
+      "lane": "js-sdk-toolchain main `afd7f79527216dcc3b3d155eb361b7f3aa1e850a`",
+      "coverage": "unverified",
+      "compatibility": "unproven",
+      "evidence": "Pin established; release source is the inspected lane",
+      "required_checks": "Unverified changes after release; compare before release gate"
+    },
+    {
+      "lane": "sdk-multiplayer-server main `38500a9954fae99646b95a10abeb2bfe42928e04`",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "Proved Bevy hosting, room events, endpoint forwarding",
+      "required_checks": "Unproven listener/room journey; package pin below"
+    },
+    {
+      "lane": "livekit-bots main `b067556879ca703bb51e7f5ee62dab59a8f62fb2`",
+      "coverage": "proved use",
+      "compatibility": "unproven",
+      "evidence": "Proved direct LiveKit use; no direct Pulse use found",
+      "required_checks": "Unproven indirect behavior; cannot use these bots alone to certify Pulse"
+    },
+    {
+      "lane": "Mobile distribution variants, older admitted releases, third-party tools, creator-hub and web apps",
+      "coverage": "unverified",
+      "compatibility": "unproven",
+      "evidence": "Unverified deployment/runtime selection",
+      "required_checks": "Unproven. Obtain actual artifacts, admission rules and relevant caller paths in Task 0"
+    },
+    {
+      "lane": "creator-hub",
+      "coverage": "unverified",
+      "compatibility": "unproven",
+      "evidence": "Runtime artifact and caller selection not supplied",
+      "required_checks": "Trace admitted runtime and dependency wrapper paths"
+    },
+    {
+      "lane": "web apps",
+      "coverage": "unverified",
+      "compatibility": "unproven",
+      "evidence": "Runtime artifact and caller selection not supplied",
+      "required_checks": "Trace admitted runtime and dependency wrapper paths"
+    },
+    {
+      "lane": "Places",
+      "coverage": "unverified",
+      "compatibility": "unproven",
+      "evidence": "Runtime artifact and caller selection not supplied",
+      "required_checks": "Trace admitted runtime and dependency wrapper paths"
+    },
+    {
+      "lane": "hosted server dependency wrappers",
+      "coverage": "unverified",
+      "compatibility": "unproven",
+      "evidence": "Runtime artifact and caller selection not supplied",
+      "required_checks": "Trace admitted runtime and dependency wrapper paths"
+    }
+  ],
+  "occupied_schema": {
+    "HandshakeRequest": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "bytes",
+          "name": "auth_chain",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "int32",
+          "name": "profile_version",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "PlayerInitialState",
+          "name": "initial_state",
+          "tag": 3,
+          "oneof": null
+        }
+      ]
+    },
+    "PlayerInitialState": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "PlayerState",
+          "name": "state",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "string",
+          "name": "emote_id",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "emote_duration_ms",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "emote_start_offset_ms",
+          "tag": 4,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "string",
+          "name": "realm",
+          "tag": 5,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "int32",
+          "name": "emote_mask",
+          "tag": 6,
+          "oneof": null
+        }
+      ]
+    },
+    "ProfileVersionAnnouncement": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "int32",
+          "name": "version",
+          "tag": 1,
+          "oneof": null
+        }
+      ]
+    },
+    "PlayerStateInput": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "PlayerState",
+          "name": "state",
+          "tag": 1,
+          "oneof": null
+        }
+      ]
+    },
+    "ResyncRequest": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "subject_id",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "known_seq",
+          "tag": 2,
+          "oneof": null
+        }
+      ]
+    },
+    "EmoteStart": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "string",
+          "name": "emote_id",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "duration_ms",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerState",
+          "name": "player_state",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "int32",
+          "name": "mask",
+          "tag": 4,
+          "oneof": null
+        }
+      ]
+    },
+    "EmoteStop": {
+      "file": "pulse_client.proto",
+      "fields": []
+    },
+    "TeleportRequest": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "int32",
+          "name": "parcel_index",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "position_x",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "position_y",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "position_z",
+          "tag": 4,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "string",
+          "name": "realm",
+          "tag": 5,
+          "oneof": null
+        }
+      ]
+    },
+    "ParcelRect": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "sint32",
+          "name": "min_x",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "sint32",
+          "name": "min_z",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "sint32",
+          "name": "max_x",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "sint32",
+          "name": "max_z",
+          "tag": 4,
+          "oneof": null
+        }
+      ]
+    },
+    "SceneListenerAoi": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "string",
+          "name": "realm",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "repeated",
+          "type": "ParcelRect",
+          "name": "parcel_rects",
+          "tag": 2,
+          "oneof": null
+        }
+      ]
+    },
+    "SceneListenerHandshakeRequest": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "bytes",
+          "name": "auth_chain",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "repeated",
+          "type": "SceneListenerAoi",
+          "name": "aoi",
+          "tag": 2,
+          "oneof": null
+        }
+      ]
+    },
+    "SceneListenerUpdate": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "repeated",
+          "type": "SceneListenerAoi",
+          "name": "aoi",
+          "tag": 1,
+          "oneof": null
+        }
+      ]
+    },
+    "ClientMessage": {
+      "file": "pulse_client.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "HandshakeRequest",
+          "name": "handshake",
+          "tag": 1,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerStateInput",
+          "name": "input",
+          "tag": 2,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "ResyncRequest",
+          "name": "resync",
+          "tag": 3,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "ProfileVersionAnnouncement",
+          "name": "profile_announcement",
+          "tag": 4,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "EmoteStart",
+          "name": "emote_start",
+          "tag": 5,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "EmoteStop",
+          "name": "emote_stop",
+          "tag": 6,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "TeleportRequest",
+          "name": "teleport",
+          "tag": 7,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "SceneListenerHandshakeRequest",
+          "name": "scene_listener_handshake",
+          "tag": 8,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "SceneListenerUpdate",
+          "name": "scene_listener_update",
+          "tag": 9,
+          "oneof": "message"
+        }
+      ]
+    },
+    "HandshakeResponse": {
+      "file": "pulse_server.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "bool",
+          "name": "success",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "string",
+          "name": "error",
+          "tag": 2,
+          "oneof": null
+        }
+      ]
+    },
+    "PlayerProfileVersionsAnnounced": {
+      "file": "pulse_server.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "subject_id",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "int32",
+          "name": "version",
+          "tag": 2,
+          "oneof": null
+        }
+      ]
+    },
+    "PlayerStateDeltaTier0": {
+      "file": "pulse_server.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "subject_id",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "baseline_seq",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "new_seq",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "server_tick",
+          "tag": 4,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "int32",
+          "name": "parcel_index",
+          "tag": 5,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "position_x",
+          "tag": 6,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "position_y",
+          "tag": 7,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "position_z",
+          "tag": 8,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "velocity_x",
+          "tag": 9,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "velocity_y",
+          "tag": 10,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "velocity_z",
+          "tag": 11,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "rotation_y",
+          "tag": 12,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "movement_blend",
+          "tag": 13,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "slide_blend",
+          "tag": 14,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "head_yaw",
+          "tag": 15,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "head_pitch",
+          "tag": 16,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "state_flags",
+          "tag": 17,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "GlideState",
+          "name": "glide_state",
+          "tag": 18,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "int32",
+          "name": "jump_count",
+          "tag": 19,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "point_at_x",
+          "tag": 20,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "point_at_y",
+          "tag": 21,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "point_at_z",
+          "tag": 22,
+          "oneof": null
+        }
+      ]
+    },
+    "PlayerStateFull": {
+      "file": "pulse_server.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "subject_id",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "sequence",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "server_tick",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerState",
+          "name": "state",
+          "tag": 4,
+          "oneof": null
+        }
+      ]
+    },
+    "PlayerJoined": {
+      "file": "pulse_server.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "string",
+          "name": "user_id",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "int32",
+          "name": "profile_version",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerStateFull",
+          "name": "state",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "string",
+          "name": "realm",
+          "tag": 4,
+          "oneof": null
+        }
+      ]
+    },
+    "PlayerLeft": {
+      "file": "pulse_server.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "subject_id",
+          "tag": 1,
+          "oneof": null
+        }
+      ]
+    },
+    "EmoteStarted": {
+      "file": "pulse_server.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "subject_id",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "sequence",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "server_tick",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "string",
+          "name": "emote_id",
+          "tag": 4,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerState",
+          "name": "player_state",
+          "tag": 5,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "int32",
+          "name": "mask",
+          "tag": 6,
+          "oneof": null
+        }
+      ]
+    },
+    "EmoteStopped": {
+      "file": "pulse_server.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "subject_id",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "server_tick",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "EmoteStopReason",
+          "name": "reason",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "sequence",
+          "tag": 4,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerState",
+          "name": "player_state",
+          "tag": 5,
+          "oneof": null
+        }
+      ]
+    },
+    "TeleportPerformed": {
+      "file": "pulse_server.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "subject_id",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "sequence",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "server_tick",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerState",
+          "name": "state",
+          "tag": 4,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "string",
+          "name": "realm",
+          "tag": 5,
+          "oneof": null
+        }
+      ]
+    },
+    "ServerMessage": {
+      "file": "pulse_server.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "HandshakeResponse",
+          "name": "handshake",
+          "tag": 1,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerStateFull",
+          "name": "player_state_full",
+          "tag": 2,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerStateDeltaTier0",
+          "name": "player_state_delta",
+          "tag": 3,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerJoined",
+          "name": "player_joined",
+          "tag": 4,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerLeft",
+          "name": "player_left",
+          "tag": 5,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "PlayerProfileVersionsAnnounced",
+          "name": "player_profile_version_announced",
+          "tag": 6,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "EmoteStarted",
+          "name": "emote_started",
+          "tag": 7,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "EmoteStopped",
+          "name": "emote_stopped",
+          "tag": 8,
+          "oneof": "message"
+        },
+        {
+          "presence": "implicit",
+          "type": "TeleportPerformed",
+          "name": "teleported",
+          "tag": 9,
+          "oneof": "message"
+        }
+      ]
+    },
+    "PlayerState": {
+      "file": "pulse_shared.proto",
+      "fields": [
+        {
+          "presence": "implicit",
+          "type": "int32",
+          "name": "parcel_index",
+          "tag": 1,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "position_x",
+          "tag": 2,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "position_y",
+          "tag": 3,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "position_z",
+          "tag": 4,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "velocity_x",
+          "tag": 5,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "velocity_y",
+          "tag": 6,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "velocity_z",
+          "tag": 7,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "rotation_y",
+          "tag": 8,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "movement_blend",
+          "tag": 9,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "slide_blend",
+          "tag": 10,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "head_yaw",
+          "tag": 11,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "head_pitch",
+          "tag": 12,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "uint32",
+          "name": "state_flags",
+          "tag": 13,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "GlideState",
+          "name": "glide_state",
+          "tag": 14,
+          "oneof": null
+        },
+        {
+          "presence": "implicit",
+          "type": "int32",
+          "name": "jump_count",
+          "tag": 15,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "point_at_x",
+          "tag": 16,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "point_at_y",
+          "tag": 17,
+          "oneof": null
+        },
+        {
+          "presence": "optional",
+          "type": "uint32",
+          "name": "point_at_z",
+          "tag": 18,
+          "oneof": null
+        }
+      ]
+    }
+  },
+  "private_allocations": {
+    "status": "additional unreserved tags; future allocation decision unresolved; no occupied-tag collision",
+    "client_arms": [
+      12,
+      13,
+      14,
+      20,
+      21
+    ],
+    "server_arms": [
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16,
+      20,
+      21
+    ],
+    "fields": [
+      "HandshakeRequest.4",
+      "SceneListenerHandshakeRequest.4",
+      "HandshakeResponse.3",
+      "HandshakeResponse.4"
+    ],
+    "producers_consumers": [
+      "server handshake masks offered features independently for player/listener",
+      "simulation consumes negotiated delta batch bits",
+      "application relay consumes explicit relay capability",
+      "hello/auth and challenge/result arms are outside the baseline authentication contract",
+      "integrated Bevy sends feature zero; no published client private-feature sender established"
+    ],
+    "activation_audit": {
+      "source": "services/catalyst/comms/src/pulse/env.rs",
+      "legacy": "PULSE_LEGACY_HANDSHAKE validates the baseline authentication posture; absent, blank or true accepted; false rejected at startup; effective deployment value unverified",
+      "v4": "PULSE_V4_ENABLED validates the baseline authentication posture; absent, blank or false accepted; true rejected at startup; effective deployment value unverified",
+      "application_relay": "Public startup does not activate application relay; this baseline fixture certifies no relay activation; effective deployment configuration unverified",
+      "batch": "server feature mask intersects player and listener offers separately; baseline peers offer zero",
+      "removals": "This fixture certifies only the source-derived baseline contract; additional public authentication or relay activation requires separate review."
+    }
+  },
+  "executed_validation": {
+    "method": "Pinned committed generated C# Protocol.dll, GenerateProto=false; decode/re-encode independently hand-composed vectors",
+    "cases": 36,
+    "result": "all raw inputs parsed and re-encoded identically",
+    "validation_output_sha256": "b0983bdcba8ae699de16170f7696d89b6431c1e0c6f637d27743baa4ed8aaa8e",
+    "limitation": "No actual shipped client encoder or live-client capture; source-derived provenance retained",
+    "unknown_field_probe": {
+      "raw_hex": "0a00f80701f20702aabb",
+      "known_arm": "Handshake",
+      "csharp": "known arm retained; unknown bytes retained exactly",
+      "prost_contract": "known arm retained; unknown bytes dropped on re-encode",
+      "compatibility_scope": "decoder behavior only; no relay roundtrip preservation claim"
+    },
+    "validation_input_sha256": "fe769917bebff06174d29454368eeec72db6dc54380aa086edd12b135c34fb7c",
+    "traces_sha256": "925fff9c284f81285ec18bb50dc7ac65e8d8ed8cd51d00204f0646300070599a",
+    "metadata_correction": "Decoded expectations now include signed zigzag coordinates (-1), repeated arrays, optional presence and complete default payloads; raw protobuf inputs unchanged from validated input."
+  }
+}

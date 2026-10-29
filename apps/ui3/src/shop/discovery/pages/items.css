@@ -1,0 +1,113 @@
+/* from: shop@2d3bf62:app/src/styles/grid.styles.ts (Grid), app/src/components/EmptyState/EmptyState.styles.ts,
+   app/src/styles/index.css (.page, `*` box-sizing), app/src/styles/browseLayout.styles.ts (Root, Main, Sidebar). */
+.shop-items *,
+.shop-items *::before,
+.shop-items *::after {
+  box-sizing: border-box;
+}
+.shop-page.shop-items {
+  max-width: 1760px;
+  padding: 28px var(--shop-gutter, 54px) 80px;
+}
+.shop-campaign ~ .shop-page.shop-items {
+  padding-top: var(--ui-page-pad, 24px);
+}
+@media (max-width: 768px) {
+  .shop-page.shop-items {
+    padding: 16px var(--shop-gutter, 16px) 56px;
+  }
+}
+.shop-items .shop-grid {
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 16px;
+}
+@media (max-width: 720px) {
+  .shop-items .shop-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+}
+
+.shop-items__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 16px 32px;
+  box-sizing: border-box;
+  border-radius: 16px;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.2);
+  color: #fcfcfc;
+  font-family: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+.shop-items__empty-art {
+  width: 138px;
+  height: 138px;
+}
+.shop-items__empty-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+.shop-items .shop-items__empty-title {
+  margin: 0;
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1.6;
+}
+.shop-items .shop-items__empty-body {
+  margin: 0;
+  max-width: 540px;
+  font-weight: 400;
+  font-size: 16px;
+  line-height: 1.6;
+}
+.shop-items__empty-body b {
+  font-weight: 600;
+}
+.shop-items .shop-items__empty-cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 310px;
+  max-width: 100%;
+  height: 52px;
+  margin-bottom: 16px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 12px;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fcfcfc;
+}
+.shop-items .shop-items__empty-cta:hover {
+  background: rgba(0, 0, 0, 0.55);
+}
+.shop-items .shop-items__empty-cta:active {
+  background: rgba(0, 0, 0, 0.65);
+}
+.shop-items .shop-items__empty-cta:focus-visible {
+  outline: 2px solid #fcfcfc;
+  outline-offset: 2px;
+}
+@media (max-width: 768px) {
+  .shop-items__empty-art {
+    width: 110px;
+    height: 110px;
+  }
+}

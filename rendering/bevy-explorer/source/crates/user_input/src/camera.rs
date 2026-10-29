@@ -1,0 +1,384 @@
+use std::f32::consts::PI;
+
+use bevy::{
+    prelude::*,
+    render::view::ViewUserValue,
+    window::{CursorGrabMode, PrimaryWindow},
+};
+
+use avatar::animate::{is_emoting, ActiveEmote, MaskedEmote};
+use common::{
+    inputs::{Action, SystemAction, CAMERA_SET, CAMERA_ZOOM, POINTER_SET},
+    structs::{
+        AppConfig, AvatarDynamicState, CameraOverride, CursorLocks, HeadSync, MoveKind,
+        PrimaryCamera, PrimaryUser, PLAYER_CAMERA_FOV,
+    },
+    terrain::PlayerTerrainHeight,
+    util::ModifyComponentExt,
+};
+use dcl_component::proto_components::sdk::components::common::camera_transition::TransitionMode;
+use input_manager::{InputManager, InputPriority};
+use scene_runner::OutOfWorld;
+use tween::SystemTween;
+
+use crate::TRANSITION_TIME;
+
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
+pub struct CinematicInitialData {
+    base_yaw: f32,
+    base_pitch: f32,
+    base_roll: f32,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn update_camera(
+    time: Res<Time>,
+    mut camera: Query<(&Transform, &mut PrimaryCamera)>,
+    locks: Res<CursorLocks>,
+    mut cinematic_data: Local<Option<CinematicInitialData>>,
+    input_manager: InputManager,
+    config: Res<AppConfig>,
+    mut smoothed_delta: Local<Vec2>,
+) {
+    let dt = time.delta_secs();
+
+    let Ok((camera_transform, mut options)) = camera.single_mut() else {
+        return;
+    };
+
+    if !options.initialized {
+        let (yaw, pitch, roll) = camera_transform.rotation.to_euler(EulerRot::YXZ);
+        options.yaw = yaw;
+        options.pitch = pitch;
+        options.roll = roll;
+        options.initialized = true;
+    }
+
+    let mut allow_cam_move = true;
+
+    let mut yaw_range = None;
+    let mut pitch_range = None;
+    let mut roll_range = None;
+
+    // record/reset cinematic start state
+    if let Some(CameraOverride::Cinematic(cine)) = options.scene_override.clone() {
+        if cinematic_data.is_none() {
+            *cinematic_data = Some(CinematicInitialData {
+                base_yaw: options.yaw,
+                base_pitch: options.pitch,
+                base_roll: options.roll,
+            });
+
+            options.yaw = 0.0;
+            options.pitch = 0.0;
+            options.roll = 0.0;
+        }
+
+        allow_cam_move = cine.allow_manual_rotation;
+        yaw_range = cine.yaw_range.map(|r| -r..r);
+        pitch_range = cine.pitch_range.map(|r| -r..r);
+        roll_range = cine.roll_range.map(|r| -r..r);
+    } else if let Some(initial) = cinematic_data.take() {
+        (options.yaw, options.pitch, options.roll) =
+            (initial.base_yaw, initial.base_pitch, initial.base_roll);
+    }
+    let in_cinematic = cinematic_data.is_some();
+
+    let mut mouse_delta = input_manager.get_analog(CAMERA_SET, InputPriority::Scene) * 10.0;
+    if locks.0.contains("camera") {
+        mouse_delta += input_manager.get_analog(POINTER_SET, InputPriority::Scroll);
+    }
+    match config.camera_smoothing.rate() {
+        Some(rate) => {
+            let factor = 1.0 - (-dt * rate).exp();
+            mouse_delta = factor * mouse_delta + (1.0 - factor) * *smoothed_delta;
+            *smoothed_delta = mouse_delta;
+        }
+        None => *smoothed_delta = mouse_delta,
+    }
+
+    if allow_cam_move {
+        if input_manager.is_down(Action::System(SystemAction::RollLeft), InputPriority::None) {
+            options.roll += dt * 1.0;
+        } else if input_manager
+            .is_down(Action::System(SystemAction::RollRight), InputPriority::None)
+        {
+            options.roll -= dt * 1.0;
+        } else {
+            // decay roll if not in cinematic mode
+            if options.roll > 0.0 {
+                options.roll = (options.roll - dt * 0.25).max(0.0);
+            } else {
+                options.roll = (options.roll + dt * 0.25).min(0.0);
+            }
+        }
+
+        options.pitch = (options.pitch - mouse_delta.y * options.sensitivity / 1000.0)
+            .clamp(-PI / 2.1, PI / 2.1);
+        options.yaw -= mouse_delta.x * options.sensitivity / 1000.0;
+    }
+
+    // `distance` is the third-person follow distance; a cinematic camera has its own fov
+    if !in_cinematic {
+        let zoom = input_manager
+            .get_analog(CAMERA_ZOOM, InputPriority::Scene)
+            .y;
+        if zoom != 0.0 {
+            let zoom = zoom.clamp(-1000.0, 1000.0);
+            options.distance =
+                (((options.distance + 0.5) * 1.0005f32.powf(-zoom)) - 0.5).clamp(0.0, 100.0);
+        }
+    }
+
+    if let Some(roll_range) = roll_range {
+        options.roll = options.roll.clamp(roll_range.start, roll_range.end);
+    }
+    if let Some(pitch_range) = pitch_range {
+        options.pitch = options.pitch.clamp(pitch_range.start, pitch_range.end);
+    }
+    if let Some(yaw_range) = yaw_range {
+        options.yaw = options.yaw.clamp(yaw_range.start, yaw_range.end);
+    }
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn update_camera_position(
+    mut commands: Commands,
+    mut camera: Query<(
+        Entity,
+        &Transform,
+        &PrimaryCamera,
+        &mut Projection,
+        Option<&mut SystemTween>,
+    )>,
+    mut player: Query<
+        (
+            &Transform,
+            &AvatarDynamicState,
+            Has<OutOfWorld>,
+            &mut HeadSync,
+            Option<(&ActiveEmote, &MaskedEmote)>,
+        ),
+        (With<PrimaryUser>, Without<PrimaryCamera>),
+    >,
+    mut prev_override: Local<Option<CameraOverride>>,
+    mut prev_oow: Local<bool>,
+    gt_helper: TransformHelper,
+    terrain_height: Option<Res<PlayerTerrainHeight>>,
+) {
+    let (
+        Ok((player_transform, dynamic_state, is_oow, mut head_sync, emotes)),
+        Ok((camera_ent, camera_transform, options, mut projection, maybe_tween)),
+    ) = (player.single_mut(), camera.single_mut())
+    else {
+        return;
+    };
+
+    // Capture head-sync angles only when the real camera drives rotation (not OOW, not
+    // a scene-driven cinematic). We additionally gate on the avatar being idle and not
+    // emoting (in either slot — an upper-body emote keeps the idle move kind) so head
+    // gaze doesn't broadcast through movement/jump/emote — matches unity's HeadIK gate.
+    // In first-person the head is rigidly attached to the camera, so additional yaw IK
+    // would over-rotate the neck — pitch is still meaningful (head tilts up/down).
+    let real_camera =
+        !is_oow && !matches!(options.scene_override, Some(CameraOverride::Cinematic(_)));
+    let idle = dynamic_state.move_kind == MoveKind::Idle
+        && !emotes.is_some_and(|(active, masked)| is_emoting(active, masked));
+    let head_active = real_camera && idle;
+    let first_person = options.distance < 0.05;
+    head_sync.yaw_enabled = head_active && !first_person;
+    head_sync.pitch_enabled = head_active;
+    if head_active {
+        // DCL world is left-handed (Z+ forward) while bevy is right-handed
+        // (-Z forward). The Y-up rotation handedness flips going across, so
+        // a yaw of θ in bevy maps to -θ on the wire. With this, looking N is
+        // 0°, E is 90°, S is 180°, W is 270° — matching unity senders.
+        // Pitch is also handedness-flipped on the wire (looking up positive
+        // in DCL = negative bevy pitch). HeadSync holds the wire value, and
+        // the IK reader applies the same negation to render back in bevy.
+        head_sync.yaw_deg = -options.yaw.to_degrees();
+        head_sync.pitch_deg = -options.pitch.to_degrees();
+    }
+
+    let mut target_transform = *camera_transform;
+    let mut target_fov = PLAYER_CAMERA_FOV;
+    let mut target_transition = TransitionMode::Time(TRANSITION_TIME);
+
+    if is_oow {
+        target_transform = Transform::from_translation(
+            player_transform.translation + Vec3::new(15.0, 75.0, 100.0),
+        )
+        .looking_at(player_transform.translation, Vec3::Y);
+    } else if let Some(CameraOverride::Cinematic(cine)) = options.scene_override.as_ref() {
+        let Ok(origin) = gt_helper.compute_global_transform(cine.origin) else {
+            warn!("failed to get gt");
+            return;
+        };
+
+        let (_, rotation, translation) = origin.to_scale_rotation_translation();
+
+        target_transform.translation = translation;
+        target_transform.rotation = if let Some(look_at_transform) = cine
+            .look_at_entity
+            .and_then(|e| gt_helper.compute_global_transform(e).ok())
+        {
+            Transform::IDENTITY
+                .looking_at(look_at_transform.translation() - translation, Vec3::Y)
+                .rotation
+        } else {
+            let yaw = cine
+                .yaw_range
+                .map(|r| options.yaw.clamp(-r, r))
+                .unwrap_or(options.yaw);
+            let pitch = cine
+                .pitch_range
+                .map(|r| options.pitch.clamp(-r, r))
+                .unwrap_or(options.pitch);
+            let roll = cine
+                .roll_range
+                .map(|r| options.roll.clamp(-r, r))
+                .unwrap_or(options.roll);
+            rotation * Quat::from_euler(EulerRot::YXZ, yaw, pitch, roll)
+        };
+        target_fov = cine.fov;
+        if let Some(transition) = cine
+            .transition
+            .as_ref()
+            .and_then(|ct| ct.transition_mode.as_ref())
+        {
+            target_transition = transition.clone();
+        }
+
+        commands.entity(camera_ent).try_insert(ViewUserValue(0.0));
+    } else {
+        let mut distance = match options.scene_override {
+            Some(CameraOverride::Distance(d)) => d,
+            _ => options.distance,
+        } * 5.0;
+
+        target_transform.rotation =
+            Quat::from_euler(EulerRot::YXZ, options.yaw, options.pitch, options.roll);
+
+        let player_head = player_transform.translation + Vec3::Y * 1.81;
+        let head_offset = (target_transform.rotation.mul_vec3(Vec3::X) * Vec3::new(1.0, 0.0, 1.0))
+            .normalize_or_zero()
+            * 0.25
+            + Vec3::Y * -0.08;
+
+        let target_direction = target_transform.rotation.mul_vec3(Vec3::Z);
+        let target_translation =
+            player_head + head_offset * distance.clamp(0.0, 3.0) + target_direction * distance;
+
+        // keep above the ground: the empty-parcel terrain under the player, else zero
+        let ground = terrain_height.map_or(0.0, |height| height.0);
+        if target_translation.y - ground < distance * 0.25 {
+            distance = (player_head.y - ground) / (0.25 - target_direction.y);
+        }
+
+        target_transform.translation =
+            player_head + head_offset * distance.clamp(0.0, 3.0) + target_direction * distance;
+
+        commands
+            .entity(camera_ent)
+            .try_insert(ViewUserValue(distance));
+    }
+
+    // the camera never carries scale; scenes may set arbitrary scale on virtual camera entities
+    target_transform.scale = Vec3::ONE;
+
+    let changed = (prev_override.is_some() != options.scene_override.is_some())
+        || prev_override
+            .as_ref()
+            .is_some_and(|prev| !prev.effectively_equals(options.scene_override.as_ref().unwrap()))
+        || *prev_oow != is_oow;
+
+    if changed {
+        debug!("changed cam to {:?}", options.scene_override);
+        prev_override.clone_from(&options.scene_override);
+        *prev_oow = is_oow;
+        let time = match target_transition {
+            TransitionMode::Time(t) => t,
+            TransitionMode::Speed(s) => {
+                let distance =
+                    (target_transform.translation - camera_transform.translation).length();
+                distance / s.max(0.001)
+            }
+        };
+        debug!(
+            "tween {:?} to {:?} over {time} seconds",
+            camera_transform, target_transform
+        );
+        commands.entity(camera_ent).try_insert(SystemTween {
+            target: target_transform,
+            time,
+            fov: Some(target_fov),
+        });
+    } else if let Some(mut tween) = maybe_tween {
+        let tween = tween.bypass_change_detection();
+        if target_transform != tween.target {
+            debug!(
+                "tween changed to {:?} to {:?}",
+                camera_transform, target_transform
+            );
+            tween.target = target_transform;
+        }
+        if tween.fov != Some(target_fov) {
+            tween.fov = Some(target_fov);
+        }
+    } else {
+        commands
+            .entity(camera_ent)
+            .modify_component(move |t: &mut Transform| *t = target_transform);
+        // *camera_transform = target_transform;
+        if let Projection::Perspective(PerspectiveProjection { ref mut fov, .. }) = &mut *projection
+        {
+            if *fov != target_fov {
+                *fov = target_fov;
+            }
+        }
+    }
+}
+
+pub fn update_cursor_lock(
+    locks: Res<CursorLocks>,
+    mut windows: Query<&mut Window, With<PrimaryWindow>>,
+    mut prev: Local<bool>,
+) {
+    let lock = !locks.0.is_empty();
+
+    if lock {
+        for mut window in &mut windows {
+            if !window.focused {
+                if !*prev {
+                    // new right-click while not focussed - try to focus
+                    window.focused = true;
+                    // and skip updating window fields until focus is processed
+                    return;
+                } else {
+                    continue;
+                }
+            }
+
+            if window.cursor_options.grab_mode == CursorGrabMode::None {
+                window.cursor_options.grab_mode = CursorGrabMode::Locked;
+                return;
+            }
+
+            if window.cursor_options.visible {
+                window.cursor_options.visible = false;
+            }
+        }
+    } else {
+        for mut window in &mut windows {
+            if window.cursor_options.grab_mode != CursorGrabMode::None {
+                window.cursor_options.grab_mode = CursorGrabMode::None;
+            }
+
+            if !window.cursor_options.visible {
+                window.cursor_options.visible = true;
+            }
+        }
+    }
+
+    *prev = lock;
+}

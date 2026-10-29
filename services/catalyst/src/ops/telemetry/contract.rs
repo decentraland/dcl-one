@@ -1,0 +1,402 @@
+//! The authoritative enforcement layer for telemetry event shapes. Mirrors the
+//! sites TS validator (`packages/core/src/lib/telemetry/validate.ts`) against the
+//! machine-readable contract generated from the sites TS registry
+//! (`telemetry-contract.json`).
+//!
+//! Loaded fail-open: no `TELEMETRY_CONTRACT_PATH` / missing / unparseable file
+//! disables validation (accept everything). When enabled, a bad event is flagged
+//! (quarantine-by-`invalid_reason`), never rejected.
+
+use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
+
+use serde::Deserialize;
+use serde_json::Value;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContractProp {
+    /// `string | number | boolean | enum-string | enum-number | unknown`.
+    pub kind: String,
+    /// Permitted values for the `enum-*` kinds.
+    #[serde(default)]
+    pub values: Option<Vec<Value>>,
+    #[serde(default)]
+    pub optional: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ContractEvent {
+    /// A loose event opts out of prop validation entirely.
+    #[serde(default)]
+    pub loose: bool,
+    #[serde(default)]
+    pub props: HashMap<String, ContractProp>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Contract {
+    #[serde(default)]
+    pub version: u32,
+    /// Injected context fields (story/variant/exp_key). Always allowed on any
+    /// event as extra props, so this is informational only for validation.
+    #[serde(default, rename = "contextProps")]
+    pub context_props: HashMap<String, ContractProp>,
+    #[serde(default)]
+    pub events: HashMap<String, ContractEvent>,
+}
+
+/// Projects (Segment write keys) the contract describes, from
+/// `TELEMETRY_CONTRACT_PROJECTS` (comma-separated). Events from any other
+/// project are stored unvalidated: the contract is generated from the sites
+/// and engine sources, so a game or scene shipping its own events under its
+/// own key would otherwise have every event flagged as unknown. Unset or
+/// empty = validate every project.
+pub fn projects_from(raw: Option<&str>) -> Option<HashSet<String>> {
+    let set: HashSet<String> = raw?
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
+    if set.is_empty() {
+        None
+    } else {
+        tracing::info!(projects = ?set, "telemetry contract validation scoped to these projects");
+        Some(set)
+    }
+}
+
+/// Whether `project` is subject to contract validation under `scope`
+/// (`None` = every project).
+pub fn project_in_scope(scope: Option<&HashSet<String>>, project: &str) -> bool {
+    scope.is_none_or(|set| set.contains(project))
+}
+
+/// Loads `TELEMETRY_CONTRACT_PATH`. Fail-open: any of unset / missing /
+/// unreadable / unparseable logs a single warning and returns `None`
+/// (validation disabled).
+pub fn load(path: Option<&str>) -> Option<Arc<Contract>> {
+    let Some(path) = path.map(str::trim).filter(|p| !p.is_empty()) else {
+        tracing::warn!(
+            "TELEMETRY_CONTRACT_PATH unset \u{2014} telemetry contract validation DISABLED (accepting all events)"
+        );
+        return None;
+    };
+    match std::fs::read_to_string(path) {
+        Ok(text) => match serde_json::from_str::<Contract>(&text) {
+            Ok(contract) => {
+                tracing::info!(path = %path, events = contract.events.len(), version = contract.version, "telemetry contract loaded \u{2014} validation ENABLED");
+                Some(Arc::new(contract))
+            }
+            Err(err) => {
+                tracing::warn!(path = %path, error = %err, "telemetry contract unparseable \u{2014} validation DISABLED (accepting all events)");
+                None
+            }
+        },
+        Err(err) => {
+            tracing::warn!(path = %path, error = %err, "telemetry contract file missing/unreadable \u{2014} validation DISABLED (accepting all events)");
+            None
+        }
+    }
+}
+
+/// JS-`typeof`-flavoured kind of a JSON value. Arrays and objects both read as
+/// `"object"`, matching the TS `kindOf`.
+fn kind_of(v: &Value) -> &'static str {
+    match v {
+        Value::String(_) => "string",
+        Value::Number(_) => "number",
+        Value::Bool(_) => "boolean",
+        Value::Null => "null",
+        Value::Array(_) | Value::Object(_) => "object",
+    }
+}
+
+/// Numeric equality across JSON int/float representations (`5` == `5.0`),
+/// matching JS where every number is an f64.
+fn numbers_eq(a: &Value, b: &Value) -> bool {
+    match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
+    }
+}
+
+/// Strings render without quotes, for the `{a, b}` list in a problem message,
+/// matching the TS `values.join(", ")`.
+fn bare(v: &Value) -> String {
+    match v {
+        Value::String(s) => s.clone(),
+        other => other.to_string(),
+    }
+}
+
+fn join_values(values: &[Value]) -> String {
+    values.iter().map(bare).collect::<Vec<_>>().join(", ")
+}
+
+/// Returns a human-readable problem string, or `None` when the event is valid.
+/// Mirrors `validateEventAgainst` in sites `validate.ts`: unknown events and
+/// missing or ill-typed required props are problems; `loose` events and the
+/// `unknown` kind accept, and extra props (incl. injected context fields) are
+/// allowed. All problems are joined with `; ` into the single stored flag.
+pub fn validate_event(contract: &Contract, event_name: &str, properties: &Value) -> Option<String> {
+    let ev = match contract.events.get(event_name) {
+        None => {
+            return Some(format!(
+                "unknown event \"{event_name}\" (not in the telemetry contract)"
+            ));
+        }
+        Some(ev) => ev,
+    };
+    if ev.loose {
+        return None;
+    }
+
+    let empty = serde_json::Map::new();
+    let props = properties.as_object().unwrap_or(&empty);
+
+    let mut problems: Vec<String> = Vec::new();
+    for (name, spec) in &ev.props {
+        let val = match props.get(name) {
+            Some(v) => v,
+            None => {
+                if !spec.optional {
+                    problems.push(format!("missing required prop \"{name}\""));
+                }
+                continue;
+            }
+        };
+        let actual = kind_of(val);
+        match spec.kind.as_str() {
+            "string" | "number" | "boolean" if actual != spec.kind => {
+                problems.push(format!(
+                    "prop \"{name}\" should be {}, got {actual}",
+                    spec.kind
+                ));
+            }
+            "enum-string" => {
+                if actual != "string" {
+                    problems.push(format!("prop \"{name}\" should be a string, got {actual}"));
+                } else if let Some(values) = &spec.values
+                    && !values.iter().any(|v| v == val)
+                {
+                    problems.push(format!(
+                        "prop \"{name}\" = {val} is not one of {{{}}}",
+                        join_values(values)
+                    ));
+                }
+            }
+            "enum-number" => {
+                if actual != "number" {
+                    problems.push(format!("prop \"{name}\" should be a number, got {actual}"));
+                } else if let Some(values) = &spec.values
+                    && !values.iter().any(|v| numbers_eq(v, val))
+                {
+                    problems.push(format!(
+                        "prop \"{name}\" = {val} is not one of {{{}}}",
+                        join_values(values)
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    if problems.is_empty() {
+        None
+    } else {
+        Some(problems.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod validate_tests {
+    use super::*;
+
+    fn fixture() -> Contract {
+        serde_json::from_str(
+            r#"{
+              "version": 1,
+              "contextProps": {
+                "story":   { "kind": "string", "optional": true },
+                "variant": { "kind": "string", "optional": true },
+                "exp_key": { "kind": "string", "optional": true }
+              },
+              "events": {
+                "thing_clicked": {
+                  "loose": false,
+                  "props": {
+                    "label":   { "kind": "string",       "optional": false },
+                    "count":   { "kind": "number",       "optional": false },
+                    "enabled": { "kind": "boolean",      "optional": false },
+                    "mode":    { "kind": "enum-string",  "values": ["a", "b"], "optional": false },
+                    "level":   { "kind": "enum-number",  "values": [1, 2, 3],  "optional": false },
+                    "payload": { "kind": "unknown",      "optional": false },
+                    "note":    { "kind": "string",       "optional": true }
+                  }
+                },
+                "freeform": { "loose": true, "props": {} }
+              }
+            }"#,
+        )
+        .expect("fixture contract parses")
+    }
+
+    fn valid_props() -> Value {
+        serde_json::json!({
+            "label": "x",
+            "count": 3,
+            "enabled": true,
+            "mode": "a",
+            "level": 2,
+            "payload": { "nested": 1 }
+        })
+    }
+
+    #[test]
+    fn project_scope_none_means_every_project() {
+        assert!(project_in_scope(None, "anything"));
+        assert!(projects_from(None).is_none() && projects_from(Some(" , ")).is_none());
+        assert_eq!(projects_from(Some("a, b")).unwrap().len(), 2);
+        assert!(
+            load(None).is_none() && load(Some("/nonexistent/telemetry-contract.json")).is_none()
+        );
+        let scope: HashSet<String> = ["dcl-sites".to_string()].into_iter().collect();
+        assert!(project_in_scope(Some(&scope), "dcl-sites"));
+        assert!(!project_in_scope(Some(&scope), "freedom-and-order"));
+    }
+
+    #[test]
+    fn validate_accepts_a_valid_event() {
+        assert_eq!(
+            validate_event(&fixture(), "thing_clicked", &valid_props()),
+            None
+        );
+    }
+
+    #[test]
+    fn validate_rejects_an_unknown_event() {
+        let problem = validate_event(&fixture(), "never_declared", &valid_props());
+        assert!(
+            problem.as_deref().unwrap_or("").contains("unknown event"),
+            "got {problem:?}"
+        );
+    }
+
+    #[test]
+    fn validate_flags_a_missing_required_prop() {
+        let mut props = valid_props();
+        props.as_object_mut().unwrap().remove("label");
+        let problem = validate_event(&fixture(), "thing_clicked", &props);
+        assert!(
+            problem
+                .as_deref()
+                .unwrap_or("")
+                .contains("missing required prop \"label\""),
+            "got {problem:?}"
+        );
+    }
+
+    #[test]
+    fn validate_flags_a_wrong_kind() {
+        let mut props = valid_props();
+        props["count"] = Value::String("3".into());
+        let problem = validate_event(&fixture(), "thing_clicked", &props);
+        assert!(
+            problem
+                .as_deref()
+                .unwrap_or("")
+                .contains("should be number"),
+            "got {problem:?}"
+        );
+    }
+
+    #[test]
+    fn validate_flags_an_enum_string_out_of_set() {
+        let mut props = valid_props();
+        props["mode"] = Value::String("z".into());
+        let problem = validate_event(&fixture(), "thing_clicked", &props);
+        assert!(
+            problem.as_deref().unwrap_or("").contains("is not one of"),
+            "got {problem:?}"
+        );
+    }
+
+    #[test]
+    fn validate_flags_an_enum_number_out_of_set() {
+        let mut props = valid_props();
+        props["level"] = serde_json::json!(9);
+        let problem = validate_event(&fixture(), "thing_clicked", &props);
+        assert!(
+            problem.as_deref().unwrap_or("").contains("is not one of"),
+            "got {problem:?}"
+        );
+    }
+
+    #[test]
+    fn validate_loose_event_accepts_anything() {
+        let props = serde_json::json!({ "whatever": 123, "shape": ["not", "declared"] });
+        assert_eq!(validate_event(&fixture(), "freeform", &props), None);
+    }
+
+    #[test]
+    fn validate_unknown_kind_accepts_any_shape() {
+        let mut props = valid_props();
+        props["payload"] = Value::String("now a string".into());
+        assert_eq!(
+            validate_event(&fixture(), "thing_clicked", &props),
+            None,
+            "the unknown kind must accept any value"
+        );
+    }
+
+    #[test]
+    fn null_is_a_present_value_not_a_missing_property() {
+        let mut props = valid_props();
+        props["payload"] = Value::Null;
+        assert_eq!(validate_event(&fixture(), "thing_clicked", &props), None);
+        props.as_object_mut().unwrap().remove("payload");
+        assert_eq!(
+            validate_event(&fixture(), "thing_clicked", &props).as_deref(),
+            Some("missing required prop \"payload\"")
+        );
+    }
+
+    #[test]
+    fn null_still_fails_non_nullable_primitive_and_optional_types() {
+        for (name, kind) in [("count", "number"), ("note", "string")] {
+            let mut props = valid_props();
+            props[name] = Value::Null;
+            assert_eq!(
+                validate_event(&fixture(), "thing_clicked", &props),
+                Some(format!("prop \"{name}\" should be {kind}, got null"))
+            );
+        }
+    }
+
+    #[test]
+    fn validate_allows_extra_and_context_props() {
+        let mut props = valid_props();
+        let obj = props.as_object_mut().unwrap();
+        obj.insert("story".into(), Value::String("checkout".into()));
+        obj.insert("variant".into(), Value::String("b".into()));
+        obj.insert("exp_key".into(), Value::String("exp-1".into()));
+        obj.insert("some_future_prop".into(), serde_json::json!({ "x": 1 }));
+        assert_eq!(validate_event(&fixture(), "thing_clicked", &props), None);
+    }
+
+    #[test]
+    fn validate_optional_prop_may_be_absent() {
+        assert_eq!(
+            validate_event(&fixture(), "thing_clicked", &valid_props()),
+            None
+        );
+    }
+
+    #[test]
+    fn validate_number_int_float_enum_equivalence() {
+        let mut props = valid_props();
+        props["level"] = serde_json::json!(2.0);
+        assert_eq!(validate_event(&fixture(), "thing_clicked", &props), None);
+    }
+}

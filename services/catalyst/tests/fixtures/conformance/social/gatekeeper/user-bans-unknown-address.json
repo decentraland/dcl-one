@@ -1,0 +1,24 @@
+{
+  "description": "GET /users/{address}/bans for an address with no history. Captured GET https://comms-gatekeeper.decentraland.org/users/0x0000000000000000000000000000000000000001/bans -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/users/0x0000000000000000000000000000000000000001/bans",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "isBanned": false
+      }
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/users/0x0000000000000000000000000000000000000001/bans",
+  "captured_at": "2026-09-25T19:24:26Z",
+  "volatile_paths": []
+}

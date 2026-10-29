@@ -1,0 +1,1468 @@
+{
+  "version": 1,
+  "normalization": "Synthetic empty payloads; no identities, tokens or keys; no capture timing asserted",
+  "cases": [
+    {
+      "case_id": "client_handshake",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "0a00",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "handshake",
+          "tag": 1,
+          "payload": {
+            "auth_chain": [],
+            "profile_version": 0,
+            "initial_state": null
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_input",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "1200",
+          "channel": 1,
+          "reliability": "unreliable-sequenced",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "input",
+          "tag": 2,
+          "payload": {
+            "state": null
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_resync",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "1a00",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "resync",
+          "tag": 3,
+          "payload": {
+            "subject_id": 0,
+            "known_seq": 0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_profile_announcement",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "2200",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "profile_announcement",
+          "tag": 4,
+          "payload": {
+            "version": 0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_emote_start",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "2a00",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "emote_start",
+          "tag": 5,
+          "payload": {
+            "emote_id": "",
+            "duration_ms": null,
+            "player_state": null,
+            "mask": null
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_emote_stop",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "3200",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "emote_stop",
+          "tag": 6,
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "case_id": "client_teleport",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "3a00",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "teleport",
+          "tag": 7,
+          "payload": {
+            "parcel_index": 0,
+            "position_x": 0,
+            "position_y": 0,
+            "position_z": 0,
+            "realm": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_scene_listener_handshake",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "4200",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "scene_listener_handshake",
+          "tag": 8,
+          "payload": {
+            "auth_chain": [],
+            "aoi": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_scene_listener_update",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "4a00",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "scene_listener_update",
+          "tag": 9,
+          "payload": {
+            "aoi": []
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_handshake",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "0a00",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "handshake",
+          "tag": 1,
+          "payload": {
+            "success": false,
+            "error": null
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_player_state_full",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "1200",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "player_state_full",
+          "tag": 2,
+          "payload": {
+            "subject_id": 0,
+            "sequence": 0,
+            "server_tick": 0,
+            "state": null
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_player_state_delta",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "1a00",
+          "channel": 1,
+          "reliability": "unreliable-sequenced",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "player_state_delta",
+          "tag": 3,
+          "payload": {
+            "subject_id": 0,
+            "baseline_seq": 0,
+            "new_seq": 0,
+            "server_tick": 0,
+            "parcel_index": null,
+            "position_x": null,
+            "position_y": null,
+            "position_z": null,
+            "velocity_x": null,
+            "velocity_y": null,
+            "velocity_z": null,
+            "rotation_y": null,
+            "movement_blend": null,
+            "slide_blend": null,
+            "head_yaw": null,
+            "head_pitch": null,
+            "state_flags": null,
+            "glide_state": null,
+            "jump_count": null,
+            "point_at_x": null,
+            "point_at_y": null,
+            "point_at_z": null
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_player_joined",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "2200",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "player_joined",
+          "tag": 4,
+          "payload": {
+            "user_id": "",
+            "profile_version": 0,
+            "state": null,
+            "realm": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_player_left",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "2a00",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "player_left",
+          "tag": 5,
+          "payload": {
+            "subject_id": 0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_player_profile_version_announced",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "3200",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "player_profile_version_announced",
+          "tag": 6,
+          "payload": {
+            "subject_id": 0,
+            "version": 0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_emote_started",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "3a00",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "emote_started",
+          "tag": 7,
+          "payload": {
+            "subject_id": 0,
+            "sequence": 0,
+            "server_tick": 0,
+            "emote_id": "",
+            "player_state": null,
+            "mask": null
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_emote_stopped",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "4200",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "emote_stopped",
+          "tag": 8,
+          "payload": {
+            "subject_id": 0,
+            "server_tick": 0,
+            "reason": 0,
+            "sequence": 0,
+            "player_state": null
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_teleported",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "4a00",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "teleported",
+          "tag": 9,
+          "payload": {
+            "subject_id": 0,
+            "sequence": 0,
+            "server_tick": 0,
+            "state": null,
+            "realm": ""
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_handshake_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "0a540a0973796e74686574696310011a450a27080110011801200128013001380140014801500158006000680170017801800100880100900100120973796e746865746963180020002a0973796e7468657469633000",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "handshake",
+          "tag": 1,
+          "payload": {
+            "auth_chain": [
+              115,
+              121,
+              110,
+              116,
+              104,
+              101,
+              116,
+              105,
+              99
+            ],
+            "profile_version": 1,
+            "initial_state": {
+              "state": {
+                "parcel_index": 1,
+                "position_x": 1,
+                "position_y": 1,
+                "position_z": 1,
+                "velocity_x": 1,
+                "velocity_y": 1,
+                "velocity_z": 1,
+                "rotation_y": 1,
+                "movement_blend": 1,
+                "slide_blend": 1,
+                "head_yaw": 0,
+                "head_pitch": 0,
+                "state_flags": 1,
+                "glide_state": 1,
+                "jump_count": 1,
+                "point_at_x": 0,
+                "point_at_y": 0,
+                "point_at_z": 0
+              },
+              "emote_id": "synthetic",
+              "emote_duration_ms": 0,
+              "emote_start_offset_ms": 0,
+              "realm": "synthetic",
+              "emote_mask": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_input_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "12290a27080110011801200128013001380140014801500158006000680170017801800100880100900100",
+          "channel": 1,
+          "reliability": "unreliable-sequenced",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "input",
+          "tag": 2,
+          "payload": {
+            "state": {
+              "parcel_index": 1,
+              "position_x": 1,
+              "position_y": 1,
+              "position_z": 1,
+              "velocity_x": 1,
+              "velocity_y": 1,
+              "velocity_z": 1,
+              "rotation_y": 1,
+              "movement_blend": 1,
+              "slide_blend": 1,
+              "head_yaw": 0,
+              "head_pitch": 0,
+              "state_flags": 1,
+              "glide_state": 1,
+              "jump_count": 1,
+              "point_at_x": 0,
+              "point_at_y": 0,
+              "point_at_z": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_resync_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "1a0408011001",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "resync",
+          "tag": 3,
+          "payload": {
+            "subject_id": 1,
+            "known_seq": 1
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_profile_announcement_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "22020801",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "profile_announcement",
+          "tag": 4,
+          "payload": {
+            "version": 1
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_emote_start_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "2a380a0973796e74686574696310001a270801100118012001280130013801400148015001580060006801700178018001008801009001002000",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "emote_start",
+          "tag": 5,
+          "payload": {
+            "emote_id": "synthetic",
+            "duration_ms": 0,
+            "player_state": {
+              "parcel_index": 1,
+              "position_x": 1,
+              "position_y": 1,
+              "position_z": 1,
+              "velocity_x": 1,
+              "velocity_y": 1,
+              "velocity_z": 1,
+              "rotation_y": 1,
+              "movement_blend": 1,
+              "slide_blend": 1,
+              "head_yaw": 0,
+              "head_pitch": 0,
+              "state_flags": 1,
+              "glide_state": 1,
+              "jump_count": 1,
+              "point_at_x": 0,
+              "point_at_y": 0,
+              "point_at_z": 0
+            },
+            "mask": 0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_emote_stop_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "3200",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "emote_stop",
+          "tag": 6,
+          "payload": {}
+        }
+      ]
+    },
+    {
+      "case_id": "client_teleport_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "3a1308011001180120012a0973796e746865746963",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "teleport",
+          "tag": 7,
+          "payload": {
+            "parcel_index": 1,
+            "position_x": 1,
+            "position_y": 1,
+            "position_z": 1,
+            "realm": "synthetic"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_scene_listener_handshake_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "42220a0973796e74686574696312150a0973796e74686574696312080801100118012001",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "scene_listener_handshake",
+          "tag": 8,
+          "payload": {
+            "auth_chain": [
+              115,
+              121,
+              110,
+              116,
+              104,
+              101,
+              116,
+              105,
+              99
+            ],
+            "aoi": [
+              {
+                "realm": "synthetic",
+                "parcel_rects": [
+                  {
+                    "min_x": -1,
+                    "min_z": -1,
+                    "max_x": -1,
+                    "max_z": -1
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "client_scene_listener_update_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "4a170a150a0973796e74686574696312080801100118012001",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "client"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "scene_listener_update",
+          "tag": 9,
+          "payload": {
+            "aoi": [
+              {
+                "realm": "synthetic",
+                "parcel_rects": [
+                  {
+                    "min_x": -1,
+                    "min_z": -1,
+                    "max_x": -1,
+                    "max_z": -1
+                  }
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_handshake_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "0a0d0801120973796e746865746963",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "handshake",
+          "tag": 1,
+          "payload": {
+            "success": true,
+            "error": "synthetic"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_player_state_full_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "122f0801100118012227080110011801200128013001380140014801500158006000680170017801800100880100900100",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "player_state_full",
+          "tag": 2,
+          "payload": {
+            "subject_id": 1,
+            "sequence": 1,
+            "server_tick": 1,
+            "state": {
+              "parcel_index": 1,
+              "position_x": 1,
+              "position_y": 1,
+              "position_z": 1,
+              "velocity_x": 1,
+              "velocity_y": 1,
+              "velocity_z": 1,
+              "rotation_y": 1,
+              "movement_blend": 1,
+              "slide_blend": 1,
+              "head_yaw": 0,
+              "head_pitch": 0,
+              "state_flags": 1,
+              "glide_state": 1,
+              "jump_count": 1,
+              "point_at_x": 0,
+              "point_at_y": 0,
+              "point_at_z": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_player_state_delta_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "1a33080110011801200128003000380040004800500058006000680070007800800100880100900100980100a00100a80100b00100",
+          "channel": 1,
+          "reliability": "unreliable-sequenced",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "player_state_delta",
+          "tag": 3,
+          "payload": {
+            "subject_id": 1,
+            "baseline_seq": 1,
+            "new_seq": 1,
+            "server_tick": 1,
+            "parcel_index": 0,
+            "position_x": 0,
+            "position_y": 0,
+            "position_z": 0,
+            "velocity_x": 0,
+            "velocity_y": 0,
+            "velocity_z": 0,
+            "rotation_y": 0,
+            "movement_blend": 0,
+            "slide_blend": 0,
+            "head_yaw": 0,
+            "head_pitch": 0,
+            "state_flags": 0,
+            "glide_state": 0,
+            "jump_count": 0,
+            "point_at_x": 0,
+            "point_at_y": 0,
+            "point_at_z": 0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_player_joined_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "22490a0973796e74686574696310011a2f0801100118012227080110011801200128013001380140014801500158006000680170017801800100880100900100220973796e746865746963",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "player_joined",
+          "tag": 4,
+          "payload": {
+            "user_id": "synthetic",
+            "profile_version": 1,
+            "state": {
+              "subject_id": 1,
+              "sequence": 1,
+              "server_tick": 1,
+              "state": {
+                "parcel_index": 1,
+                "position_x": 1,
+                "position_y": 1,
+                "position_z": 1,
+                "velocity_x": 1,
+                "velocity_y": 1,
+                "velocity_z": 1,
+                "rotation_y": 1,
+                "movement_blend": 1,
+                "slide_blend": 1,
+                "head_yaw": 0,
+                "head_pitch": 0,
+                "state_flags": 1,
+                "glide_state": 1,
+                "jump_count": 1,
+                "point_at_x": 0,
+                "point_at_y": 0,
+                "point_at_z": 0
+              }
+            },
+            "realm": "synthetic"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_player_left_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "2a020801",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "player_left",
+          "tag": 5,
+          "payload": {
+            "subject_id": 1
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_player_profile_version_announced_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "320408011001",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "player_profile_version_announced",
+          "tag": 6,
+          "payload": {
+            "subject_id": 1,
+            "version": 1
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_emote_started_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "3a3c080110011801220973796e7468657469632a270801100118012001280130013801400148015001580060006801700178018001008801009001003000",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "emote_started",
+          "tag": 7,
+          "payload": {
+            "subject_id": 1,
+            "sequence": 1,
+            "server_tick": 1,
+            "emote_id": "synthetic",
+            "player_state": {
+              "parcel_index": 1,
+              "position_x": 1,
+              "position_y": 1,
+              "position_z": 1,
+              "velocity_x": 1,
+              "velocity_y": 1,
+              "velocity_z": 1,
+              "rotation_y": 1,
+              "movement_blend": 1,
+              "slide_blend": 1,
+              "head_yaw": 0,
+              "head_pitch": 0,
+              "state_flags": 1,
+              "glide_state": 1,
+              "jump_count": 1,
+              "point_at_x": 0,
+              "point_at_y": 0,
+              "point_at_z": 0
+            },
+            "mask": 0
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_emote_stopped_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "423108011001180120012a27080110011801200128013001380140014801500158006000680170017801800100880100900100",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "emote_stopped",
+          "tag": 8,
+          "payload": {
+            "subject_id": 1,
+            "server_tick": 1,
+            "reason": 1,
+            "sequence": 1,
+            "player_state": {
+              "parcel_index": 1,
+              "position_x": 1,
+              "position_y": 1,
+              "position_z": 1,
+              "velocity_x": 1,
+              "velocity_y": 1,
+              "velocity_z": 1,
+              "rotation_y": 1,
+              "movement_blend": 1,
+              "slide_blend": 1,
+              "head_yaw": 0,
+              "head_pitch": 0,
+              "state_flags": 1,
+              "glide_state": 1,
+              "jump_count": 1,
+              "point_at_x": 0,
+              "point_at_y": 0,
+              "point_at_z": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "server_teleported_populated",
+      "provenance": {
+        "kind": "source-derived",
+        "source_sha": "694568db455b07e0eca2c119d9e916a4c5581c69",
+        "generated_csharp_sha": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+        "encoder_executed": false
+      },
+      "client_lane": "all baseline schema lanes; runtime selection unverified",
+      "configuration": {
+        "protocol_features": 0
+      },
+      "controlled_time_ms": 0,
+      "inputs": [
+        {
+          "order": 0,
+          "raw_hex": "4a3a08011001180122270801100118012001280130013801400148015001580060006801700178018001008801009001002a0973796e746865746963",
+          "channel": 0,
+          "reliability": "reliable",
+          "direction": "server"
+        }
+      ],
+      "expected_events": [
+        {
+          "arm": "teleported",
+          "tag": 9,
+          "payload": {
+            "subject_id": 1,
+            "sequence": 1,
+            "server_tick": 1,
+            "state": {
+              "parcel_index": 1,
+              "position_x": 1,
+              "position_y": 1,
+              "position_z": 1,
+              "velocity_x": 1,
+              "velocity_y": 1,
+              "velocity_z": 1,
+              "rotation_y": 1,
+              "movement_blend": 1,
+              "slide_blend": 1,
+              "head_yaw": 0,
+              "head_pitch": 0,
+              "state_flags": 1,
+              "glide_state": 1,
+              "jump_count": 1,
+              "point_at_x": 0,
+              "point_at_y": 0,
+              "point_at_z": 0
+            },
+            "realm": "synthetic"
+          }
+        }
+      ]
+    }
+  ]
+}

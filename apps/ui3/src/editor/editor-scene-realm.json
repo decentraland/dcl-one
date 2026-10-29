@@ -1,0 +1,29 @@
+{
+  "acceptingUsers": true,
+  "bff": {
+    "healthy": false,
+    "publicUrl": "https://peer.decentraland.org/bff"
+  },
+  "comms": {
+    "healthy": true,
+    "protocol": "v3",
+    "fixedAdapter": "offline:offline"
+  },
+  "configurations": {
+    "networkId": 0,
+    "globalScenesUrn": [],
+    "scenesUrn": [
+      "urn:decentraland:entity:bafkreic4te2puhkrl7yth3fhd5ndj37gzhpful2gwkkasecv6fjct3roya?=&baseUrl=/editor-scene/"
+    ],
+    "realmName": "EditorScene"
+  },
+  "content": {
+    "healthy": true,
+    "publicUrl": "https://peer.decentraland.org/content"
+  },
+  "lambdas": {
+    "healthy": true,
+    "publicUrl": "https://peer.decentraland.org/lambdas"
+  },
+  "healthy": true
+}

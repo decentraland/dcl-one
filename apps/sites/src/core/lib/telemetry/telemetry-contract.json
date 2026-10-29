@@ -1,0 +1,3487 @@
+{
+  "version": 1,
+  "contextProps": {
+    "story": {
+      "kind": "string",
+      "optional": true
+    },
+    "variant": {
+      "kind": "string",
+      "optional": true
+    }
+  },
+  "events": {
+    "bd_create_collection_completed": {
+      "loose": false,
+      "props": {
+        "collection_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "contract_address": {
+          "kind": "string",
+          "optional": true
+        },
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "stub": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "type": {
+          "kind": "enum-string",
+          "values": [
+            "linked",
+            "standard"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_create_collection_items_added": {
+      "loose": false,
+      "props": {
+        "count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_create_collection_named": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_create_collection_review_reached": {
+      "loose": false,
+      "props": {
+        "cost_mana": {
+          "kind": "number",
+          "optional": false
+        },
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "type": {
+          "kind": "enum-string",
+          "values": [
+            "linked",
+            "standard"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_create_collection_started": {
+      "loose": false,
+      "props": {
+        "type": {
+          "kind": "enum-string",
+          "values": [
+            "linked",
+            "standard"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_create_collection_submitted": {
+      "loose": false,
+      "props": {
+        "cost_mana": {
+          "kind": "number",
+          "optional": false
+        },
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "type": {
+          "kind": "enum-string",
+          "values": [
+            "linked",
+            "standard"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_assigned": {
+      "loose": false,
+      "props": {
+        "id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_comment_added": {
+      "loose": false,
+      "props": {
+        "decision": {
+          "kind": "enum-string",
+          "values": [
+            "approved",
+            "rejected"
+          ],
+          "optional": true
+        },
+        "has_comment": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "id": {
+          "kind": "string",
+          "optional": true
+        },
+        "length": {
+          "kind": "number",
+          "optional": false
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "topic_id": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_decided": {
+      "loose": false,
+      "props": {
+        "has_comment": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "id": {
+          "kind": "string",
+          "optional": true
+        },
+        "status": {
+          "kind": "enum-string",
+          "values": [
+            "approved",
+            "rejected"
+          ],
+          "optional": true
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "updated": {
+          "kind": "number",
+          "optional": true
+        }
+      }
+    },
+    "bd_curation_filtered": {
+      "loose": false,
+      "props": {
+        "assignee": {
+          "kind": "string",
+          "optional": false
+        },
+        "status": {
+          "kind": "enum-string",
+          "values": [
+            "ALL_STATUS",
+            "approved",
+            "rejected",
+            "to_review",
+            "under_review"
+          ],
+          "optional": false
+        },
+        "type": {
+          "kind": "enum-string",
+          "values": [
+            "ALL_TYPES",
+            "standard",
+            "third_party"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_review_opened": {
+      "loose": false,
+      "props": {
+        "id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_curation_viewed": {
+      "loose": false,
+      "props": {
+        "count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_category_set": {
+      "loose": false,
+      "props": {
+        "category": {
+          "kind": "string",
+          "optional": false
+        },
+        "item": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_editor_opened": {
+      "loose": false,
+      "props": {
+        "collection": {
+          "kind": "string",
+          "optional": false
+        },
+        "item": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_model_set": {
+      "loose": false,
+      "props": {
+        "item": {
+          "kind": "string",
+          "optional": false
+        },
+        "model": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_price_set": {
+      "loose": false,
+      "props": {
+        "free": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "item": {
+          "kind": "string",
+          "optional": false
+        },
+        "price": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_rarity_set": {
+      "loose": false,
+      "props": {
+        "item": {
+          "kind": "string",
+          "optional": false
+        },
+        "max_supply": {
+          "kind": "number",
+          "optional": false
+        },
+        "rarity": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_reverted": {
+      "loose": false,
+      "props": {
+        "item": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "bd_item_saved": {
+      "loose": false,
+      "props": {
+        "item": {
+          "kind": "string",
+          "optional": false
+        },
+        "price": {
+          "kind": "string",
+          "optional": false
+        },
+        "rarity": {
+          "kind": "string",
+          "optional": false
+        },
+        "stub": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "urn": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "bd_publish_collection_cost_shown": {
+      "loose": false,
+      "props": {
+        "mana": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_publish_collection_started": {
+      "loose": false,
+      "props": {
+        "id": {
+          "kind": "string",
+          "optional": false
+        },
+        "itemCount": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "bd_publish_collection_terms_accepted": {
+      "loose": false,
+      "props": {}
+    },
+    "bd_publish_fee_paid": {
+      "loose": false,
+      "props": {
+        "mana": {
+          "kind": "number",
+          "optional": false
+        },
+        "simulated": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "tx_hash": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "bd_publish_submitted": {
+      "loose": false,
+      "props": {
+        "id": {
+          "kind": "string",
+          "optional": false
+        },
+        "itemCount": {
+          "kind": "number",
+          "optional": false
+        },
+        "mana": {
+          "kind": "number",
+          "optional": true
+        },
+        "stub": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "cast_devices_selected": {
+      "loose": false,
+      "props": {
+        "camera": {
+          "kind": "string",
+          "optional": false
+        },
+        "mic": {
+          "kind": "string",
+          "optional": false
+        },
+        "speaker": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "cast_ended": {
+      "loose": false,
+      "props": {
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "cast_ending": {
+      "loose": false,
+      "props": {}
+    },
+    "cast_invalid_token": {
+      "loose": false,
+      "props": {
+        "reason": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "cast_join_requested": {
+      "loose": false,
+      "props": {}
+    },
+    "cast_not_found_go_home": {
+      "loose": false,
+      "props": {
+        "from": {
+          "kind": "enum-string",
+          "values": [
+            "streamer",
+            "unknown",
+            "watcher"
+          ],
+          "optional": false
+        },
+        "reason": {
+          "kind": "enum-string",
+          "values": [
+            "ended",
+            "expired",
+            "malformed",
+            "missing"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "cast_not_found_shown": {
+      "loose": false,
+      "props": {
+        "from": {
+          "kind": "enum-string",
+          "values": [
+            "streamer",
+            "unknown",
+            "watcher"
+          ],
+          "optional": false
+        },
+        "reason": {
+          "kind": "enum-string",
+          "values": [
+            "ended",
+            "expired",
+            "malformed",
+            "missing"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "cast_not_found_view_docs": {
+      "loose": false,
+      "props": {
+        "from": {
+          "kind": "enum-string",
+          "values": [
+            "streamer",
+            "unknown",
+            "watcher"
+          ],
+          "optional": false
+        },
+        "reason": {
+          "kind": "enum-string",
+          "values": [
+            "ended",
+            "expired",
+            "malformed",
+            "missing"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "cast_permissions_denied": {
+      "loose": false,
+      "props": {}
+    },
+    "cast_permissions_granted": {
+      "loose": false,
+      "props": {}
+    },
+    "cast_preview_ready": {
+      "loose": false,
+      "props": {}
+    },
+    "cast_screenshare_failed": {
+      "loose": false,
+      "props": {
+        "room_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "cast_screenshare_started": {
+      "loose": false,
+      "props": {
+        "room_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "cast_token_checked": {
+      "loose": false,
+      "props": {}
+    },
+    "cast_token_valid": {
+      "loose": false,
+      "props": {
+        "is_world": {
+          "kind": "boolean",
+          "optional": true
+        },
+        "place_name": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "cast_watch_access_expired": {
+      "loose": false,
+      "props": {
+        "location": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "cast_watch_chat_opened": {
+      "loose": false,
+      "props": {}
+    },
+    "cast_watch_joined": {
+      "loose": false,
+      "props": {
+        "place_name": {
+          "kind": "string",
+          "optional": false
+        },
+        "room_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "cast_watch_left": {
+      "loose": false,
+      "props": {}
+    },
+    "cast_watch_muted": {
+      "loose": false,
+      "props": {}
+    },
+    "cast_watch_no_stream": {
+      "loose": false,
+      "props": {
+        "location": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "cast_watch_opened": {
+      "loose": false,
+      "props": {
+        "is_world": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "location": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "cast_watch_unmuted": {
+      "loose": false,
+      "props": {}
+    },
+    "cast_went_live": {
+      "loose": false,
+      "props": {
+        "room_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "catalyst_schema_drift": {
+      "loose": false,
+      "props": {
+        "issues": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "issues_count": {
+          "kind": "number",
+          "optional": true
+        },
+        "kind": {
+          "kind": "string",
+          "optional": true
+        },
+        "module": {
+          "kind": "string",
+          "optional": true
+        },
+        "path": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "ch_claim_name_available": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_claim_name_completed": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "token_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "tx_hash": {
+          "kind": "string",
+          "optional": true
+        },
+        "world_name": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_claim_name_mint_submitted": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        },
+        "simulated": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_claim_name_returned_to_publish": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        },
+        "world_name": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_claim_name_review_reached": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        },
+        "price_mana": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_claim_name_started": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_claim_name_unavailable": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_create_project_completed": {
+      "loose": false,
+      "props": {
+        "files": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "folder": {
+          "kind": "string",
+          "optional": true
+        },
+        "name": {
+          "kind": "string",
+          "optional": false
+        },
+        "path": {
+          "kind": "string",
+          "optional": false
+        },
+        "template": {
+          "kind": "string",
+          "optional": false
+        },
+        "via": {
+          "kind": "enum-string",
+          "values": [
+            "canceled",
+            "directory",
+            "download"
+          ],
+          "optional": true
+        },
+        "written": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "ch_create_project_failed": {
+      "loose": false,
+      "props": {
+        "code": {
+          "kind": "string",
+          "optional": true
+        },
+        "message": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_create_project_name_set": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_create_project_path_invalid": {
+      "loose": false,
+      "props": {
+        "path": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_create_project_path_set": {
+      "loose": false,
+      "props": {
+        "path": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_create_project_scaffolding": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": false
+        },
+        "path": {
+          "kind": "string",
+          "optional": false
+        },
+        "template": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_create_project_started": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_create_project_template_selected": {
+      "loose": false,
+      "props": {
+        "preselected": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "template": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_curate_signin_clicked": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_delete_cancelled": {
+      "loose": false,
+      "props": {
+        "local": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "project_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_delete_confirmed": {
+      "loose": false,
+      "props": {
+        "delete_files": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "local": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "local_files": {
+          "kind": "enum-string",
+          "values": [
+            "deleted",
+            "kept"
+          ],
+          "optional": true
+        },
+        "overrode_pointers": {
+          "kind": "number",
+          "optional": true
+        },
+        "project_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "replaced_entity": {
+          "kind": "string",
+          "optional": true
+        },
+        "simulated": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "status": {
+          "kind": "number",
+          "optional": true
+        },
+        "tombstone_id": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "ch_delete_done_viewed": {
+      "loose": false,
+      "props": {
+        "deleted_id": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "remaining": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "ch_delete_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "project_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "simulated": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "status": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "ch_delete_files_opted_in": {
+      "loose": false,
+      "props": {
+        "local": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "project_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_delete_files_toggled": {
+      "loose": false,
+      "props": {
+        "checked": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "local": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "project_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_delete_no_deployment": {
+      "loose": false,
+      "props": {
+        "base": {
+          "kind": "string",
+          "optional": false
+        },
+        "project_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_delete_opened": {
+      "loose": false,
+      "props": {
+        "local": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "project_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "published": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_delete_scenes_viewed": {
+      "loose": false,
+      "props": {
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "source": {
+          "kind": "enum-string",
+          "values": [
+            "empty",
+            "live",
+            "unavailable"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_deploy_world_completed": {
+      "loose": false,
+      "props": {
+        "jump_url": {
+          "kind": "string",
+          "optional": true
+        },
+        "name": {
+          "kind": "string",
+          "optional": true
+        },
+        "target": {
+          "kind": "enum-string",
+          "values": [
+            "land",
+            "world"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_deploy_world_confirm_reached": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": true
+        },
+        "target": {
+          "kind": "enum-string",
+          "values": [
+            "land",
+            "world"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_deploy_world_destination_selected": {
+      "loose": false,
+      "props": {
+        "target": {
+          "kind": "enum-string",
+          "values": [
+            "land",
+            "world"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_deploy_world_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": true
+        },
+        "name": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "ch_deploy_world_name_selected": {
+      "loose": false,
+      "props": {
+        "name": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "ch_deploy_world_names_empty": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_deploy_world_quota_exceeded": {
+      "loose": false,
+      "props": {
+        "max_mb": {
+          "kind": "number",
+          "optional": false
+        },
+        "phase": {
+          "kind": "string",
+          "optional": true
+        },
+        "total_bytes": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "ch_deploy_world_review_reached": {
+      "loose": false,
+      "props": {
+        "exceeded": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "target": {
+          "kind": "enum-string",
+          "values": [
+            "land",
+            "world"
+          ],
+          "optional": false
+        },
+        "total_bytes": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "ch_deploy_world_started": {
+      "loose": false,
+      "props": {
+        "target": {
+          "kind": "enum-string",
+          "values": [
+            "land",
+            "world"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_home_card_opened": {
+      "loose": false,
+      "props": {
+        "card": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_home_signin_clicked": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_home_start_building": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_home_viewed": {
+      "loose": false,
+      "props": {
+        "scene_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "ch_learn_signin_clicked": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_learn_viewed": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_manage_card_clicked": {
+      "loose": false,
+      "props": {
+        "id": {
+          "kind": "string",
+          "optional": false
+        },
+        "role": {
+          "kind": "enum-string",
+          "values": [
+            "collaborator",
+            "operator",
+            "owner"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_manage_empty_viewed": {
+      "loose": false,
+      "props": {
+        "filter": {
+          "kind": "enum-string",
+          "values": [
+            "published",
+            "unpublished"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_manage_filter_changed": {
+      "loose": false,
+      "props": {
+        "filter": {
+          "kind": "enum-string",
+          "values": [
+            "published",
+            "unpublished"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_manage_searched": {
+      "loose": false,
+      "props": {
+        "q": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_manage_sorted": {
+      "loose": false,
+      "props": {
+        "sort": {
+          "kind": "enum-string",
+          "values": [
+            "domain",
+            "last_published"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_manage_storage_opened": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_manage_viewed": {
+      "loose": false,
+      "props": {
+        "address": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "filter": {
+          "kind": "enum-string",
+          "values": [
+            "published",
+            "unpublished"
+          ],
+          "optional": false
+        },
+        "search": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "sort": {
+          "kind": "enum-string",
+          "values": [
+            "domain",
+            "last_published"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_mp_paired": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_mp_replay_completed": {
+      "loose": false,
+      "props": {
+        "run": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "tier": {
+          "kind": "enum-string",
+          "values": [
+            "a",
+            "b"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_mp_replay_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "run": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_mp_replay_requested": {
+      "loose": false,
+      "props": {
+        "run": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "tier": {
+          "kind": "enum-string",
+          "values": [
+            "a",
+            "b"
+          ],
+          "optional": true
+        }
+      }
+    },
+    "ch_mp_run_completed": {
+      "loose": false,
+      "props": {
+        "run": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_mp_run_failed": {
+      "loose": false,
+      "props": {
+        "detail": {
+          "kind": "string",
+          "optional": true
+        },
+        "run": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_mp_run_launched": {
+      "loose": true,
+      "props": {}
+    },
+    "ch_mp_run_rejected": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_scenes_clicked": {
+      "loose": false,
+      "props": {
+        "card": {
+          "kind": "string",
+          "optional": true
+        },
+        "entity": {
+          "kind": "string",
+          "optional": true
+        },
+        "from": {
+          "kind": "string",
+          "optional": true
+        },
+        "local": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "ok": {
+          "kind": "boolean",
+          "optional": true
+        },
+        "parcel": {
+          "kind": "string",
+          "optional": true
+        },
+        "seeded": {
+          "kind": "boolean",
+          "optional": true
+        },
+        "to": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "ch_scenes_empty_viewed": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_scenes_import_failed": {
+      "loose": false,
+      "props": {
+        "files": {
+          "kind": "number",
+          "optional": true
+        },
+        "has_scene_json": {
+          "kind": "boolean",
+          "optional": true
+        },
+        "reason": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_scenes_signin_clicked": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_scenes_viewed": {
+      "loose": false,
+      "props": {
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "empty": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "error": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "ch_studio_opened": {
+      "loose": false,
+      "props": {
+        "source": {
+          "kind": "string",
+          "optional": false
+        },
+        "template_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_template_previewed": {
+      "loose": false,
+      "props": {
+        "template_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_template_selected": {
+      "loose": false,
+      "props": {
+        "template_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "title": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_template_view_code": {
+      "loose": false,
+      "props": {
+        "template_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_templates_signin_clicked": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_templates_viewed": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_world_perms_access_type_set": {
+      "loose": false,
+      "props": {
+        "access_type": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_world_perms_collaborator_validated": {
+      "loose": false,
+      "props": {
+        "address": {
+          "kind": "string",
+          "optional": true
+        },
+        "valid": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "ch_world_perms_completed": {
+      "loose": false,
+      "props": {
+        "access_type": {
+          "kind": "enum-string",
+          "values": [
+            "allow-list",
+            "shared-secret",
+            "unrestricted"
+          ],
+          "optional": false
+        },
+        "addresses": {
+          "kind": "number",
+          "optional": true
+        },
+        "stub": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "ch_world_perms_confirm_reached": {
+      "loose": false,
+      "props": {
+        "access_type": {
+          "kind": "enum-string",
+          "values": [
+            "allow-list",
+            "shared-secret",
+            "unrestricted"
+          ],
+          "optional": false
+        },
+        "collaborators": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "ch_world_perms_invalid_address": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_world_perms_invite_submitted": {
+      "loose": false,
+      "props": {
+        "channel": {
+          "kind": "enum-string",
+          "values": [
+            "community",
+            "csv",
+            "wallet"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ch_world_perms_password_set": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_world_perms_started": {
+      "loose": false,
+      "props": {}
+    },
+    "ch_world_settings_changed": {
+      "loose": false,
+      "props": {
+        "field": {
+          "kind": "string",
+          "optional": false
+        },
+        "tab": {
+          "kind": "enum-string",
+          "values": [
+            "details",
+            "layout",
+            "misc"
+          ],
+          "optional": false
+        },
+        "world": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_world_settings_discarded": {
+      "loose": false,
+      "props": {
+        "change_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "world": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_world_settings_opened": {
+      "loose": false,
+      "props": {
+        "world": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_world_settings_review_reached": {
+      "loose": false,
+      "props": {
+        "change_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "world": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_world_settings_saved": {
+      "loose": false,
+      "props": {
+        "fields": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "stub": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "world": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_world_settings_saving": {
+      "loose": false,
+      "props": {
+        "fields": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "world": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_world_settings_tab_viewed": {
+      "loose": false,
+      "props": {
+        "tab": {
+          "kind": "enum-string",
+          "values": [
+            "details",
+            "layout",
+            "misc"
+          ],
+          "optional": false
+        },
+        "world": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_asset_selected": {
+      "loose": false,
+      "props": {
+        "kind": {
+          "kind": "string",
+          "optional": false
+        },
+        "world": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_clear_failed": {
+      "loose": false,
+      "props": {
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "namespace": {
+          "kind": "enum-string",
+          "values": [
+            "env",
+            "players",
+            "scene"
+          ],
+          "optional": false
+        },
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_cleared": {
+      "loose": false,
+      "props": {
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "namespace": {
+          "kind": "enum-string",
+          "values": [
+            "env",
+            "players",
+            "scene"
+          ],
+          "optional": false
+        },
+        "reason": {
+          "kind": "string",
+          "optional": true
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_dialog_opened": {
+      "loose": false,
+      "props": {
+        "key": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "mode": {
+          "kind": "string",
+          "optional": false
+        },
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_namespace_changed": {
+      "loose": false,
+      "props": {
+        "namespace": {
+          "kind": "enum-string",
+          "values": [
+            "env",
+            "players",
+            "scene"
+          ],
+          "optional": false
+        },
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_quota_opened": {
+      "loose": false,
+      "props": {
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_quota_retry": {
+      "loose": false,
+      "props": {
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_value_delete_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "key": {
+          "kind": "string",
+          "optional": false
+        },
+        "namespace": {
+          "kind": "enum-string",
+          "values": [
+            "env",
+            "players",
+            "scene"
+          ],
+          "optional": false
+        },
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_value_deleted": {
+      "loose": false,
+      "props": {
+        "key": {
+          "kind": "string",
+          "optional": false
+        },
+        "namespace": {
+          "kind": "enum-string",
+          "values": [
+            "env",
+            "players",
+            "scene"
+          ],
+          "optional": false
+        },
+        "reason": {
+          "kind": "string",
+          "optional": true
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_value_save_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": false
+        },
+        "key": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "mode": {
+          "kind": "string",
+          "optional": false
+        },
+        "namespace": {
+          "kind": "enum-string",
+          "values": [
+            "env",
+            "players",
+            "scene"
+          ],
+          "optional": false
+        },
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_value_saved": {
+      "loose": false,
+      "props": {
+        "key": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "mode": {
+          "kind": "string",
+          "optional": false
+        },
+        "namespace": {
+          "kind": "enum-string",
+          "values": [
+            "env",
+            "players",
+            "scene"
+          ],
+          "optional": false
+        },
+        "reason": {
+          "kind": "string",
+          "optional": true
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "ch_worlds_storage_viewed": {
+      "loose": false,
+      "props": {
+        "fallback": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "lands": {
+          "kind": "number",
+          "optional": false
+        },
+        "namespace": {
+          "kind": "enum-string",
+          "values": [
+            "env",
+            "players",
+            "scene"
+          ],
+          "optional": false
+        },
+        "source": {
+          "kind": "enum-string",
+          "values": [
+            "empty",
+            "live"
+          ],
+          "optional": false
+        },
+        "step": {
+          "kind": "enum-string",
+          "values": [
+            "clear",
+            "edit",
+            "scene",
+            "select"
+          ],
+          "optional": false
+        },
+        "world": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "worlds": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "cl_explore_opened": {
+      "loose": false,
+      "props": {
+        "place_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "cl_open_jumped_in": {
+      "loose": false,
+      "props": {
+        "place_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "cl_open_screen_shown": {
+      "loose": false,
+      "props": {}
+    },
+    "client_error": {
+      "loose": false,
+      "props": {
+        "client_ts": {
+          "kind": "string",
+          "optional": false
+        },
+        "correlation_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "engine_build": {
+          "kind": "string",
+          "optional": false
+        },
+        "error_message": {
+          "kind": "string",
+          "optional": false
+        },
+        "error_name": {
+          "kind": "string",
+          "optional": false
+        },
+        "error_source": {
+          "kind": "string",
+          "optional": false
+        },
+        "error_stack": {
+          "kind": "string",
+          "optional": false
+        },
+        "ua": {
+          "kind": "string",
+          "optional": false
+        },
+        "url": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "creator_builder_redirect": {
+      "loose": false,
+      "props": {
+        "from": {
+          "kind": "string",
+          "optional": false
+        },
+        "fromPath": {
+          "kind": "string",
+          "optional": true
+        },
+        "query": {
+          "kind": "string",
+          "optional": true
+        },
+        "to": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "creator_builder_redirect_dashboard_viewed": {
+      "loose": false,
+      "props": {
+        "total": {
+          "kind": "number",
+          "optional": false
+        },
+        "window_days": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "creator_claim_name_redirect": {
+      "loose": false,
+      "props": {
+        "from": {
+          "kind": "string",
+          "optional": false
+        },
+        "to": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "creator_collection_detail_viewed": {
+      "loose": false,
+      "props": {
+        "id": {
+          "kind": "string",
+          "optional": false
+        },
+        "itemCount": {
+          "kind": "number",
+          "optional": false
+        },
+        "missing": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "source": {
+          "kind": "enum-string",
+          "values": [
+            "catalyst",
+            "empty"
+          ],
+          "optional": false
+        },
+        "tab": {
+          "kind": "enum-string",
+          "values": [
+            "emotes",
+            "wearables"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "creator_collection_item_clicked": {
+      "loose": false,
+      "props": {
+        "id": {
+          "kind": "string",
+          "optional": false
+        },
+        "itemId": {
+          "kind": "string",
+          "optional": false
+        },
+        "kind": {
+          "kind": "string",
+          "optional": false
+        },
+        "tab": {
+          "kind": "enum-string",
+          "values": [
+            "emotes",
+            "wearables"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "creator_collection_published": {
+      "loose": false,
+      "props": {
+        "funnel_step": {
+          "kind": "number",
+          "optional": false
+        },
+        "source_event": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "creator_collection_tab_changed": {
+      "loose": false,
+      "props": {
+        "tab": {
+          "kind": "enum-string",
+          "values": [
+            "emotes",
+            "wearables"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "creator_collection_viewed": {
+      "loose": false,
+      "props": {
+        "funnel_step": {
+          "kind": "number",
+          "optional": false
+        },
+        "source_event": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "creator_curation_submitted": {
+      "loose": false,
+      "props": {
+        "funnel_step": {
+          "kind": "number",
+          "optional": false
+        },
+        "source_event": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "creator_dashboard_viewed": {
+      "loose": false,
+      "props": {
+        "on_sale_items": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "published_collections": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "sales_7d": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "scene_visits_30d": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "window_days": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "creator_item_detail_viewed": {
+      "loose": false,
+      "props": {
+        "fallback": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "id": {
+          "kind": "string",
+          "optional": false
+        },
+        "type": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "creator_item_edit_clicked": {
+      "loose": false,
+      "props": {
+        "id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "creator_item_edited": {
+      "loose": false,
+      "props": {
+        "funnel_step": {
+          "kind": "number",
+          "optional": false
+        },
+        "source_event": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "creator_item_listed": {
+      "loose": false,
+      "props": {
+        "funnel_step": {
+          "kind": "number",
+          "optional": false
+        },
+        "source_event": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "creator_publish_started": {
+      "loose": false,
+      "props": {
+        "funnel_step": {
+          "kind": "number",
+          "optional": false
+        },
+        "source_event": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "creator_sale_completed": {
+      "loose": false,
+      "props": {
+        "funnel_step": {
+          "kind": "number",
+          "optional": false
+        },
+        "source_event": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "creator_store_viewed": {
+      "loose": false,
+      "props": {
+        "funnel_step": {
+          "kind": "number",
+          "optional": false
+        },
+        "source_event": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "creator_wearables_card_clicked": {
+      "loose": false,
+      "props": {
+        "id": {
+          "kind": "string",
+          "optional": false
+        },
+        "kind": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "creator_wearables_home_viewed": {
+      "loose": false,
+      "props": {
+        "count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "creator_wearables_signin_clicked": {
+      "loose": false,
+      "props": {}
+    },
+    "creator_wearables_view_changed": {
+      "loose": false,
+      "props": {
+        "view": {
+          "kind": "enum-string",
+          "values": [
+            "grid",
+            "list"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "ffw_shop_landing": {
+      "loose": false,
+      "props": {
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "nid": {
+          "kind": "string",
+          "optional": false
+        },
+        "on_sale": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "jump_in_completed": {
+      "loose": false,
+      "props": {
+        "launch_url": {
+          "kind": "string",
+          "optional": true
+        },
+        "place_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "jump_in_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": true
+        },
+        "place_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "jump_in_started": {
+      "loose": false,
+      "props": {
+        "place_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "landings_subscription_edited": {
+      "loose": false,
+      "props": {
+        "enabled": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "notification_type": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "landings_subscription_error": {
+      "loose": false,
+      "props": {
+        "kind": {
+          "kind": "enum-string",
+          "values": [
+            "subscribe",
+            "unsubscribe"
+          ],
+          "optional": false
+        },
+        "message": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "landings_subscription_signed_in": {
+      "loose": false,
+      "props": {}
+    },
+    "landings_subscription_signin_required": {
+      "loose": false,
+      "props": {}
+    },
+    "landings_subscription_started": {
+      "loose": false,
+      "props": {}
+    },
+    "landings_subscription_submitting": {
+      "loose": false,
+      "props": {
+        "enabled_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "landings_subscription_subscribed": {
+      "loose": false,
+      "props": {
+        "enabled_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "landings_subscription_unsubscribed": {
+      "loose": false,
+      "props": {}
+    },
+    "landings_subscription_unsubscribing": {
+      "loose": false,
+      "props": {}
+    },
+    "lp_blog_post_clicked": {
+      "loose": false,
+      "props": {
+        "slug": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_blog_post_viewed": {
+      "loose": false,
+      "props": {
+        "slug": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_blog_viewed": {
+      "loose": false,
+      "props": {
+        "post_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "lp_community_created": {
+      "loose": false,
+      "props": {
+        "community_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "lp_community_gate_viewed": {
+      "loose": false,
+      "props": {}
+    },
+    "lp_community_private_gated": {
+      "loose": false,
+      "props": {
+        "community_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_community_review_reached": {
+      "loose": false,
+      "props": {
+        "places": {
+          "kind": "number",
+          "optional": false
+        },
+        "privacy": {
+          "kind": "enum-string",
+          "values": [
+            "private",
+            "public"
+          ],
+          "optional": false
+        },
+        "visibility": {
+          "kind": "enum-string",
+          "values": [
+            "all",
+            "unlisted"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "lp_community_started": {
+      "loose": false,
+      "props": {}
+    },
+    "lp_community_submit_attempted": {
+      "loose": false,
+      "props": {
+        "privacy": {
+          "kind": "enum-string",
+          "values": [
+            "private",
+            "public"
+          ],
+          "optional": false
+        },
+        "visibility": {
+          "kind": "enum-string",
+          "values": [
+            "all",
+            "unlisted"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "lp_community_submit_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "lp_community_viewed": {
+      "loose": false,
+      "props": {
+        "community_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "members_count": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "privacy": {
+          "kind": "enum-string",
+          "values": [
+            "private",
+            "public"
+          ],
+          "optional": false
+        },
+        "source": {
+          "kind": "enum-string",
+          "values": [
+            "fixture",
+            "live"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "lp_creatorhub_download_clicked": {
+      "loose": false,
+      "props": {
+        "arch": {
+          "kind": "string",
+          "optional": false
+        },
+        "file_name": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "kind": {
+          "kind": "string",
+          "optional": false
+        },
+        "os": {
+          "kind": "enum-string",
+          "values": [
+            "macos",
+            "windows"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "lp_creatorhub_download_success": {
+      "loose": false,
+      "props": {
+        "os": {
+          "kind": "enum-string",
+          "values": [
+            "macos",
+            "windows"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "lp_creatorhub_download_viewed": {
+      "loose": false,
+      "props": {
+        "arch": {
+          "kind": "string",
+          "optional": false
+        },
+        "os": {
+          "kind": "enum-string",
+          "values": [
+            "macos",
+            "windows"
+          ],
+          "optional": false
+        },
+        "overridden": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "version": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_discover_viewed": {
+      "loose": false,
+      "props": {}
+    },
+    "lp_event_card_clicked": {
+      "loose": false,
+      "props": {
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_event_jump_in": {
+      "loose": false,
+      "props": {
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "position": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "lp_event_viewed": {
+      "loose": false,
+      "props": {
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "live": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "lp_hangout_preview_opened": {
+      "loose": false,
+      "props": {}
+    },
+    "lp_hangout_signin_gate_viewed": {
+      "loose": false,
+      "props": {}
+    },
+    "lp_hangout_started": {
+      "loose": false,
+      "props": {}
+    },
+    "lp_hangout_step_completed": {
+      "loose": false,
+      "props": {
+        "from": {
+          "kind": "enum-string",
+          "values": [
+            "cover",
+            "details",
+            "location",
+            "preview",
+            "review",
+            "schedule",
+            "signinGate",
+            "submitted",
+            "submitting"
+          ],
+          "optional": false
+        },
+        "to": {
+          "kind": "enum-string",
+          "values": [
+            "cover",
+            "details",
+            "location",
+            "preview",
+            "review",
+            "schedule",
+            "signinGate",
+            "submitted",
+            "submitting"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "lp_hangout_submit_attempted": {
+      "loose": false,
+      "props": {
+        "location": {
+          "kind": "enum-string",
+          "values": [
+            "land",
+            "world"
+          ],
+          "optional": false
+        },
+        "recurrent": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "lp_hangout_submit_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "lp_hangout_submitted": {
+      "loose": false,
+      "props": {
+        "approved": {
+          "kind": "boolean",
+          "optional": true
+        },
+        "event_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "lp_home_download_clicked": {
+      "loose": false,
+      "props": {
+        "placement": {
+          "kind": "string",
+          "optional": false
+        },
+        "store": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_home_rail_clicked": {
+      "loose": false,
+      "props": {
+        "rail": {
+          "kind": "string",
+          "optional": false
+        },
+        "target": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_home_rail_viewed": {
+      "loose": false,
+      "props": {
+        "rail": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_home_viewed": {
+      "loose": false,
+      "props": {
+        "live_rail": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "rails": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "lp_invite_referrer_resolved": {
+      "loose": false,
+      "props": {
+        "referrer_handle": {
+          "kind": "string",
+          "optional": false
+        },
+        "resolved": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "source": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_invite_rewards_viewed": {
+      "loose": false,
+      "props": {
+        "accepted": {
+          "kind": "number",
+          "optional": false
+        },
+        "current_tier": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "lp_invite_viewed": {
+      "loose": false,
+      "props": {
+        "has_referrer": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "referrer_handle": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "resolved": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "lp_legal_section_clicked": {
+      "loose": false,
+      "props": {
+        "doc": {
+          "kind": "enum-string",
+          "values": [
+            "brand",
+            "content",
+            "ethics",
+            "privacy",
+            "referral",
+            "rewards",
+            "security",
+            "terms"
+          ],
+          "optional": false
+        },
+        "section": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_legal_viewed": {
+      "loose": false,
+      "props": {
+        "doc": {
+          "kind": "enum-string",
+          "values": [
+            "brand",
+            "content",
+            "ethics",
+            "privacy",
+            "referral",
+            "rewards",
+            "security",
+            "terms"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "lp_rsvp_cancelled": {
+      "loose": false,
+      "props": {
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "stub": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "lp_rsvp_cancelling": {
+      "loose": false,
+      "props": {
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_rsvp_confirmed": {
+      "loose": false,
+      "props": {
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_rsvp_error": {
+      "loose": false,
+      "props": {
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "reason": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_rsvp_going": {
+      "loose": false,
+      "props": {
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "stub": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "lp_rsvp_signin": {
+      "loose": false,
+      "props": {
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "simulated": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "lp_rsvp_started": {
+      "loose": false,
+      "props": {
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_rsvp_submitting": {
+      "loose": false,
+      "props": {
+        "event_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "lp_schedule_created": {
+      "loose": false,
+      "props": {
+        "active": {
+          "kind": "boolean",
+          "optional": true
+        },
+        "editing": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "schedule_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "stub": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "lp_schedule_gate_viewed": {
+      "loose": false,
+      "props": {}
+    },
+    "lp_schedule_list_viewed": {
+      "loose": false,
+      "props": {
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "source": {
+          "kind": "enum-string",
+          "values": [
+            "empty",
+            "error",
+            "live"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "lp_schedule_review_reached": {
+      "loose": false,
+      "props": {}
+    },
+    "lp_schedule_started": {
+      "loose": false,
+      "props": {
+        "editing": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "lp_schedule_step_completed": {
+      "loose": false,
+      "props": {
+        "from": {
+          "kind": "enum-string",
+          "values": [
+            "authGate",
+            "basics",
+            "created",
+            "dates",
+            "review",
+            "submitting"
+          ],
+          "optional": false
+        },
+        "to": {
+          "kind": "enum-string",
+          "values": [
+            "authGate",
+            "basics",
+            "created",
+            "dates",
+            "review",
+            "submitting"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "lp_schedule_submit_attempted": {
+      "loose": false,
+      "props": {
+        "editing": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "theme": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "lp_schedule_submit_failed": {
+      "loose": false,
+      "props": {
+        "error": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "lp_whatson_viewed": {
+      "loose": false,
+      "props": {
+        "filter": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "live_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "search": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "upcoming_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "page_not_found": {
+      "loose": false,
+      "props": {
+        "path": {
+          "kind": "string",
+          "optional": false
+        },
+        "referrer": {
+          "kind": "string",
+          "optional": false
+        },
+        "spa": {
+          "kind": "unknown",
+          "optional": true
+        },
+        "ua": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "place_card_clicked": {
+      "loose": false,
+      "props": {
+        "place_id": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "place_list_viewed": {
+      "loose": false,
+      "props": {
+        "category": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "count": {
+          "kind": "number",
+          "optional": false
+        },
+        "search": {
+          "kind": "unknown",
+          "optional": false
+        }
+      }
+    },
+    "profile_card_clicked": {
+      "loose": false,
+      "props": {
+        "item_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "tab": {
+          "kind": "enum-string",
+          "values": [
+            "assets",
+            "communities",
+            "creations",
+            "overview",
+            "photos",
+            "places",
+            "referral-rewards"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "profile_communities_load_failed": {
+      "loose": false,
+      "props": {
+        "address": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "profile_tab_changed": {
+      "loose": false,
+      "props": {
+        "tab": {
+          "kind": "enum-string",
+          "values": [
+            "assets",
+            "communities",
+            "creations",
+            "overview",
+            "photos",
+            "places",
+            "referral-rewards"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "profile_viewed": {
+      "loose": false,
+      "props": {
+        "address": {
+          "kind": "string",
+          "optional": false
+        },
+        "has_claimed_name": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "own": {
+          "kind": "boolean",
+          "optional": false
+        },
+        "source": {
+          "kind": "enum-string",
+          "values": [
+            "fallback",
+            "live"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "report_category_set": {
+      "loose": false,
+      "props": {
+        "reason": {
+          "kind": "enum-string",
+          "values": [
+            "cheating",
+            "harassment",
+            "illegal_content",
+            "impersonation",
+            "scam_phishing"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "report_completed": {
+      "loose": false,
+      "props": {
+        "evidence_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "reason": {
+          "kind": "enum-string",
+          "values": [
+            "",
+            "cheating",
+            "harassment",
+            "illegal_content",
+            "impersonation",
+            "scam_phishing"
+          ],
+          "optional": false
+        },
+        "report_id": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "report_details_set": {
+      "loose": false,
+      "props": {
+        "description_len": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "report_evidence_added": {
+      "loose": false,
+      "props": {
+        "file_count": {
+          "kind": "number",
+          "optional": false
+        }
+      }
+    },
+    "report_failed": {
+      "loose": false,
+      "props": {
+        "reason": {
+          "kind": "string",
+          "optional": true
+        }
+      }
+    },
+    "report_review_reached": {
+      "loose": false,
+      "props": {}
+    },
+    "report_started": {
+      "loose": false,
+      "props": {}
+    },
+    "report_submit_started": {
+      "loose": false,
+      "props": {
+        "evidence_count": {
+          "kind": "number",
+          "optional": false
+        },
+        "reason": {
+          "kind": "enum-string",
+          "values": [
+            "",
+            "cheating",
+            "harassment",
+            "illegal_content",
+            "impersonation",
+            "scam_phishing"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "report_target_set": {
+      "loose": false,
+      "props": {
+        "has_reporter": {
+          "kind": "boolean",
+          "optional": false
+        }
+      }
+    },
+    "report_validation_failed": {
+      "loose": false,
+      "props": {
+        "fields": {
+          "kind": "unknown",
+          "optional": false
+        },
+        "step": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    },
+    "scene_analytics_exported": {
+      "loose": false,
+      "props": {
+        "scene_id": {
+          "kind": "string",
+          "optional": false
+        },
+        "scene_type": {
+          "kind": "enum-string",
+          "values": [
+            "genesis",
+            "world"
+          ],
+          "optional": false
+        }
+      }
+    },
+    "scene_analytics_viewed": {
+      "loose": false,
+      "props": {
+        "scene_id": {
+          "kind": "string",
+          "optional": true
+        },
+        "scene_type": {
+          "kind": "enum-string",
+          "values": [
+            "genesis",
+            "world"
+          ],
+          "optional": true
+        },
+        "source": {
+          "kind": "string",
+          "optional": false
+        }
+      }
+    }
+  }
+}

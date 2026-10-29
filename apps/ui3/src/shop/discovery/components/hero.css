@@ -1,0 +1,74 @@
+/* from: shop@2d3bf62:app/src/components/CollectionHero/CollectionHero.styles.ts;
+   shop@94584a5c:app/src/components/CreatorBadge/badge.styles.ts */
+.shop-hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 200px;
+  margin-bottom: 24px;
+  border-radius: 12px;
+  overflow: hidden;
+}
+.shop-hero__cover {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background: var(--modal-grad, linear-gradient(135deg, #3a0653, #175e52));
+  background-size: cover;
+  background-position: center;
+}
+.shop-hero__cover::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0.55) 100%);
+}
+.shop-hero__title {
+  position: relative;
+  z-index: 1;
+  margin: 0;
+  padding: 32px 24px;
+  text-align: center;
+  color: #fff;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+@media (max-width: 768px) {
+  .shop-hero { min-height: 140px; }
+  .shop-hero__title { padding: 24px 16px; font-size: 26px; }
+}
+.shop-badge__avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.shop-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ui-text);
+  text-decoration: none;
+  font-weight: 600;
+  min-width: 0;
+}
+.shop-badge__avatar {
+  width: 28px;
+  height: 28px;
+  flex: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background: var(--ui-raised);
+}
+.shop-badge__name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+a.shop-badge:hover .shop-badge__name {
+  text-decoration: underline;
+}

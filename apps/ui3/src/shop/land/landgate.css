@@ -1,0 +1,33 @@
+/* from: decentraland-ui src/components/SignIn/SignIn.css, src/components/Header/Header.css, Button (primary);
+   marketplace@3bf3662f webapp/src/components/SignInPage/SignInPage.css. Copyright 2020 Metaverse Holdings Ltd., Apache-2.0.
+   The manage page's signed-out "Get Started" card as upstream's /marketplace/sign-in draws it: a regular-weight
+   header, the dimmed icon circle with white strokes, an underlined white MetaMask link, Semantic's paragraph
+   margin and decentraland-ui's 13px letter-spaced primary button. Scoped to .shop-land-gate. */
+.shop-land-gate .shop-land-signin {
+  padding-left: 0;
+  padding-right: 0;
+}
+.shop-land-gate .shop-land-signin__header {
+  font-weight: 400;
+}
+.shop-land-gate .shop-land-signin__icon {
+  background-color: rgba(0, 0, 0, 0.66);
+}
+.shop-land-gate .shop-land-signin__icon svg {
+  stroke: #fff;
+}
+.shop-land-gate .shop-land-signin__message {
+  margin: 0 0 1em;
+}
+.shop-land-gate .shop-land-signin__message a {
+  color: #fff;
+  text-decoration: underline;
+}
+.shop-land-gate .shop-land-signin__connect {
+  min-width: 0;
+  height: 44px;
+  padding: 0 32px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1px;
+}

@@ -1,0 +1,260 @@
+use super::SocialServiceImpl;
+use super::helpers::{
+    FRIENDSHIP_RATE_LIMIT_MESSAGE, SocialError, internal_err, invalid_req, normalize,
+    page_blocked_users, page_of,
+};
+use crate::rpc::context::{Context, PairScope};
+use crate::rpc::drpc::service_module_definition::ProcedureContext;
+use crate::rpc::profiles;
+use crate::rpc::proto::v2::*;
+use crate::rpc::pubsub::SocialEvent;
+
+impl SocialServiceImpl {
+    /// Records the block and, when a friendship exists, appends the `block`
+    /// action that deactivates it; the other party gets a BlockUpdate and a
+    /// FriendshipUpdate::Block.
+    pub(crate) async fn block_user(
+        &self,
+        request: BlockUserPayload,
+        context: ProcedureContext<Context>,
+    ) -> Result<BlockUserResponse, SocialError> {
+        let me = Self::caller(&context)?;
+        let other = match request.user.as_ref() {
+            Some(u) => normalize(&u.address),
+            None => {
+                return Ok(BlockUserResponse {
+                    response: Some(block_user_response::Response::InvalidRequest(invalid_req(
+                        "missing user",
+                    ))),
+                });
+            }
+        };
+        if other == me {
+            return Ok(BlockUserResponse {
+                response: Some(block_user_response::Response::InvalidRequest(invalid_req(
+                    "cannot block yourself",
+                ))),
+            });
+        }
+        if !context
+            .server_context
+            .friendship_limiter()
+            .allow(&me, &other, PairScope::Directional)
+        {
+            tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
+            return Ok(BlockUserResponse {
+                response: Some(block_user_response::Response::InvalidRequest(invalid_req(
+                    FRIENDSHIP_RATE_LIMIT_MESSAGE,
+                ))),
+            });
+        }
+        let db = context.server_context.db();
+        match db.block_user_and_last(&me, &other).await {
+            Ok(Some(last)) => {
+                if let Err(e) = db
+                    .apply_friendship_action(
+                        &me,
+                        &other,
+                        "block",
+                        false,
+                        Some(last.friendship_id),
+                        None,
+                    )
+                    .await
+                {
+                    tracing::warn!(error = %e, "block: recording the friendship action failed");
+                }
+            }
+            Ok(None) => {}
+            Err(e) => {
+                return Ok(BlockUserResponse {
+                    response: Some(block_user_response::Response::InternalServerError(
+                        internal_err(e.to_string()),
+                    )),
+                });
+            }
+        }
+
+        let pubsub = context.server_context.pubsub();
+        pubsub.publish(
+            &other,
+            SocialEvent::Block(BlockUpdate {
+                address: me.clone(),
+                is_blocked: true,
+            }),
+        );
+        pubsub.publish(
+            &other,
+            SocialEvent::Friendship(FriendshipUpdate {
+                update: Some(friendship_update::Update::Block(
+                    friendship_update::BlockResponse {
+                        user: Some(User {
+                            address: me.clone(),
+                        }),
+                    },
+                )),
+            }),
+        );
+
+        let profile = context
+            .server_context
+            .profiles()
+            .blocked_profile(&other, Some(chrono::Utc::now().timestamp_millis()))
+            .await;
+        Ok(BlockUserResponse {
+            response: Some(block_user_response::Response::Ok(block_user_response::Ok {
+                profile: Some(profile),
+            })),
+        })
+    }
+
+    /// Removes the block; a friendship the block had deactivated is closed with
+    /// a `delete` action (the pair starts over), and the other party is told.
+    pub(crate) async fn unblock_user(
+        &self,
+        request: UnblockUserPayload,
+        context: ProcedureContext<Context>,
+    ) -> Result<UnblockUserResponse, SocialError> {
+        let me = Self::caller(&context)?;
+        let other = match request.user.as_ref() {
+            Some(u) => normalize(&u.address),
+            None => {
+                return Ok(UnblockUserResponse {
+                    response: Some(unblock_user_response::Response::InvalidRequest(
+                        invalid_req("missing user"),
+                    )),
+                });
+            }
+        };
+        if !context
+            .server_context
+            .friendship_limiter()
+            .allow(&me, &other, PairScope::Directional)
+        {
+            tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
+            return Ok(UnblockUserResponse {
+                response: Some(unblock_user_response::Response::InvalidRequest(
+                    invalid_req(FRIENDSHIP_RATE_LIMIT_MESSAGE),
+                )),
+            });
+        }
+        let db = context.server_context.db();
+        let pubsub = context.server_context.pubsub();
+
+        let last = match db.unblock_user_and_last(&me, &other).await {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(UnblockUserResponse {
+                    response: Some(unblock_user_response::Response::InternalServerError(
+                        internal_err(e.to_string()),
+                    )),
+                });
+            }
+        };
+        if let Some(last) = last
+            && db
+                .apply_friendship_action(
+                    &me,
+                    &other,
+                    "delete",
+                    false,
+                    Some(last.friendship_id),
+                    None,
+                )
+                .await
+                .is_ok()
+        {
+            pubsub.publish(
+                &other,
+                SocialEvent::Friendship(FriendshipUpdate {
+                    update: Some(friendship_update::Update::Delete(
+                        friendship_update::DeleteResponse {
+                            user: Some(User {
+                                address: me.clone(),
+                            }),
+                        },
+                    )),
+                }),
+            );
+        }
+
+        pubsub.publish(
+            &other,
+            SocialEvent::Block(BlockUpdate {
+                address: me.clone(),
+                is_blocked: false,
+            }),
+        );
+        let profile = context
+            .server_context
+            .profiles()
+            .blocked_profile(&other, None)
+            .await;
+        Ok(UnblockUserResponse {
+            response: Some(unblock_user_response::Response::Ok(
+                unblock_user_response::Ok {
+                    profile: Some(profile),
+                },
+            )),
+        })
+    }
+
+    pub(crate) async fn get_blocked_users(
+        &self,
+        request: GetBlockedUsersPayload,
+        context: ProcedureContext<Context>,
+    ) -> Result<GetBlockedUsersResponse, SocialError> {
+        let me = Self::caller(&context)?;
+        let db = context.server_context.db();
+        let (limit, offset) = page_blocked_users(&request.pagination);
+        let (rows, total) = match db.get_blocked_users(&me, limit, offset).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, "get_blocked_users failed");
+                return Ok(GetBlockedUsersResponse {
+                    profiles: Vec::new(),
+                    pagination_data: Some(PaginatedResponse { total: 0, page: 1 }),
+                });
+            }
+        };
+        let addrs: Vec<String> = rows.iter().map(|r| r.address.clone()).collect();
+        let map = context.server_context.profiles().get_profiles(&addrs).await;
+        let profiles = rows
+            .iter()
+            .map(|r| {
+                profiles::blocked_profile(
+                    &r.address,
+                    map.get(&r.address.to_lowercase()),
+                    Some(r.blocked_at.timestamp_millis()),
+                )
+            })
+            .collect();
+        Ok(GetBlockedUsersResponse {
+            profiles,
+            pagination_data: Some(PaginatedResponse {
+                total: total as i32,
+                page: page_of(limit, offset),
+            }),
+        })
+    }
+
+    pub(crate) async fn get_blocking_status(
+        &self,
+        context: ProcedureContext<Context>,
+    ) -> Result<GetBlockingStatusResponse, SocialError> {
+        let me = Self::caller(&context)?;
+        let (blocked_users, blocked_by_users) = context
+            .server_context
+            .db()
+            .get_blocking_status(&me)
+            .await
+            .unwrap_or_else(|e| {
+                tracing::error!(error = %e, "get_blocking_status failed");
+                Default::default()
+            });
+        Ok(GetBlockingStatusResponse {
+            blocked_users,
+            blocked_by_users,
+        })
+    }
+}

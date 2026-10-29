@@ -1,0 +1,191 @@
+{
+  "description": "GET /v1/communities, first page, unauthenticated: only public communities (social-service-ea #488), envelope {data:{results,total,page,pages,limit}}. results is a live list (ordering, membership counts). Captured GET https://social-api.decentraland.org/v1/communities?limit=10&offset=0 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities",
+    "query": {
+      "limit": [
+        "10"
+      ],
+      "offset": [
+        "0"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "results": [
+          {
+            "id": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "name": "Decentraland Foundation",
+            "description": "Your hub for official Decentraland updates and events. \n\nKeep up with All Hands, weekly rituals, and more—all in one place.",
+            "ownerAddress": "0xbcac4dafb7e215f2f6cb3312af6d5e4f9d9e7eda",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 1303,
+            "ownerName": "DCLOfficial",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "c1bf2ebe-d1d2-4edc-9488-1047689640cb",
+            "name": "Chiri Storytelling",
+            "description": "This space brings to life Chiri's adventures. Gathering cozy Social Gamers, Creators, Digi Fashion lovers, Virtual Citizens & more!\r\nWe will share different activities in Chiri's hood better known as the Impossible Dimension a balance of Nature, Technology and Magic. Here the story expands, and fam can follow Chiri's journey, sharing Weekly Chapters, Merch Drops, Online Cowork, Collabs, Art expos, Workshops, Treasure Hunt & lots of fun activities!\r\nThis is a gender inclusive safe space.",
+            "ownerAddress": "0xfbf7e572a63ca6a4e21a83720c0f23dd644e32e0",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 403,
+            "ownerName": "Chiri",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "3ca51536-f8aa-4f94-b172-d8ff9a6abfe4",
+            "name": "ABC Decentraland",
+            "description": "Adventures, learning Basics and Chill time in Decentraland!\n\nWe host a weekly tour around Decentraland (main event time is Saturdays 11 PM UTC with a second event time on Thursdays 10am UTC), exploring new and old scenes with your hosts Awedjob, BillyTeacoin and ToxicWaifu.",
+            "ownerAddress": "0x09bc69a986e1b37fb01ef36124f4c2e14fa0ab6b",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 462,
+            "ownerName": "BillyTeacoin",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "375e83ce-680f-44d5-a8d0-568fa63fa360",
+            "name": "VTATV",
+            "description": "Here we share events shown in the metaverse in real time also we show case educational sessions. Media nights is a fun thing as well we do plus we offer job fair virtually. Please check out VTATV.io for more information or links at LINKTR.EE/VTATV you will find all information needed on these sites. \n\nWe will also post and share collabs avil with pay (irl,virtually or digitally).\n\nPlease email <<REDACTED:email>> for more questions and concerns.",
+            "ownerAddress": "0x60e7357de5ec8c3b07f8efb3a8c1325811eb7db0",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 198,
+            "ownerName": "BioMETA",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "55e64582-f8c6-4e81-a097-690dab5b4549",
+            "name": "AN TE LA (Community)",
+            "description": "An Té La is a creative community born in the Caribbean and open to the world through Web3. \nWe share our culture, our music, and our lifestyle to build bridges between people all around the globe.\n\n",
+            "ownerAddress": "0x5854cce95d5e25817b41f4c41f06b695a83bc495",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 115,
+            "ownerName": "sebga",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "427638bd-35c2-4592-bee3-7a33d0883d8a",
+            "name": "Toxic Events",
+            "description": "Stay in the loop with the hottest events in DCL! From Dogebusters madness, Toxic Tuesday chaos to W.T.F DCL vibes and community spotlights.. we’ve got it all💜",
+            "ownerAddress": "0x6723dcb07f3ca735223cd1c0acfa62dd994a1bb4",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 626,
+            "ownerName": "ToxicWaifu",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "2b55a598-07cd-408e-a541-7407fffc4ebc",
+            "name": "Last Slice Creators",
+            "description": "We’re building a game from scratch on the largest Decentraland scene ever... 3,249 parcels on a 57x57 World! Join us every Thursday: Hour 1 features live building of game mechanics and the world, Hour 2 is open office hours for anyone wanting help creating their own Decentraland game.\n\nA 6-month buildathon, hackathon, free coding help, open sourced project building, giveaways, bounties, and so much more. \r\n\r\nSpectate and earn. Bounty and earn. Build and earn.  Play and earn. ",
+            "ownerAddress": "0xaabe0ecfaf9e028d63cf7ea7e772cf52d662691a",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 180,
+            "ownerName": "Lastraum",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "9ba90937-0ecd-4017-9240-0d41dbb8f2ce",
+            "name": "Meta GamiMall Play & Earn",
+            "description": "Welcome to our community—a hub for Web3 enthusiasts seeking both fun and earning opportunities. We will base in one of the most active scene in Decentraland, MetaGamiMall. And we share the latest trends, connect through discussions, and enjoy activities like wearable giveaway etc. Our goal is to blend insight, entertainment, and opportunity so members always leave with value.",
+            "ownerAddress": "0x797066a17f83425c1b4c7a8cca52d19095520a52",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 296,
+            "ownerName": "MetaDoge",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "eb8a4496-d08d-40af-85b9-5ca5cdca156c",
+            "name": "Old Guy BBQ",
+            "description": "The smoky heart of the metaverse where flavor meets friendship! Hang out with fellow barbecue lovers around a glowing virtual firepit, swap laughs, and perfect your digital ribs. Grab your apron (or NFT spatula), crack a beer, and join Old Guys BBQ — where the smoke never fades, the parties get wilder, and every event tastes like victory.",
+            "ownerAddress": "0xdb760099f0f3359131e08716848f23c014d35b9e",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 223,
+            "ownerName": "oldguy",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          },
+          {
+            "id": "1c71f864-fee9-4a67-947c-7954382fdf89",
+            "name": "Mug Club",
+            "description": "Mug Club is an onchain social club founded on Base in 2024 by juxton, the creator of Franky’s Tavern, Decentraland’s longest-running interactive bar.\n\nEach mug is your membership pass, unlocking access to the club and experiences across Decentraland and beyond.\n\nGrab a mug and join the club.\n\nMore information: https://mugclub.wtf",
+            "ownerAddress": "0xd4f20b86ab05e5e91cecfefe874657b0f7bfc87d",
+            "privacy": "public",
+            "active": true,
+            "membersCount": 235,
+            "ownerName": "juxton",
+            "voiceChatStatus": {
+              "isActive": false,
+              "participantCount": 0,
+              "moderatorCount": 0
+            }
+          }
+        ],
+        "total": 143,
+        "page": 1,
+        "pages": 15,
+        "limit": 10
+      }
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities?limit=10&offset=0",
+  "captured_at": "2026-09-25T19:23:58Z",
+  "volatile_paths": [
+    "data.pages",
+    "data.results.membersCount",
+    "data.total",
+    "data.results[]"
+  ]
+}

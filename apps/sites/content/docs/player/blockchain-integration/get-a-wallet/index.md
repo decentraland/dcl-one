@@ -1,0 +1,97 @@
+> >-
+
+# Get a Wallet
+
+## What is a wallet?
+
+Decentraland uses the Ethereum blockchain to record the ownership of all digital assets and tradable items.
+
+![](/docs/player/images/media/get-a-wallet-account.webp)
+
+Digital wallets are tools that work as a bridge between the blockchain and the dApp (decentralized applications). This means that with a wallet you will be able to monitor your available funds, transaction history and security options.
+
+## Do I need a wallet to play in Decentraland?
+
+No, you do not need to own crypto or already have a digital wallet to use Decentraland. Decentraland is free to use, and if you'd like to purchase something from the [**Marketplace**](https://market.decentraland.org/), you can use a credit/debit card in addition to cryptocurrency.
+
+See a tutorial for [**making an account with a social profile**](https://www.youtube.com/watch?v=ylZrPisyPl4) or [**with an external wallet like MetaMask**](https://www.youtube.com/watch?v=w3CCVrVe1M4).
+
+## How do I get a digital wallet?
+
+To enter Decentraland, you must use a wallet that is integrated to your web browser, so we recommend you [MetaMask](https://metamask.io/)
+
+![](/docs/player/images/media/get-a-wallet-metamask-logo.webp)
+
+Once you install it, you will see an icon like this:
+
+![](/docs/player/images/media/get-a-wallet-metamask-extension.webp)
+
+## Wallet address
+
+All wallets have a public and private key. A public key Is a unique identifier for your wallet and it looks like this: **0xcba113f589805095a892ecefdb4eb83eff45d98**. It is basically a name that you can share freely with others and it's used to direct assets to your wallet.
+
+You can localize your wallet address clicking on the extension icon in your browser, and then clicking on your wallet name with the public key to copy it to clipboard:
+
+![](/docs/player/images/media/get-a-wallet-public-key-1.webp)
+
+Or by clicking on your account details:
+
+![](/docs/player/images/media/get-a-wallet-public-key-2.webp)
+
+The private key is used by your wallet to sign each transaction and certify that it was truly sent by you. It is also used to restore your wallet in case you forget your password.
+
+Keep in mind that a digital wallet is like a bank account, so make sure you **don't forget your password, or backup phrase. Keep them in a safe place and don't share them with anyone.**
+
+## What is Ether (ETH), and how do I send it to my wallet?
+
+![](/docs/player/images/media/get-a-wallet-ether.webp)
+
+For executing transactions, you'll need to put money in your wallet. dApps based on Ethereum, like Decentraland, use Ether: a digital currency that powers the Ethereum network. It acts like any other currency, in that its value fluctuates with the market.
+
+* You need to convert your currency (e.g. USD, CAD, GBP) into Ether to pay for things such as a collectibles.
+
+## How do I get Ether?
+
+_For US citizens only:_
+
+You can purchase ETH for the MetaMask Browser Extension with the Coinbase service.
+
+* Click the `Buy` button.
+* Select the `Coinbase` option.
+* Click the `Continue to Coinbase` button to purchase Ethereum.
+
+_For the rest of the World:_
+
+You need to buy ETH from Coinbase or another exchange using normal fiat currency.
+
+* Copy your MetaMask address by clicking on your name account and address.
+* Select `Copy Address to clipboard`.
+* Go to Coinbase or another exchange.
+* Click `Accounts` in your top navigation.
+* Select your ETH wallet and click `buy`.
+* Follow the steps to `Add payment method` and paste your MetaMask address with the amount you'd like to transfer.
+
+## What is MANA and how do I get it?
+
+![](/docs/player/images/media/get-a-wallet-mana.webp)
+
+[MANA](https://etherscan.io/token/decentraland) is Decentraland's fungible (reproducible or interchangeable) cryptocurrency token. It is burned, or spent in exchange for LAND parcels, wearables and names.
+
+Steps to buy MANA:
+
+* First, you need to register with an exchange that lists MANA (such as [Coinbase](https://www.coinbase.com/), [Huobi](https://www.huobi.io/), [Binance](https://www.binance.com/)).
+* Secondly, you will need to deposit funds into your account. While things change rapidly in the crypto world, it's not likely that there's an exchange available to convert your USD directly for MANA. If that's the case, you'll first need to obtain a cryptocurrency listed in a currency pair with MANA, such as Ether (ETH), and then exchange it for Decentraland's native token.
+* Third, once logged into your exchange account, click on the "Markets" or "Exchange" link and search for your desired currency pairing. For example, MANA/ETH. In the "Buy" field, you can then specify the amount of MANA you want to buy or the amount of ETH you want to spend. Make sure you take a moment to review the full details of the transaction including any fees that apply and the total cost of completing your purchase.
+
+## What is 'gas'?
+
+'Gas' is a shorthand term used to describe the cost of powering a transaction or contract in Ethereum. Because blockchain is decentralized, every transaction is distributed through multiple computers, not a central server. This ensures each token – in this case, each collectible – is secure and one-of-a-kind. It also takes a lot of computational power, which is covered by the cost of gas.
+
+* _'Gas' is composed of two parts: Gas Price and Gas Limit. Gas Price is what you offer to pay the miners (in a tiny measurement of ether called 'gwei') for each operation to execute the smart contract. Gas Limit is how many operations you let them do before they run out of gas and drop the transaction._
+* _1 gwei = 1/1,000,000,000th of an Ether._
+
+![](/docs/player/images/media/get-a-wallet-gas.webp)
+
+To summarize, Gas Price (gwei) is the amount of Ether offered per gas unit to pay miners to process your transaction. The higher the gas price you set, the faster your transaction will get processed. So, for more important transactions – such as a collectible that you really like ;D – think about increasing the suggested gas price.
+
+**For extra technical information, visit** [**About the blockchain**](/docs/player/blockchain-integration/ethereum-essentials/)

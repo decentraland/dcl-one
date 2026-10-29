@@ -1,0 +1,61 @@
+// Documentation of `room_events.rs`, which is hand-written: nothing generates code from this
+// file, and the Rust definitions are the contract. Keep the two in step by hand.
+syntax = "proto3";
+
+package catalyst.comms.bus.v1;
+
+// One LiveKit join or leave in a scene or world room. The comms gatekeeper's LiveKit webhook
+// publishes it on `comms.room_events.v1` (core NATS, at most once, at most 4096 bytes, which
+// the publisher's `encode` and the consumer's `decode` both enforce); the `multiplayer-hosting`
+// scheduler consumes it and reconciles against `GET /scene-participants`.
+//
+// The fields are the ones that scheduler reads, plus the session, the time and the id it uses
+// to order and deduplicate events (`participant_sid`, `event_time_ms`, `event_id`); they are
+// not the set of fields the gatekeeper's former SNS events carried. A consumer ignores fields
+// it does not know, so a retired field a sender still writes is skipped.
+message RoomEvent {
+  // Retired: never given another meaning.
+  reserved 5, 7, 12, 13, 14;
+  reserved "is_world", "user_address", "island_name", "community_id", "voice_chat_id";
+
+  RoomEventKind kind = 1;
+
+  // The LiveKit room name.
+  string room = 2;
+
+  RoomType room_type = 3;
+
+  // The world name for a world room, else the realm.
+  string realm_name = 4;
+
+  // Empty when the room has no scene.
+  string scene_id = 6;
+
+  // The LiveKit identity as is: a wallet, `authoritative-server`, a streamer's.
+  string identity = 8;
+
+  // LiveKit's participant sid: the participant's session in the room.
+  string participant_sid = 9;
+
+  // LiveKit's `createdAt`, in milliseconds since the epoch.
+  uint64 event_time_ms = 10;
+
+  // LiveKit's webhook event id.
+  string event_id = 11;
+}
+
+enum RoomEventKind {
+  UNSPECIFIED = 0;
+  JOINED = 1;
+  LEFT = 2;
+}
+
+enum RoomType {
+  // Retired: never given another meaning. A decoder reads them as UNKNOWN.
+  reserved 3 to 5;
+  reserved "ISLAND", "COMMUNITY_VOICE", "PRIVATE_VOICE";
+
+  UNKNOWN = 0;
+  SCENE = 1;
+  WORLD = 2;
+}

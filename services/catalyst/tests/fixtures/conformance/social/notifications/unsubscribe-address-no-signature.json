@@ -1,0 +1,23 @@
+{
+  "description": "GET /unsubscribe/{address} without the signed-url query (the e-mail link form). Captured GET https://notifications.decentraland.org/unsubscribe/0x8d6f63e382d73cf53858864f673f39e9ff915a1e -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/unsubscribe/0x8d6f63e382d73cf53858864f673f39e9ff915a1e",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Not Authorized",
+      "message": "Invalid URL."
+    }
+  },
+  "captured_from": "https://notifications.decentraland.org/unsubscribe/0x8d6f63e382d73cf53858864f673f39e9ff915a1e",
+  "captured_at": "2026-09-25T19:24:45Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,23 @@
+{
+  "description": "GET /scene-admin without an auth chain (the corpus sends it signed with scene metadata). Captured GET https://comms-gatekeeper.decentraland.org/scene-admin -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/scene-admin",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": false,
+      "message": "Invalid Auth Chain"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/scene-admin",
+  "captured_at": "2026-09-25T19:24:30Z",
+  "volatile_paths": []
+}

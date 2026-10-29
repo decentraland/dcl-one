@@ -1,0 +1,20 @@
+import { afterEach, beforeEach, expect, test } from "vitest";
+import { z } from "zod";
+import { check, resetValidationFailures, setValidationDevMode, setValidationReporter } from "../validate";
+
+const Store = z.record(z.string(), z.object({ txHash: z.string() }));
+const WALLET = "0x1d9fd6a04e5e1cbb0f5b3ac7a0d0dbd8c0d63e11";
+
+beforeEach(() => { resetValidationFailures(); setValidationDevMode(false); });
+afterEach(() => resetValidationFailures());
+
+test("a wallet-keyed path is redacted before it can reach any sink, and the reporter fires once per boundary, not once per rejection", () => {
+  const seen: { detail: string; paths: string[] }[] = [];
+  setValidationReporter((r) => seen.push(r));
+  for (let i = 0; i < 10; i++) check(Store, { [WALLET]: { txHash: i } }, "t/pending");
+  const blob = JSON.stringify(seen);
+  expect(blob).not.toContain(WALLET);
+  expect(blob).not.toContain("0x1d9fd6");
+  expect(seen).toHaveLength(1);
+  expect(seen[0]?.paths).toEqual(["<key>.txHash"]);
+});

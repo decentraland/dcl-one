@@ -1,0 +1,118 @@
+{
+  "description": "GET /users/{address}/badges for the explorer-boot corpus address: achieved and not-achieved badges with progress. Captured GET https://badges.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/badges -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/badges",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "achieved": [
+          {
+            "id": "dclcitizen",
+            "name": "Decentraland Citizen",
+            "description": "Landed in Decentraland",
+            "category": "Explorer",
+            "isTier": false,
+            "completedAt": "1785948011626",
+            "assets": {
+              "2d": {
+                "normal": "https://assets-cdn.decentraland.org/dclcitizen/2d/normal.png"
+              },
+              "3d": {
+                "normal": "https://assets-cdn.decentraland.org/dclcitizen/3d/normal.png",
+                "hrm": "https://assets-cdn.decentraland.org/dclcitizen/3d/hrm.png",
+                "basecolor": "https://assets-cdn.decentraland.org/dclcitizen/3d/basecolor.png"
+              }
+            },
+            "progress": {
+              "stepsDone": 1,
+              "nextStepsTarget": null,
+              "totalStepsTarget": 1,
+              "lastCompletedTierAt": null,
+              "lastCompletedTierName": null,
+              "lastCompletedTierImage": null
+            }
+          },
+          {
+            "id": "traveler",
+            "name": "Traveler",
+            "description": "Starter: 1 Genesis City scene explored (for at least 1 min);Bronze: 50 Genesis City scenes explored (for at least 1 min);Silver: 250 Genesis City scenes explored (for at least 1 min);Gold: 1,000 Genesis City scenes explored (for at least 1 min);Platinum: 2,500 Genesis City scenes explored (for at least 1 min);Diamond: 10,000 Genesis City scenes explored (for at least 1 min)",
+            "category": "Explorer",
+            "isTier": true,
+            "completedAt": null,
+            "assets": {
+              "2d": {
+                "normal": "https://assets-cdn.decentraland.org/traveler/starter/2d/normal.png"
+              },
+              "3d": {
+                "normal": "https://assets-cdn.decentraland.org/traveler/starter/3d/normal.png",
+                "hrm": "https://assets-cdn.decentraland.org/traveler/starter/3d/hrm.png",
+                "basecolor": "https://assets-cdn.decentraland.org/traveler/starter/3d/basecolor.png"
+              }
+            },
+            "progress": {
+              "achievedTiers": [
+                {
+                  "tierId": "traveler-starter",
+                  "completedAt": 1785958571317
+                }
+              ],
+              "stepsDone": 1,
+              "nextStepsTarget": 50,
+              "totalStepsTarget": 10000,
+              "lastCompletedTierAt": 1785958571317,
+              "lastCompletedTierName": "Starter",
+              "lastCompletedTierImage": "https://assets-cdn.decentraland.org/traveler/starter/2d/normal.png"
+            }
+          },
+          {
+            "id": "profile_pro",
+            "name": "Profile Pro",
+            "description": "Added information to Profile",
+            "category": "Socializer",
+            "isTier": false,
+            "completedAt": "1785964493205",
+            "assets": {
+              "2d": {
+                "normal": "https://assets-cdn.decentraland.org/profile_pro/2d/normal.png"
+              },
+              "3d": {
+                "normal": "https://assets-cdn.decentraland.org/profile_pro/3d/normal.png",
+                "hrm": "https://assets-cdn.decentraland.org/profile_pro/3d/hrm.png",
+                "basecolor": "https://assets-cdn.decentraland.org/profile_pro/3d/basecolor.png"
+              }
+            },
+            "progress": {
+              "stepsDone": 1,
+              "nextStepsTarget": null,
+              "totalStepsTarget": 1,
+              "lastCompletedTierAt": null,
+              "lastCompletedTierName": null,
+              "lastCompletedTierImage": null
+            }
+          }
+        ],
+        "notAchieved": []
+      }
+    }
+  },
+  "captured_from": "https://badges.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/badges",
+  "captured_at": "2026-09-25T19:24:47Z",
+  "volatile_paths": [
+    "data.achieved.completedAt",
+    "data.achieved.progress.achievedTiers.completedAt",
+    "data.achieved.progress.lastCompletedTierAt",
+    "data.achieved.progress.lastCompletedTierImage",
+    "data.achieved.progress.lastCompletedTierName",
+    "data.achieved.progress.nextStepsTarget",
+    "data.achieved.progress.stepsDone"
+  ]
+}

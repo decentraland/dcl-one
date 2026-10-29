@@ -1,0 +1,22 @@
+{
+  "description": "GET /api/wearables/{item}/images with a string that is not <contract>-<itemId>. Captured GET https://camera-reel-service.decentraland.org/api/wearables/not-an-item/images -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/api/wearables/not-an-item/images",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "message": "the item must be an item id, as `<contract>-<itemId>`"
+    }
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/wearables/not-an-item/images",
+  "captured_at": "2026-09-25T19:25:08Z",
+  "volatile_paths": []
+}

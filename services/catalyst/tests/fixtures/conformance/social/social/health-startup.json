@@ -1,0 +1,27 @@
+{
+  "description": "GET /health/startup: the @dcl/http-server status check. Captured GET https://social-api.decentraland.org/health/startup -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/health/startup",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/health+json; charset=utf-8"
+    },
+    "body_json": {
+      "details": {
+        "httpServer": {
+          "status": "pass"
+        }
+      },
+      "status": "pass"
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/health/startup",
+  "captured_at": "2026-10-26T20:46:18Z",
+  "volatile_paths": []
+}

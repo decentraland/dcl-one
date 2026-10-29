@@ -1,0 +1,396 @@
+use bevy::{diagnostic::FrameCount, prelude::*};
+use common::{asset_cache::AssetCache, util::TryPushChildrenEx};
+use dcl_component::proto_components::{
+    common::{texture_union, BorderRect, TextureUnion},
+    sdk::components::{self, PbUiBackground},
+    Color4DclToBevy,
+};
+use ui_core::{
+    nine_slice::Ui9Slice, stretch_uvs_image::StretchUvMaterial, ui_builder::SpawnSpacer,
+};
+
+use crate::{
+    renderer_context::RendererSceneContext,
+    update_world::material::{TextureResolveError, TextureResolver, VideoTextureOutput},
+    SceneEntity,
+};
+
+use super::UiLink;
+
+#[derive(Clone, Copy, Debug)]
+pub enum BackgroundTextureMode {
+    NineSlices(BorderRect),
+    Stretch([Vec4; 2]),
+    Center,
+}
+
+impl BackgroundTextureMode {
+    pub fn stretch_default() -> Self {
+        Self::Stretch([Vec4::W, Vec4::ONE - Vec4::W])
+    }
+}
+
+#[derive(Component, Clone, Debug)]
+pub struct BackgroundTexture {
+    tex: TextureUnion,
+    mode: BackgroundTextureMode,
+}
+
+#[derive(Component, Clone, Debug)]
+pub struct UiBackground {
+    color: Option<Color>,
+    texture: Option<BackgroundTexture>,
+}
+
+impl From<PbUiBackground> for UiBackground {
+    fn from(value: PbUiBackground) -> Self {
+        let texture_mode = value.texture_mode();
+        Self {
+            color: value.color.map(Color4DclToBevy::convert_srgba),
+            texture: value.texture.map(|tex| {
+                let mode = match texture_mode {
+                    components::BackgroundTextureMode::NineSlices => {
+                        BackgroundTextureMode::NineSlices(value.texture_slices.unwrap_or(
+                            BorderRect {
+                                top: 1.0 / 3.0,
+                                bottom: 1.0 / 3.0,
+                                left: 1.0 / 3.0,
+                                right: 1.0 / 3.0,
+                            },
+                        ))
+                    }
+                    components::BackgroundTextureMode::Center => BackgroundTextureMode::Center,
+                    components::BackgroundTextureMode::Stretch => {
+                        // the uvs array contain [tl.x, tl.y, bl.x, bl.y, br.x, br.y, tr.x, tr.y]
+                        let mut iter = value.uvs.iter().copied();
+                        let uvs = [
+                            Vec4::new(
+                                iter.next().unwrap_or(0.0),
+                                iter.next().unwrap_or(0.0),
+                                iter.next().unwrap_or(0.0),
+                                iter.next().unwrap_or(1.0),
+                            ),
+                            Vec4::new(
+                                iter.next().unwrap_or(1.0),
+                                iter.next().unwrap_or(1.0),
+                                iter.next().unwrap_or(1.0),
+                                iter.next().unwrap_or(0.0),
+                            ),
+                        ];
+                        BackgroundTextureMode::Stretch(uvs)
+                    }
+                };
+
+                BackgroundTexture { tex, mode }
+            }),
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct UiBackgroundMarker;
+
+#[derive(Component)]
+pub struct RetryBackground {
+    since_frame: u32,
+}
+
+const RETRY_BACKGROUND_INTERVAL: u32 = 10;
+
+#[derive(Component)]
+pub struct UiMaterialSource {
+    source: Entity,
+    owner: Entity,
+}
+
+#[derive(PartialEq, Eq, Hash, Clone)]
+pub struct StretchUvKey {
+    image: AssetId<Image>,
+    uvs: [u32; 8],
+    color: [u32; 4],
+}
+
+pub fn set_ui_background(
+    mut commands: Commands,
+    backgrounds: Query<
+        (
+            Entity,
+            &SceneEntity,
+            Ref<UiBackground>,
+            Ref<UiLink>,
+            Option<&RetryBackground>,
+        ),
+        Or<(
+            Changed<UiBackground>,
+            Changed<UiLink>,
+            With<RetryBackground>,
+        )>,
+    >,
+    radii: Query<(&Node, Option<&BorderRadius>)>,
+    mut removed: RemovedComponents<UiBackground>,
+    links: Query<&UiLink>,
+    children: Query<&Children>,
+    prev_backgrounds: Query<Entity, With<UiBackgroundMarker>>,
+    contexts: Query<&RendererSceneContext>,
+    mut resolver: TextureResolver,
+    mut stretch_uvs: ResMut<Assets<StretchUvMaterial>>,
+    mut cache: ResMut<AssetCache<StretchUvKey, StretchUvMaterial>>,
+    frame: Res<FrameCount>,
+    sourced: Query<(&UiMaterialSource, Option<&MaterialNode<StretchUvMaterial>>)>,
+    sources: Query<Option<Ref<VideoTextureOutput>>>,
+    retried: Query<Has<RetryBackground>>,
+    mut pending_touch: Local<Vec<AssetId<StretchUvMaterial>>>,
+) {
+    // touch materials whose source image was recreated last frame; deferred because ui
+    // materials have no prepare ordering against GpuImage, so a same-frame touch can
+    // re-bind the old texture
+    for material_id in pending_touch.drain(..) {
+        stretch_uvs.get_mut(material_id);
+    }
+
+    for ent in removed.read() {
+        let Ok(link) = links.get(ent) else {
+            continue;
+        };
+
+        if let Ok(children) = children.get(link.ui_entity) {
+            for child in children.iter().filter(|c| prev_backgrounds.get(*c).is_ok()) {
+                if let Ok(mut commands) = commands.get_entity(child) {
+                    commands.despawn();
+                }
+            }
+        }
+
+        if let Ok(mut commands) = commands.get_entity(link.ui_entity) {
+            commands.try_insert(BackgroundColor::DEFAULT);
+        }
+    }
+
+    for (ent, scene_ent, background, link, maybe_retry) in backgrounds.iter() {
+        // waiting on a texture source; only despawn/respawn the node every few frames
+        if let Some(retry) = maybe_retry {
+            if !background.is_changed()
+                && !link.is_changed()
+                && frame.0.wrapping_sub(retry.since_frame) < RETRY_BACKGROUND_INTERVAL
+            {
+                continue;
+            }
+        }
+
+        if let Ok(children) = children.get(link.ui_entity) {
+            for child in children.iter().filter(|c| prev_backgrounds.get(*c).is_ok()) {
+                if let Ok(mut commands) = commands.get_entity(child) {
+                    commands.despawn();
+                }
+            }
+        }
+
+        commands.entity(ent).remove::<RetryBackground>();
+
+        let Ok(mut commands) = commands.get_entity(link.ui_entity) else {
+            continue;
+        };
+
+        debug!("[{}] set background {:?}", scene_ent.id, &*background);
+
+        if let Some(texture) = background.texture.as_ref() {
+            let Ok(ctx) = contexts.get(scene_ent.root) else {
+                continue;
+            };
+
+            let image = texture.tex.tex.as_ref().map(|tex| {
+                // sampling ui from within ui allows an unbounded feedback loop (a canvas
+                // sampling itself); nest the nodes instead
+                if matches!(tex, texture_union::Tex::UiTexture(_)) {
+                    warn!(
+                        "[{}] uiTexture is not supported in scene ui backgrounds",
+                        scene_ent.id
+                    );
+                    return Err(TextureResolveError::NoTexture);
+                }
+                resolver.resolve_texture(ctx, tex)
+            });
+
+            let image = match image {
+                Some(Ok(t)) => t,
+                Some(Err(TextureResolveError::SourceNotReady)) => {
+                    commands.commands().entity(ent).try_insert(RetryBackground {
+                        since_frame: frame.0,
+                    });
+                    continue;
+                }
+                None | Some(Err(TextureResolveError::NoTexture)) => {
+                    continue;
+                }
+                Some(Err(other)) => {
+                    warn!(
+                        "failed to load ui image from content map: {:?}: {other:?}",
+                        texture
+                    );
+                    continue;
+                }
+            };
+
+            let image_color = background.color.unwrap_or(Color::WHITE);
+            let image_color = image_color.with_alpha(image_color.alpha() * link.opacity.0);
+            let (border, border_radius) = radii
+                .get(link.ui_entity)
+                .ok()
+                .map(|(node, radius)| (node.border, radius))
+                .unwrap_or((UiRect::DEFAULT, None));
+
+            let unborder = |v: Val| -> Val {
+                match v {
+                    Val::Auto => Val::Px(0.0),
+                    other => other * -1.0,
+                }
+            };
+
+            let node = Node {
+                position_type: PositionType::Absolute,
+                top: unborder(border.top),
+                left: unborder(border.left),
+                bottom: unborder(border.bottom),
+                right: unborder(border.right),
+                border,
+                overflow: Overflow::clip(),
+                ..Default::default()
+            };
+
+            let background_entity = match texture.mode {
+                BackgroundTextureMode::NineSlices(rect) => commands
+                    .commands()
+                    .spawn((
+                        node,
+                        Ui9Slice {
+                            image: image.image,
+                            // slices arrive as fractions of the texture size
+                            center_region: UiRect {
+                                left: Val::Percent(rect.left * 100.0),
+                                right: Val::Percent(rect.right * 100.0),
+                                top: Val::Percent(rect.top * 100.0),
+                                bottom: Val::Percent(rect.bottom * 100.0),
+                            },
+                            tint: Some(image_color),
+                        },
+                        UiBackgroundMarker,
+                    ))
+                    .id(),
+                BackgroundTextureMode::Stretch(ref uvs) => {
+                    let color = image_color.to_linear().to_vec4();
+                    let mut uv_bits = [0u32; 8];
+                    for (bits, uv) in uv_bits
+                        .iter_mut()
+                        .zip(uvs.iter().flat_map(|v| v.to_array()))
+                    {
+                        *bits = uv.to_bits();
+                    }
+                    let key = StretchUvKey {
+                        image: image.image.id(),
+                        uvs: uv_bits,
+                        color: color.to_array().map(f32::to_bits),
+                    };
+                    let material = cache.get_or_add(key, &mut stretch_uvs, || StretchUvMaterial {
+                        image: image.image.clone(),
+                        uvs: *uvs,
+                        color,
+                    });
+                    commands
+                        .commands()
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                top: Val::Px(0.0),
+                                right: Val::Px(0.0),
+                                left: Val::Px(0.0),
+                                bottom: Val::Px(0.0),
+                                ..Default::default()
+                            },
+                            UiBackgroundMarker,
+                        ))
+                        .try_with_children(|c| {
+                            let mut inner = c.spawn((node, MaterialNode(material)));
+                            if let Some(source) = image.source_entity {
+                                inner.try_insert(UiMaterialSource { source, owner: ent });
+                            }
+                            if let Some(radius) = border_radius {
+                                inner.try_insert(*radius);
+                            }
+                        })
+                        .id()
+                }
+                BackgroundTextureMode::Center => commands
+                    .commands()
+                    .spawn((
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            right: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            bottom: Val::Px(0.0),
+                            justify_content: JustifyContent::Center,
+                            overflow: Overflow::clip(),
+                            width: Val::Percent(100.0),
+                            ..Default::default()
+                        },
+                        UiBackgroundMarker,
+                    ))
+                    .try_with_children(|c| {
+                        c.spacer();
+                        c.spawn(Node {
+                            flex_direction: FlexDirection::Column,
+                            justify_content: JustifyContent::Center,
+                            overflow: Overflow::clip(),
+                            height: Val::Percent(100.0),
+                            ..Default::default()
+                        })
+                        .try_with_children(|c| {
+                            c.spacer();
+                            let mut inner = c
+                                .spawn((node, ImageNode::new(image.image).with_color(image_color)));
+                            if let Some(source) = image.source_entity {
+                                inner.try_insert(UiMaterialSource { source, owner: ent });
+                            }
+                            if let Some(radius) = border_radius {
+                                inner.try_insert(*radius);
+                            }
+                            c.spacer();
+                        });
+                        c.spacer();
+                    })
+                    .id(),
+            };
+
+            commands.insert_children(0, &[background_entity]);
+        } else if let Some(color) = background.color {
+            let background_color = color.with_alpha(color.alpha() * link.opacity.0);
+            commands.try_insert(BackgroundColor(background_color));
+        }
+    }
+
+    // rebuild the owner when its texture-source entity disappears; when the source's output
+    // changes (video resize, texture-camera target resize) the gpu texture is recreated, so
+    // touch the consuming material to rebuild its bind group (as update_materials does for
+    // meshes)
+    for (source, maybe_material) in sourced.iter() {
+        match sources.get(source.source) {
+            Err(_) => {
+                let Ok(has_retry) = retried.get(source.owner) else {
+                    continue;
+                };
+                if !has_retry {
+                    commands.entity(source.owner).try_insert(RetryBackground {
+                        since_frame: frame.0,
+                    });
+                }
+            }
+            Ok(output) => {
+                if output.is_some_and(|o| o.is_changed()) {
+                    if let Some(material) = maybe_material {
+                        pending_touch.push(material.0.id());
+                    }
+                }
+            }
+        }
+    }
+}

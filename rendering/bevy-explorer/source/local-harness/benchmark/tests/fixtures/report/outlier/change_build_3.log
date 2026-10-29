@@ -1,0 +1,12 @@
+10:00:00.000 - <color=#DBD6C8>[autopilot]</color>: Arriving
+10:00:05.000 - <color=#DBD6C8>[autopilot]</color>: Measuring
+10:00:10.000 - <color=#FF5C5C>[scene]</color>: 
+Error: the scene threw
+DebugLogReportHandler:LogExceptionInternal src/scene.rs:12
+10:00:11.000 - <color=#FF5C5C>[asset]</color>: 
+PanicException: the asset loader panicked
+DebugLogReportHandler:LogExceptionInternal src/asset.rs:12
+10:00:12.000 - <color=#FF5C5C>[asset]</color>: 
+PanicException: the asset loader panicked
+DebugLogReportHandler:LogExceptionInternal src/asset.rs:12
+10:01:35.000 - <color=#DBD6C8>[autopilot]</color>: [ExitUtils] Exit requested at 2026-10-28T10:01:35.000Z

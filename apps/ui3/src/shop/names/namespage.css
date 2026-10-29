@@ -1,0 +1,470 @@
+/* from: shop@2d3bf62:app/src/pages/NamesPage.styles.ts (theme tokens from app/src/styles/theme.ts inlined)
+   Copyright Decentraland. Licensed under the Apache License, Version 2.0.
+   The NAME claim page: a translucent panel edged in magenta over the page field, then the
+   "Why buy a NAME?" cards. Everything is scoped under .shop-names-claim. Breakpoints: upstream
+   `mobile` 768px, `lg` 900px. */
+
+.shop-names.shop-names--claim {
+  gap: 0;
+  padding-top: 28px;
+  padding-bottom: 80px;
+}
+
+.shop-names-claim {
+  width: 100%;
+  min-width: 0;
+  font-family: inherit;
+}
+
+.shop-names-claim__crumbs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 16px calc(50% - 50vw);
+  padding-left: 54px;
+  font-size: 12px;
+  line-height: 1;
+  color: #cfcdd4;
+}
+.shop-names-claim__crumbs a {
+  color: #cfcdd4;
+  text-decoration: none;
+}
+.shop-names-claim__crumbs a:hover {
+  color: #fff;
+  text-decoration: underline;
+}
+.shop-names-claim__crumbs [aria-current] {
+  font-weight: 700;
+  color: #fcfcfc;
+}
+
+.shop-names-claim__panel {
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+  padding-bottom: 48px;
+}
+
+.shop-names-claim__hero {
+  position: relative;
+  border: 1px solid #c640cd;
+  border-radius: 24px;
+  padding: 88px 48px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 48px;
+  text-align: center;
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.shop-names-claim__copy {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.shop-names-claim__copy h1 {
+  margin: 0;
+  font-weight: 600;
+  font-size: 40px;
+  line-height: 1.167;
+  color: #fff;
+}
+.shop-names-claim__copy p {
+  margin: 0;
+  max-width: 760px;
+  font-weight: 500;
+  font-size: 24px;
+  line-height: 1.334;
+  color: #ecebed;
+}
+
+.shop-names-claim__search {
+  width: min(785px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.shop-names-claim__wrap {
+  position: relative;
+}
+
+.shop-names-claim__row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 8px 16px;
+  background: #fcfcfc;
+  border: 3px solid #ff7439;
+  border-radius: 20px;
+}
+.shop-names-claim__row:focus-within {
+  border-color: #c640cd;
+}
+.shop-names-claim__row[data-invalid] {
+  border-color: #ff2d55;
+}
+.shop-names-claim__box {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.shop-names-claim__field {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  cursor: text;
+  overflow: hidden;
+}
+.shop-names-claim__at {
+  flex: none;
+  margin-right: 8px;
+  font-size: 26px;
+  font-weight: 500;
+  line-height: 1;
+  color: #a09ba8;
+}
+.shop-names-claim__field input,
+.shop-names-claim__sizer {
+  font-family: inherit;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.6;
+}
+.shop-names-claim__field input {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #161518;
+  padding: 0;
+  margin: 0;
+  box-shadow: none;
+}
+.shop-names-claim__field input::placeholder {
+  color: #5e5b67;
+  font-weight: 400;
+  opacity: 1;
+}
+.shop-names-claim__sizer {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+  white-space: pre;
+}
+.shop-names-claim__sizer[data-placeholder] {
+  font-weight: 400;
+}
+.shop-names-claim__suffix {
+  flex: none;
+  user-select: none;
+  -webkit-user-select: none;
+  font-size: 20px;
+  font-weight: 400;
+  line-height: 1.6;
+  color: #5e5b67;
+}
+.shop-names-claim__counter {
+  flex: none;
+  font-size: 14px;
+  line-height: 1.43;
+  color: #a09ba8;
+  white-space: nowrap;
+}
+
+.shop-names-claim__btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 52px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 12px;
+  cursor: pointer;
+  background: linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%);
+  color: #fcfcfc;
+  font-family: inherit;
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0.46px;
+  line-height: 24px;
+  text-transform: uppercase;
+  transition: background-image 0.15s ease;
+}
+.shop-names-claim__btn:hover:not(:disabled),
+.shop-names-claim__btn:active:not(:disabled) {
+  background-image: linear-gradient(#ff2d55, #ff2d55);
+}
+.shop-names-claim__btn:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+.shop-names-claim__btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+.shop-names-claim__price {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 18px;
+  font-weight: 600;
+}
+.shop-names-claim__price .ico,
+.shop-names-claim__price > span {
+  width: 13.26px;
+  height: 14px;
+}
+
+.shop-names-claim__taken,
+.shop-names-claim__status {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 8px;
+  font-weight: 500;
+  text-align: left;
+}
+.shop-names-claim__taken {
+  padding: 8px 12px;
+  background: #ffcdd4;
+  color: #ec303a;
+  font-size: 14px;
+  line-height: 1.2;
+}
+.shop-names-claim__status {
+  padding: 8px 14px;
+  background: rgba(255, 255, 255, 0.14);
+  color: #ecebed;
+  font-size: 13px;
+}
+.shop-names-claim__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  font-weight: 600;
+  text-decoration: underline;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: #ec303a;
+}
+.shop-names-claim__sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.shop-names-claim__why {
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+  padding: 0 48px;
+}
+.shop-names-claim__whyhead {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 24px;
+}
+.shop-names-claim__whyhead h2 {
+  margin: 0;
+  text-align: center;
+  font-weight: 600;
+  font-size: 32px;
+  line-height: 1.167;
+  color: #fff;
+}
+.shop-names-claim__whyhead p {
+  margin: 0;
+  max-width: 907px;
+  text-align: center;
+  font-weight: 400;
+  font-size: 20px;
+  line-height: 1.57;
+  color: #cfcdd4;
+}
+.shop-names-claim__cards {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 24px;
+  align-items: stretch;
+}
+.shop-names-claim__cards article {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 24px;
+}
+@media (forced-colors: active) {
+  .shop-names-claim__cards article {
+    outline: 1px solid CanvasText;
+  }
+}
+.shop-names-claim__cards img {
+  display: block;
+  align-self: flex-start;
+  height: 55px;
+  width: auto;
+}
+.shop-names-claim__cards article > div {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.shop-names-claim__cards h3 {
+  margin: 0;
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1.57;
+  text-transform: uppercase;
+  color: #fff;
+}
+.shop-names-claim__cards p {
+  margin: 0;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.57;
+  color: #ecebed;
+}
+.shop-names-claim__cards b {
+  font-weight: 700;
+  color: #fff;
+}
+.shop-names-claim__cards a {
+  display: inline-flex;
+  align-self: flex-start;
+  align-items: center;
+  gap: 2px;
+  margin-top: auto;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 30px;
+  color: #fcfcfc;
+  text-decoration: underline;
+}
+.shop-names-claim__cards a:focus-visible {
+  outline: 2px solid #fcfcfc;
+  outline-offset: 2px;
+}
+
+@media (max-width: 900px) {
+  .shop-names-claim__cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 768px) {
+  .shop-names.shop-names--claim {
+    padding-top: 16px;
+    padding-bottom: 56px;
+  }
+  .shop-names-claim__crumbs {
+    padding-left: 16px;
+  }
+  .shop-names-claim__panel {
+    gap: 32px;
+    padding-bottom: 32px;
+  }
+  .shop-names-claim__hero {
+    padding: 40px 20px;
+    gap: 28px;
+  }
+  .shop-names-claim__copy h1 {
+    font-size: 26px;
+  }
+  .shop-names-claim__copy p {
+    font-size: 16px;
+  }
+  .shop-names-claim__wrap {
+    display: flex;
+    flex-direction: column;
+  }
+  .shop-names-claim__row {
+    display: contents;
+  }
+  .shop-names-claim__box {
+    order: 0;
+    padding: 8px 8px 8px 16px;
+    background: #fcfcfc;
+    border: 3px solid #ff7439;
+    border-radius: 16px;
+  }
+  .shop-names-claim__box:focus-within {
+    border-color: #c640cd;
+  }
+  .shop-names-claim__row[data-invalid] .shop-names-claim__box {
+    border-color: #ff2d55;
+  }
+  .shop-names-claim__taken,
+  .shop-names-claim__status {
+    order: 1;
+    position: static;
+    margin-top: 8px;
+  }
+  .shop-names-claim__taken {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+  .shop-names-claim__action {
+    margin-left: 0;
+  }
+  .shop-names-claim__btn {
+    order: 2;
+    width: 100%;
+    height: 48px;
+    margin-top: 12px;
+  }
+  .shop-names-claim__at {
+    font-size: 20px;
+  }
+  .shop-names-claim__field input,
+  .shop-names-claim__sizer,
+  .shop-names-claim__suffix {
+    font-size: 16px;
+  }
+  .shop-names-claim__why {
+    gap: 32px;
+    padding: 0 20px;
+  }
+  .shop-names-claim__whyhead h2 {
+    font-size: 22px;
+  }
+  .shop-names-claim__whyhead p {
+    font-size: 16px;
+  }
+  .shop-names-claim__cards {
+    grid-template-columns: 1fr;
+  }
+  .shop-names-claim__cards article {
+    gap: 20px;
+    padding: 20px;
+  }
+}

@@ -1,0 +1,170 @@
+import type { NativeHostMessage } from "../generated/bridge/NativeHostMessage";
+
+export type { NativeHostMessage };
+
+type Rect = Extract<NativeHostMessage, { t: "pointerRegions" }>["rects"][number];
+
+export function isNativeHost(): boolean {
+  return typeof window !== "undefined" && !!window.__dclNativeHost;
+}
+
+/** The Creator Hub's editor viewport: the engine runs with no HUD at all. */
+export function isEditorShell(search: string): boolean {
+  return !isNativeHost() && /[?&]editorUi=1(?:&|$)/.test(search);
+}
+
+/** A scene preview launched by dcl-scene-cli: the full HUD, minus what needs the public world. */
+export function isPreviewShell(search: string): boolean {
+  return !isNativeHost() && !isEditorShell(search) && /[?&]preview=(?:true|1)(?:&|$)/.test(search);
+}
+
+function post(msg: NativeHostMessage): void {
+  try {
+    window.__dclNativeHost?.post(msg);
+  } catch {
+  }
+}
+
+function contains(a: Rect, b: Rect): boolean {
+  return (
+    b[0] >= a[0] &&
+    b[1] >= a[1] &&
+    b[0] + b[2] <= a[0] + a[2] &&
+    b[1] + b[3] <= a[1] + a[3]
+  );
+}
+
+function dropContained(rects: Rect[]): Rect[] {
+  return rects.filter(
+    (r, i) =>
+      !rects.some(
+        (o, j) => j !== i && contains(o, r) && (j < i || !contains(r, o)),
+      ),
+  );
+}
+
+function visit(el: Element, rects: Rect[]): void {
+  const style = getComputedStyle(el);
+  if (
+    style.display === "none" ||
+    style.visibility === "hidden" ||
+    style.opacity === "0"
+  ) {
+    return;
+  }
+  const box = el.getBoundingClientRect();
+  if (style.pointerEvents === "auto" && box.width > 0 && box.height > 0) {
+    const x = Math.floor(box.left);
+    const y = Math.floor(box.top);
+    rects.push([x, y, Math.ceil(box.right) - x, Math.ceil(box.bottom) - y]);
+    return;
+  }
+  for (const child of el.children) visit(child, rects);
+}
+
+export function computeInteractiveRects(root: HTMLElement): Rect[] {
+  const rects: Rect[] = [];
+  for (const child of root.children) visit(child, rects);
+  return dropContained(rects);
+}
+
+const NON_RENDERED = new Set(["SCRIPT", "STYLE", "LINK", "META", "TEMPLATE"]);
+
+export function computePageRects(root: HTMLElement): Rect[] {
+  const rects: Rect[] = [];
+  for (const child of root.children) visit(child, rects);
+  for (const sibling of document.body.children) {
+    if (sibling === root || sibling.contains(root)) continue;
+    if (NON_RENDERED.has(sibling.tagName)) continue;
+    visit(sibling, rects);
+  }
+  return dropContained(rects);
+}
+
+export function hashRects(rects: readonly Rect[]): number {
+  const s = rects.map((r) => r.join(",")).join(";");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h;
+}
+
+const EDITABLE = 'input, textarea, [contenteditable=""], [contenteditable="true"]';
+
+export function startNativeHostBridge(): () => void {
+  if (typeof window === "undefined") return () => {};
+  const root = document.getElementById("ui3-overlay");
+  if (!root) return () => {};
+
+  let lastHash = -1;
+  let rafId: number | null = null;
+  const measure = (): void => {
+    rafId = null;
+    const rects = computePageRects(root);
+    const h = hashRects(rects);
+    if (h === lastHash) return;
+    lastHash = h;
+    post({
+      t: "pointerRegions",
+      w: window.innerWidth,
+      h: window.innerHeight,
+      rects,
+    });
+  };
+  const schedule = (): void => {
+    if (rafId !== null) return;
+    rafId = window.requestAnimationFrame(measure);
+  };
+
+  const mo = new MutationObserver(schedule);
+  mo.observe(document.body, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ["class", "style"],
+  });
+  let ro: ResizeObserver | null = null;
+  if (typeof ResizeObserver !== "undefined") {
+    ro = new ResizeObserver(schedule);
+    ro.observe(document.body);
+  }
+  window.addEventListener("resize", schedule);
+  const tick = setInterval(schedule, 125);
+
+  let focusTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastWant = false;
+  const emitFocus = (want: boolean): void => {
+    if (focusTimer !== null) clearTimeout(focusTimer);
+    focusTimer = setTimeout(() => {
+      focusTimer = null;
+      if (want === lastWant) return;
+      lastWant = want;
+      post({ t: "keyboardFocus", want });
+    }, 16);
+  };
+  const editable = (t: EventTarget | null): boolean =>
+    t instanceof Element && t.matches(EDITABLE);
+  const onFocusIn = (e: FocusEvent): void => {
+    if (editable(e.target)) emitFocus(true);
+  };
+  const onFocusOut = (e: FocusEvent): void => {
+    if (editable(e.target)) emitFocus(false);
+  };
+  document.addEventListener("focusin", onFocusIn);
+  document.addEventListener("focusout", onFocusOut);
+
+  schedule();
+
+  return () => {
+    mo.disconnect();
+    ro?.disconnect();
+    window.removeEventListener("resize", schedule);
+    clearInterval(tick);
+    if (rafId !== null) window.cancelAnimationFrame(rafId);
+    if (focusTimer !== null) clearTimeout(focusTimer);
+    document.removeEventListener("focusin", onFocusIn);
+    document.removeEventListener("focusout", onFocusOut);
+  };
+}

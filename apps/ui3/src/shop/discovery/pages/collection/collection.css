@@ -1,0 +1,182 @@
+/* from: shop@2d3bf62:app/src/styles/collectionPage.styles.ts, app/src/components/CollectionHero/CollectionHero.styles.ts,
+   app/src/components/CollectionCreatorCard/CollectionCreatorCard.styles.ts, app/src/components/CopyButton/CopyButton.styles.ts */
+.shop-page.shop-collection {
+  gap: 0;
+  max-width: 1760px;
+  padding: 28px var(--shop-gutter, 54px) 80px;
+}
+.shop-collection > .shop-crumbs {
+  flex-wrap: nowrap;
+  margin-bottom: 18px;
+  box-sizing: border-box;
+  width: 100vw;
+  margin-left: calc(-50vw + 50%);
+  padding: 0 54px;
+}
+.shop-collection > .shop-crumbs [aria-current] {
+  color: #fcfcfc;
+}
+
+.shop-collection .shop-hero {
+  min-height: 200px;
+  margin-bottom: 24px;
+  padding: 0;
+  border-radius: 12px;
+  align-items: center;
+  justify-content: center;
+}
+.shop-collection .shop-hero__cover::after {
+  background: radial-gradient(ellipse at center, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0.55) 100%);
+}
+.shop-collection .shop-hero__title {
+  padding: 32px 24px;
+  text-align: center;
+  color: #fff;
+  font-size: 40px;
+  font-weight: 800;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.4);
+}
+
+.shop-collection .shop-browse {
+  grid-template-columns: 265px minmax(0, 1fr);
+  gap: 24px 32px;
+}
+.shop-collection .shop-browse__main {
+  gap: 0;
+}
+.shop-collection .shop-browse__main > .shop-page__error {
+  margin-bottom: 16px;
+}
+.shop-collection .shop-browse__col {
+  position: static;
+  gap: 0;
+}
+
+.shop-ccard {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 12px;
+  padding-bottom: 24px;
+  margin-top: -79px;
+  margin-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+  position: relative;
+}
+.shop-ccard__ava {
+  display: block;
+  width: 110px;
+  height: 110px;
+  border-radius: 50%;
+  object-fit: cover;
+  box-sizing: border-box;
+  border: 5px solid #fff;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.2);
+  background: #ff4bed;
+}
+.shop-ccard__name {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.3;
+  color: #fcfcfc;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.shop-ccard__copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: #cfcdd4;
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background 0.15s ease;
+}
+.shop-ccard__copy:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+}
+.shop-ccard__copy:focus-visible {
+  outline: 2px solid #fcfcfc;
+  outline-offset: 2px;
+}
+.shop-ccard__glyph {
+  flex: none;
+  animation: shop-ccard-pop 0.22s ease-out;
+}
+@keyframes shop-ccard-pop {
+  0% {
+    transform: scale(0.6);
+    opacity: 0;
+  }
+  60% {
+    transform: scale(1.15);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shop-ccard__glyph {
+    animation: none;
+  }
+}
+.shop-ccard__view {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: 100%;
+  height: 44px;
+  padding: 0 20px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.4);
+  color: #fcfcfc;
+  font-weight: 600;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.046em;
+  text-decoration: none;
+  transition:
+    background 0.15s ease,
+    color 0.15s ease;
+}
+.shop-ccard__view:hover {
+  background: #242129;
+}
+
+@media (max-width: 900px) {
+  .shop-collection .shop-browse {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
+}
+@media (max-width: 768px) {
+  .shop-page.shop-collection {
+    padding: 16px 16px 56px;
+  }
+  .shop-collection > .shop-crumbs {
+    padding: 0 16px;
+  }
+  .shop-collection .shop-hero {
+    min-height: 140px;
+  }
+  .shop-collection .shop-hero__title {
+    padding: 24px 16px;
+    font-size: 26px;
+  }
+}

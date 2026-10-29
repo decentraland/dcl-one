@@ -1,0 +1,66 @@
+.shop-groups {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shop-group {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--shop-card-line, var(--line));
+  border-left: 3px solid var(--ink-45);
+  border-radius: var(--shop-radius-card, var(--r-control));
+  background: transparent;
+  font-size: 13px;
+}
+
+.shop-group[data-tone="busy"] {
+  border-left-color: var(--info);
+}
+
+.shop-group[data-tone="done"] {
+  border-left-color: var(--success);
+}
+
+.shop-group[data-tone="failed"] {
+  border-left-color: var(--error);
+}
+
+.shop-group[data-tone="wait"] {
+  border-left-color: var(--warning);
+}
+
+.shop-group__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 10px;
+}
+
+.shop-group__title {
+  font-weight: 600;
+}
+
+.shop-group__via {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--ink-6);
+  font-size: var(--fs-12);
+}
+
+.shop-group__status {
+  margin: 0;
+  font-size: var(--fs-13);
+}
+
+.shop-group[data-tone="failed"] .shop-group__status {
+  color: var(--error);
+}
+
+.shop-group__status a {
+  color: inherit;
+}

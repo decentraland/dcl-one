@@ -1,0 +1,136 @@
+
+import type { MouseEvent } from "react";
+import type { NearbyPlayer } from "../../generated/bridge/NearbyPlayer";
+
+type Token =
+  | { type: "text"; value: string }
+  | { type: "url"; value: string }
+  | { type: "world"; value: string }
+  | { type: "location"; value: string; x: number; y: number }
+  | { type: "mention"; value: string; name: string; tag?: string };
+
+const TOKEN_RE =
+  /(?<url>https?:\/\/[^\s<>"']+)|(?<world>[a-z0-9][\w-]*\.(?:dcl\.)?eth\b)|(?<loc>-?\d{1,3}\s*,\s*-?\d{1,3})|(?<mention>@[\w-]+(?:#[\w]+)?)/gi;
+
+function parseMessage(text: string): Token[] {
+  const tokens: Token[] = [];
+  let last = 0;
+  for (const m of text.matchAll(TOKEN_RE)) {
+    const i = m.index ?? 0;
+    if (i > last) tokens.push({ type: "text", value: text.slice(last, i) });
+    const g = m.groups ?? {};
+    if (g.url) {
+      tokens.push({ type: "url", value: g.url });
+    } else if (g.world) {
+      tokens.push({ type: "world", value: g.world });
+    } else if (g.loc) {
+      const parts = g.loc.split(",");
+      const x = parseInt((parts[0] ?? "").trim(), 10);
+      const y = parseInt((parts[1] ?? "").trim(), 10);
+      tokens.push({ type: "location", value: g.loc, x, y });
+    } else if (g.mention) {
+      const parts = g.mention.slice(1).split("#");
+      tokens.push({ type: "mention", value: g.mention, name: parts[0] ?? "", tag: parts[1] });
+    }
+    last = i + m[0].length;
+  }
+  if (last < text.length) tokens.push({ type: "text", value: text.slice(last) });
+  return tokens;
+}
+
+export function buildNameIndex(members: NearbyPlayer[]): Map<string, string> {
+  const idx = new Map<string, string>();
+  for (const m of members) {
+    if (m.name.trim()) {
+      idx.set(m.name.toLowerCase(), m.address);
+      idx.set((m.name.split("#")[0] ?? m.name).toLowerCase(), m.address);
+    }
+  }
+  return idx;
+}
+
+function resolveMention(t: Extract<Token, { type: "mention" }>, index: Map<string, string>): string | undefined {
+  return index.get(`${t.name}#${t.tag}`.toLowerCase()) ?? index.get(t.name.toLowerCase());
+}
+
+export function mentionsMe(
+  text: string,
+  me: { address?: string; name?: string } | null,
+  index: Map<string, string>,
+): boolean {
+  if (!me) return false;
+  const myName = me.name?.split("#")[0]?.toLowerCase();
+  return parseMessage(text).some((t) => {
+    if (t.type !== "mention") return false;
+    const addr = resolveMention(t, index);
+    return (
+      (addr && me.address && addr.toLowerCase() === me.address.toLowerCase()) ||
+      (!!myName && t.name.toLowerCase() === myName)
+    );
+  });
+}
+
+export function MessageText({
+  text,
+  members,
+  styles,
+  onMention,
+  onLocation,
+  onWorld,
+  interactive = true,
+}: {
+  text: string;
+  members: NearbyPlayer[];
+  styles: { url: string | undefined; mention: string | undefined; location: string | undefined; world: string | undefined };
+  onMention: (address: string, name: string, e: MouseEvent) => void;
+  onLocation: (x: number, y: number) => void;
+  onWorld?: (name: string) => void;
+  interactive?: boolean;
+}) {
+  const index = buildNameIndex(members);
+  return (
+    <>
+      {parseMessage(text).map((t, i) => {
+        if (!interactive) return <span key={i} className={t.type === "text" ? undefined : styles[t.type]}>{t.value}</span>;
+        if (t.type === "url") {
+          return (
+            <a key={i} className={styles.url} href={t.value} target="_blank" rel="noreferrer noopener">
+              {t.value}
+            </a>
+          );
+        }
+        if (t.type === "world") {
+          if (!onWorld) return <span key={i}>{t.value}</span>;
+          return (
+            <button key={i} type="button" className={styles.world} onClick={() => onWorld(t.value)}>
+              {t.value}
+            </button>
+          );
+        }
+        if (t.type === "location") {
+          return (
+            <button key={i} type="button" className={styles.location} onClick={() => onLocation(t.x, t.y)}>
+              {t.value}
+            </button>
+          );
+        }
+        if (t.type === "mention") {
+          const addr = resolveMention(t, index);
+          if (!addr) return <span key={i}>{t.value}</span>;
+          return (
+            <button
+              key={i}
+              type="button"
+              className={styles.mention}
+              onClick={(e) => onMention(addr, t.name, e)}
+              onContextMenu={(e) => onMention(addr, t.name, e)}
+            >
+              @{t.name}
+            </button>
+          );
+        }
+        return <span key={i}>{t.value}</span>;
+      })}
+    </>
+  );
+}
