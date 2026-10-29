@@ -8,7 +8,8 @@
 //! sweep that retires orders nobody paid within a session's lifetime. Every
 //! Stripe call runs outside a transaction; the state change is one guarded
 //! UPDATE (`status = 'pending'`), so a late webhook or a second click moves
-//! nothing twice.
+//! nothing twice. A delayed payment that settles after its order was
+//! retired still credits it (`packs::SETTLEABLE_STATUSES`).
 
 use sqlx::Row;
 
