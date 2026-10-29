@@ -1,0 +1,36 @@
+# Layering of the application's modules (AGENTS.md). A module may only use
+# modules on a lower layer; scripts/check-module-dag.sh enforces it. Peers on
+# one layer may not use each other. [allow] would list tolerated back-edges
+# with their reference counts; a new back-edge is an inversion to design (a
+# trait the lower layer owns), not a line to add here. The shared crates in
+# library/ sit below every layer: auth (dcl-auth) and http (dcl-http) are
+# reached through their module aliases but depend on nothing in the
+# application. The creator SDK app sits outside the layers: the node never
+# links it.
+
+[layers]
+# leaf crates (services/catalyst/<module>/): db, then jobs, then fed
+db = 0
+jobs = 1
+fed = 2
+shared = 3
+# conformance fixtures the tests share; depends on nothing in the app
+testing = 3
+config = 4
+storage = 4
+price = 4
+chain_index = 4
+land_authz = 5
+content = 6
+explore = 7
+# comms: pulse, the archipelago connector, the gatekeeper and live presence; worlds, social and shop call it
+comms = 8
+worlds = 9
+social = 10
+builder = 11
+camera_reel = 12
+shop = 13
+presence = 15
+ops = 16
+
+[allow]
