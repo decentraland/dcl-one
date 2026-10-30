@@ -76,9 +76,9 @@ jobs:
             services/catalyst/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
+          key: foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
           restore-keys: |
-            foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
+            foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
       - name: Run backend tests with PostgreSQL and isolated NATS
         run: nix develop --command bash tooling/dev-test.sh rust
       - name: Preserve database logs
@@ -133,9 +133,9 @@ jobs:
             services/catalyst/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
+          key: foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
           restore-keys: |
-            foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
+            foundation-dev-nodebug-${{ github.repository }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
       - name: Restore the pnpm store
         id: pnpm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
