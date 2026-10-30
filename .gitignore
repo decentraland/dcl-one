@@ -7,7 +7,7 @@
 /state/
 /credentials/
 /data/
-# AI session plans and handoffs are local; durable outcomes belong in ledgers.
+# AI session plans and handoffs are local; durable ledger outcomes belong in Notion.
 /.agent-work/
 **/.superpowers/
 **/docs/superpowers/
@@ -33,3 +33,26 @@ result-*
 /rendering/bevy-explorer/source/package/
 /rendering/bevy-explorer/source/libs/
 /rendering/bevy-explorer/source/bevy-explorer-desktop-*
+
+# Private agent records and generated ledger pages stay outside the public tree.
+/services/catalyst/docs/comms/plans/
+/services/catalyst/docs/comms/agents/**/*.json
+/services/catalyst/docs/comms/agents/**/run-log.md
+/services/catalyst/docs/comms/agents/**/tools/
+/services/catalyst/docs/comms/agents/architecture/designs/
+/services/catalyst/docs/comms/agents/lineage/
+/services/catalyst/docs/comms/agents/keyless-e2e-plan.md
+/services/catalyst/docs/comms/*.html
+/services/catalyst/docs/comms/comms-security-review.md
+/services/catalyst/docs/comms/agents/comms-security/
+/services/catalyst/.claude/agents/comms-security-reviewer.md
+/services/catalyst/docs/crates/agents/*.json
+/services/catalyst/docs/crates/agents/*-evidence.md
+/services/catalyst/docs/crates/agents/tools/
+/services/catalyst/docs/crates/*.html
+/METRICS.md
+/docs/compatibility.md
+/docs/readiness.md
+
+# Private scene-response design and security review.
+/rendering/bevy-explorer/source/docs/shared-scene-response-channel.md
