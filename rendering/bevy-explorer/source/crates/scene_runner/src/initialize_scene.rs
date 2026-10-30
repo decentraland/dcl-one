@@ -46,7 +46,10 @@ use super::{update_world::CrdtExtractors, LoadSceneEvent, PrimaryUser, SceneSets
 use crate::{
     bounds_calc::scene_regions,
     parcel_to_vec3,
-    renderer_context::{RendererSceneContext, SceneState, FROZEN_BLOCK},
+    renderer_context::{
+        RendererSceneContext, SceneState, FROZEN_BLOCK, SCENE_FIRST_UPDATE_TICK,
+        SCENE_JS_SPAWN_TICK,
+    },
     update_world::{visibility::VisibilityComponent, ComponentTracker},
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
     SceneEntity, SceneThreadHandle,
@@ -527,7 +530,7 @@ pub(crate) fn load_scene_javascript(
             debug!("main crdt found for scene ent {root:?}");
         } else {
             // explicitly set initial tick as run
-            renderer_context.tick_number = 1;
+            renderer_context.tick_number = SCENE_JS_SPAWN_TICK;
         }
 
         // add MainCamera component
@@ -653,7 +656,9 @@ pub(crate) fn initialize_scene(
     mobile_ui: Res<MobileUiEmulation>,
 ) {
     for (root, mut state, initial_data, mut context, super_user) in loading_scenes.iter_mut() {
-        if !matches!(state.as_mut(), SceneLoading::Javascript { .. }) || context.tick_number != 1 {
+        if !matches!(state.as_mut(), SceneLoading::Javascript { .. })
+            || context.tick_number != SCENE_JS_SPAWN_TICK
+        {
             continue;
         }
 
@@ -748,16 +753,16 @@ pub(crate) fn initialize_scene(
         // reaches the target after a scene update; the first two updates are the
         // engine handshake (init + onStart/composite instancing, no scene frame),
         // and the third is the first real scene update that runs main() + one system
-        // pass — so 3 lands on "main ran, one frame". Super scenes (the editor
-        // agent) and startup portables (the default controller — parent_scene is
-        // None) are exempt: they aren't the scene being edited and must keep
+        // pass — so SCENE_FIRST_UPDATE_TICK lands on "main ran, one frame". Super
+        // scenes (the editor agent) and startup portables (the default controller —
+        // parent_scene is None) are exempt: they aren't the scene being edited and must keep
         // ticking. Portables spawned BY a scene still freeze with it.
         let startup_portable = context.is_portable
             && portable_scenes
                 .get(&context.hash)
                 .is_some_and(|source| source.parent_scene.is_none());
         if editor_mode.0 && super_user.is_none() && !startup_portable {
-            context.refreeze_at_tick = Some(3);
+            context.refreeze_at_tick = Some(SCENE_FIRST_UPDATE_TICK);
         }
 
         commands.entity(root).remove::<SceneLoading>();
