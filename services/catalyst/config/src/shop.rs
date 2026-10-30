@@ -362,7 +362,7 @@ pub struct ShopConfig {
     pub credits_ttl_seconds: u64,
 
     /// The signed value over the group's quoted MANA need, in percent, 100..=150 (upstream USD_CREDIT_CAP_HEADROOM_PCT).
-    #[arg(long, env = "CREDITS_CAP_HEADROOM_PCT", default_value_t = 150)]
+    #[arg(long, env = "CREDITS_CAP_HEADROOM_PCT", default_value_t = 100)]
     pub credits_cap_headroom_pct: u32,
 
     /// The oracle buffer inside the credit sizing, in basis points, at most 1000 (upstream USD_CREDIT_BUFFER_BPS).
@@ -651,5 +651,26 @@ mod tests {
             ),
             (30, 50)
         );
+    }
+
+    #[test]
+    fn the_credit_cap_adds_no_headroom_by_default_and_keeps_an_explicit_one() {
+        let c = parse(&["x", "--database-url", "postgres:///catalyst"]).unwrap();
+        assert_eq!(
+            (
+                c.shop.credits_cap_headroom_pct,
+                c.shop.credits_oracle_buffer_bps
+            ),
+            (100, 200)
+        );
+        let c = parse(&[
+            "x",
+            "--database-url",
+            "postgres:///catalyst",
+            "--credits-cap-headroom-pct",
+            "150",
+        ])
+        .unwrap();
+        assert_eq!(c.shop.credits_cap_headroom_pct, 150);
     }
 }

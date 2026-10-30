@@ -41,8 +41,8 @@ use crate::types::{
 pub const MAX_LINES_PER_GROUP: usize = policy::MAX_CREDIT_LINES_PER_GROUP;
 /// Upstream `DEFAULT_USD_CREDIT_TTL_SECONDS`.
 pub const DEFAULT_TTL_SECONDS: u64 = 300;
-/// Upstream `DEFAULT_CAP_HEADROOM_PCT`.
-pub const DEFAULT_CAP_HEADROOM_PCT: u32 = 150;
+/// 100 adds no headroom over the buffered quote: with the default buffer a credit signs 1.02x its quote.
+pub const DEFAULT_CAP_HEADROOM_PCT: u32 = 100;
 /// Upstream `USD_CREDIT_BUFFER_BPS` default.
 pub const DEFAULT_ORACLE_BUFFER_BPS: u32 = 200;
 /// The unavailable-source name of NAME credits (docs/shop/CONTRACTS.md).

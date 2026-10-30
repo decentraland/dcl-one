@@ -2289,6 +2289,52 @@ async fn priced_authorization_derives_the_wei_from_the_oracle() {
     cleanup(&pool, &addr).await;
 }
 
+#[test]
+fn the_default_settings_sign_the_buffered_quote_and_an_explicit_headroom_is_kept() {
+    let defaults = Settings::parse(RawSettings::default()).unwrap();
+    assert_eq!(
+        (defaults.credit_cap_headroom_pct, defaults.credit_buffer_bps),
+        (100, 200)
+    );
+    let explicit = Settings::parse(RawSettings {
+        credit_cap_headroom_pct: 150,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    assert_eq!(explicit.credit_cap_headroom_pct, 150);
+
+    // 4 MANA quoted at 0.5 USD/MANA ($2): what each configuration signs.
+    let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
+    let signed = |buffer_bps, headroom_pct| {
+        crate::types::CreditSizing::new(rate, buffer_bps, headroom_pct)
+            .unwrap()
+            .cap(UsdCents::new(200))
+            .unwrap()
+            .get()
+            .to_string()
+    };
+    assert_eq!(
+        signed(defaults.credit_buffer_bps, defaults.credit_cap_headroom_pct),
+        "4080000000000000000",
+        "1.02x by default"
+    );
+    assert_eq!(
+        signed(200, 150),
+        "6120000000000000000",
+        "1.53x with headroom 150"
+    );
+    assert_eq!(
+        signed(1_000, 100),
+        "4400000000000000000",
+        "1.10x with the largest buffer, no headroom"
+    );
+    assert_eq!(
+        signed(1_000, 150),
+        "6600000000000000000",
+        "1.65x with both at their maximum"
+    );
+}
+
 #[tokio::test]
 async fn a_five_dollar_pack_signs_the_mana_of_five_hundred_cents_on_the_authorize_lane() {
     let Some(db) = OwnDatabase::create("peg").await else {
@@ -2394,7 +2440,7 @@ async fn a_five_dollar_pack_signs_the_mana_of_five_hundred_cents_on_the_authoriz
         }
     };
     let rate = crate::types::ManaUsdRate::parse_usd_per_mana("0.5").unwrap();
-    let sizing = crate::types::CreditSizing::new(rate, 200, 150).unwrap();
+    let sizing = crate::types::CreditSizing::new(rate, 200, 100).unwrap();
     let cap = |quoted: i64| sizing.cap(UsdCents::new(quoted)).unwrap().get().to_string();
     let (status, v) = authorize(200, "200").await;
     assert_eq!(status, StatusCode::OK, "{v}");
@@ -2406,8 +2452,8 @@ async fn a_five_dollar_pack_signs_the_mana_of_five_hundred_cents_on_the_authoriz
         "the signed value is the quoted MANA need plus the oracle buffer, times the headroom"
     );
     assert_eq!(
-        v["credit"]["amount"], "6120000000000000000",
-        "4 MANA * 1.02 * 1.5"
+        v["credit"]["amount"], "4080000000000000000",
+        "4 MANA * 1.02, no headroom"
     );
     assert_eq!(v["maxCreditedValue"], v["credit"]["amount"]);
     assert_eq!(v["credit"]["availableAmount"], v["credit"]["amount"]);
@@ -2482,8 +2528,8 @@ async fn a_five_dollar_pack_signs_the_mana_of_five_hundred_cents_on_the_authoriz
         parse(cap(200)) * alloy_primitives::U256::from(2) + parse(cap(95))
     );
     assert!(
-        signed < ManaWei::from_mana(16).get(),
-        "$5 at 0.5 USD/MANA is 10 MANA, 15.3 with the buffer and the headroom, not the 153 the 100-cent peg signed: {signed}"
+        signed < ManaWei::from_mana(11).get(),
+        "$5 at 0.5 USD/MANA is 10 MANA, 10.2 with the buffer, not the 153 the 100-cent peg signed: {signed}"
     );
     let lines: i64 = sqlx::query_scalar("SELECT count(*) FROM credits.authorization_lines l JOIN credits.authorizations a ON a.id = l.authorization_id WHERE a.address = $1 AND l.sale_kind = 'primary_mint' AND l.asset_kind = 'wearable'").bind(&wallet.address).fetch_one(&pool).await.unwrap();
     assert_eq!(

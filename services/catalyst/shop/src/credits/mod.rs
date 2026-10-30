@@ -194,7 +194,7 @@ pub struct RawSettings {
     pub usage_stop_block: Option<u64>,
     /// `CREDITS_TTL_SECONDS` (300): how long a signed credit stays spendable (upstream `USD_CREDIT_TTL_SECONDS`).
     pub credit_ttl_seconds: u64,
-    /// `CREDITS_CAP_HEADROOM_PCT` (150): the signed value over the quoted MANA need, 100..=150 (upstream `USD_CREDIT_CAP_HEADROOM_PCT`).
+    /// `CREDITS_CAP_HEADROOM_PCT` (100): the signed value over the quoted MANA need, 100..=150 (upstream `USD_CREDIT_CAP_HEADROOM_PCT`).
     pub credit_cap_headroom_pct: u32,
     /// `CREDITS_ORACLE_BUFFER_BPS` (200): the oracle buffer inside the sizing, at most 1000 (upstream `USD_CREDIT_BUFFER_BPS`).
     pub credit_buffer_bps: u32,
