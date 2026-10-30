@@ -313,8 +313,9 @@ The Explorer HUD ships from two copies:
 Both carry the same `design/` primitives and `styles/tokens.css`. In both, the
 existing primitives and local tokens remain in use, under
 `rendering/bevy-explorer/source/react-web/AGENTS.md`, until the shared library
-integration is reviewed and implemented. A future migration must preserve HUD
-behavior in both.
+integration is reviewed and implemented. Sites will be migrated as a whole
+later; until then its HUD adaptation in `apps/ui3/src/play` stays as it is. A
+future migration must preserve HUD behavior in both.
 
 ### Integration
 
