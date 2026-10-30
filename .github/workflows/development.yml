@@ -72,6 +72,14 @@ jobs:
       - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
       - name: Verify the exact public ENet source pin
         run: nix develop --command python3 tooling/enet-provenance.py
+      - name: Identify Rust build inputs
+        id: rust-inputs
+        shell: bash
+        run: |
+          # Hash tracked inputs, not the commit: unrelated documentation edits
+          # reuse a snapshot, while schema, protocol and vendored SDK edits do not.
+          source=$(git ls-tree -r HEAD -- services/catalyst library schemas .cargo apps/dcl-scene-cli flake.nix Makefile tooling infra/dev .github/workflows/development.yml | git hash-object --stdin)
+          echo "source=$source" >> "$GITHUB_OUTPUT"
       - name: Restore Rust build cache
         id: rust-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -80,8 +88,11 @@ jobs:
             services/catalyst/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
+          key: foundation-dev-v2-tests-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}-${{ steps.rust-inputs.outputs.source }}
           restore-keys: |
+            foundation-dev-v2-tests-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}-
+            foundation-dev-v2-tests-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
+            foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
             foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
       - name: Run backend tests with PostgreSQL and isolated NATS
         run: nix develop --command bash tooling/dev-test.sh rust
@@ -92,8 +103,10 @@ jobs:
           name: development-rust-logs-${{ runner.os }}-${{ runner.arch }}
           path: .cache/dev/*.log
           retention-days: 7
-      - name: Save Rust build cache from main
-        if: github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
+      - name: Save successful Rust build snapshot
+        # Only same-repository Linux test jobs write large PR snapshots.
+        # Main maintains both platforms; GitHub keeps PR writes on their merge ref.
+        if: success() && ((github.event_name == 'pull_request' && runner.os == 'Linux' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/main')) && steps.rust-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -129,6 +142,14 @@ jobs:
         run: nix flake show --all-systems
       - name: Build the development shell and locate the pnpm store
         run: echo "PNPM_STORE=$(nix develop --command pnpm store path)" >> "$GITHUB_ENV"
+      - name: Identify Rust build inputs
+        id: rust-inputs
+        shell: bash
+        run: |
+          # Hash tracked inputs, not the commit: unrelated documentation edits
+          # reuse a snapshot, while schema, protocol and vendored SDK edits do not.
+          source=$(git ls-tree -r HEAD -- services/catalyst library schemas .cargo apps/dcl-scene-cli flake.nix Makefile tooling infra/dev .github/workflows/development.yml | git hash-object --stdin)
+          echo "source=$source" >> "$GITHUB_OUTPUT"
       - name: Restore Rust build cache
         id: rust-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -137,9 +158,10 @@ jobs:
             services/catalyst/target
             ~/.cargo/registry
             ~/.cargo/git
-          key: foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}
+          key: foundation-dev-v2-smoke-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}-${{ steps.rust-inputs.outputs.source }}
           restore-keys: |
-            foundation-dev-nodebug-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
+            foundation-dev-v2-smoke-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-${{ hashFiles('services/catalyst/Cargo.lock') }}-
+            foundation-dev-v2-smoke-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('flake.lock', 'services/catalyst/rust-toolchain.toml') }}-
       - name: Restore the pnpm store
         id: pnpm-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -184,6 +206,17 @@ jobs:
         with:
           path: ${{ env.PNPM_STORE }}
           key: ${{ steps.pnpm-cache.outputs.cache-primary-key }}
+      - name: Save successful smoke build snapshot
+        # PR smoke jobs restore main's snapshots without creating multi-GB copies.
+        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rust-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            services/catalyst/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.rust-cache.outputs.cache-primary-key }}
+
   web:
     name: Web tests and contracts
     runs-on: ubuntu-26.04
@@ -205,11 +238,23 @@ jobs:
         run: |
           nix develop --command pnpm --dir apps/ui3 install --frozen-lockfile
           nix develop --command pnpm --dir apps/sites install --frozen-lockfile
-      - name: Run the web unit tests
+      - name: Select web unit coverage
+        id: web-coverage
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 tooling/dev-ci.py
+      - name: Run UI3 unit tests
+        if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
+        timeout-minutes: 20
+        run: nix develop --command pnpm --dir apps/ui3 test
+      - name: Run Sites unit tests
+        if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
+        timeout-minutes: 20
+        run: nix develop --command pnpm --dir apps/sites test
+      - name: Run editor scene unit tests
+        if: steps.web-coverage.outputs.run-web-unit-tests != 'false'
         timeout-minutes: 20
         run: |
-          nix develop --command pnpm --dir apps/ui3 test
-          nix develop --command pnpm --dir apps/sites test
           nix develop --command pnpm --dir apps/ui3/editor-scene install --frozen-lockfile
           nix develop --command pnpm --dir apps/ui3/editor-scene test
       - name: Check web types and generated artifacts

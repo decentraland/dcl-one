@@ -59,10 +59,12 @@ jobs:
     steps:
       - name: Reserve disk space for native builds
         run: |
-          # Hosted runners include SDKs unused by this Nix build.
+          # Free every unused SDK before the LFS checkout and cold Nix builds.
+          SECONDS=0
           df -h /
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
           df -h /
+          echo "Image build disk cleanup completed in ${SECONDS}s"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: true
@@ -73,35 +75,50 @@ jobs:
       - name: Check the publication rules
         run: |
           python3 -m unittest discover -s tooling/tests -p 'test_image_publish.py' -v
+          python3 -m unittest discover -s tooling/tests -p 'test_image_cache.py' -v
           python3 -m unittest discover -s tooling/tests -p 'test_ci_publication.py' -v
       - name: Validate packaged docs before compiling applications
         run: nix build 'git+file:.?lfs=1#sites.docsContent' --no-link -L
-      - name: Restore dependency binary cache
-        id: cache
+      - name: Identify exact Nix cache inputs
+        id: cache-keys
+        run: python3 tooling/image-cache.py keys --arch '${{ matrix.arch }}'
+      - name: Restore Catalyst dependency cache
+        id: catalyst-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
+          path: .cache/catalyst-nix
+          key: ${{ steps.cache-keys.outputs.catalyst-key }}
+          # PR caches are isolated by merge ref and explicit PR namespace. Only
+          # this exact trusted-main derivation is eligible as their fallback.
+          restore-keys: ${{ steps.cache-keys.outputs.catalyst-main-key }}
+      - name: Restore Sites dependency cache
+        id: sites-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/sites-nix
+          key: ${{ steps.cache-keys.outputs.sites-key }}
+          restore-keys: ${{ steps.cache-keys.outputs.sites-main-key }}
+      - name: Restore legacy dependencies during cache migration
+        if: steps.catalyst-cache.outputs.cache-matched-key == '' || steps.sites-cache.outputs.cache-matched-key == ''
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          # Read-only compatibility fallback keeps the complete Node toolchain
+          # available until both independent caches have been populated.
           path: .cache/image-nix
-          # Keep fallback restores inside this namespace: earlier caches omit
-          # Node's dev/libv8/npm outputs and cannot safely seed a partial build.
           key: images-deps-node-all-${{ matrix.arch }}-${{ hashFiles('flake.*', 'infra/packages/**', 'services/catalyst/rust-toolchain.toml', 'services/catalyst/Cargo.lock', 'services/catalyst/**/Cargo.toml', 'apps/sites/package.json', 'apps/sites/pnpm-lock.yaml', 'apps/sites/pnpm-workspace.yaml', 'apps/sites/.npmrc') }}
-          restore-keys: |
-            images-deps-node-all-${{ matrix.arch }}-
-      - name: Identify the compiled APIs package
-        id: apis-package
-        run: |
-          drv=$(nix eval --raw .#catalyst.drvPath)
-          echo "key=apis-package-v1-${{ matrix.arch }}-${drv##*/}" >> "$GITHUB_OUTPUT"
+          restore-keys: images-deps-node-all-${{ matrix.arch }}-
       - name: Restore the compiled APIs package
         id: apis-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/apis-nix
-          # Exact Nix derivation: source, dependency pins, compiler and build flags.
-          # Container revision labels are rebuilt separately for this commit.
-          key: ${{ steps.apis-package.outputs.key }}
+          # Exact source/compiler/flags identity; only the runtime closure is
+          # cached, not a new multi-gigabyte Cargo target tree on each commit.
+          key: ${{ steps.cache-keys.outputs.apis-key }}
+          restore-keys: ${{ steps.cache-keys.outputs.apis-main-key }}
       - name: Import cached store paths
         run: |
-          for cache in .cache/image-nix .cache/apis-nix; do
+          for cache in .cache/image-nix .cache/catalyst-nix .cache/sites-nix .cache/apis-nix; do
             if [ -f "$cache/nix-cache-info" ]; then
               # Import canonical names; --all can enumerate hash-x aliases.
               shopt -s nullglob
@@ -114,7 +131,7 @@ jobs:
                 nix copy --no-check-sigs --from "file://$PWD/$cache" "${paths[@]}"
               fi
             fi
-            # Imported paths live in /nix/store. Only main exports misses below.
+            # Imported paths live in /nix/store. Export only current closures after smoke tests.
             rm -rf "$cache"
           done
           df -h /
@@ -146,29 +163,45 @@ jobs:
           df -h /
       - name: Test the exact images before publication
         run: python3 tooling/image-smoke.py --revision "$GITHUB_SHA"
-      - name: Export reusable dependencies
-        if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+      - name: Export tested Catalyst dependencies
+        if: steps.cache-keys.outputs.save == 'true' && steps.catalyst-cache.outputs.cache-matched-key == ''
         run: |
-          # Old restored paths are in /nix/store; save only this dependency set.
-          rm -rf .cache/image-nix
-          mkdir -p .cache/image-nix
-          nix copy --to "file://$PWD/.cache/image-nix?compression=zstd&compression-level=3" \
-            .#catalyst-deps .#catalyst-vendor .#sites-deps .#sites-runtime-deps .#sites-toolchain
-          du -sh .cache/image-nix .cache/images
-          df -h /
+          mkdir -p .cache/catalyst-nix
+          nix copy --to "file://$PWD/.cache/catalyst-nix?compression=zstd&compression-level=3" \
+            .#catalyst-deps .#catalyst-vendor
+          du -sh .cache/catalyst-nix
+      - name: Save tested Catalyst dependencies
+        if: steps.cache-keys.outputs.save == 'true' && steps.catalyst-cache.outputs.cache-matched-key == ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/catalyst-nix
+          key: ${{ steps.cache-keys.outputs.catalyst-key }}
+      - name: Export tested Sites dependencies
+        if: steps.cache-keys.outputs.save == 'true' && steps.sites-cache.outputs.cache-matched-key == ''
+        run: |
+          mkdir -p .cache/sites-nix
+          nix copy --to "file://$PWD/.cache/sites-nix?compression=zstd&compression-level=3" \
+            .#sites-deps .#sites-runtime-deps .#sites-toolchain
+          du -sh .cache/sites-nix
+      - name: Save tested Sites dependencies
+        if: steps.cache-keys.outputs.save == 'true' && steps.sites-cache.outputs.cache-matched-key == ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/sites-nix
+          key: ${{ steps.cache-keys.outputs.sites-key }}
       - name: Export the tested APIs package
-        if: github.ref == 'refs/heads/main' && steps.apis-cache.outputs.cache-hit != 'true'
+        if: steps.cache-keys.outputs.save == 'true' && steps.apis-cache.outputs.cache-matched-key == ''
         run: |
           mkdir -p .cache/apis-nix
           # Runtime closure only: no extra Cargo target tree or dependency build cache.
           nix copy --to "file://$PWD/.cache/apis-nix?compression=zstd&compression-level=3" .#catalyst
           du -sh .cache/apis-nix
-      - name: Save the tested APIs package from main
-        if: github.ref == 'refs/heads/main' && steps.apis-cache.outputs.cache-hit != 'true'
+      - name: Save the tested APIs package
+        if: steps.cache-keys.outputs.save == 'true' && steps.apis-cache.outputs.cache-matched-key == ''
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: .cache/apis-nix
-          key: ${{ steps.apis-package.outputs.key }}
+          key: ${{ steps.cache-keys.outputs.apis-key }}
       - name: Upload tested images
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -187,12 +220,6 @@ jobs:
           path: .cache/images/play-producer.json
           if-no-files-found: error
           retention-days: 3
-      - name: Save dependency binary cache from main
-        if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: .cache/image-nix
-          key: ${{ steps.cache.outputs.cache-primary-key }}
       - name: Preserve smoke logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
