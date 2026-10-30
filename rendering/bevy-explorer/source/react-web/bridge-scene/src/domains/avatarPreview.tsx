@@ -450,11 +450,13 @@ function pollTurn(dt: number): void {
   else if (done.to === YAW_FRONT && swapReady) startTurn(done.entity, YAW_FRONT, YAW_AWAY)
 }
 
-// The look wanted on show goes on the standby (unless already there, loaded ahead); the next
-// RANDOMIZE's look goes there once the one on show has loaded and nothing else is wanted, nor on
-// its way (a RANDOMIZE's look, usually the one loaded ahead, must find it there).
+// The look wanted on show goes on the standby (unless already there, loaded ahead), in place of one
+// still loading ahead; the next RANDOMIZE's look goes there once the one on show has loaded and
+// nothing else is wanted, nor on its way (a RANDOMIZE's look, usually the one loaded ahead, must
+// find it there).
 function loadOnStandby(): void {
-  if (standbyEntity == null || standbyLoad != null) return
+  if (standbyEntity == null) return
+  if (standbyLoad != null && (standbyWanted || wanted == null || wanted.key === standbyKey)) return
   const next = wanted != null && wanted.key !== standbyKey ? wanted : wanted == null && expecting === 0 && preload != null && shownLoaded && preload.key !== standbyKey ? preload : null
   if (next == null) return
   setShape(standbyEntity, next.shape)
