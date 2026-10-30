@@ -27,7 +27,7 @@ INPUTS = ('apps/bevy-explorer/build-web.py',
 TOOLCHAINS = ('rust-toolchain', 'rust-toolchain.toml')
 # Compiled into the engine (option_env!): a value change must miss the engine cache like a source
 # change, while the Sites import, which runs without the variables, still verifies the build.
-BUILD_ENV = ('BEVY_SEGMENT_WRITE_KEY_PROD', 'BEVY_SEGMENT_WRITE_KEY_DEV')
+BUILD_ENV = ('BEVY_SEGMENT_WRITE_KEY', 'BEVY_ANALYTICS_DEV')
 REQUIRED = ('engine/pkg/webgpu_build_bg.wasm', 'engine/pkg/webgpu_build.js',
             'engine/pkg/manifest.json', 'engine/pkg-scene/dcl_scene_wasm_bg.wasm',
             'engine/headless.html', 'bridge-scene/static/BevyExplorerUI/about',

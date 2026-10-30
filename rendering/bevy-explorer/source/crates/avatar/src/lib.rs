@@ -33,6 +33,7 @@ use scene_material::{
 
 pub mod animate;
 pub mod attach;
+mod avatar_state;
 pub mod avatar_texture;
 pub mod colliders;
 mod dynamic_nametag;
@@ -161,6 +162,9 @@ impl Plugin for AvatarPlugin {
         );
 
         app.add_preview_console_command::<DebugDumpAvatar, _>(debug_dump_avatar);
+        app.add_console_command::<avatar_state::AvatarStateCommand, _>(
+            avatar_state::avatar_state_cmd,
+        );
 
         app.add_observer(add_attach_points_to_avatar_shape);
         app.add_observer(remove_attach_points_from_avatar_shape);
@@ -522,7 +526,8 @@ pub struct AvatarRenderDefinition {
     skin_color: Color,
     hair_color: Color,
     eyes_color: Color,
-    wearables: Vec<Wearable>,
+    /// each worn wearable with its urn, in the order of their categories
+    wearables: Vec<(WearableUrn, Wearable)>,
     hides: HashSet<WearableCategory>,
     bounds: SceneBounds,
     disable_dither: bool,
@@ -744,10 +749,14 @@ fn update_render_avatar(
             initial_count
         );
 
-        let (mut wearables, mut urns): (Vec<_>, HashSet<_>) = wearables.into_values().unzip();
+        let mut wearables: Vec<(WearableUrn, Wearable)> = wearables
+            .into_values()
+            .map(|(wearable, urn)| (urn, wearable))
+            .collect();
         // a fixed order, so an unchanged definition compares equal
-        wearables.sort_by_key(|wearable| wearable.category);
+        wearables.sort_by_key(|(_, wearable)| wearable.category);
 
+        let mut urns: HashSet<_> = wearables.iter().map(|(urn, _)| urn.clone()).collect();
         urns.insert(body_urn.clone());
 
         debug!("avatar definition loaded: {wearables:?}");
@@ -1015,7 +1024,7 @@ fn spawn_scenes(
             .chain(
                 def.wearables
                     .iter()
-                    .flat_map(|wearable| wearable.model.as_ref()),
+                    .flat_map(|(_, wearable)| wearable.model.as_ref()),
             )
             .any(|model| {
                 let h_model = &model.gltf;
@@ -1083,7 +1092,7 @@ fn spawn_scenes(
         let instances = def
             .wearables
             .iter()
-            .flat_map(|wearable| &wearable.model)
+            .flat_map(|(_, wearable)| &wearable.model)
             .flat_map(|model| {
                 let h_gltf = &model.gltf;
                 match asset_server.get_load_state(h_gltf) {
@@ -1398,7 +1407,9 @@ fn process_avatar(
                 if parent_name.ends_with(suffix) {
                     *vis = Visibility::Hidden;
 
-                    if let Some(wearable) = def.wearables.iter().find(|w| w.category == category) {
+                    if let Some((_, wearable)) =
+                        def.wearables.iter().find(|(_, w)| w.category == category)
+                    {
                         debug!("setting {suffix} color {:?}", color);
                         if let Some(mask) = wearable.mask.as_ref() {
                             debug!("using mask for {suffix}");
@@ -1486,10 +1497,9 @@ fn process_avatar(
                 if parent_name.ends_with(hidename) {
                     // todo construct hides better so we don't need to scan the wearables here
                     if def.hides.contains(&category)
-                        || def
-                            .wearables
-                            .iter()
-                            .any(|w| w.category == WearableCategory::SKIN || w.category == category)
+                        || def.wearables.iter().any(|(_, w)| {
+                            w.category == WearableCategory::SKIN || w.category == category
+                        })
                     {
                         *vis = Visibility::Hidden;
                     }
@@ -1581,7 +1591,7 @@ fn process_avatar(
 
         // color the components of wearables
         // wearable_instances is built from the wearables with models, in order
-        let wearable_models = def.wearables.iter().filter_map(|w| w.model.as_ref());
+        let wearable_models = def.wearables.iter().filter_map(|(_, w)| w.model.as_ref());
         for (instance, model) in loaded_avatar.wearable_instances.iter().zip(wearable_models) {
             let Some(instance) = instance else {
                 warn!("failed to load instance for wearable");
@@ -1728,8 +1738,16 @@ fn process_avatar(
             }
         }
 
-        let wearable_models = def.wearables.iter().filter(|w| w.model.is_some()).count();
-        let wearable_texs = def.wearables.iter().filter(|w| w.model.is_none()).count();
+        let wearable_models = def
+            .wearables
+            .iter()
+            .filter(|(_, w)| w.model.is_some())
+            .count();
+        let wearable_texs = def
+            .wearables
+            .iter()
+            .filter(|(_, w)| w.model.is_none())
+            .count();
 
         debug!(
             "avatar processed, 1+{} models, {} textures. hides: {:?}, skin mats: {:?}, hair mats: {:?}, used mats: {:?}",

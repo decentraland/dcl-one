@@ -5,8 +5,8 @@ use common::{
     structs::{CameraFov, TimeOfDay},
 };
 use dcl_component::{
-    proto_components::sdk::components::PbRealmInfo, DclReader, FromDclReader, SceneComponentId,
-    SceneEntityId,
+    proto_components::sdk::components::{PbExplorerConfiguration, PbRealmInfo},
+    DclReader, FromDclReader, SceneComponentId, SceneEntityId,
 };
 use serde::Serialize;
 use std::{cell::RefCell, rc::Rc};
@@ -135,6 +135,22 @@ pub async fn op_camera_fov(op_state: Rc<RefCell<impl State>>) -> Result<f32, any
     debug!("op_camera_fov");
     let state = op_state.borrow();
     Ok(state.borrow::<CameraFov>().0)
+}
+
+// the player's language (BCP-47), for getExplorerInformation
+pub fn op_get_player_language(state: &impl State) -> Option<String> {
+    player_language(state)
+}
+
+pub fn player_language(state: &impl State) -> Option<String> {
+    let raw_component = state.try_borrow::<RendererStore>()?.0.get(
+        SceneComponentId::EXPLORER_CONFIGURATION,
+        CrdtType::LWW_ANY,
+        SceneEntityId::ROOT,
+    )?;
+    PbExplorerConfiguration::from_reader(&mut DclReader::new(raw_component))
+        .ok()?
+        .locale
 }
 
 // what getExplorerInformation / EnvironmentApi report to this scene

@@ -198,6 +198,7 @@ impl SceneComponentId {
 
     pub const BILLBOARD: SceneComponentId = SceneComponentId(1090);
     pub const PLAYER_IDENTITY_DATA: SceneComponentId = SceneComponentId(1089);
+    pub const EXPLORER_CONFIGURATION: SceneComponentId = SceneComponentId(1505);
 
     pub const UI_INPUT: SceneComponentId = SceneComponentId(1093);
     pub const UI_DROPDOWN: SceneComponentId = SceneComponentId(1094);

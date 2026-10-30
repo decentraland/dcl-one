@@ -188,6 +188,11 @@ pub fn platform_pointer_is_locked() -> Option<bool> {
     None
 }
 
+/// The OS language as a BCP-47 tag (`en-GB`).
+pub fn system_language() -> Option<String> {
+    sys_locale::get_locale()
+}
+
 pub fn default_camera_components() -> impl Bundle {
     (
         Tonemapping::AcesFitted,

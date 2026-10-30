@@ -35,6 +35,7 @@ import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '../pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { formatConsoleReply, parseChatCommand } from '../chat/chatCommands'
+import { applyLanguageSetting } from '../chat/translation'
 import { PARCEL_METERS, isGenesisSatelliteView } from '../map/atlas'
 import { EDITOR_BUILD } from '../editorHost/config'
 import { editorEntry } from '../editorHost/source'
@@ -1190,6 +1191,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'settings':
           setSettings(msg.settings)
+          applyLanguageSetting(msg.settings)
           break
         case 'bindings':
           setBindingsSnapshot(msg.bindings)

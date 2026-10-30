@@ -34,8 +34,10 @@ pub enum RendererResponse {
     /// deleted scene-side, `born` are reserved for engine-created entities. The
     /// census is sourced from the engine context's `death_row`/`nascent` at the
     /// send point (before the scene's own census is merged in), so it never
-    /// echoes the scene's own born/died back to it.
-    Ok(CrdtStore, SceneCensus),
+    /// echoes the scene's own born/died back to it. The `f64` is the engine time in
+    /// seconds since this scene's previous dispatch (0 for the first), which the scene
+    /// uses as its next tick's dt.
+    Ok(CrdtStore, SceneCensus, f64),
     /// Request the scene thread to send back a full clone of its current CRDT state.
     GetCrdtSnapshot,
     /// Allocate `count` fresh entity ids from the scene's allocator (collision-free, correctly

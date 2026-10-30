@@ -12,7 +12,7 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin, RpcStreamSender},
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
-        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PointAtSync,
+        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
         SceneDrivenAnimationRequest,
     },
     util::ModifyComponentExt,
@@ -25,7 +25,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use dcl_component::{
     proto_components::{
         kernel::comms::rfc4::{self, packet::Message},
-        sdk::components::PbPlayerIdentityData,
+        sdk::components::{PbExplorerConfiguration, PbPlayerIdentityData},
     },
     transform_and_parent::{DclQuat, DclTransformAndParent, DclTranslation},
     DclReader, DclWriter, GlobalCrdtData, Localizer, SceneComponentId, SceneEntityId, SceneOrigin,
@@ -110,6 +110,14 @@ impl Plugin for GlobalCrdtPlugin {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_systems(Update, process_transport_updates);
         app.add_systems(Update, despawn_players);
+        app.init_resource::<PlayerLanguage>();
+        // a server has no local player, so no language to report
+        if !common::structs::server_mode() {
+            app.add_systems(
+                Update,
+                push_explorer_configuration.run_if(resource_changed::<PlayerLanguage>),
+            );
+        }
         app.add_observer(remove_transport_from_foreign_audio_source);
         app.add_observer(remove_transport_from_foreign_players);
         // a headless app plays no voices, so never subscribes to foreign audio
@@ -132,6 +140,24 @@ impl Plugin for GlobalCrdtPlugin {
         app.add_event::<PlayerSceneAnimEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<ChatEvent>();
+    }
+}
+
+/// Scenes read the explorer's configuration from `EXPLORER_CONFIGURATION` on their root entity.
+fn push_explorer_configuration(
+    language: Res<PlayerLanguage>,
+    mut contexts: Query<&mut GlobalCrdtState>,
+) {
+    let configuration = PbExplorerConfiguration {
+        locale: language.0.clone(),
+    };
+    for mut global_crdt in contexts.iter_mut() {
+        global_crdt.update_crdt(
+            SceneComponentId::EXPLORER_CONFIGURATION,
+            CrdtType::LWW_ANY,
+            SceneEntityId::ROOT,
+            &configuration,
+        );
     }
 }
 
@@ -774,7 +800,7 @@ pub fn process_transport_updates(
     mut profile_meta_cache: ResMut<ProfileMetaCache>,
     mut duplicate_chat_filter: Local<HashMap<Entity, f64>>,
     mut remote_anim: Local<RemoteAnimState>,
-    discard_player_updates: Res<DiscardPlayerUpdates>,
+    (discard_player_updates, transports): (Res<DiscardPlayerUpdates>, Query<(), With<Transport>>),
 ) {
     // gather any event receivers
     for ev in subscribers.read() {
@@ -810,6 +836,15 @@ pub fn process_transport_updates(
             match network_update {
                 NetworkUpdate::Player(update) => {
                     if discard_player_updates.0 {
+                        continue;
+                    }
+                    // queued before its transport was despawned: registering a dead transport
+                    // would hold the player forever, as nothing can remove it again
+                    if !transports.contains(update.transport_id) {
+                        debug!(
+                            "dropping update from {} on despawned transport {}",
+                            update.address, update.transport_id
+                        );
                         continue;
                     }
                     // create/update timestamp/transport_id on the foreign player
@@ -1522,5 +1557,89 @@ mod tests {
         assert_eq!(reused.index(), gone.index());
         assert!(!state.cache.contains_key(&reused));
         assert!(!state.last_sequence.contains_key(&reused));
+    }
+
+    /// The presence pipeline as the plugin wires it, on a bare world: one shared context, the
+    /// update/despawn systems and the transport-removal observer.
+    fn presence_app() -> (App, Entity) {
+        let mut app = App::new();
+        app.init_resource::<Time>();
+        app.init_resource::<DiscardPlayerUpdates>();
+        app.init_resource::<ProfileMetaCache>();
+        app.add_event::<RpcCallEvent>();
+        app.add_event::<ProfileEvent>();
+        app.add_event::<PlayerPositionEvent>();
+        app.add_event::<PlayerSceneAnimEvent>();
+        app.add_event::<EmoteLifecycleEvent>();
+        app.add_event::<ChatEvent>();
+        app.add_event::<ChatReactionEvent>();
+        app.add_systems(Update, (process_transport_updates, despawn_players).chain());
+        app.add_observer(remove_transport_from_foreign_players);
+        let context = app.world_mut().spawn(GlobalCrdtState::new(None)).id();
+        (app, context)
+    }
+
+    fn spawn_transport(app: &mut App, context: Entity) -> Entity {
+        let (sender, _receiver) = mpsc::channel(1);
+        app.world_mut()
+            .spawn(Transport {
+                transport_type: crate::TransportType::WebsocketRoom,
+                sender,
+                control: None,
+                context,
+            })
+            .id()
+    }
+
+    fn queue_joined(app: &mut App, context: Entity, transport: Entity, address: Address) {
+        app.world()
+            .get::<GlobalCrdtState>(context)
+            .unwrap()
+            .get_sender()
+            .try_send(
+                PlayerUpdate {
+                    transport_id: transport,
+                    message: PlayerMessage::Joined,
+                    address,
+                }
+                .into(),
+            )
+            .unwrap();
+    }
+
+    /// Each foreign player's presence set.
+    fn foreign_players(app: &mut App) -> Vec<HashSet<Entity>> {
+        app.world_mut()
+            .query::<&ForeignPlayer>()
+            .iter(app.world())
+            .map(|player| player.transports.clone())
+            .collect()
+    }
+
+    #[test]
+    fn update_queued_before_transport_despawn_does_not_register_presence() {
+        let (mut app, context) = presence_app();
+        let peer = Address::repeat_byte(0xab);
+
+        // control: a live transport registers the peer
+        let live = spawn_transport(&mut app, context);
+        queue_joined(&mut app, context, live, peer);
+        app.update();
+        let players = foreign_players(&mut app);
+        assert_eq!(players, vec![HashSet::from_iter([live])]);
+
+        // an update still queued when the transport goes (a realm sweep) must not put the dead
+        // transport back into the peer's presence set — nothing could ever remove it again
+        queue_joined(&mut app, context, live, peer);
+        app.world_mut().despawn(live);
+        app.update();
+        assert!(foreign_players(&mut app).is_empty());
+
+        // and a peer first seen on an already-despawned transport is not spawned at all
+        let gone = spawn_transport(&mut app, context);
+        queue_joined(&mut app, context, gone, peer);
+        app.world_mut().despawn(gone);
+        app.update();
+        assert!(foreign_players(&mut app).is_empty());
     }
 }

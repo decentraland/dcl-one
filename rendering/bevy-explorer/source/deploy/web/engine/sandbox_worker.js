@@ -745,23 +745,17 @@ self.onmessage = async (event) => {
       ops.op_set_elapsed(0);
 
       await module.onStart();
+      // drop onStart's handshake round trips from the first onUpdate's dt (dcl_js::end_start)
+      ops.op_end_start();
 
-      var elapsed = 0;
-      const startTime = new Date();
-      var prevElapsed = 0;
-      var elapsed = 0;
       var count = 0;
       // lifetime uncaught-error count; only gates the log cap
       var reportedErrors = 0;
       // consecutive ticks that never reached the renderer interface functions
       var silentTicks = 0;
-      // Cap the per-frame dt handed to the scene: a slow frame must not feed dt-scaled scene
-      // logic (timers, animations) a multi-second step. Mirrors MAX_SCENE_DT in
-      // crates/dcl_deno/src/js/mod.rs.
-      const MAX_SCENE_DT_SECONDS = 1;
       while (ops.op_continue_running()) {
-        const dt = Math.min((elapsed - prevElapsed) / 1000, MAX_SCENE_DT_SECONDS);
-        ops.op_set_elapsed(elapsed / 1000);
+        // engine-time dt from the previous tick's renderer response, capped (dcl_js::begin_tick)
+        const dt = ops.op_begin_tick();
         var err = undefined;
         try {
           await module.onUpdate(dt);
@@ -794,8 +788,6 @@ self.onmessage = async (event) => {
           const msg = err !== undefined ? err : "no renderer interaction for 10 consecutive ticks";
           throw `[Sandbox worker] ${msg}: shutting down`;
         }
-        prevElapsed = elapsed;
-        elapsed = new Date() - startTime;
         count += 1;
       }
       console.log("[Sandbox Worker] Exiting gracefully");

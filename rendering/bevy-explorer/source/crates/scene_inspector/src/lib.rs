@@ -8,6 +8,7 @@ mod asset_commands;
 mod manual_registry;
 mod mobile_ui;
 mod read_commands;
+mod screen_position;
 pub mod snapshot;
 mod write_commands;
 

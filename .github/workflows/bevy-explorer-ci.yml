@@ -246,6 +246,17 @@ jobs:
           fi
           python3 "$GITHUB_WORKSPACE/tooling/dev-regressions.py" --bevy-artifacts target/native-test-artifacts.jsonl
           cargo test --all --release --locked -- --test-threads=1
+      - name: Use Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Test the web driver
+        # The web driver against the runner's Chrome: real input through the DevTools pipe into the
+        # HUD's test commands, with the app frame out of and in the page's process. (A comment
+        # between steps would extend the native test step as tooling/dev-regressions.py reads it.)
+        env:
+          DCL_WEB_DRIVER_REQUIRE_CHROME: '1'
+        run: node --test local-harness/web-driver/driver.test.mjs
       - name: Build the benchmark runner
         # The benchmark runner, for each OS: the fleet's laptops (Windows and macOS) run the legs with
         # it and Bevy Explorer / Benchmark writes the report with the Linux one. Name:
@@ -498,10 +509,9 @@ jobs:
     concurrency:
       group: ${{ github.workflow }}-deploy-web-${{ github.ref }}
     env:
-      # The Segment sources the engine reports to (crates/analytics); unset, the shared key. Part
+      # The Segment source the engine reports to (crates/analytics); unset, the shared key. Part
       # of the compiled engine's cache key (tooling/play-artifact.py engine-cache-key).
-      BEVY_SEGMENT_WRITE_KEY_PROD: ${{ vars.BEVY_SEGMENT_WRITE_KEY_PROD }}
-      BEVY_SEGMENT_WRITE_KEY_DEV: ${{ vars.BEVY_SEGMENT_WRITE_KEY_DEV }}
+      BEVY_SEGMENT_WRITE_KEY: ${{ vars.BEVY_SEGMENT_WRITE_KEY }}
     permissions:
       id-token: write
       contents: read
