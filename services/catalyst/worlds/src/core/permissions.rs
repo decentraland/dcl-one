@@ -1,9 +1,12 @@
 //! The world permission routes: the public `GET /world/{name}/permissions`
-//! document and the owner-gated grant, parcel and access-list edits. Every
-//! owner question is `Policy::is_owner` (personal world, then the name
-//! authority, `worlds.owner` only when no reader is configured; an
-//! unanswerable authority is a 503, never a silent refusal); the grant
-//! writes are `store::*` over the PK-keyed tables.
+//! document and the owner-gated grant, parcel and access-list edits. The
+//! document's `owner` is `Policy::current_owner_or_stored` for a world with
+//! a row (the live NAME holder, the stored owner on a reader fault) and
+//! only the personal rule otherwise. Every owner question of an edit is
+//! `Policy::is_owner` (personal world, then the name authority,
+//! `worlds.owner` only when no reader is configured; an unanswerable
+//! authority is a 503, never a silent refusal); the grant writes are
+//! `store::*` over the PK-keyed tables.
 
 use std::collections::BTreeMap;
 
@@ -83,14 +86,16 @@ pub async fn get_permissions(
         .as_ref()
         .map(|w| w.access.clone())
         .unwrap_or_default();
-    // The old GET resolved an unknown owner by NAME through squid (memoized
-    // 5 min); v2 has no by-name reader, so the field is the row's owner or
-    // the personal rule (policy.rs, "known_owner").
-    let owner = state
-        .policy
-        .personal_worlds()
-        .owner_of(&world)
-        .or_else(|| record.as_ref().and_then(|w| w.owner.clone()));
+    // No subgraph lookup without a row: this route is unauthenticated.
+    let owner = match &record {
+        Some(w) => {
+            state
+                .policy
+                .current_owner_or_stored(&world, w.owner.clone())
+                .await
+        }
+        None => state.policy.personal_worlds().owner_of(&world),
+    };
 
     let mut deployment_wallets = Vec::new();
     let mut streaming_wallets = Vec::new();

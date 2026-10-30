@@ -135,7 +135,7 @@ pub struct Caches {
     /// The sorted coordinate list of a place -> its parcels and their owners.
     land: TtlMap<Vec<(i32, i32)>, Arc<Vec<LandParcel>>>,
     /// lowercased DCL name -> its holder.
-    name_owner: TtlMap<String, Arc<Option<String>>>,
+    pub name_owner: TtlMap<String, Arc<Option<String>>>,
     /// `owner` -> the parcels and estates the owner holds, newest transfer first.
     lands: TtlMap<String, Arc<Vec<OwnedLand>>>,
 }
@@ -655,6 +655,77 @@ pub async fn name_owner(state: &ChainIndex, name: &str) -> Result<Option<String>
         .map(|a| (*a).clone())
 }
 
+/// The holders of up to [`NAMES_PER_QUERY`] names in one round trip.
+const QUERY_NAME_OWNERS: &str = r#"
+query nameOwners($names: [String!]!, $first: Int!) {
+  nfts(where: { category: ens, searchText_in: $names }, orderBy: id, orderDirection: asc, first: $first) {
+    id
+    name
+    owner { id }
+  }
+}"#;
+
+/// Names [`name_owners`] asks per query.
+pub const NAMES_PER_QUERY: usize = 100;
+
+/// The first token per name (lowest id, as [`name_owner`] picks), so both
+/// lookups name the same holder of a name with several tokens.
+pub(crate) fn parse_name_owners(data: &Value) -> HashMap<String, String> {
+    let mut first: HashMap<String, Option<String>> = HashMap::new();
+    for nft in data
+        .get("nfts")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        let Some(name) = nft.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let owner = nft
+            .pointer("/owner/id")
+            .and_then(Value::as_str)
+            .filter(|o| !o.is_empty())
+            .map(str::to_lowercase);
+        first.entry(name.to_lowercase()).or_insert(owner);
+    }
+    first
+        .into_iter()
+        .filter_map(|(name, owner)| Some((name, owner?)))
+        .collect()
+}
+
+/// Lowercased DCL name -> holder for the `names` (`.dcl.eth` stripped) the
+/// subgraph knows, [`NAMES_PER_QUERY`] per query, not memoized; a name it
+/// does not list (or a full page cut off) is absent. `Ok(empty)` when no
+/// marketplace subgraph is configured.
+pub async fn name_owners(
+    state: &ChainIndex,
+    names: &[String],
+) -> Result<HashMap<String, String>, String> {
+    let Some(url) = state.settings.marketplace_subgraph_url.as_deref() else {
+        return Ok(HashMap::new());
+    };
+    let mut out = HashMap::new();
+    for chunk in names.chunks(NAMES_PER_QUERY) {
+        let chunk: Vec<String> = chunk.iter().map(|n| n.to_lowercase()).collect();
+        let data = graph_query(
+            state,
+            url,
+            QUERY_NAME_OWNERS,
+            json!({ "names": chunk, "first": THE_GRAPH_PAGE_SIZE }),
+        )
+        .await?;
+        if page_len(&data) as i64 >= THE_GRAPH_PAGE_SIZE {
+            tracing::warn!(
+                names = chunk.len(),
+                "name owners page full; later names unresolved"
+            );
+        }
+        out.extend(parse_name_owners(&data));
+    }
+    Ok(out)
+}
+
 const QUERY_OWNED_LANDS: &str = r#"
 query ownedLands($owner: String!, $idFrom: ID!, $first: Int!) {
   nfts(where: { owner: $owner, category_in: [parcel, estate], id_gt: $idFrom }, orderBy: id, orderDirection: asc, first: $first) {
@@ -785,6 +856,53 @@ pub async fn owns_land_at(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn name_owners_map_each_lowercased_name_to_its_holder() {
+        let owners = parse_name_owners(&json!({ "nfts": [
+            { "id": "ens-1", "name": "Boedo", "owner": { "id": "0xABCD" } },
+            { "id": "ens-2", "name": "palermo", "owner": { "id": "" } },
+            { "id": "ens-3", "owner": { "id": "0x01" } },
+            { "id": "ens-4", "name": "boedo", "owner": { "id": "0x02" } },
+            { "id": "ens-5", "name": "palermo", "owner": { "id": "0x03" } }
+        ] }));
+        assert_eq!(owners.len(), 1);
+        assert_eq!(owners.get("boedo").map(String::as_str), Some("0xabcd"));
+    }
+
+    fn holder(i: usize) -> crate::shared::identity::Address {
+        crate::shared::identity::Address::parse(&format!("0x{i:040x}")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn name_owners_asks_100_names_per_query() {
+        let (index, names) = test_support::index_with_names().await;
+        let labels: Vec<String> = (0..150).map(|i| format!("name{i}")).collect();
+        for (i, l) in labels.iter().enumerate() {
+            names.set(&holder(i + 1), l);
+        }
+        let owners = name_owners(&index, &labels).await.unwrap();
+        assert_eq!(owners.len(), 150);
+        assert_eq!(owners["name149"], holder(150).as_str());
+        assert_eq!(names.batch_queries(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_name_with_several_tokens_has_one_holder_and_crowds_out_no_other() {
+        let (index, names) = test_support::index_with_names().await;
+        for i in [3, 1, 2] {
+            names.set(&holder(i), "aaa");
+        }
+        names.set(&holder(9), "zzz");
+        let labels = vec!["aaa".to_string(), "zzz".to_string()];
+        let owners = name_owners(&index, &labels).await.unwrap();
+        assert_eq!(owners["aaa"], holder(1).as_str());
+        assert_eq!(owners["zzz"], holder(9).as_str());
+        assert_eq!(
+            name_owner(&index, "AAA").await.unwrap().as_deref(),
+            Some(holder(1).as_str())
+        );
+    }
 
     #[test]
     fn name_owner_is_the_first_ens_holder_lowercased() {
@@ -979,7 +1097,7 @@ mod tests {
     }
 }
 
-/// A loopback marketplace subgraph answering the `names` query from a
+/// A loopback marketplace subgraph answering the `names` and name-owner queries from a
 /// mutable registry: the name authority of the worlds tests (the old tests
 /// seeded squid's `ens`/`nft` tables).
 #[cfg(any(test, feature = "test-support"))]
@@ -996,11 +1114,17 @@ pub mod test_support {
     use axum::routing::post;
     use serde_json::{Value, json};
 
-    /// Owner address -> labels.
+    /// Owner address -> labels, plus the batch name-owner queries answered.
     #[derive(Clone, Default)]
-    pub struct Names(Arc<Mutex<HashMap<String, Vec<String>>>>);
+    pub struct Names(
+        Arc<Mutex<HashMap<String, Vec<String>>>>,
+        Arc<std::sync::atomic::AtomicUsize>,
+    );
 
     impl Names {
+        pub fn batch_queries(&self) -> usize {
+            self.1.load(std::sync::atomic::Ordering::SeqCst)
+        }
         pub fn set(&self, owner: &Address, label: &str) {
             self.0
                 .lock()
@@ -1019,7 +1143,35 @@ pub mod test_support {
         axum::Json(body): axum::Json<Value>,
     ) -> axum::response::Response {
         let query = body["query"].as_str().unwrap_or("");
-        let nfts: Vec<Value> = if query.contains("names(") {
+        // Every holder of `wanted` is one token, id-ordered and cut at `first`.
+        let tokens = |wanted: &[&str], first: usize| -> Vec<Value> {
+            let names = names.0.lock().unwrap();
+            let mut out: Vec<(String, Value)> = names
+                .iter()
+                .flat_map(|(owner, labels)| labels.iter().map(move |l| (owner, l)))
+                .filter(|(_, l)| wanted.iter().any(|w| l.eq_ignore_ascii_case(w)))
+                .map(|(owner, label)| {
+                    let id = format!("0xname-{}-{owner}", label.to_lowercase());
+                    let nft = json!({ "id": id, "name": label, "owner": { "id": owner } });
+                    (id, nft)
+                })
+                .collect();
+            out.sort_by(|a, b| a.0.cmp(&b.0));
+            out.into_iter().take(first).map(|(_, nft)| nft).collect()
+        };
+        let nfts: Vec<Value> = if query.contains("nameOwners(") {
+            names.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let wanted: Vec<&str> = body["variables"]["names"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            let first = body["variables"]["first"].as_u64().unwrap_or(100) as usize;
+            tokens(&wanted, first)
+        } else if query.contains("nameOwner(") {
+            tokens(&[body["variables"]["name"].as_str().unwrap_or("")], 1)
+        } else if query.contains("names(") {
             let owner = body["variables"]["owner"]
                 .as_str()
                 .unwrap_or("")
