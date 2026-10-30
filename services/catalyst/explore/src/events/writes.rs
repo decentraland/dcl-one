@@ -9,7 +9,7 @@
 //! behind `DATA_WRITES_ENABLED`. An owner's edit of an approved event's
 //! content (or its featured item) sends it back to approval. Every write
 //! lands in `explore.event` with its `explore.events_local` audit in one
-//! transaction (`events::moderation::store`). Only events created here
+//! transaction (`events::moderation::store_locked`). Only events created here
 //! (`origin = 'local'`) take their owner's edit and delete: on a mirrored
 //! event those answer 409 naming the upstream (the mirror writes its
 //! fields). The admin's moderation and delete of a mirrored event are local
@@ -24,7 +24,6 @@ use axum::http::{HeaderMap, Method};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use sqlx::{Postgres, Transaction};
 
 use super::moderation::{
     self, AdminPatch, CreateEvent, MAX_EVENT_DURATION_MS, PAST_FINISH_AT_MESSAGE,
@@ -380,12 +379,11 @@ fn reject_past_dates(raw: &Map<String, Value>) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// The stored document, its owner (the document's `user`, else the column)
-/// and whether it is mirrored. The owner never writes a mirrored event: that
-/// answers 409 naming the upstream (`owner_write`); the operator's delete of
-/// one is local moderation ([`moderation::hide_mirrored`]).
+/// Lock and load the document before applying any mutation. Its owner comes
+/// from the document or projected creator; mirrored authority is returned so
+/// the caller can reject an owner write or apply operator policy explicitly.
 async fn load_raw(
-    tx: &mut Transaction<'_, Postgres>,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     id: &str,
 ) -> Result<Option<(Map<String, Value>, String, bool)>, ApiError> {
     let row: Option<(Value, Option<String>, String)> = sqlx::query_as(
@@ -413,10 +411,14 @@ async fn load_raw(
     }))
 }
 
-async fn answer(state: &SharedState, id: &str) -> Result<Json<ApiData<EventRecord>>, ApiError> {
+async fn answer(
+    state: &SharedState,
+    id: &str,
+    viewer: Option<&str>,
+) -> Result<Json<ApiData<EventRecord>>, ApiError> {
     let record = state
         .events
-        .get(id)
+        .get_for_viewer(id, viewer)
         .await?
         .ok_or_else(|| ApiError::not_found(format!("Not found event \"{id}\"")))?;
     Ok(Json(ApiData::ok(record)))
@@ -445,7 +447,7 @@ pub async fn create_event(
     let body: CreateEvent = serde_json::from_slice(&body)
         .map_err(|e| ApiError::bad_request(format!("invalid event body: {e}")))?;
     let id = moderation::create_as(&state.pool, &body, &signer, &signer).await?;
-    answer(&state, &id).await
+    answer(&state, &id, Some(&signer)).await
 }
 
 /// `PATCH /api/events/{id}`: the admin's moderation or the owner's edit.
@@ -471,7 +473,7 @@ pub async fn patch_event(
         if !moderation::moderate(&state.pool, &event_id, &patch, &actor).await? {
             return Err(not_found(&event_id));
         }
-        return answer(&state, &event_id).await;
+        return answer(&state, &event_id, None).await;
     }
     state.user_writes()?;
     let signer = state.signer(&headers, method.as_str(), uri.path()).await?;
@@ -540,6 +542,7 @@ pub async fn patch_event(
         );
         raw.insert("world".into(), json!(world));
     }
+    super::metadata::enrich(&mut tx, &mut raw).await?;
     // Another reviewer's rejection is a moderation hold: self-approval cannot remove it.
     let held = moderation::flag(&before, "rejected")
         && !before
@@ -595,9 +598,18 @@ pub async fn patch_event(
         raw.insert("trending".into(), json!(false));
     }
     raw.insert("updated_at".into(), json!(Utc::now().to_rfc3339()));
-    moderation::store_locked(&mut tx, &event_id, raw, &signer, json!({ "edit": edit })).await?;
+    moderation::store_locked(
+        &mut tx,
+        &event_id,
+        raw,
+        &signer,
+        json!({ "edit": edit }),
+        &Value::Object(before),
+        true,
+    )
+    .await?;
     tx.commit().await?;
-    answer(&state, &event_id).await
+    answer(&state, &event_id, Some(&signer)).await
 }
 
 /// `DELETE /api/events/{id}`: a soft delete, by the admin or the owner.
@@ -617,24 +629,30 @@ pub async fn delete_event(
         state.user_writes()?;
         Some(state.signer(&headers, method.as_str(), uri.path()).await?)
     };
-    let permissions = if let Some(signer) = signer.as_ref() {
-        super::profiles::event_permissions(&state.pool, signer).await?
-    } else {
-        Default::default()
+    let permissions = match signer.as_deref() {
+        Some(signer) => super::profiles::event_permissions(&state.pool, signer).await?,
+        None => super::profiles::EventPermissions::default(),
     };
     super::mirror::reclaim_local(&state.pool).await?;
     let mut tx = state.pool.begin().await?;
     let Some((mut raw, owner, mirrored)) = load_raw(&mut tx, &event_id).await? else {
         return Err(not_found(&event_id));
     };
-    if mirrored && signer.is_some() {
+    if mirrored && signer.is_some() && !permissions.edit_any {
         tx.rollback().await?;
         return Err(moderation::mirrored_event(&state.pool, &event_id).await);
     }
+    if signer.as_deref().is_some_and(|signer| signer != owner) && !permissions.edit_any {
+        return Err(ApiError::forbidden(
+            "You don't have permission to delete this event",
+        ));
+    }
     if is_soft_deleted(&raw) {
         tx.rollback().await?;
-        return answer(&state, &event_id).await;
+        return answer(&state, &event_id, signer.as_deref()).await;
     }
+    let before = Value::Object(raw.clone());
+    let viewer = signer.clone();
     let now = Utc::now().to_rfc3339();
     let (provenance, payload) = match signer {
         None => {
@@ -653,11 +671,6 @@ pub async fn delete_event(
             )
         }
         Some(signer) => {
-            if owner != signer && !permissions.edit_any {
-                return Err(ApiError::forbidden(
-                    "You don't have permission to delete this event",
-                ));
-            }
             if owner != signer {
                 state.operator_writes()?;
             }
@@ -677,12 +690,13 @@ pub async fn delete_event(
     raw.insert("deleted_at".into(), json!(now));
     raw.insert("updated_at".into(), json!(now));
     if mirrored {
-        moderation::hide_mirrored_locked(&mut tx, &event_id, raw, &provenance).await?;
+        moderation::hide_mirrored_locked(&mut tx, &event_id, raw, &provenance, &before).await?;
     } else {
-        moderation::store_locked(&mut tx, &event_id, raw, &provenance, payload).await?;
+        moderation::store_locked(&mut tx, &event_id, raw, &provenance, payload, &before, true)
+            .await?;
     }
     tx.commit().await?;
-    answer(&state, &event_id).await
+    answer(&state, &event_id, viewer.as_deref()).await
 }
 
 /// Visible to `signer`: approved and not rejected, or theirs; never a deleted one.
@@ -886,6 +900,198 @@ mod tests {
 
     fn new_event() -> Value {
         json!({ "name": "Launch party", "start_at": "2099-06-01T18:00:00Z", "duration": 3_600_000, "x": 10, "y": -20, "description": "<b>come</b>" })
+    }
+
+    async fn wait_for_event_lock(pool: &sqlx::PgPool, count: i64) {
+        tokio::time::timeout(std::time::Duration::from_secs(5),async {
+            loop {
+                let blocked: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%explore.event%FOR UPDATE%'")
+                    .fetch_one(pool).await.unwrap();
+                if blocked >= count { break; }
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("event mutations reach the held row lock");
+    }
+
+    #[tokio::test]
+    async fn authoring_enriches_known_metadata_and_updates_generated_targets_while_preserving_posters()
+     {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let profile_id = format!("event-profile-{}", uuid::Uuid::new_v4());
+        sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES ($1,'v3','profile',$2,'{\"avatars\":[{\"name\":\"Known Creator\"}]}',timezone('UTC',now()),ARRAY[$1],timezone('UTC',now()),'[]')")
+            .bind(address()).bind(&profile_id).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO content.active_pointers (pointer,entity_id,entity_type) VALUES ($1,$2,'profile') ON CONFLICT (pointer) DO UPDATE SET entity_id=EXCLUDED.entity_id")
+            .bind(address()).bind(&profile_id).execute(&pool).await.unwrap();
+        let first_place = format!("event-place-{}", uuid::Uuid::new_v4());
+        let second_place = format!("event-place-{}", uuid::Uuid::new_v4());
+        sqlx::query("INSERT INTO explore.place (id,base_position,title,raw) VALUES ($1,'41,42','Known scene','{\"positions\":[\"41,42\"],\"title\":\"Known scene\",\"estate_id\":\"known-estate\",\"estate_name\":\"Known estate\",\"image\":\"https://cdn.example.org/scene.png\"}'),($2,'43,44','Other scene','{\"positions\":[\"43,44\"],\"title\":\"Other scene\"}')")
+            .bind(&first_place).bind(&second_place).execute(&pool).await.unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let mut event = new_event();
+        event["x"] = json!(41);
+        event["y"] = json!(42);
+        let (status, created) =
+            call(&app, "POST", "/api/events", Some("signed"), Some(event)).await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        assert_eq!(created["data"]["user_name"], "Known Creator");
+        assert_eq!(created["data"]["scene_name"], "Known scene");
+        assert_eq!(created["data"]["estate_id"], "known-estate");
+        assert_eq!(
+            created["data"]["image"],
+            "https://cdn.example.org/scene.png"
+        );
+        let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        let (status, moved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"x":43,"y":44,"image":"/poster/approved-upload.webp"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert_eq!(moved["data"]["place_id"], second_place);
+        assert_eq!(moved["data"]["scene_name"], "Other scene");
+        assert_eq!(
+            moved["data"]["estate_id"],
+            Value::Null,
+            "unknown estate facts are never inferred from the scene name"
+        );
+        assert_eq!(moved["data"]["image"], "/poster/approved-upload.webp");
+        assert_eq!(
+            moved["data"]["url"],
+            "https://decentraland.org/play/?position=43%2C44"
+        );
+    }
+
+    #[tokio::test]
+    async fn owner_edits_preserve_committed_moderation_and_concurrent_fields_without_exposing_private_details()
+     {
+        let Some(pool) = crate::db::scratch::pool(8).await else {
+            return;
+        };
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("concurrent-admin".into()),
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let mut event = new_event();
+        event["contact"] = json!("private@example.org");
+        event["details"] = json!("Organizer instructions");
+        let (status, created) =
+            call(&app, "POST", "/api/events", Some("signed"), Some(event)).await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        assert_eq!(created["data"]["contact"], "private@example.org");
+        let id = created["data"]["id"].as_str().unwrap().to_owned();
+        let path = format!("/api/events/{id}");
+        call(
+            &app,
+            "PATCH",
+            &path,
+            Some("concurrent-admin"),
+            Some(json!({"approved":true})),
+        )
+        .await;
+        let (_, public) = call(&app, "GET", &path, None, None).await;
+        assert!(public["data"].get("contact").is_none());
+        assert!(public["data"].get("details").is_none());
+        let (_, owner) = call(&app, "GET", &path, Some("signed"), None).await;
+        assert_eq!(owner["data"]["details"], "Organizer instructions");
+        let (_, admin) = call(&app, "GET", &path, Some("concurrent-admin"), None).await;
+        assert!(
+            admin["data"].get("contact").is_none(),
+            "moderation privilege does not imply organizer-private access"
+        );
+
+        let mut moderator = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM explore.event WHERE id=$1 FOR UPDATE")
+            .bind(&id)
+            .execute(&mut *moderator)
+            .await
+            .unwrap();
+        let edit = {
+            let (app, path) = (app.clone(), path.clone());
+            tokio::spawn(async move {
+                call(
+                    &app,
+                    "PATCH",
+                    &path,
+                    Some("signed"),
+                    Some(json!({"contact":"updated@example.org"})),
+                )
+                .await
+            })
+        };
+        wait_for_event_lock(&pool, 1).await;
+        sqlx::query("UPDATE explore.event SET approved=false,raw=raw || '{\"approved\":false,\"rejected\":true,\"rejection_reason\":\"Moderator reason\"}'::jsonb WHERE id=$1")
+            .bind(&id).execute(&mut *moderator).await.unwrap();
+        moderator.commit().await.unwrap();
+        let (status, edited) = edit.await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{edited}");
+        assert_eq!(edited["data"]["rejected"], true);
+        assert_eq!(edited["data"]["rejection_reason"], "Moderator reason");
+        assert_eq!(edited["data"]["contact"], "updated@example.org");
+        assert_eq!(edited["data"]["approved"], false);
+
+        let mut blocker = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM explore.event WHERE id=$1 FOR UPDATE")
+            .bind(&id)
+            .execute(&mut *blocker)
+            .await
+            .unwrap();
+        let first = {
+            let (app, path) = (app.clone(), path.clone());
+            tokio::spawn(async move {
+                call(
+                    &app,
+                    "PATCH",
+                    &path,
+                    Some("signed"),
+                    Some(json!({"name":"Concurrent name"})),
+                )
+                .await
+            })
+        };
+        let second = {
+            let (app, path) = (app.clone(), path.clone());
+            tokio::spawn(async move {
+                call(
+                    &app,
+                    "PATCH",
+                    &path,
+                    Some("signed"),
+                    Some(json!({"description":"Concurrent description"})),
+                )
+                .await
+            })
+        };
+        wait_for_event_lock(&pool, 2).await;
+        blocker.rollback().await.unwrap();
+        assert_eq!(first.await.unwrap().0, StatusCode::OK);
+        assert_eq!(second.await.unwrap().0, StatusCode::OK);
+        let (_, result) = call(&app, "GET", &path, Some("signed"), None).await;
+        assert_eq!(result["data"]["name"], "Concurrent name");
+        assert_eq!(result["data"]["description"], "Concurrent description");
+        let leaked: i64=sqlx::query_scalar("SELECT count(*) FROM explore.event_notification_intents WHERE event_id=$1 AND event ?| ARRAY['contact','details','recurrent_dates']")
+            .bind(&id).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            leaked, 0,
+            "notification snapshots contain no private data or recurrence arrays"
+        );
     }
 
     async fn call_as(

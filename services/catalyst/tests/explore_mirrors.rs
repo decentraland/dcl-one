@@ -2078,6 +2078,75 @@ async fn the_viewers_attendance_rides_in_the_list_and_get_statements() {
         events[0]["latest_attendees"].as_array().unwrap().len() + 1
     );
 
+    let original_total = component.get(id).await.unwrap().unwrap().total_attendees;
+    catalyst::explore::events::attendees::rsvp_cancel(&pool, id, upstream_user)
+        .await
+        .unwrap();
+    let cancelled = component
+        .get_for_viewer(id, Some(upstream_user))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        !cancelled.attending,
+        "local cancellation overrides the upstream preview"
+    );
+    assert_eq!(cancelled.total_attendees, (original_total - 1).max(0));
+    assert!(
+        !cancelled
+            .latest_attendees
+            .iter()
+            .any(|address| address.eq_ignore_ascii_case(upstream_user))
+    );
+    let cancelled_filter = EventListFilters {
+        user: Some(upstream_user.to_uppercase()),
+        only_attendee: true,
+        ..filters.clone()
+    };
+    let (cancelled_page, _) = component.query(&cancelled_filter, false).await.unwrap();
+    assert!(!cancelled_page.iter().any(|event| event.id == id));
+    assert!(
+        !component
+            .attending(upstream_user)
+            .await
+            .unwrap()
+            .iter()
+            .any(|event| event.id == id)
+    );
+    events_mirror::upsert_event(&pool, &events[0])
+        .await
+        .unwrap();
+    assert!(
+        !component
+            .get_for_viewer(id, Some(upstream_user))
+            .await
+            .unwrap()
+            .unwrap()
+            .attending,
+        "a mirror refresh cannot erase explicit cancellation"
+    );
+    let cancelled_list = catalyst::explore::events::attendees::list_for_event(&pool, id)
+        .await
+        .unwrap();
+    assert!(
+        !cancelled_list
+            .iter()
+            .any(|record| record.user.eq_ignore_ascii_case(upstream_user))
+    );
+    catalyst::explore::events::attendees::rsvp_going(&pool, id, upstream_user, None)
+        .await
+        .unwrap();
+    let rejoined = component
+        .get_for_viewer(id, Some(upstream_user))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(rejoined.attending);
+    assert_eq!(
+        rejoined.total_attendees, original_total,
+        "rejoining does not double-count a mirrored attendee"
+    );
+
     let mut finished = events[0].clone();
     occurrence(&mut finished, now - chrono::Duration::days(1));
     events_mirror::upsert_event(&pool, &finished).await.unwrap();

@@ -380,6 +380,7 @@ pub(super) async fn hide_mirrored_locked(
     event_id: &str,
     raw: Map<String, Value>,
     actor: &str,
+    before: &Value,
 ) -> Result<(), ApiError> {
     let decision = Decision {
         hidden: Some(true),
@@ -387,15 +388,10 @@ pub(super) async fn hide_mirrored_locked(
         deleted_reason: text(&raw, "deleted_reason"),
         ..Default::default()
     };
-    let before: Option<Value> =
-        sqlx::query_scalar("SELECT raw FROM explore.event WHERE id = $1 FOR UPDATE")
-            .bind(event_id)
-            .fetch_optional(&mut **tx)
-            .await?;
     super::notifications::record_transition(
         tx,
         event_id,
-        before.as_ref(),
+        Some(before),
         &Value::Object(raw.clone()),
         false,
     )
@@ -726,16 +722,13 @@ pub(crate) fn generate_id(seed: &str) -> String {
 /// `server` (the world's name, lowercased, when the catalogue knows it); a
 /// parcel event takes the enabled place whose positions hold the parcel
 /// (`place_positions_path_gin`), the newest deployment first.
-pub(crate) async fn resolve_location<'e, E>(
-    executor: E,
+pub(crate) async fn resolve_location<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     world: bool,
     server: Option<&str>,
     x: i32,
     y: i32,
-) -> Result<(Option<String>, bool), ApiError>
-where
-    E: sqlx::PgExecutor<'e>,
-{
+) -> Result<(Option<String>, bool), ApiError> {
     match server.filter(|s| world && !s.is_empty()) {
         Some(name) => {
             let found: Option<(String,)> = sqlx::query_as(
@@ -762,14 +755,11 @@ where
 /// A community event may only be linked by an owner or moderator of that
 /// active community. This uses the shared membership authority, not a claim
 /// supplied by the event form.
-pub(super) async fn validate_community<'e, E>(
-    executor: E,
+pub(super) async fn validate_community<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     id: &str,
     signer: &str,
-) -> Result<(), ApiError>
-where
-    E: sqlx::PgExecutor<'e>,
-{
+) -> Result<(), ApiError> {
     let id =
         uuid::Uuid::parse_str(id).map_err(|_| ApiError::bad_request("invalid community_id"))?;
     let managed: bool = sqlx::query_scalar(
@@ -792,13 +782,10 @@ where
 
 /// Validate catalogue references before committing an event. Arrays are
 /// bounded at the boundary, and the schedule check is one set query.
-pub(super) async fn validate_references<'e, E>(
-    executor: E,
+pub(super) async fn validate_references<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     raw: &Map<String, Value>,
-) -> Result<(), ApiError>
-where
-    E: sqlx::PgExecutor<'e>,
-{
+) -> Result<(), ApiError> {
     if let Some(categories) = raw.get("categories").and_then(Value::as_array) {
         let known = super::categories::list();
         if categories.len() > 25
@@ -863,6 +850,10 @@ pub async fn create_as(
     let id = generate_id(&body.name);
     let mut doc = build_create_raw(body, creator, start_at, place_id.as_deref(), world, now)?;
     doc["id"] = json!(id);
+    if let Some(raw) = doc.as_object_mut() {
+        let mut conn = pool.acquire().await?;
+        super::metadata::enrich(&mut conn, raw).await?;
+    }
     if creator != ADMIN_CREATOR {
         if let Some(community) = body.community_id.as_deref() {
             validate_community(pool, community, creator).await?;
@@ -914,30 +905,22 @@ pub async fn create_as(
     Ok(id)
 }
 
-/// Writes `raw` as the event's document and its projected columns, with
-/// `signer`'s overlay (`payload` as received), in one transaction: an edit,
-/// a delete or a moderation of a stored event.
+/// Store an edit/delete using the caller's already locked row and transaction.
+/// `before` is that locked snapshot, not a document read outside the lock.
 pub(super) async fn store_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
     raw: Map<String, Value>,
     signer: &str,
     payload: Value,
+    before: &Value,
+    local: bool,
 ) -> Result<(), ApiError> {
     let mut doc = Value::Object(raw);
     doc["id"] = json!(event_id);
     let f = super::mirror::extract_fields(&doc)
         .ok_or_else(|| ApiError::internal("event document without an id"))?;
-    let previous: Option<(Value, String)> =
-        sqlx::query_as("SELECT raw, origin FROM explore.event WHERE id = $1 FOR UPDATE")
-            .bind(event_id)
-            .fetch_optional(&mut **tx)
-            .await?;
-    let Some((before, origin)) = previous else {
-        return Err(ApiError::not_found("Event not found"));
-    };
-    super::notifications::record_transition(tx, event_id, Some(&before), &doc, origin == LOCAL)
-        .await?;
+    super::notifications::record_transition(tx, event_id, Some(before), &doc, local).await?;
     sqlx::query(
         "UPDATE explore.event SET name = $2, start_at = $3::timestamptz AT TIME ZONE 'UTC', finish_at = $4::timestamptz AT TIME ZONE 'UTC',
              next_start_at = $5::timestamptz AT TIME ZONE 'UTC', next_finish_at = $6::timestamptz AT TIME ZONE 'UTC', duration_ms = $7,
