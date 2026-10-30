@@ -1,0 +1,28 @@
+{
+  "method": "GET",
+  "url": "https://social-api.decentraland.org/v1/communities?minimal=true&search=dec",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 401,
+  "status_text": "Unauthorized",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c68216aa1f558-TXL",
+    "connection": "keep-alive",
+    "content-length": "91",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:02 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "vary": "accept-encoding",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:02Z",
+  "elapsed_ms": 152,
+  "body_bytes": 91,
+  "body_file": "communities-list-401-minimal-unauth.raw.body",
+  "redacted": false
+}

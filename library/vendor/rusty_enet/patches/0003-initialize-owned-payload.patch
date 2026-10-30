@@ -1,0 +1,244 @@
+diff --git a/src/c/malloc.rs b/src/c/malloc.rs
+index a0ef5dba..cbb528ab 100644
+--- a/src/c/malloc.rs
++++ b/src/c/malloc.rs
+@@ -7,6 +7,7 @@ use std::alloc::{alloc, dealloc, handle_alloc_error};
+ 
+ #[cfg(all(test, feature = "std"))]
+ std::thread_local! {
++    static ALLOCATION_FILL: core::cell::Cell<Option<u8>> = const { core::cell::Cell::new(None) };
+     static ALLOCATION_PEAK: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+ }
+ 
+@@ -21,6 +22,19 @@ pub(crate) fn enet_test_allocation_peak(reset: bool) -> usize {
+     })
+ }
+ 
++// Scoped initialization makes pre-fix packet regression reads defined and deterministic.
++#[cfg(all(test, feature = "std"))]
++pub(crate) fn enet_test_with_allocation_fill<R>(fill: u8, run: impl FnOnce() -> R) -> R {
++    struct Restore(Option<u8>);
++    impl Drop for Restore {
++        fn drop(&mut self) {
++            ALLOCATION_FILL.with(|value| value.set(self.0));
++        }
++    }
++    let _restore = Restore(ALLOCATION_FILL.with(|value| value.replace(Some(fill))));
++    run()
++}
++
+ pub(crate) unsafe fn enet_malloc(layout: Layout) -> *mut u8 {
+     #[cfg(all(test, feature = "std"))]
+     ALLOCATION_PEAK.with(|peak| peak.set(peak.get().max(layout.size())));
+@@ -28,6 +42,12 @@ pub(crate) unsafe fn enet_malloc(layout: Layout) -> *mut u8 {
+     if ptr.is_null() {
+         handle_alloc_error(layout);
+     }
++    #[cfg(all(test, feature = "std"))]
++    ALLOCATION_FILL.with(|fill| {
++        if let Some(value) = fill.get() {
++            unsafe { ptr.write_bytes(value, layout.size()) };
++        }
++    });
+     ptr
+ }
+ 
+diff --git a/src/test.rs b/src/test.rs
+index bbffe68e..610a3bbc 100644
+--- a/src/test.rs
++++ b/src/test.rs
+@@ -469,17 +469,21 @@ mod receive_policy {
+ 
+     // A connected transport slot with no application admission: native allocation starts here.
+     fn rig() -> (Host<UdpSocket>, UdpSocket) {
++        rig_with_policy(Some(ReceivePolicy {
++            maximum_packet_size: 8192,
++            maximum_queued_bytes: 65536,
++            maximum_queued_commands: 256,
++        }))
++    }
++
++    fn rig_with_policy(policy: Option<ReceivePolicy>) -> (Host<UdpSocket>, UdpSocket) {
+         let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
+         let mut host = Host::new(
+             UdpSocket::bind("127.0.0.1:0").unwrap(),
+             HostSettings {
+                 peer_limit: 2,
+                 channel_limit: 3,
+-                receive_policy: Some(ReceivePolicy {
+-                    maximum_packet_size: 8192,
+-                    maximum_queued_bytes: 65536,
+-                    maximum_queued_commands: 256,
+-                }),
++                receive_policy: policy,
+                 ..Default::default()
+             },
+         )
+@@ -514,6 +518,155 @@ mod receive_policy {
+         bytes
+     }
+ 
++    #[test]
++    fn packet_payload_initialization_preserves_copy_and_borrowed_payloads() {
++        enet_test_with_allocation_fill(0xa5, || unsafe {
++            let packet = enet_packet_create(core::ptr::null(), 7, 0);
++            assert_eq!(core::slice::from_raw_parts((*packet).data, 7), &[0; 7]);
++            enet_packet_destroy(packet);
++
++            let input = [11, 22, 33];
++            let packet = enet_packet_create(input.as_ptr(), input.len(), 0);
++            assert_eq!(core::slice::from_raw_parts((*packet).data, 3), &input);
++            assert_ne!((*packet).data, input.as_ptr().cast_mut());
++            enet_packet_destroy(packet);
++
++            let mut borrowed = [41, 42];
++            let packet = enet_packet_create(
++                borrowed.as_mut_ptr(),
++                borrowed.len(),
++                ENET_PACKET_FLAG_NO_ALLOCATE,
++            );
++            assert_eq!((*packet).data, borrowed.as_mut_ptr());
++            assert_eq!(core::slice::from_raw_parts((*packet).data, 2), &[41, 42]);
++            enet_packet_destroy(packet);
++            assert_eq!(borrowed, [41, 42]);
++
++            let packet = enet_packet_create(core::ptr::null(), 0, 0);
++            assert!((*packet).data.is_null());
++            enet_packet_destroy(packet);
++        });
++    }
++
++    #[test]
++    fn reliable_fragment_payload_initialization_preserves_ranges_order_and_duplicates() {
++        check_fragment_cases(true);
++    }
++
++    #[test]
++    fn unreliable_fragment_payload_initialization_preserves_ranges_order_and_duplicates() {
++        check_fragment_cases(false);
++        // The unreliable handler also admits an empty fragment range.
++        for limited in [false, true] {
++            check_fragment_payload(
++                limited,
++                false,
++                3,
++                2,
++                &[(0, 0, &[]), (1, 2, &[22])],
++                &[0, 0, 22],
++            );
++        }
++    }
++
++    fn check_fragment_cases(reliable_fragments: bool) {
++        // Literal expected bytes describe existing arrival/duplicate behavior.
++        // Allocation fill keeps every pre-fix read initialized, without relying on heap reuse.
++        let cases: &[(u32, &[(u32, u32, &[u8])], &[u8])] = &[
++            (2, &[(0, 0, &[11]), (1, 0, &[22])], &[22, 0]),
++            (5, &[(0, 2, &[11]), (1, 3, &[22])], &[0, 0, 11, 22, 0]),
++            (4, &[(0, 0, &[11]), (1, 3, &[22])], &[11, 0, 0, 22]),
++            (
++                6,
++                &[
++                    (2, 4, &[44, 55]),
++                    (0, 0, &[11]),
++                    (0, 0, &[99]),
++                    (1, 1, &[22, 33, 34]),
++                ],
++                &[11, 22, 33, 34, 44, 55],
++            ),
++        ];
++        for limited in [false, true] {
++            for &(total, fragments, expected) in cases {
++                let count = if total == 6 { 3 } else { 2 };
++                check_fragment_payload(
++                    limited,
++                    reliable_fragments,
++                    total,
++                    count,
++                    fragments,
++                    expected,
++                );
++            }
++        }
++    }
++
++    fn check_fragment_payload(
++        limited: bool,
++        reliable_fragments: bool,
++        total: u32,
++        count: u32,
++        fragments: &[(u32, u32, &[u8])],
++        expected: &[u8],
++    ) {
++        enet_test_with_allocation_fill(0xa5, || {
++            let policy = limited.then_some(ReceivePolicy {
++                maximum_packet_size: 8192,
++                maximum_queued_bytes: 65536,
++                maximum_queued_commands: 256,
++            });
++            let (mut host, sender) = rig_with_policy(policy);
++            for &(number, offset, payload) in fragments {
++                let sequence = if reliable_fragments {
++                    number as u16 + 1
++                } else {
++                    0
++                };
++                let mut bytes = fragment(
++                    total,
++                    count,
++                    number,
++                    offset,
++                    reliable_fragments,
++                    0,
++                    sequence,
++                );
++                bytes[8..10].copy_from_slice(&1u16.to_be_bytes());
++                bytes[10..12].copy_from_slice(&(payload.len() as u16).to_be_bytes());
++                bytes.truncate(28);
++                bytes.extend_from_slice(payload);
++                assert!(inject(&mut host, &sender, bytes).is_none());
++            }
++            match host.check_events() {
++                Some(Event::Receive {
++                    packet,
++                    channel_id: 0,
++                    ..
++                }) => {
++                    assert_eq!(
++                        packet.data(),
++                        expected,
++                        "limited={limited}, reliable={reliable_fragments}"
++                    );
++                }
++                _ => panic!("completed fragment group must produce public Receive"),
++            }
++            assert!(host.check_events().is_none());
++            assert_eq!(counters(&host, 0), (0, 0));
++            // Fully consumed groups must not block the following ordinary reliable packet.
++            let next = if reliable_fragments {
++                count as u16 + 1
++            } else {
++                1
++            };
++            assert!(inject(&mut host, &sender, reliable(next, 0, &[77], 0x86)).is_none());
++            assert!(matches!(host.check_events(),
++                Some(Event::Receive { packet, .. }) if packet.data() == [77]));
++            assert_eq!(counters(&host, 0), (0, 0));
++        });
++    }
++
+     #[test]
+     fn native_receive_valid_declaration_above_old_max_reports_before_allocation() {
+         let (mut host, sender) = rig();
+--- a/src/c/packet.rs
++++ b/src/c/packet.rs
+@@ -28,6 +28,9 @@
+         (*packet).data = enet_malloc(Layout::array::<u8>(data_length).unwrap());
+         if !data.is_null() {
+             copy_nonoverlapping(data, (*packet).data, data_length);
++        } else {
++            // Public packet access must see initialized owned payload bytes.
++            (*packet).data.write_bytes(0, data_length);
+         }
+     }
+     (*packet).reference_count = 0_i32 as usize;

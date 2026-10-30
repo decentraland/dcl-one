@@ -1,0 +1,64 @@
+{
+  "repository": "https://github.com/robtfm/rusty_enet",
+  "revision": "6fa651d50554f6db8f8a4bd98aaf95ef3238b408",
+  "package": "rusty_enet",
+  "version": "0.4.0",
+  "license": {
+    "spdx": "MIT",
+    "path": "LICENSE",
+    "sha256": "3df814d681decf69f02859771671fe919d5d07474a825fd59200acbf68d34356"
+  },
+  "normalization": "Exact upstream and patched file bytes. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted repository-relative paths. No Git metadata or Cargo cache marker is imported.",
+  "manifests": {
+    "upstream-files.sha256": "7bce19bf15feb754a84a36ffd7e17f1d2a540cda764a2f7179b69021c3394fca",
+    "checksums.sha256": "218049fad236d75292ce6bab6bae5bc1808f8dcc542b1afcf3540e25cb4d1fef"
+  },
+  "patches": [
+    {
+      "path": "patches/0001-per-packet-unthrottled.patch",
+      "sha256": "510728e81855fb5b7ea6ab4ca7e98591e7a77b9e2a85f9b59d4d5c53dcd11655",
+      "changes": [
+        "Orthogonal per-packet local throttle bypass",
+        "Correct Packet::kind bit mask",
+        "Keep discard grouping within packet, channel and sequence pair",
+        "Deterministic controls, fragmented groups, repeated sends and optional native interop"
+      ]
+    },
+    {
+      "path": "patches/0002-receive-policy.patch",
+      "sha256": "eed7118abfbce595c696c3298bdaef1d0c5b0200dd079aaf2ff28c09e5bd6440",
+      "changes": [
+        "Optional per-host incoming payload and charged queued byte/command limits; defaults and outgoing sends preserved",
+        "Preallocation admission, exact owning-command accounting and all queue release paths",
+        "Bounded per-peer local limit events, terminal parser ordering and exhaustive ordinary/connected/client adapters",
+        "Deterministic accounting, malformed attribution, terminal slot reuse, reliable retry and default-client controls"
+      ]
+    },
+    {
+      "path": "patches/0003-initialize-owned-payload.patch",
+      "sha256": "2036cc4508d6e472cdcd44b50307980dce423dfcf9b9e14b006c9a091d45af51",
+      "changes": [
+        "Initialize owned positive-length null-data packet payloads before public byte access",
+        "Preserve nonnull copies, borrowed payload ownership, receive limits and fragment ordering",
+        "Deterministic initialized-allocation tests for reliable and unreliable fragment ranges"
+      ]
+    },
+    {
+      "path": "patches/0004-preserve-limit-lifecycle-dispatch.patch",
+      "sha256": "8ba6745bd32e39c192d8c0bd393437d30979fe10b03c7fe6300e0dd52b9c47dc",
+      "changes": [
+        "Preserve queued Connect and Disconnect lifecycle dispatch after nonterminal aggregate receive reports",
+        "Retain existing terminal payload handling, receive policy and queue accounting",
+        "Exercise same-pass disconnect, lifecycle staging, timeout and native peer-slot reuse"
+      ]
+    }
+  ],
+  "update_instructions": [
+    "Import an exact reviewed revision without .git or .cargo-ok; preserve LICENSE, upstream Cargo.toml/Cargo.lock and ci workspace member.",
+    "Regenerate upstream-files.sha256 from pristine upstream bytes. Apply reviewed portable patches in listed order.",
+    "Regenerate checksums.sha256 for every imported source file, verify.py and each portable patch; update manifest and patch hashes here. Do not normalize imported files.",
+    "Run python library/vendor/rusty_enet/verify.py and cargo +1.99.1 test --locked --manifest-path library/vendor/rusty_enet/Cargo.toml --lib.",
+    "Native test is ignored by default and requires an independently built pinned ENet-CSharp probe via PULSE_NATIVE_PROBE and PULSE_NATIVE_TRACE plus --include-ignored. Default test success does not prove native interop.",
+    "Review dependency, layout, ownership, source provenance, ordinary-lane preservation and native-client evidence before updating the pin or patches."
+  ]
+}

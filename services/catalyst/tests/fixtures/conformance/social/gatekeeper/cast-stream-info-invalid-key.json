@@ -1,0 +1,22 @@
+{
+  "description": "GET /cast/stream-info/{streamingKey} for a key nobody generated. Captured GET https://comms-gatekeeper.decentraland.org/cast/stream-info/not-a-real-streaming-key -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/cast/stream-info/not-a-real-streaming-key",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Invalid streaming key"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/cast/stream-info/not-a-real-streaming-key",
+  "captured_at": "2026-09-25T19:24:38Z",
+  "volatile_paths": []
+}

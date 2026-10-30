@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-mp-hello"
+description = "Enables the mp_hello command without any pre-configured scope."
+commands.allow = ["mp_hello"]
+
+[[permission]]
+identifier = "deny-mp-hello"
+description = "Denies the mp_hello command without any pre-configured scope."
+commands.deny = ["mp_hello"]

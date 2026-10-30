@@ -1,0 +1,31 @@
+/* Creator workflows still use legacy token names; their values come from Social's surface palette. */
+.ch.ui2,
+.ch .ui2 {
+  --panel: var(--ui-panel);
+  --text: var(--ui-text);
+  --ink-85: var(--ui-text);
+  --ink-7: var(--ui-muted);
+  --ink-6: var(--ui-muted);
+  --ink-45: var(--ui-muted);
+  --line: var(--ui-border);
+  --fill-1: var(--ui-raised);
+  --fill-2: var(--ui-raised);
+  --fill-3: var(--ui-hover);
+  --fill-4: var(--ui-hover);
+  --ctl-radius: var(--ui-radius);
+  --ctl-weight: 600;
+  --ctl-tracking: 0;
+  --ctl-pad-sm: 8px 12px;
+  --ctl-pad-md: 10px 16px;
+  --r-control: var(--ui-radius);
+  --r-card: var(--ui-card-radius);
+  --brand-ink: var(--ui-accent);
+  --brand-cta: var(--ui-action);
+  --font-sans: var(--ui-font);
+  --font-family: var(--ui-font);
+  font-size: 13px;
+}
+
+.ch .es__title { font-weight: 600; }
+.ch .es__sub { font-weight: 400; line-height: 1.6; }
+.ch .es__cta { border-radius: var(--ui-radius); }

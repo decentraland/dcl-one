@@ -1,0 +1,81 @@
+{
+  "catalyst": {
+    "archipelago_nats_recovery": [
+      "real_pulse_retained_recovery_reaches_signed_ws_with_lost_completion_and_no_stale_packet",
+      "real_pulse_departed_pending_wallet_cleans_without_socket_and_unknown_dispatch_never_retries",
+      "real_pulse_configured_legacy_owner_completes_durable_fenced_takeover",
+      "real_pulse_read_only_replica_refresh_and_unknown_restart_survive_ban_lift",
+      "public_projections::baseline_pulse_startup_fallback_preserves_room_flow",
+      "public_projections::baseline_livekit_only_client_has_expected_online_projection",
+      "public_projections::baseline_empty_topology_differs_from_feed_loss",
+      "public_projections::advertised_counts_follow_produced_native_discovery"
+    ],
+    "archipelago_control_extensions_websocket": [
+      "configured_legacy_heartbeat_reaches_real_pulse_clustering_over_nats",
+      "baseline_legacy_ws_reconnect_preserves_ownership",
+      "pulse_stamp_rejects_stale_sql_visibility_after_commit_wait_without_changing_legacy_wire"
+    ],
+    "comms_v4_assignment_fence": [
+      "recovery::a_stationary_reconnect_refills_the_claim_once_despite_an_old_participant",
+      "recovery::a_stale_connect_cannot_refill_a_newer_owners_claim",
+      "recovery::same_room_control_handoffs_refill_same_and_different_session_claims",
+      "recovery::a_move_during_token_mint_rolls_back_then_recovers_the_current_room",
+      "recovery::same_room_recovery_renews_expired_credentials_without_periodic_churn"
+    ],
+    "archipelago_ws_island_dedup": [
+      "same_room_refreshes_deliver_the_entire_assignment_to_only_the_named_session"
+    ]
+  },
+  "unix": {
+    "archipelago_nats_recovery": [
+      "a_stalled_broker_cannot_hold_readiness"
+    ]
+  },
+  "vendor": [
+    "crc32::test::crc32",
+    "test::events",
+    "test::resend_reliable_packet",
+    "test::round_trip_time",
+    "test::timeout",
+    "test::packet_kind_preserves_all_construction_kinds",
+    "test::per_packet_unthrottled_preserves_control_lane",
+    "test::throttle_drop_does_not_consume_next_packet_on_other_channel",
+    "test::ordinary_unreliable_fragment_group_drops_without_consuming_bypass_group",
+    "test::repeated_packet_sends_keep_independent_throttle_decisions",
+    "test::receive_policy::native_receive_valid_declaration_above_old_max_reports_before_allocation",
+    "test::receive_policy::native_receive_charge_exact_boundary_and_transfer_release",
+    "test::receive_policy::native_receive_zero_payload_command_cap_duplicates_and_independent_peers",
+    "test::receive_policy::native_receive_fragment_bitmap_budget_and_duplicate_reservations",
+    "test::receive_policy::native_receive_unfragmented_paths_enforce_payload_after_window_validation",
+    "test::receive_policy::native_receive_terminal_wins_over_pending_receive_and_following_input",
+    "test::receive_policy::native_receive_malformed_out_of_window_and_spoofed_headers_have_no_attribution",
+    "test::receive_policy::native_receive_stale_unreliable_removal_releases_while_connected",
+    "test::receive_policy::native_receive_checked_charge_overflow_and_recoverable_refusal_leave_no_reservation",
+    "test::receive_policy::native_receive_reliable_refusal_is_not_acked_and_retry_progresses",
+    "test::receive_policy::native_receive_default_policy_preserves_large_packets_and_settings_validation",
+    "test::receive_policy::native_receive_sequence_wrap_and_aggregate_payload_precedence",
+    "test::receive_policy::native_receive_host_destruction_releases_before_packet_free",
+    "test::receive_policy::native_receive_timeout_releases_partial_group_and_pending_reports",
+    "test::receive_policy::native_receive_connected_adapter_forwards_opt_in_violation",
+    "connected::receive_policy_tests::native_receive_handshake_terminal_event_owns_peer_for_disconnect_and_reset_reuse",
+    "test::receive_policy::native_receive_consumed_reliable_fragment_is_not_attributed_and_next_sequence_progresses",
+    "connected::receive_policy_tests::native_receive_staged_old_limit_cannot_attach_replacement_awaiting_or_has_peer",
+    "connected::receive_policy_tests::native_receive_staged_old_limit_drops_disconnected_or_closing_wrapper",
+    "connected::receive_policy_tests::native_receive_full_address_and_has_peer_pointer_are_checked_independently",
+    "test::receive_policy::packet_payload_initialization_preserves_copy_and_borrowed_payloads",
+    "test::receive_policy::reliable_fragment_payload_initialization_preserves_ranges_order_and_duplicates",
+    "test::receive_policy::unreliable_fragment_payload_initialization_preserves_ranges_order_and_duplicates",
+    "test::receive_policy::aggregate_limit_commands_preserve_same_pass_disconnect_and_slot_reuse",
+    "test::receive_policy::aggregate_limit_bytes_preserve_same_pass_disconnect_and_slot_reuse",
+    "test::receive_policy::aggregate_limit_preserves_pending_connect_lifecycle_dispatch",
+    "test::receive_policy::aggregate_limit_preserves_timeout_disconnect_and_slot_reuse"
+  ],
+  "vendor_ignored": [
+    "test::native_csharp_all_lanes_and_controlled_sender_throttle"
+  ],
+  "bevy": {
+    "comms": [
+      "pulse::native::tests::native_frame_mapping_preserves_channels_and_explicit_throttle_bypass"
+    ]
+  }
+}

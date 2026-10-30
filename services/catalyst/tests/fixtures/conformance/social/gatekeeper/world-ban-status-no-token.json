@@ -1,0 +1,22 @@
+{
+  "description": "GET /worlds/{worldName}/parcels/{baseParcel}/users/{address}/ban-status for a world name (openapi 2157). Captured GET https://comms-gatekeeper.decentraland.org/worlds/genesis.dcl.eth/parcels/0,0/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/ban-status -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/worlds/genesis.dcl.eth/parcels/0,0/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/ban-status",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Authorization header is missing"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/worlds/genesis.dcl.eth/parcels/0,0/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/ban-status",
+  "captured_at": "2026-09-25T19:24:37Z",
+  "volatile_paths": []
+}

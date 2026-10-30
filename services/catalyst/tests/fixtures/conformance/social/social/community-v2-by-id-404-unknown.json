@@ -1,0 +1,23 @@
+{
+  "description": "GET /v2/communities/{id} for an unknown uuid. Captured GET https://social-api.decentraland.org/v2/communities/00000000-0000-4000-8000-000000000000 -> 404.",
+  "request": {
+    "method": "GET",
+    "path": "/v2/communities/00000000-0000-4000-8000-000000000000",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Not Found",
+      "message": "Community not found: 00000000-0000-4000-8000-000000000000"
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v2/communities/00000000-0000-4000-8000-000000000000",
+  "captured_at": "2026-09-25T19:24:09Z",
+  "volatile_paths": []
+}

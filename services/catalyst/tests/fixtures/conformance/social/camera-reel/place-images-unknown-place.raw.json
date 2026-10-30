@@ -1,0 +1,29 @@
+{
+  "method": "GET",
+  "url": "https://camera-reel-service.decentraland.org/api/places/00000000-0000-4000-8000-000000000000/images",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 200,
+  "status_text": "OK",
+  "response_headers": {
+    "access-control-expose-headers": "content-type",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c69b52a23e508-TXL",
+    "connection": "keep-alive",
+    "content-length": "27",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:25:06 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:25:06Z",
+  "elapsed_ms": 151,
+  "body_bytes": 27,
+  "body_file": "place-images-unknown-place.raw.body",
+  "redacted": false
+}

@@ -1,0 +1,34 @@
+{
+  "description": "GET /scene-bans?limit=20&offset=0 signed as a scene (signer decentraland-kernel-scene, Genesis Plaza metadata) by a wallet that administers nothing. Signed fetch with the run's throwaway key 0xd6690b5a1525b60a799fc41a63f59e01ed620cb1 (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0 -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/scene-bans",
+    "query": {
+      "limit": [
+        "20"
+      ],
+      "offset": [
+        "0"
+      ]
+    },
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xd6690b5a1525b60a799fc41a63f59e01ed620cb1\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/scene-bans:1790364659732:{\\\"signer\\\":\\\"decentraland-kernel-scene\\\",\\\"realm\\\":{\\\"hostname\\\":\\\"realm-provider-ea.decentraland.org\\\",\\\"protocol\\\":\\\"v3\\\",\\\"serverName\\\":\\\"main\\\"},\\\"sceneId\\\":\\\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\\\",\\\"parcel\\\":\\\"-3,-2\\\"}\",\"signature\":\"0x182d92ac75939a5a8c14c24d671d242fdbf20534db7320682829974e79913b5105a9ceeeb14a7bd294701a09d0169b6f79992c4a6c66d39e140460e8a2b119871b\"}",
+      "x-identity-timestamp": "1790364659732",
+      "x-identity-metadata": "{\"signer\":\"decentraland-kernel-scene\",\"realm\":{\"hostname\":\"realm-provider-ea.decentraland.org\",\"protocol\":\"v3\",\"serverName\":\"main\"},\"sceneId\":\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\",\"parcel\":\"-3,-2\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "User does not have permission to list scene bans"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0",
+  "captured_at": "2026-09-25T19:30:59Z",
+  "volatile_paths": []
+}

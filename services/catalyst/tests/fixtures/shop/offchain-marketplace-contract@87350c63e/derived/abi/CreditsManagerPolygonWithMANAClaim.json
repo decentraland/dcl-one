@@ -1,0 +1,2017 @@
+{
+  "contract": "CreditsManagerPolygonWithMANAClaim",
+  "source": "src/credits/CreditsManagerPolygonWithMANAClaim.sol",
+  "compiler": {
+    "solc": "0.8.20+commit.a1b79de6.Emscripten.clang",
+    "settings": {
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "*": [
+            "abi",
+            "evm.methodIdentifiers"
+          ]
+        }
+      }
+    },
+    "openzeppelin": {
+      "commit": "dbb6104ce834628e473d2173bbc9d47f81a9eec3",
+      "tag": "v5.0.2",
+      "npm": "5.0.2"
+    }
+  },
+  "abi": [
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "owner",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "creditsSigner",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "pauser",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "userDenier",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "creditsRevoker",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "customExternalCallSigner",
+              "type": "address"
+            },
+            {
+              "internalType": "address",
+              "name": "customExternalCallRevoker",
+              "type": "address"
+            }
+          ],
+          "internalType": "struct CreditsManagerPolygonWithMANAClaim.Roles",
+          "name": "_roles",
+          "type": "tuple"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_maxManaCreditedPerHour",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bool",
+          "name": "_primarySalesAllowed",
+          "type": "bool"
+        },
+        {
+          "internalType": "bool",
+          "name": "_secondarySalesAllowed",
+          "type": "bool"
+        },
+        {
+          "internalType": "contract IERC20",
+          "name": "_mana",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "_marketplace",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "_legacyMarketplace",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "_collectionStore",
+          "type": "address"
+        },
+        {
+          "internalType": "contract ICollectionFactory",
+          "name": "_collectionFactory",
+          "type": "address"
+        },
+        {
+          "internalType": "contract ICollectionFactory",
+          "name": "_collectionFactoryV3",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "constructor"
+    },
+    {
+      "inputs": [],
+      "name": "AccessControlBadConfirmation",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "neededRole",
+          "type": "bytes32"
+        }
+      ],
+      "name": "AccessControlUnauthorizedAccount",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "target",
+          "type": "address"
+        }
+      ],
+      "name": "AddressEmptyCode",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "AddressInsufficientBalance",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "_creditId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "CreditConsumed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "_creditId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "CreditExpired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_expiresAt",
+          "type": "uint256"
+        }
+      ],
+      "name": "CustomExternalCallExpired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_target",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes4",
+          "name": "_selector",
+          "type": "bytes4"
+        }
+      ],
+      "name": "CustomExternalCallNotAllowed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_user",
+          "type": "address"
+        }
+      ],
+      "name": "DeniedUser",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ECDSAInvalidSignature",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "length",
+          "type": "uint256"
+        }
+      ],
+      "name": "ECDSAInvalidSignatureLength",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "s",
+          "type": "bytes32"
+        }
+      ],
+      "name": "ECDSAInvalidSignatureS",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "EnforcedPause",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ExpectedPause",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "target",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes4",
+              "name": "selector",
+              "type": "bytes4"
+            },
+            {
+              "internalType": "bytes",
+              "name": "data",
+              "type": "bytes"
+            },
+            {
+              "internalType": "uint256",
+              "name": "expiresAt",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "salt",
+              "type": "bytes32"
+            }
+          ],
+          "internalType": "struct CreditsManagerPolygonWithMANAClaim.ExternalCall",
+          "name": "_externalCall",
+          "type": "tuple"
+        }
+      ],
+      "name": "ExternalCallFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "FailedInnerCall",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidAreDeniedLength",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidAssetsLength",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidBeneficiary",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidCreditValue",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidCreditsSignaturesLength",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_recoveredSigner",
+          "type": "address"
+        }
+      ],
+      "name": "InvalidCustomExternalCallSignature",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_target",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes4",
+          "name": "_selector",
+          "type": "bytes4"
+        }
+      ],
+      "name": "InvalidExternalCallSelector",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "_creditId",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "_recoveredSigner",
+          "type": "address"
+        }
+      ],
+      "name": "InvalidSignature",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "signer",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes",
+              "name": "signature",
+              "type": "bytes"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "uses",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "expiration",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "effective",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "salt",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "contractSignatureIndex",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "signerSignatureIndex",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "allowedRoot",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "bytes32[]",
+                  "name": "allowedProof",
+                  "type": "bytes32[]"
+                },
+                {
+                  "components": [
+                    {
+                      "internalType": "address",
+                      "name": "contractAddress",
+                      "type": "address"
+                    },
+                    {
+                      "internalType": "bytes4",
+                      "name": "selector",
+                      "type": "bytes4"
+                    },
+                    {
+                      "internalType": "bytes",
+                      "name": "value",
+                      "type": "bytes"
+                    },
+                    {
+                      "internalType": "bool",
+                      "name": "required",
+                      "type": "bool"
+                    }
+                  ],
+                  "internalType": "struct IMarketplace.ExternalCheck[]",
+                  "name": "externalChecks",
+                  "type": "tuple[]"
+                }
+              ],
+              "internalType": "struct IMarketplace.Checks",
+              "name": "checks",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "assetType",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "contractAddress",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "value",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "beneficiary",
+                  "type": "address"
+                },
+                {
+                  "internalType": "bytes",
+                  "name": "extra",
+                  "type": "bytes"
+                }
+              ],
+              "internalType": "struct IMarketplace.Asset[]",
+              "name": "sent",
+              "type": "tuple[]"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "assetType",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "contractAddress",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "value",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "beneficiary",
+                  "type": "address"
+                },
+                {
+                  "internalType": "bytes",
+                  "name": "extra",
+                  "type": "bytes"
+                }
+              ],
+              "internalType": "struct IMarketplace.Asset[]",
+              "name": "received",
+              "type": "tuple[]"
+            }
+          ],
+          "internalType": "struct IMarketplace.Trade",
+          "name": "_trade",
+          "type": "tuple"
+        }
+      ],
+      "name": "InvalidTrade",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidTradesLength",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidUsersLength",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_creditedValue",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_maxCreditedValue",
+          "type": "uint256"
+        }
+      ],
+      "name": "MaxCreditedValueExceeded",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "MaxCreditedValueZero",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_creditableManaThisHour",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_creditedValue",
+          "type": "uint256"
+        }
+      ],
+      "name": "MaxManaCreditedPerHourExceeded",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_uncreditedValue",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_maxUncreditedValue",
+          "type": "uint256"
+        }
+      ],
+      "name": "MaxUncreditedValueExceeded",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "MetaTransactionFailedWithoutReason",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NoCredits",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NoMANATransfer",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_contractAddress",
+          "type": "address"
+        }
+      ],
+      "name": "NotDecentralandCollection",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "PrimarySalesNotAllowed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ReentrancyGuardReentrantCall",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "_creditId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "RevokedCredit",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "token",
+          "type": "address"
+        }
+      ],
+      "name": "SafeERC20FailedOperation",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "SecondarySalesNotAllowed",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "SenderBalanceChanged",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "SignerAndSignatureDoNotMatch",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "string",
+          "name": "str",
+          "type": "string"
+        }
+      ],
+      "name": "StringTooLong",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        }
+      ],
+      "name": "Unauthorized",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "_customExternalCallHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "UsedCustomExternalCall",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "_creditId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "CreditRevoked",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "_creditId",
+          "type": "bytes32"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "value",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "expiresAt",
+              "type": "uint256"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "salt",
+              "type": "bytes32"
+            }
+          ],
+          "indexed": false,
+          "internalType": "struct CreditsManagerPolygonWithMANAClaim.Credit",
+          "name": "_credit",
+          "type": "tuple"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "_value",
+          "type": "uint256"
+        }
+      ],
+      "name": "CreditUsed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "_manaTransferred",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "_creditedValue",
+          "type": "uint256"
+        }
+      ],
+      "name": "CreditsUsed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_target",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes4",
+          "name": "_selector",
+          "type": "bytes4"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "_allowed",
+          "type": "bool"
+        }
+      ],
+      "name": "CustomExternalCallAllowed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "_customExternalCallHash",
+          "type": "bytes32"
+        }
+      ],
+      "name": "CustomExternalCallRevoked",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_token",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "_amount",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_to",
+          "type": "address"
+        }
+      ],
+      "name": "ERC20Withdrawn",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_token",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "_tokenId",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "_to",
+          "type": "address"
+        }
+      ],
+      "name": "ERC721Withdrawn",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "_maxManaCreditedPerHour",
+          "type": "uint256"
+        }
+      ],
+      "name": "MaxManaCreditedPerHourUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_userAddress",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_relayerAddress",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "_functionData",
+          "type": "bytes"
+        }
+      ],
+      "name": "MetaTransactionExecuted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "Paused",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "_primarySalesAllowed",
+          "type": "bool"
+        }
+      ],
+      "name": "PrimarySalesAllowedUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "role",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "previousAdminRole",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "newAdminRole",
+          "type": "bytes32"
+        }
+      ],
+      "name": "RoleAdminChanged",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "role",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "sender",
+          "type": "address"
+        }
+      ],
+      "name": "RoleGranted",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "role",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "sender",
+          "type": "address"
+        }
+      ],
+      "name": "RoleRevoked",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "_secondarySalesAllowed",
+          "type": "bool"
+        }
+      ],
+      "name": "SecondarySalesAllowedUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "Unpaused",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_sender",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "_user",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "_isDenied",
+          "type": "bool"
+        }
+      ],
+      "name": "UserDenied",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "ASSET_TYPE_COLLECTION_ITEM",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "ASSET_TYPE_ERC20",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "ASSET_TYPE_ERC721",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "ASSET_TYPE_USD_PEGGED_MANA",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "CREDITS_REVOKER_ROLE",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "CREDITS_SIGNER_ROLE",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "DEFAULT_ADMIN_ROLE",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "EXTERNAL_CALL_REVOKER_ROLE",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "EXTERNAL_CALL_SIGNER_ROLE",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "PAUSER_ROLE",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "USER_DENIER_ROLE",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_target",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes4",
+          "name": "_selector",
+          "type": "bytes4"
+        },
+        {
+          "internalType": "bool",
+          "name": "_allowed",
+          "type": "bool"
+        }
+      ],
+      "name": "allowCustomExternalCall",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes4",
+          "name": "",
+          "type": "bytes4"
+        }
+      ],
+      "name": "allowedCustomExternalCalls",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "collectionFactory",
+      "outputs": [
+        {
+          "internalType": "contract ICollectionFactory",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "collectionFactoryV3",
+      "outputs": [
+        {
+          "internalType": "contract ICollectionFactory",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "collectionStore",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address[]",
+          "name": "_users",
+          "type": "address[]"
+        },
+        {
+          "internalType": "bool[]",
+          "name": "_areDenied",
+          "type": "bool[]"
+        }
+      ],
+      "name": "denyUsers",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_userAddress",
+          "type": "address"
+        },
+        {
+          "internalType": "bytes",
+          "name": "_functionData",
+          "type": "bytes"
+        },
+        {
+          "internalType": "bytes",
+          "name": "_signature",
+          "type": "bytes"
+        }
+      ],
+      "name": "executeMetaTransaction",
+      "outputs": [
+        {
+          "internalType": "bytes",
+          "name": "",
+          "type": "bytes"
+        }
+      ],
+      "stateMutability": "payable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_signer",
+          "type": "address"
+        }
+      ],
+      "name": "getNonce",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "role",
+          "type": "bytes32"
+        }
+      ],
+      "name": "getRoleAdmin",
+      "outputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "role",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "grantRole",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "role",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "hasRole",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "hourOfLastManaCredit",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "name": "isDenied",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "isRevoked",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "legacyMarketplace",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "mana",
+      "outputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "manaCreditedThisHour",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "marketplace",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "maxManaCreditedPerHour",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        },
+        {
+          "internalType": "address",
+          "name": "",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "",
+          "type": "bytes"
+        }
+      ],
+      "name": "onERC721Received",
+      "outputs": [
+        {
+          "internalType": "bytes4",
+          "name": "",
+          "type": "bytes4"
+        }
+      ],
+      "stateMutability": "pure",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "pause",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "paused",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "primarySalesAllowed",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "role",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "callerConfirmation",
+          "type": "address"
+        }
+      ],
+      "name": "renounceRole",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32[]",
+          "name": "_creditHashes",
+          "type": "bytes32[]"
+        }
+      ],
+      "name": "revokeCredits",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32[]",
+          "name": "_customExternalCallHashes",
+          "type": "bytes32[]"
+        }
+      ],
+      "name": "revokeCustomExternalCalls",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "role",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "revokeRole",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "secondarySalesAllowed",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "spentValue",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes4",
+          "name": "interfaceId",
+          "type": "bytes4"
+        }
+      ],
+      "name": "supportsInterface",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "unpause",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_maxManaCreditedPerHour",
+          "type": "uint256"
+        }
+      ],
+      "name": "updateMaxManaCreditedPerHour",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bool",
+          "name": "_primarySalesAllowed",
+          "type": "bool"
+        }
+      ],
+      "name": "updatePrimarySalesAllowed",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bool",
+          "name": "_secondarySalesAllowed",
+          "type": "bool"
+        }
+      ],
+      "name": "updateSecondarySalesAllowed",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "value",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "expiresAt",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "salt",
+                  "type": "bytes32"
+                }
+              ],
+              "internalType": "struct CreditsManagerPolygonWithMANAClaim.Credit[]",
+              "name": "credits",
+              "type": "tuple[]"
+            },
+            {
+              "internalType": "bytes[]",
+              "name": "creditsSignatures",
+              "type": "bytes[]"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "address",
+                  "name": "target",
+                  "type": "address"
+                },
+                {
+                  "internalType": "bytes4",
+                  "name": "selector",
+                  "type": "bytes4"
+                },
+                {
+                  "internalType": "bytes",
+                  "name": "data",
+                  "type": "bytes"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "expiresAt",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "salt",
+                  "type": "bytes32"
+                }
+              ],
+              "internalType": "struct CreditsManagerPolygonWithMANAClaim.ExternalCall",
+              "name": "externalCall",
+              "type": "tuple"
+            },
+            {
+              "internalType": "bytes",
+              "name": "customExternalCallSignature",
+              "type": "bytes"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxUncreditedValue",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "maxCreditedValue",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct CreditsManagerPolygonWithMANAClaim.UseCreditsArgs",
+          "name": "_args",
+          "type": "tuple"
+        }
+      ],
+      "name": "useCredits",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "",
+          "type": "bytes32"
+        }
+      ],
+      "name": "usedCustomExternalCall",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_token",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_amount",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "_to",
+          "type": "address"
+        }
+      ],
+      "name": "withdrawERC20",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_token",
+          "type": "address"
+        },
+        {
+          "internalType": "uint256",
+          "name": "_tokenId",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "_to",
+          "type": "address"
+        }
+      ],
+      "name": "withdrawERC721",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "methodIdentifiers": {
+    "ASSET_TYPE_COLLECTION_ITEM()": "ba9ea7bd",
+    "ASSET_TYPE_ERC20()": "6c1d8ee6",
+    "ASSET_TYPE_ERC721()": "7bb185bd",
+    "ASSET_TYPE_USD_PEGGED_MANA()": "a5b2a654",
+    "CREDITS_REVOKER_ROLE()": "6adf8f63",
+    "CREDITS_SIGNER_ROLE()": "097340ac",
+    "DEFAULT_ADMIN_ROLE()": "a217fddf",
+    "EXTERNAL_CALL_REVOKER_ROLE()": "2c4d5e3d",
+    "EXTERNAL_CALL_SIGNER_ROLE()": "15f20038",
+    "PAUSER_ROLE()": "e63ab1e9",
+    "USER_DENIER_ROLE()": "818fb9ec",
+    "allowCustomExternalCall(address,bytes4,bool)": "425adff5",
+    "allowedCustomExternalCalls(address,bytes4)": "a1b3130b",
+    "collectionFactory()": "cf25a2fd",
+    "collectionFactoryV3()": "4b5e3a12",
+    "collectionStore()": "a078d364",
+    "denyUsers(address[],bool[])": "e71bf9a6",
+    "executeMetaTransaction(address,bytes,bytes)": "d8ed1acc",
+    "getNonce(address)": "2d0335ab",
+    "getRoleAdmin(bytes32)": "248a9ca3",
+    "grantRole(bytes32,address)": "2f2ff15d",
+    "hasRole(bytes32,address)": "91d14854",
+    "hourOfLastManaCredit()": "d1f44ab1",
+    "isDenied(address)": "e838dfbb",
+    "isRevoked(bytes32)": "4294857f",
+    "legacyMarketplace()": "298b8f26",
+    "mana()": "bdb001a7",
+    "manaCreditedThisHour()": "4df167be",
+    "marketplace()": "abc8c7af",
+    "maxManaCreditedPerHour()": "626c7fee",
+    "onERC721Received(address,address,uint256,bytes)": "150b7a02",
+    "pause()": "8456cb59",
+    "paused()": "5c975abb",
+    "primarySalesAllowed()": "55c81e2c",
+    "renounceRole(bytes32,address)": "36568abe",
+    "revokeCredits(bytes32[])": "309cb81b",
+    "revokeCustomExternalCalls(bytes32[])": "77f86a3c",
+    "revokeRole(bytes32,address)": "d547741f",
+    "secondarySalesAllowed()": "3c0b1267",
+    "spentValue(bytes32)": "ed3a61b7",
+    "supportsInterface(bytes4)": "01ffc9a7",
+    "unpause()": "3f4ba83a",
+    "updateMaxManaCreditedPerHour(uint256)": "5fe34337",
+    "updatePrimarySalesAllowed(bool)": "cc0262f8",
+    "updateSecondarySalesAllowed(bool)": "c6cf3dc6",
+    "useCredits(((uint256,uint256,bytes32)[],bytes[],(address,bytes4,bytes,uint256,bytes32),bytes,uint256,uint256))": "1863572d",
+    "usedCustomExternalCall(bytes32)": "a8ee3ee3",
+    "withdrawERC20(address,uint256,address)": "5fc3ea0b",
+    "withdrawERC721(address,uint256,address)": "7b9f76b5"
+  }
+}

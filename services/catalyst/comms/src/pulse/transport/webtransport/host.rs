@@ -1,0 +1,507 @@
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::{Receiver as StdReceiver, Sender as StdSender};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+
+use crate::pulse::transport::webtransport::quic::{
+    Event as QuicEvent, Host as QuicHost, HostConfig as QuicConfig,
+};
+
+use crate::pulse::hardening::DisconnectReason;
+use crate::pulse::transport::application_budget::{
+    ApplicationBudget, ApplicationGlobal, ApplicationPayload, ApplicationPermit,
+};
+use crate::pulse::transport::peer::PeerId;
+use crate::pulse::transport::webtransport::CHANNEL_SEQUENCED;
+use crate::pulse::transport::webtransport::config::WtConfig;
+use crate::pulse::transport::webtransport::framing::{
+    DatagramDeduper, StreamFrameReader, parse_datagram, stream_frame,
+};
+use crate::pulse::transport::{Event, Packet};
+
+#[derive(Debug, Default)]
+pub struct WtMetrics {
+    pub datagrams_dropped_stale: AtomicU64,
+    pub datagrams_dropped_oversize: AtomicU64,
+    pub messages_dropped_oversize: AtomicU64,
+    pub peers_refused_full: AtomicU64,
+}
+
+enum Outbound {
+    Send {
+        peer: u32,
+        packet: Packet,
+    },
+    Application {
+        peer: u32,
+        connection: u64,
+        packet: Packet,
+        permit: ApplicationPermit,
+    },
+    Disconnect {
+        peer: u32,
+        reason: u32,
+    },
+}
+
+#[derive(Clone)]
+struct ApplicationPeer {
+    connection: u64,
+    budget: ApplicationBudget,
+}
+
+struct ApplicationSenders {
+    global: ApplicationGlobal,
+    peers: Mutex<HashMap<u32, ApplicationPeer>>,
+}
+
+pub struct WtHost {
+    outbound_tx: StdSender<Outbound>,
+    local_addr: SocketAddr,
+    metrics: Arc<WtMetrics>,
+    application: Arc<ApplicationSenders>,
+    max_message_bytes: usize,
+    max_datagram_bytes: usize,
+}
+
+impl WtHost {
+    pub fn start(config: WtConfig) -> anyhow::Result<(WtHost, UnboundedReceiver<Event>)> {
+        let ceiling = config.slot_base as u64 + config.slot_capacity as u64;
+        if ceiling > u16::MAX as u64 + 1 {
+            anyhow::bail!(
+                "webtransport slot range [{}, {}) exceeds the PeerId (u16) space",
+                config.slot_base,
+                ceiling
+            );
+        }
+
+        let quic = QuicHost::new(QuicConfig {
+            bind_addr: config.bind_addr,
+            cert_pem: config.cert_pem.clone(),
+            key_pem: config.key_pem.clone(),
+        })
+        .map_err(|e| anyhow::anyhow!("webtransport host bind: {e}"))?;
+        let local_addr = quic.local_addr();
+
+        let (events_tx, events_rx) = unbounded_channel::<Event>();
+        let (outbound_tx, outbound_rx) = std::sync::mpsc::channel::<Outbound>();
+        let metrics = Arc::new(WtMetrics::default());
+        let thread_metrics = metrics.clone();
+        let application = Arc::new(ApplicationSenders {
+            global: ApplicationBudget::global(),
+            peers: Mutex::new(HashMap::new()),
+        });
+        let thread_application = application.clone();
+        let max_message_bytes = config.max_message_bytes;
+        let max_datagram_bytes = config.max_datagram_bytes;
+
+        std::thread::Builder::new()
+            .name("pulse-webtransport".into())
+            .spawn(move || {
+                run_loop(
+                    quic,
+                    config,
+                    events_tx,
+                    outbound_rx,
+                    thread_metrics,
+                    thread_application,
+                )
+            })?;
+
+        Ok((
+            WtHost {
+                outbound_tx,
+                local_addr,
+                metrics,
+                application,
+                max_message_bytes,
+                max_datagram_bytes,
+            },
+            events_rx,
+        ))
+    }
+
+    pub fn send(&self, peer: u32, packet: Packet) {
+        let _ = self.outbound_tx.send(Outbound::Send { peer, packet });
+    }
+
+    pub fn send_application(&self, peer: u32, packet: Packet) -> std::io::Result<()> {
+        self.queue_application(peer, packet, false)
+    }
+
+    pub(in crate::pulse::transport) fn queue_application(
+        &self,
+        peer: u32,
+        packet: Packet,
+        control: bool,
+    ) -> std::io::Result<()> {
+        let cap = if packet.channel == CHANNEL_RELIABLE {
+            self.max_message_bytes
+        } else {
+            self.max_datagram_bytes
+        };
+        if packet.data.len() > cap {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "application packet exceeds transport limit",
+            ));
+        }
+        let destination = self
+            .application
+            .peers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&peer)
+            .cloned()
+            .ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::NotConnected,
+                    "application peer unavailable",
+                )
+            })?;
+        let permit = destination.budget.reserve(packet.data.len() + 4, control)?;
+        self.outbound_tx
+            .send(Outbound::Application {
+                peer,
+                connection: destination.connection,
+                packet,
+                permit,
+            })
+            .map_err(|_| {
+                std::io::Error::new(
+                    std::io::ErrorKind::BrokenPipe,
+                    "application transport closed",
+                )
+            })
+    }
+
+    pub fn disconnect(&self, peer: u32, reason: u32) {
+        let _ = self.outbound_tx.send(Outbound::Disconnect { peer, reason });
+    }
+
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    pub fn metrics(&self) -> Arc<WtMetrics> {
+        self.metrics.clone()
+    }
+}
+
+struct WtSession {
+    our_peer: u32,
+    reader: StreamFrameReader,
+    deduper: DatagramDeduper,
+}
+
+fn run_loop(
+    mut quic: QuicHost,
+    config: WtConfig,
+    events_tx: UnboundedSender<Event>,
+    outbound_rx: StdReceiver<Outbound>,
+    metrics: Arc<WtMetrics>,
+    application: Arc<ApplicationSenders>,
+) {
+    let mut sessions = Sessions {
+        by_quic: HashMap::new(),
+        quic_by_peer: HashMap::new(),
+        free_slots: (config.slot_base..config.slot_base + config.slot_capacity as u32)
+            .rev()
+            .collect(),
+        application,
+    };
+
+    let timeout = Duration::from_millis(config.service_timeout_ms);
+
+    loop {
+        while let Ok(cmd) = outbound_rx.try_recv() {
+            match cmd {
+                Outbound::Application {
+                    peer,
+                    connection,
+                    packet,
+                    permit,
+                } => {
+                    if sessions.quic_by_peer.get(&peer) != Some(&connection) {
+                        continue;
+                    }
+                    if packet.channel == CHANNEL_RELIABLE {
+                        let bytes = bytes::Bytes::from_owner(ApplicationPayload {
+                            bytes: stream_frame(&packet.data).into(),
+                            _permit: permit,
+                        });
+                        if !quic.send_stream_bytes(connection, bytes) {
+                            quic.disconnect(connection, DisconnectReason::Graceful.code());
+                        }
+                    } else {
+                        quic.send_datagram(connection, &packet.data);
+                    }
+                }
+                Outbound::Disconnect { peer, reason } => {
+                    if let Some(&qid) = sessions.quic_by_peer.get(&peer) {
+                        quic.disconnect(qid, reason);
+                    }
+                }
+                Outbound::Send { peer, packet } => {
+                    let Some(&qid) = sessions.quic_by_peer.get(&peer) else {
+                        continue;
+                    };
+                    if packet.channel == CHANNEL_RELIABLE {
+                        if packet.data.len() > config.max_message_bytes {
+                            metrics
+                                .messages_dropped_oversize
+                                .fetch_add(1, Ordering::Relaxed);
+                            tracing::error!(
+                                peer,
+                                size = packet.data.len(),
+                                cap = config.max_message_bytes,
+                                "webtransport: reliable message exceeds max_message_bytes -- dropped"
+                            );
+                        } else {
+                            quic.send_stream(qid, &stream_frame(&packet.data));
+                        }
+                    } else if packet.data.len() > config.max_datagram_bytes {
+                        metrics
+                            .datagrams_dropped_oversize
+                            .fetch_add(1, Ordering::Relaxed);
+                        tracing::error!(
+                            peer,
+                            size = packet.data.len(),
+                            cap = config.max_datagram_bytes,
+                            "webtransport: unreliable message exceeds datagram cap -- dropped"
+                        );
+                    } else {
+                        quic.send_datagram(qid, &packet.data);
+                    }
+                }
+            }
+        }
+
+        let Some(event) = quic.service(timeout) else {
+            if events_tx.is_closed() {
+                shutdown_graceful(&quic, &sessions.by_quic);
+                return;
+            }
+            continue;
+        };
+
+        let forwarded = match event {
+            QuicEvent::Connect {
+                peer_id,
+                remote_addr,
+            } => handle_connect(
+                &mut quic,
+                &config,
+                &metrics,
+                &mut sessions,
+                &events_tx,
+                peer_id,
+                remote_addr,
+            ),
+            QuicEvent::StreamData { peer_id, data } => {
+                handle_stream(&mut sessions.by_quic, &events_tx, peer_id, &data)
+            }
+            QuicEvent::Datagram { peer_id, data } => {
+                handle_datagram(&metrics, &mut sessions.by_quic, &events_tx, peer_id, &data)
+            }
+            QuicEvent::Disconnect { peer_id, .. } => {
+                handle_disconnect(&mut sessions, &events_tx, peer_id)
+            }
+        };
+
+        if forwarded.is_err() {
+            shutdown_graceful(&quic, &sessions.by_quic);
+            return;
+        }
+    }
+}
+
+fn shutdown_graceful(quic: &QuicHost, by_quic: &HashMap<u64, WtSession>) {
+    for &qid in by_quic.keys() {
+        quic.disconnect(qid, DisconnectReason::Graceful.code());
+    }
+}
+
+const CHANNEL_RELIABLE: u8 = 0;
+const CHANNEL_UNSEQUENCED: u8 = 2;
+
+type Forward = Result<(), ()>;
+
+struct Sessions {
+    by_quic: HashMap<u64, WtSession>,
+    quic_by_peer: HashMap<u32, u64>,
+    free_slots: Vec<u32>,
+    application: Arc<ApplicationSenders>,
+}
+
+fn send_event(events_tx: &UnboundedSender<Event>, event: Event) -> Forward {
+    events_tx.send(event).map_err(|_| ())
+}
+
+fn handle_connect(
+    quic: &mut QuicHost,
+    config: &WtConfig,
+    metrics: &WtMetrics,
+    sessions: &mut Sessions,
+    events_tx: &UnboundedSender<Event>,
+    peer_id: u64,
+    remote_addr: String,
+) -> Forward {
+    let Sessions {
+        by_quic,
+        quic_by_peer,
+        free_slots,
+        application,
+    } = sessions;
+    let Some(slot) = free_slots.pop() else {
+        metrics.peers_refused_full.fetch_add(1, Ordering::Relaxed);
+        tracing::warn!(%remote_addr, "webtransport: peer pool exhausted -- refusing");
+        quic.disconnect(peer_id, config.server_full_reason);
+        return Ok(());
+    };
+    by_quic.insert(
+        peer_id,
+        WtSession {
+            our_peer: slot,
+            reader: StreamFrameReader::new(config.max_message_bytes),
+            deduper: DatagramDeduper::default(),
+        },
+    );
+    quic_by_peer.insert(slot, peer_id);
+    application
+        .peers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(
+            slot,
+            ApplicationPeer {
+                connection: peer_id,
+                budget: ApplicationBudget::new(application.global.clone()),
+            },
+        );
+    tracing::debug!(peer = slot, %remote_addr, "webtransport peer connected");
+    send_event(
+        events_tx,
+        Event::Connect {
+            peer: slot as PeerId,
+            ip: Some(parse_ip(&remote_addr)),
+        },
+    )
+}
+
+fn handle_stream(
+    by_quic: &mut HashMap<u64, WtSession>,
+    events_tx: &UnboundedSender<Event>,
+    peer_id: u64,
+    data: &[u8],
+) -> Forward {
+    let Some(session) = by_quic.get_mut(&peer_id) else {
+        return Ok(());
+    };
+    let peer = session.our_peer;
+    session.reader.append(data);
+    loop {
+        match session.reader.try_read() {
+            Ok(Some(msg)) => {
+                send_event(
+                    events_tx,
+                    Event::Receive {
+                        peer: peer as PeerId,
+                        channel: CHANNEL_RELIABLE,
+                        packet: Packet::reliable(CHANNEL_RELIABLE, msg),
+                    },
+                )?;
+            }
+            Ok(None) => return Ok(()),
+            Err(_overrun) => {
+                return send_event(
+                    events_tx,
+                    Event::Corrupt {
+                        peer: peer as PeerId,
+                    },
+                );
+            }
+        }
+    }
+}
+
+fn handle_datagram(
+    metrics: &WtMetrics,
+    by_quic: &mut HashMap<u64, WtSession>,
+    events_tx: &UnboundedSender<Event>,
+    peer_id: u64,
+    data: &[u8],
+) -> Forward {
+    let Some(session) = by_quic.get_mut(&peer_id) else {
+        return Ok(());
+    };
+    let peer = session.our_peer;
+    let Some((channel_id, seq, payload)) = parse_datagram(data) else {
+        return send_event(
+            events_tx,
+            Event::Corrupt {
+                peer: peer as PeerId,
+            },
+        );
+    };
+    if channel_id == CHANNEL_SEQUENCED && !session.deduper.should_accept(channel_id, seq) {
+        metrics
+            .datagrams_dropped_stale
+            .fetch_add(1, Ordering::Relaxed);
+        return Ok(());
+    }
+    let packet = if channel_id == CHANNEL_UNSEQUENCED {
+        Packet::unsequenced(channel_id, payload.to_vec())
+    } else {
+        Packet::unreliable(channel_id, payload.to_vec())
+    };
+    send_event(
+        events_tx,
+        Event::Receive {
+            peer: peer as PeerId,
+            channel: channel_id,
+            packet,
+        },
+    )
+}
+
+fn handle_disconnect(
+    sessions: &mut Sessions,
+    events_tx: &UnboundedSender<Event>,
+    peer_id: u64,
+) -> Forward {
+    let Sessions {
+        by_quic,
+        quic_by_peer,
+        free_slots,
+        application,
+    } = sessions;
+    let Some(session) = by_quic.remove(&peer_id) else {
+        return Ok(());
+    };
+    quic_by_peer.remove(&session.our_peer);
+    application
+        .peers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .remove(&session.our_peer);
+    free_slots.push(session.our_peer);
+    tracing::debug!(peer = session.our_peer, "webtransport peer disconnected");
+    send_event(
+        events_tx,
+        Event::Disconnect {
+            peer: session.our_peer as PeerId,
+        },
+    )
+}
+
+fn parse_ip(remote_addr: &str) -> String {
+    remote_addr
+        .parse::<SocketAddr>()
+        .map(|a| a.ip().to_string())
+        .unwrap_or_else(|_| remote_addr.to_string())
+}

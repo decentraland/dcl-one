@@ -1,0 +1,28 @@
+import { describe, expect, it } from "vitest";
+
+import { action } from "./internal.page-not-found";
+
+function post(body: string): Request {
+  return new Request("https://example.org/internal/page-not-found", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
+}
+
+function call(request: Request) {
+  return action({ request } as unknown as Parameters<typeof action>[0]);
+}
+
+describe("internal.page-not-found action", () => {
+  it("rejects non-POST, swallows garbage bodies silently and accepts a well-formed spa 404 report", async () => {
+    expect((await call(new Request("https://example.org/internal/page-not-found"))).status).toBe(405);
+    expect((await call(post("not json"))).status).toBe(204);
+    expect((await call(post(JSON.stringify({ referrer: "x" })))).status).toBe(204);
+    expect((await call(post(JSON.stringify({ path: "no-leading-slash" })))).status).toBe(204);
+    const accepted = await call(
+      post(JSON.stringify({ path: "/missing-page?q=1", referrer: "https://example.org/" })),
+    );
+    expect(accepted.status).toBe(202);
+  });
+});

@@ -1,0 +1,24 @@
+{
+  "description": "GET /status: the health document. Captured GET https://notifications.decentraland.org/status -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/status",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "version": "3.12.2",
+      "currentTime": 1790364280276,
+      "commitHash": "0f113fba0bfc33856b8e184474b99e9c28046370"
+    }
+  },
+  "captured_from": "https://notifications.decentraland.org/status",
+  "captured_at": "2026-09-25T19:24:40Z",
+  "volatile_paths": []
+}

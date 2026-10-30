@@ -1,0 +1,21 @@
+{
+  "description": "GET /entities/{cid}/face.png for a well-formed CID no profile has: the edge redirects without checking. Captured GET https://profile-images.decentraland.org/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/face.png -> 301.",
+  "request": {
+    "method": "GET",
+    "path": "/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/face.png",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 301,
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "location": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/face.png"
+    },
+    "body_bytes_b64": "PGh0bWw+DQo8aGVhZD48dGl0bGU+MzAxIE1vdmVkIFBlcm1hbmVudGx5PC90aXRsZT48L2hlYWQ+DQo8Ym9keT4NCjxjZW50ZXI+PGgxPjMwMSBNb3ZlZCBQZXJtYW5lbnRseTwvaDE+PC9jZW50ZXI+DQo8aHI+PGNlbnRlcj5jbG91ZGZsYXJlPC9jZW50ZXI+DQo8L2JvZHk+DQo8L2h0bWw+DQo="
+  },
+  "captured_from": "https://profile-images.decentraland.org/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/face.png",
+  "captured_at": "2026-09-25T19:24:58Z",
+  "volatile_paths": []
+}

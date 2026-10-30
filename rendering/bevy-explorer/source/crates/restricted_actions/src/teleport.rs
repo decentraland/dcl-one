@@ -1,0 +1,296 @@
+use bevy::{math::Vec3Swizzles, prelude::*};
+use common::{
+    rpc::{RpcCall, RpcCallEvent, RpcResultSender},
+    structs::{AvatarDynamicState, PermissionType, PrimaryUser, ReturnedToWorld},
+};
+use comms::global_crdt::ForeignPlayer;
+use ipfs::{ChangeRealmEvent, RealmInitialLocation};
+use rand::{seq::SliceRandom, Rng};
+use scene_runner::{
+    initialize_scene::{
+        LiveScenes, PointerResult, SceneHash, SceneLoading, ScenePointers, SuperUserScene,
+        PARCEL_SIZE,
+    },
+    permissions::Permission,
+    renderer_context::{RendererSceneContext, FROZEN_BLOCK},
+    update_world::{gltf_container::GLTF_LOADING, mesh_collider::SceneColliderData},
+    OutOfWorld,
+};
+use wallet::Wallet;
+
+// (parcel, realm, response, report a realm change's outcome)
+type TeleportAction = (
+    Option<IVec2>,
+    Option<String>,
+    RpcResultSender<Result<(), String>>,
+    bool,
+);
+
+pub fn teleport_player(
+    mut commands: Commands,
+    mut events: EventReader<RpcCallEvent>,
+    mut player: Query<(Entity, &mut Transform, &mut AvatarDynamicState), With<PrimaryUser>>,
+    mut perms: Permission<TeleportAction>,
+    mut realm_target: ResMut<RealmInitialLocation>,
+    super_user: Query<(), With<SuperUserScene>>,
+) {
+    let mut actions: Vec<TeleportAction> = Vec::new();
+
+    for (scene, to, realm, response) in events.read().filter_map(|ev| match &ev.call {
+        RpcCall::TeleportPlayer {
+            to,
+            realm,
+            response,
+        } => Some((ev.origin.scene(), *to, realm.clone(), response.clone())),
+        _ => None,
+    }) {
+        let parcel = to.map(|to| format!("({},{})", to.x, to.y));
+        let (ty, detail) = match (&realm, parcel) {
+            (Some(realm), Some(parcel)) => {
+                (PermissionType::ChangeRealm, format!("{realm} {parcel}"))
+            }
+            (Some(realm), None) => (PermissionType::ChangeRealm, realm.clone()),
+            (None, Some(parcel)) => (PermissionType::Teleport, parcel),
+            (None, None) => {
+                response.send(Err("teleport needs a parcel or a realm".to_owned()));
+                continue;
+            }
+        };
+        // system requests reply to their requester; a scene is gone once its realm change lands,
+        // so its player is told in the console, unless it is the HUD's own bridge scene
+        let Some(scene) = scene else {
+            actions.push((to, realm, response, false));
+            continue;
+        };
+        let report = !super_user.contains(scene);
+        perms.check(
+            ty,
+            scene,
+            (to, realm, response, report),
+            Some(detail),
+            false,
+        );
+    }
+
+    actions.extend(perms.drain_success(PermissionType::Teleport));
+    actions.extend(perms.drain_success(PermissionType::ChangeRealm));
+
+    for (to, realm, response, report) in actions {
+        if let Some(realm) = realm {
+            // A realm change (a full reconnect, even to the realm we are in — same as changeRealm),
+            // landing on the parcel once it is live, or on the realm's default spawn without one.
+            // The parcel can't be applied now: it would resolve against the parcel grid of the
+            // realm being left.
+            debug!("teleport -> {to:?} in {realm}");
+            *realm_target = match to {
+                Some(to) => RealmInitialLocation::Parcel(to),
+                None => RealmInitialLocation::Base,
+            };
+            // answered once the realm is actually set (or failed, keeping the player where they are)
+            commands.send_event(ChangeRealmEvent {
+                new_realm: realm,
+                content_server_override: None,
+                response,
+                report,
+            });
+            continue;
+        }
+
+        // Neither: already answered above (a system request without a scene is never built that way).
+        let Some(to) = to else {
+            response.send(Err("teleport needs a parcel or a realm".to_owned()));
+            continue;
+        };
+
+        let Ok((ent, mut transform, mut dynamic_state)) = player.single_mut() else {
+            warn!("player doesn't exist?!");
+            response.send(Err("Something went wrong".into()));
+            continue;
+        };
+
+        transform.translation.x = to.x as f32 * 16.0 + 8.0;
+        transform.translation.z = -to.y as f32 * 16.0 - 8.0;
+        dynamic_state.velocity = Vec3::ZERO;
+        if let Ok(mut commands) = commands.get_entity(ent) {
+            commands.try_insert(OutOfWorld);
+        }
+
+        debug!("teleport -> none");
+        *realm_target = RealmInitialLocation::None;
+
+        response.send(Ok(()));
+        info!("teleported to {to}");
+    }
+
+    for (_, _, response, _) in perms.drain_fail(PermissionType::Teleport) {
+        response.send(Err("User declined".to_owned()))
+    }
+    for (_, _, response, _) in perms.drain_fail(PermissionType::ChangeRealm) {
+        response.send(Err("User declined".to_owned()))
+    }
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+pub fn handle_out_of_world(
+    mut commands: Commands,
+    mut scenes: Query<
+        (
+            Option<&RendererSceneContext>,
+            Option<&SceneLoading>,
+            Option<&mut SceneColliderData>,
+        ),
+        With<SceneHash>,
+    >,
+    mut player: Query<(Entity, &mut Transform), (With<PrimaryUser>, With<OutOfWorld>)>,
+    pointers: Res<ScenePointers>,
+    live_scenes: Res<LiveScenes>,
+    foreign_players: Query<&GlobalTransform, With<ForeignPlayer>>,
+    wallet: Res<Wallet>,
+    mut returned: EventWriter<ReturnedToWorld>,
+) {
+    let Ok((player, mut t)) = player.single_mut() else {
+        return;
+    };
+
+    debug!("out of world!");
+
+    if wallet.address().is_none() {
+        debug!("waiting for connection");
+        return;
+    }
+
+    let parcel = (t.translation.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
+        .floor()
+        .as_ivec2();
+
+    let hash = match pointers.get(parcel) {
+        Some(PointerResult::Exists { hash, .. }) => hash,
+        Some(PointerResult::Nothing) => {
+            debug!("scene {parcel} doesn't exist, returning to world");
+            debug!("everything: {:?}", pointers);
+            commands.entity(player).remove::<OutOfWorld>();
+            returned.write(ReturnedToWorld::SceneReady);
+            return;
+        }
+        None => {
+            // we don't know yet, the scene isn't loaded
+            debug!("waiting for scene to resolve");
+            return;
+        }
+    };
+
+    let Some(scene) = live_scenes.scenes.get(hash) else {
+        debug!("scene resolved but not spawned");
+        return;
+    };
+
+    let (maybe_context, maybe_loadstate, maybe_collider_data) = scenes.get_mut(*scene).unwrap();
+
+    if let Some(context) = maybe_context {
+        // A frozen scene (inspector /freeze_scene, or the editor-mode auto-freeze at tick 3) is as
+        // loaded as it's going to get — it never advances its tick or clears `blocked` to become
+        // "ready" on its own, so don't keep the player out-of-world behind the loading screen. Do
+        // still wait for gltfs though: they keep processing renderer-side while the scene is frozen,
+        // and releasing early would drop the player in before the ground colliders exist.
+        let frozen =
+            context.blocked.contains(FROZEN_BLOCK) && !context.blocked.contains(GLTF_LOADING);
+        // A broken scene (hung past the not-responding timeout, errored, or unreachable) will
+        // never become ready; stop holding the player behind the loading screen and let them
+        // into the world. An inspected scene never gates the player at all: it's a debugging
+        // session, and it may sit at a breakpoint (or paused before its first tick) forever.
+        if !context.broken()
+            && !frozen
+            && !context.inspected
+            && (context.tick_number <= 5 || !context.blocked.is_empty())
+        {
+            debug!("scene not ready");
+        } else {
+            if context.broken() {
+                debug!("scene broken, returning to world");
+            }
+            debug!(
+                "ready, returning to world (set spawn here) tick: {}",
+                context.tick_number
+            );
+
+            let other_positions = foreign_players
+                .iter()
+                .map(|gt| gt.translation())
+                .collect::<Vec<_>>();
+            let base_position =
+                Vec3::new(context.base.x as f32, 0.0, -context.base.y as f32) * PARCEL_SIZE;
+
+            let rng = &mut rand::thread_rng();
+            let mut best_distance = 0.0;
+            let mut best_position = Vec3::new(
+                rng.gen_range(0.0..PARCEL_SIZE),
+                1000.0,
+                -rng.gen_range(0.0..PARCEL_SIZE),
+            ) + base_position;
+            best_position.y = 1000.0
+                - maybe_collider_data
+                    .and_then(|mut cd| cd.get_ground(best_position))
+                    .map(|(h, _)| h)
+                    .unwrap_or(1000.0);
+            let mut count = 100;
+
+            // spawn points marked `default` take precedence; a scene without any uses them all
+            let default_spawn_points = context
+                .spawn_points
+                .iter()
+                .filter(|sp| sp.default)
+                .collect::<Vec<_>>();
+            let spawn_points = if default_spawn_points.is_empty() {
+                context.spawn_points.iter().collect()
+            } else {
+                default_spawn_points
+            };
+
+            if !spawn_points.is_empty() {
+                while best_distance < 0.75 && count > 0 {
+                    let spawn_point = spawn_points.choose(rng).unwrap();
+                    let aabb = spawn_point.position.bounding_box();
+                    let position = base_position
+                        + Vec3::new(
+                            rng.gen_range(aabb.0.x..=aabb.1.x),
+                            rng.gen_range(aabb.0.y..=aabb.1.y),
+                            -rng.gen_range(aabb.0.z..=aabb.1.z),
+                        );
+                    let distance = other_positions
+                        .iter()
+                        .fold(0.75, |d, other| f32::min(d, (position - *other).length()));
+                    if distance > best_distance {
+                        best_distance = distance;
+                        best_position = position;
+                    }
+
+                    count -= 1;
+                }
+            }
+
+            debug!("chose {best_position}");
+            t.translation = best_position;
+            commands.entity(player).remove::<OutOfWorld>();
+            returned.write(if context.broken() {
+                ReturnedToWorld::SceneBroken
+            } else {
+                ReturnedToWorld::SceneReady
+            });
+        }
+        return;
+    }
+
+    match maybe_loadstate {
+        Some(SceneLoading::Failed) => {
+            debug!("failed, returning to world");
+            commands.entity(player).remove::<OutOfWorld>();
+            returned.write(ReturnedToWorld::SceneLoadFailed);
+        }
+        Some(_) => {
+            debug!("scene not loaded");
+        }
+        None => {
+            panic!("no context or loadstate?!");
+        }
+    }
+}

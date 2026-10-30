@@ -1,0 +1,223 @@
+import { z } from "zod";
+
+import { catalystBase, getJSON, signedGetJSON } from "../client";
+import type { GetOptions } from "../client";
+import { apiOkOf } from "../envelope";
+import { signedFetch } from "../../auth/signer";
+import type { AuthIdentity } from "../../auth/types";
+import type {
+  CommitFn,
+  CommitResult,
+} from "@/features/social/event-subscriptions/machine";
+import { warnInvalid } from "../warn";
+
+const ChannelSchema = z.object({
+  email: z.boolean().nullish().transform((v) => v ?? null),
+  in_app: z.boolean().nullish().transform((v) => v ?? null),
+});
+
+const SubscriptionDetailsSchema = z.object({
+  ignore_all_email: z.boolean().nullish().transform((v) => v ?? null),
+  ignore_all_in_app: z.boolean().nullish().transform((v) => v ?? null),
+  message_type: z
+    .record(z.string(), ChannelSchema)
+    .nullish()
+    .transform((v) => v ?? null),
+});
+
+const SubscriptionSchema = z.object({
+  address: z.string().nullish().transform((v) => v ?? null),
+  email: z.string().nullish().transform((v) => v ?? null),
+  details: SubscriptionDetailsSchema,
+});
+
+const GroupSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  flag: z.string().optional(),
+  types: z.array(z.string()),
+});
+type Group = z.infer<typeof GroupSchema>;
+
+z.object({
+  address: z.string(),
+  email: z.string(),
+  emailConfirmed: z.boolean(),
+  subscribed: z.boolean(),
+  details: SubscriptionDetailsSchema,
+  groups: z.array(GroupSchema),
+});
+
+const ProfileSettingsSchema = z
+  .object({
+    email: z.string().nullish().transform((v) => v ?? null),
+    email_verified: z.boolean().nullish().transform((v) => v ?? false),
+    notify_by_email: z.boolean().nullish().transform((v) => v ?? false),
+    notify_by_browser: z.boolean().nullish().transform((v) => v ?? false),
+    subscriptions: z.array(z.unknown()).nullish().transform((v) => v ?? null),
+  })
+  .passthrough();
+type ProfileSettings = z.infer<typeof ProfileSettingsSchema>;
+
+export async function fetchProfileSettings(
+  opts: GetOptions = {},
+): Promise<ProfileSettings | null> {
+  try {
+    const raw = await getJSON<unknown>("/events/api/profiles/me/settings", opts);
+    const env = apiOkOf(z.unknown()).safeParse(raw);
+    if (!env.success) {
+      warnInvalid("ProfileSettings envelope", env.error.issues);
+      return null;
+    }
+    const r = ProfileSettingsSchema.safeParse(env.data.data);
+    if (r.success) return r.data;
+    warnInvalid("ProfileSettings", r.error.issues);
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+type SubscriptionSettingsView = {
+  email: string;
+  emailConfirmed: boolean;
+  subscribed: boolean;
+};
+
+export function toSubscriptionSettingsView(
+  settings: ProfileSettings,
+): SubscriptionSettingsView {
+  return {
+    email: settings.email ?? "",
+    emailConfirmed: settings.email_verified,
+    subscribed: settings.notify_by_email,
+  };
+}
+
+export const NOTIFICATION_GROUPS: Group[] = [
+  {
+    key: "marketplace",
+    label: "Marketplace",
+    types: [
+      "item_sold",
+      "bid_accepted",
+      "bid_received",
+      "royalties_earned",
+      "rental_ended",
+      "rental_started",
+    ],
+  },
+  {
+    key: "credits",
+    label: "Marketplace Credits",
+    types: [
+      "credits_reminder_complete_goals",
+      "credits_reminder_claim_credits",
+      "credits_reminder_usage",
+      "credits_reminder_do_not_miss_out",
+    ],
+  },
+  { key: "events", label: "Events", types: ["events_started", "events_starts_soon"] },
+  {
+    key: "rewards",
+    label: "Giveaways & Rewards",
+    types: [
+      "reward_assignment",
+      "reward_campaign_out_of_funds",
+      "reward_campaign_out_of_stock",
+    ],
+  },
+  {
+    key: "worlds",
+    label: "Worlds",
+    types: [
+      "worlds_access_restored",
+      "worlds_access_restricted",
+      "worlds_missing_resources",
+      "worlds_permission_granted",
+      "worlds_permission_revoked",
+    ],
+  },
+  {
+    key: "streaming",
+    label: "In-World Streaming",
+    flag: "streaming",
+    types: [
+      "streaming_key_expired",
+      "streaming_key_reset",
+      "streaming_key_revoke",
+      "streaming_place_updated",
+      "streaming_time_exceeded",
+    ],
+  },
+  { key: "tips", label: "Tips", types: ["tip_received"] },
+  {
+    key: "referral",
+    label: "Referrals",
+    flag: "referral",
+    types: ["referral_invited_users_accepted", "referral_new_tier_reached"],
+  },
+];
+
+type WriteChannel = { email: boolean; in_app: boolean };
+
+const UNREADABLE_SETTINGS_MESSAGE =
+  "We couldn't read your current notification settings, so nothing was changed. Try again in a moment.";
+
+export function buildSubscriptionCommit(
+  identitySource: AuthIdentity | null | (() => AuthIdentity | null),
+): CommitFn {
+  return async ({ kind, enabledTypes, signal }): Promise<CommitResult> => {
+    const identity = typeof identitySource === "function" ? identitySource() : identitySource;
+    if (!identity) throw new Error("Sign in to manage email notifications.");
+
+    const current = await signedGetJSON<unknown>("/subscription", {
+      identity,
+      signal,
+    });
+    const parsed = SubscriptionSchema.safeParse(current);
+    if (!parsed.success) {
+      throw new Error(UNREADABLE_SETTINGS_MESSAGE);
+    }
+    const details = parsed.data.details;
+    if (details.message_type === null || details.ignore_all_in_app === null) {
+      throw new Error(UNREADABLE_SETTINGS_MESSAGE);
+    }
+
+    const messageType: Record<string, WriteChannel> = {};
+    for (const [type, chan] of Object.entries(details.message_type)) {
+      if (chan.email === null || chan.in_app === null) {
+        throw new Error(UNREADABLE_SETTINGS_MESSAGE);
+      }
+      messageType[type] = { email: chan.email, in_app: chan.in_app };
+    }
+
+    const subscribing = kind === "subscribe";
+    if (subscribing) {
+      const enabled = new Set(enabledTypes);
+      for (const type of NOTIFICATION_GROUPS.flatMap((group) => group.types)) {
+        const chan = messageType[type] ?? { email: false, in_app: false };
+        messageType[type] = { email: enabled.has(type), in_app: chan.in_app };
+      }
+    }
+
+    const body = {
+      ignore_all_email: !subscribing,
+      ignore_all_in_app: details.ignore_all_in_app,
+      message_type: messageType,
+    };
+
+    const res = await signedFetch(identity, `${catalystBase()}/subscription`, {
+      method: "PUT",
+      metadata: {},
+      headers: { accept: "application/json", "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal,
+    });
+    if (!res.ok) {
+      throw new Error(`Subscription update returned ${res.status}.`);
+    }
+
+    return { kind, at: Date.now() };
+  };
+}

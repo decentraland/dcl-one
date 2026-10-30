@@ -1,0 +1,21 @@
+[package]
+name = "catalyst-jobs"
+version = "0.1.0"
+edition = "2024"
+description = "Background job supervision for the catalyst node"
+publish = false
+
+[dependencies]
+catalyst-db = { path = "../db" }
+tokio.workspace = true
+sqlx.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+futures.workspace = true
+uuid.workspace = true
+tokio-util.workspace = true
+parking_lot.workspace = true
+
+[dev-dependencies]
+catalyst-db = { path = "../db", features = ["scratch"] }
+tokio = { workspace = true, features = ["test-util"] }

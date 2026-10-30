@@ -1,0 +1,143 @@
+.card {
+  position: fixed;
+  z-index: calc(var(--z-modal, 1000) + 1);
+  /* Fixed to the viewport (the popup layer has no transformed ancestor), so re-apply the DPI scale
+     here. Anchored top-left so left/top still place the corner at the click. */
+  transform: scale(var(--ui-scale, 1));
+  transform-origin: top left;
+  width: 300px;
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem 0.75rem 0.75rem;
+  border-radius: var(--r-card);
+  background: var(--panel);
+  border: 1px solid var(--menu-rim);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
+  pointer-events: auto;
+}
+
+/* --- header --------------------------------------------------------------- */
+.header {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.copyRow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  background: none;
+  border: none;
+  padding: 0.1rem 0.3rem;
+  border-radius: var(--r-control);
+  cursor: pointer;
+  color: var(--text-dim, rgba(255, 255, 255, 0.55));
+}
+.copyRow:hover {
+  background: var(--white-10, rgba(255, 255, 255, 0.06));
+}
+
+.name {
+  font-weight: 700;
+  font-size: var(--fs-lg);
+}
+.tag {
+  color: var(--text-dim, rgba(255, 255, 255, 0.5));
+  font-weight: 600;
+}
+.addr {
+  font-size: var(--fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+.copied {
+  font-size: var(--fs-xs);
+  color: var(--green, #4cd964);
+}
+
+/* --- add friend CTA (design-system <Button>) ------------------------------- */
+/* Layout-only hook: the CTA fills the card width. */
+.cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 40px;
+  margin-top: 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r-button);
+  font-family: inherit;
+  font-size: var(--type-13);
+  font-weight: var(--fw-semibold);
+  text-transform: uppercase;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    background-color var(--dur-fast) ease,
+    border-color var(--dur-fast) ease;
+}
+.ctaPrimary {
+  background: var(--brand);
+}
+.ctaPrimary:hover {
+  background: var(--brand-strong);
+}
+.ctaFriend {
+  background: var(--black);
+}
+.ctaSent {
+  background: var(--black-40);
+  border-color: var(--ink-7);
+}
+.ctaFriend:hover,
+.ctaSent:hover {
+  border-color: var(--danger-strong);
+}
+.ctaHover,
+.cta:hover .ctaIdle {
+  display: none;
+}
+.cta:hover .ctaHover {
+  display: inline;
+}
+
+/* --- action list ---------------------------------------------------------- */
+.menu {
+  display: flex;
+  flex-direction: column;
+  padding-top: 0.35rem;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.7rem 0.6rem;
+  background: none;
+  border: none;
+  border-radius: var(--r-control);
+  color: var(--text, #fff);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.row:hover {
+  background: var(--white-10, rgba(255, 255, 255, 0.07));
+}
+.row svg {
+  flex: none;
+}
+
+.danger {
+  color: var(--brand, #ff2d55);
+}
+
+.divider {
+  height: 20px;
+  margin: 0 -0.75rem;
+  background: linear-gradient(transparent 9.5px, var(--divider-strong) 9.5px, var(--divider-strong) 10.5px, transparent 10.5px);
+}
+

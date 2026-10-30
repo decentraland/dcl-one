@@ -1,0 +1,620 @@
+use anyhow::anyhow;
+use bevy::{
+    asset::AssetLoader,
+    gltf::Gltf,
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+};
+use ipfs::{ipfs_path::ContentPathExt, EntityDefinitionLoader};
+use serde::{Deserialize, Serialize};
+
+use once_cell::sync::Lazy;
+
+use crate::{
+    ext::AvatarEmotesExt,
+    urn::{CollectibleInstance, CollectibleUrn},
+    Collectible, CollectibleData, CollectibleError, CollectibleManager, CollectibleType,
+    CollectiblesTypePlugin,
+};
+
+pub fn base_bodyshapes() -> Vec<String> {
+    vec![
+        format!("urn:decentraland:off-chain:base-avatars:{}", "baseFemale").to_lowercase(),
+        format!("urn:decentraland:off-chain:base-avatars:{}", "baseMale").to_lowercase(),
+    ]
+}
+
+/// Emote pointer resolution and metadata (`CollectibleManager<Emote>`) alone: what a headless
+/// server needs to report an emote's loop flag. Loads no clip or sound.
+pub struct EmoteMetadataPlugin;
+
+impl Plugin for EmoteMetadataPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(CollectiblesTypePlugin::<Emote>::default());
+        app.register_asset_loader(EmoteMetaLoader);
+    }
+}
+
+pub struct EmotesPlugin;
+
+impl Plugin for EmotesPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<BaseEmotes>();
+        app.add_plugins(EmoteMetadataPlugin);
+        app.register_asset_loader(EmoteLoader);
+        app.add_systems(Update, (load_animations,));
+    }
+}
+
+pub type EmoteUrn = CollectibleUrn<Emote>;
+pub type EmoteInstance = CollectibleInstance<Emote>;
+
+impl EmoteUrn {
+    pub fn scene_emote(&self) -> Option<&str> {
+        self.skip_take(0, 6)
+            .rsplit_once(':')
+            .filter(|(base, _)| *base == "urn:decentraland:off-chain:scene-emote")
+            .map(|(_, emote)| emote)
+    }
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EmoteMeta {
+    name: String,
+    description: String,
+    // rarity: Rarity,
+    #[serde(rename = "emoteDataADR74")]
+    emote_extended_data: EmoteExtendedData,
+    thumbnail: String,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct EmoteExtendedData {
+    representations: Vec<EmoteRepresentation>,
+    #[serde(rename = "loop")]
+    loops: bool,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct EmoteRepresentation {
+    pub body_shapes: Vec<String>,
+    pub main_file: String,
+    pub contents: Vec<String>,
+}
+
+#[derive(Default)]
+enum AnimLoadState {
+    #[default]
+    Init,
+    WaitingForGltfs(Vec<Handle<Gltf>>),
+    Done,
+}
+
+#[derive(Resource, Default)]
+pub struct BaseEmotes(pub HashSet<CollectibleUrn<Emote>>);
+
+#[allow(clippy::type_complexity)]
+fn load_animations(
+    asset_server: Res<AssetServer>,
+    mut gltfs: ResMut<Assets<Gltf>>,
+    mut state: Local<AnimLoadState>,
+    mut emotes: CollectibleManager<Emote>,
+    mut base_emotes: ResMut<BaseEmotes>,
+) {
+    match &mut *state {
+        AnimLoadState::Init => {
+            *state = AnimLoadState::WaitingForGltfs(vec![
+                asset_server.load("embedded://animations/idle.glb"),
+                asset_server.load("embedded://animations/jump2.glb"),
+                asset_server.load("embedded://animations/double_jump.glb"),
+                asset_server.load("embedded://animations/glide.glb"),
+                asset_server.load("embedded://animations/run.glb"),
+                asset_server.load("embedded://animations/walk.glb"),
+            ]);
+        }
+        AnimLoadState::WaitingForGltfs(ref mut h_gltfs) => {
+            h_gltfs.retain(
+                |h_gltf| match gltfs.get(h_gltf).map(|gltf| &gltf.named_animations) {
+                    Some(anims) => {
+                        let anims_owned = anims.clone();
+                        // Snapshot source scene + _Prop clip once per source glb, so each
+                        // synthesized emote can reference the glider (or any future prop) the
+                        // source carries alongside its avatar clip. Cloning handles is cheap.
+                        let (source_prop_clip, source_scenes, source_meshes, source_default_scene) =
+                            gltfs
+                                .get(h_gltf)
+                                .map(|g| {
+                                    (
+                                        g.named_animations
+                                            .iter()
+                                            .find(|(n, _)| n.ends_with("_Prop"))
+                                            .map(|(_, h)| h.clone()),
+                                        g.scenes.clone(),
+                                        g.meshes.clone(),
+                                        g.default_scene.clone(),
+                                    )
+                                })
+                                .unwrap_or_default();
+                        for (clip_name, h_clip) in anims_owned {
+                            let Some((
+                                network_name,
+                                friendly_name,
+                                repeat,
+                                is_male,
+                                is_female,
+                                register_base,
+                                sound,
+                            )) = DEFAULT_ANIMATION_LOOKUP
+                                .iter()
+                                .find(|(_, anim)| {
+                                    anim.male.eq_ignore_ascii_case(&clip_name)
+                                        || anim.female.eq_ignore_ascii_case(&clip_name)
+                                })
+                                .map(|(urn, anim)| {
+                                    (
+                                        urn.to_string(),
+                                        anim.name,
+                                        anim.repeat,
+                                        anim.male.eq_ignore_ascii_case(&clip_name),
+                                        anim.female.eq_ignore_ascii_case(&clip_name),
+                                        anim.register_base_emote,
+                                        &anim.sound,
+                                    )
+                                })
+                            else {
+                                continue;
+                            };
+
+                            let mut named_animations =
+                                HashMap::from_iter([("_Avatar".into(), h_clip.clone())]);
+                            if let Some(ref prop) = source_prop_clip {
+                                named_animations.insert("_Prop".into(), prop.clone());
+                            }
+                            let new_gltf = Gltf {
+                                named_animations,
+                                scenes: source_scenes.clone(),
+                                named_scenes: Default::default(),
+                                meshes: source_meshes.clone(),
+                                named_meshes: Default::default(),
+                                materials: Default::default(),
+                                named_materials: Default::default(),
+                                nodes: Default::default(),
+                                named_nodes: Default::default(),
+                                default_scene: source_default_scene.clone(),
+                                animations: Default::default(),
+                                source: Default::default(),
+                                skins: Default::default(),
+                                named_skins: Default::default(),
+                            };
+                            let new_gltf = gltfs.add(new_gltf);
+
+                            let urn = EmoteUrn::new(&network_name).unwrap();
+                            debug!("loaded default anim {:?} from {:?}", urn, h_gltf.path());
+
+                            let sound = sound
+                                .iter()
+                                .map(|(t, fs)| {
+                                    (
+                                        *t,
+                                        fs.iter()
+                                            .map(|f| {
+                                                asset_server.load(format!(
+                                                    "embedded://sounds/avatar/{f}.wav"
+                                                ))
+                                            })
+                                            .collect(),
+                                    )
+                                })
+                                .collect();
+
+                            let emote = Emote {
+                                gltf: new_gltf,
+                                default_repeat: repeat,
+                                sound,
+                            };
+
+                            let mut representations = HashMap::new();
+
+                            if is_female {
+                                representations.insert(base_bodyshapes().remove(0), emote.clone());
+                            }
+                            if is_male {
+                                representations.insert(base_bodyshapes().remove(1), emote.clone());
+                            }
+
+                            let collectible = Collectible::<Emote> {
+                                data: CollectibleData {
+                                    hash: Default::default(),
+                                    urn: urn.as_str().to_string(),
+                                    thumbnail: if register_base {
+                                        format!(
+                                            "embedded://animations/thumbnails/{network_name}.png"
+                                        )
+                                    } else {
+                                        "embedded://images/redx.png".to_owned()
+                                    },
+                                    available_representations: representations
+                                        .keys()
+                                        .cloned()
+                                        .collect(),
+                                    name: friendly_name.to_owned(),
+                                    description: Default::default(),
+                                    extra_data: EmoteExtraData { loops: repeat },
+                                },
+                                representations,
+                            };
+
+                            if register_base {
+                                base_emotes.0.insert(urn.clone());
+                            }
+
+                            emotes.add_builtin(urn, collectible);
+
+                            debug!("added animation {network_name} from {:?}", h_clip.path());
+                        }
+                        false
+                    }
+                    None => true,
+                },
+            );
+
+            if h_gltfs.is_empty() {
+                *state = AnimLoadState::Done;
+            }
+        }
+        AnimLoadState::Done => {}
+    }
+}
+
+struct DefaultAnim {
+    male: &'static str,
+    female: &'static str,
+    name: &'static str,
+    repeat: bool,
+    register_base_emote: bool,
+    sound: Vec<(f32, Vec<String>)>,
+}
+
+impl DefaultAnim {
+    fn new(
+        name: &'static str,
+        male: &'static str,
+        female: &'static str,
+        repeat: bool,
+        base: bool,
+    ) -> Self {
+        Self {
+            name,
+            male,
+            female,
+            repeat,
+            register_base_emote: base,
+            sound: Default::default(),
+        }
+    }
+
+    fn with_sounds(self, sounds: &[(f32, &[&'static str])]) -> Self {
+        Self {
+            sound: sounds
+                .iter()
+                .map(|(t, files)| (*t, files.iter().map(|s| s.to_string()).collect()))
+                .collect(),
+            ..self
+        }
+    }
+}
+
+static DEFAULT_ANIMATION_LOOKUP: Lazy<HashMap<&str, DefaultAnim>> = Lazy::new(|| {
+    HashMap::from_iter([
+        // base animations, not emotes
+        (
+            "idle_male",
+            DefaultAnim::new("idle_male", "Idle_Male", "Idle_Male", true, false),
+        ),
+        (
+            "walk",
+            DefaultAnim::new("walk", "Walk", "Walk", true, false)
+                .with_sounds(&[(0.41, WALK_STEPS), (0.91, WALK_STEPS)]),
+        ),
+        (
+            "run",
+            DefaultAnim::new("run", "Run", "Run", true, false)
+                .with_sounds(&[(0.21, RUN_STEPS), (0.54, RUN_STEPS)]),
+        ),
+        (
+            "jump",
+            DefaultAnim::new("jump", "Jump", "Jump", false, false).with_sounds(&[
+                (
+                    0.0,
+                    &[
+                        "avatar_footstep_jump01",
+                        "avatar_footstep_jump02",
+                        "avatar_footstep_jump03",
+                    ],
+                ),
+                (0.6, &["avatar_footstep_land01", "avatar_footstep_land02"]),
+            ]),
+        ),
+        (
+            "double_jump",
+            DefaultAnim::new(
+                "double_jump",
+                "Double_Jump_Base",
+                "Double_Jump_Base",
+                false,
+                false,
+            ),
+        ),
+        (
+            "glide",
+            DefaultAnim::new("glide", "Glide_Avatar", "Glide_Avatar", true, false),
+        ),
+    ])
+});
+
+static RUN_STEPS: &[&str] = &[
+    "avatar_footstep_run01",
+    "avatar_footstep_run02",
+    "avatar_footstep_run03",
+    "avatar_footstep_run04",
+    "avatar_footstep_run05",
+    "avatar_footstep_run06",
+    "avatar_footstep_run07",
+    "avatar_footstep_run08",
+];
+
+static WALK_STEPS: &[&str] = &[
+    "avatar_footstep_walk01",
+    "avatar_footstep_walk02",
+    "avatar_footstep_walk03",
+    "avatar_footstep_walk04",
+    "avatar_footstep_walk05",
+    "avatar_footstep_walk06",
+    "avatar_footstep_walk07",
+    "avatar_footstep_walk08",
+];
+
+#[derive(PartialEq, Debug, TypePath, Clone)]
+pub struct Emote {
+    pub gltf: Handle<Gltf>,
+    pub default_repeat: bool,
+    pub sound: Vec<(f32, Vec<Handle<bevy_kira_audio::AudioSource>>)>,
+}
+
+impl Emote {
+    pub fn avatar_animation(
+        &self,
+        gltfs: &Assets<Gltf>,
+    ) -> Result<Option<Handle<AnimationClip>>, CollectibleError> {
+        let gltf = gltfs.get(self.gltf.id()).ok_or(CollectibleError::Loading)?;
+        if let Some(anim) = gltf
+            .named_animations
+            .find_avatar_emote()
+            .map(|(_, handle)| handle)
+            .cloned()
+        {
+            Ok(Some(anim))
+        } else if gltf.named_animations.len() == 1 {
+            Ok(Some(gltf.named_animations.iter().next().unwrap().1.clone()))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn prop_scene(
+        &self,
+        gltfs: &Assets<Gltf>,
+    ) -> Result<Option<Handle<Scene>>, CollectibleError> {
+        let gltf = gltfs.get(self.gltf.id()).ok_or(CollectibleError::Loading)?;
+        Ok(if gltf.meshes.is_empty() {
+            None
+        } else {
+            gltf.default_scene.clone()
+        })
+    }
+
+    pub fn prop_anim(
+        &self,
+        gltfs: &Assets<Gltf>,
+    ) -> Result<Option<Handle<AnimationClip>>, CollectibleError> {
+        Ok(gltfs
+            .get(self.gltf.id())
+            .ok_or(CollectibleError::Loading)?
+            .named_animations
+            .iter()
+            .find(|(name, _)| name.to_ascii_lowercase().contains("_prop"))
+            .map(|(_, handle)| handle)
+            .cloned())
+    }
+
+    pub fn audio(
+        &self,
+        sounds: &Assets<bevy_kira_audio::AudioSource>,
+        after: f32,
+    ) -> Result<Option<(f32, Handle<bevy_kira_audio::AudioSource>)>, CollectibleError> {
+        self.sound
+            .iter()
+            .find(|(t, _)| *t > after)
+            .map(|(t, clips)| {
+                if clips.is_empty() {
+                    return Ok(None);
+                }
+                let clip = &clips[fastrand::usize(0..clips.len())];
+                if sounds.get(clip.id()).is_some() {
+                    Ok(Some((*t, clip.clone())))
+                } else {
+                    Err(CollectibleError::Loading)
+                }
+            })
+            .unwrap_or(Ok(None))
+    }
+}
+
+/// Emote metadata available without loading the clip (`collectible.emote_data`).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct EmoteExtraData {
+    /// `emoteDataADR74.loop`: the emote loops until stopped.
+    pub loops: bool,
+}
+
+impl CollectibleType for Emote {
+    type Meta = EmoteMeta;
+    type ExtraData = EmoteExtraData;
+
+    fn source_collections() -> &'static [&'static str] {
+        &[
+            "urn:decentraland:off-chain:base-emotes",
+            "urn:decentraland:off-chain:base-scene-emotes",
+        ]
+    }
+
+    fn extension() -> &'static str {
+        "emote"
+    }
+
+    fn data_extension() -> &'static str {
+        "emote_data"
+    }
+}
+
+pub struct EmoteLoader;
+
+impl AssetLoader for EmoteLoader {
+    type Asset = Collectible<Emote>;
+
+    type Settings = ();
+
+    type Error = anyhow::Error;
+
+    async fn load(
+        &self,
+        reader: &mut dyn bevy::asset::io::Reader,
+        settings: &Self::Settings,
+        load_context: &mut bevy::asset::LoadContext<'_>,
+    ) -> Result<Self::Asset, Self::Error> {
+        let mut entity = EntityDefinitionLoader
+            .load(reader, settings, load_context)
+            .await?;
+        let metadata = entity.metadata.ok_or(anyhow!("no metadata?"))?;
+        debug!("meta: {metadata:#?}");
+        let meta = serde_json::from_value::<EmoteMeta>(metadata)?;
+
+        let thumbnail = load_context
+            .path()
+            .parent()
+            .unwrap()
+            .resolve_content_uri(&meta.thumbnail)
+            .to_string_lossy()
+            .into_owned();
+
+        let mut representations = HashMap::new();
+
+        for representation in meta.emote_extended_data.representations.into_iter() {
+            let gltf = load_context.load(
+                load_context
+                    .path()
+                    .parent()
+                    .unwrap()
+                    .resolve_content_uri(&representation.main_file),
+            );
+
+            let sound = representation
+                .contents
+                .iter()
+                .find(|f| f.ends_with(".mp3") || f.ends_with(".ogg"))
+                .map(|af| {
+                    load_context.load(
+                        load_context
+                            .path()
+                            .parent()
+                            .unwrap()
+                            .resolve_content_uri(af),
+                    )
+                });
+
+            for body_shape in representation.body_shapes {
+                representations.insert(
+                    body_shape.to_lowercase(),
+                    Emote {
+                        gltf: gltf.clone(),
+                        default_repeat: meta.emote_extended_data.loops,
+                        sound: vec![(0.0, sound.iter().cloned().collect())],
+                    },
+                );
+            }
+        }
+
+        Ok(Collectible {
+            data: CollectibleData {
+                thumbnail,
+                hash: entity.id,
+                urn: entity.pointers.pop().unwrap_or_default(),
+                name: meta.name,
+                description: meta.description,
+                available_representations: representations.keys().cloned().collect(),
+                extra_data: EmoteExtraData {
+                    loops: meta.emote_extended_data.loops,
+                },
+            },
+            representations,
+        })
+    }
+}
+
+struct EmoteMetaLoader;
+
+impl AssetLoader for EmoteMetaLoader {
+    type Asset = CollectibleData<Emote>;
+
+    type Settings = ();
+
+    type Error = anyhow::Error;
+
+    async fn load(
+        &self,
+        reader: &mut dyn bevy::asset::io::Reader,
+        settings: &Self::Settings,
+        load_context: &mut bevy::asset::LoadContext<'_>,
+    ) -> Result<Self::Asset, Self::Error> {
+        let mut entity = EntityDefinitionLoader
+            .load(reader, settings, load_context)
+            .await?;
+        let metadata = entity.metadata.ok_or(anyhow!("no metadata?"))?;
+        debug!("meta: {metadata:#?}");
+        let meta = serde_json::from_value::<EmoteMeta>(metadata)?;
+
+        let thumbnail = load_context
+            .path()
+            .parent()
+            .unwrap()
+            .resolve_content_uri(&meta.thumbnail)
+            .to_string_lossy()
+            .into_owned();
+
+        let available_representations = meta
+            .emote_extended_data
+            .representations
+            .into_iter()
+            .flat_map(|rep| {
+                rep.body_shapes
+                    .into_iter()
+                    .map(|shape| shape.to_lowercase())
+            })
+            .collect();
+
+        Ok(CollectibleData {
+            thumbnail,
+            hash: entity.id,
+            urn: entity.pointers.pop().unwrap_or_default(),
+            name: meta.name,
+            description: meta.description,
+            available_representations,
+            extra_data: EmoteExtraData {
+                loops: meta.emote_extended_data.loops,
+            },
+        })
+    }
+}

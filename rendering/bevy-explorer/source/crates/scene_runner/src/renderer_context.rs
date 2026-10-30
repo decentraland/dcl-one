@@ -1,0 +1,427 @@
+use std::sync::Arc;
+
+use bevy::{platform::collections::HashSet, prelude::*};
+
+use common::{
+    structs::SpawnPoint,
+    util::{dcl_assert, RingBuffer},
+};
+use dcl_component::{DclReader, DclWriter, SceneComponentId, SceneEntityId, ToDclWriter};
+use dcl_types::{
+    interface::{CrdtStore, CrdtType},
+    RendererResponse, SceneId, SceneLogMessage, SceneResourceCounters,
+};
+use scene_material::{BoundRegion, SceneBounds};
+
+use crate::{
+    primary_entities::PrimaryEntities,
+    update_world::{
+        mesh_collider::DisableCollisions,
+        transform_and_parent::{ParentPositionSync, SceneProxyStage},
+    },
+    ContainerEntity, SceneEntity, SceneThreadHandle, TargetParent,
+};
+
+// contains a list of (SceneEntityId.generation, bevy entity) indexed by SceneEntityId.id
+// where generation is the earliest non-dead (though maybe not yet live)
+// generation for the scene id index.
+// entities are initialized within the engine message-loop op, and added to 'nascent' until
+// the process_lifecycle system enlivens them.
+// Bevy entities are only created on a PUT of a component we care about in the renderer,
+// or if they are required for hierarchy parenting
+// TODO - consider Vec<Option<page>>
+type LiveEntityTable = Vec<(u16, Option<Entity>)>;
+
+// scene worker lifecycle. `Broken` consumes the thread handle, so marking a scene broken
+// structurally drops the renderer channel, which signals the scene host to terminate the
+// worker (after a grace period for an in-flight tick to complete). `in_flight` (a tick has
+// been sent and not yet answered) lives inside `Live` since only a live scene can have a
+// tick outstanding — `Init` and `Broken` scenes are never in flight by construction.
+#[derive(Debug, Default)]
+pub enum SceneState {
+    // scene thread not yet spawned
+    #[default]
+    Init,
+    Live {
+        handle: SceneThreadHandle,
+        in_flight: bool,
+    },
+    Broken,
+}
+
+// mapping from script entity -> bevy entity
+// note - be careful with size as this struct is moved into/out of js runtimes
+#[derive(Component, Debug)]
+pub struct RendererSceneContext {
+    pub scene_id: SceneId,
+    pub hash: Arc<str>,
+    pub storage_root: String,
+    pub is_portable: bool,
+    pub start_tick: u32,
+    pub title: String,
+    pub base: IVec2,
+    pub parcels: HashSet<IVec2>,
+    // world-space bounds for the scene
+    pub bounds: Vec<BoundRegion>,
+    // the bounds as the scene-bound shaders read them
+    pub scene_bounds: SceneBounds,
+    pub spawn_points: Vec<SpawnPoint>,
+    pub priority: f32,
+
+    // entities waiting to be born in bevy
+    pub nascent: HashSet<SceneEntityId>,
+    // entities waiting to be destroyed in bevy
+    pub death_row: HashSet<SceneEntityId>,
+    // engine-initiated entity births/deaths to push to the scene in the next
+    // engine->scene census. Unlike `nascent`/`death_row` (drained for every scene
+    // by the lifecycle pass), these are drained only when this scene is actually
+    // sent (send_scene_updates), so the census isn't lost before delivery. Holds
+    // only engine-originated changes, so it never echoes the scene's own census.
+    pub outbound_born: HashSet<SceneEntityId>,
+    pub outbound_died: HashSet<SceneEntityId>,
+    // entities that are live
+    live_entities: LiveEntityTable,
+
+    // list of entities that are not currently parented to their target parent
+    pub unparented_entities: HashSet<Entity>,
+    // indicates if we need to reprocess unparented entities
+    pub hierarchy_changed: bool,
+
+    // time of last message sent to scene
+    pub last_sent: f64,
+    // last player/camera transforms sent to the scene, used to delta-check
+    // without deserializing the stored crdt entry every frame
+    pub last_sent_player_transform: Option<Transform>,
+    pub last_sent_camera_transform: Option<Transform>,
+    // time of last updates to bevy world from scene
+    pub last_update_frame: u32,
+    // scene worker state; broken scenes are recorded and kept for debug purposes and to
+    // avoid spamming reloads
+    pub state: SceneState,
+
+    pub crdt_store: CrdtStore,
+
+    // the authored baseline: the scene's main.crdt as loaded, before any tick (custom components
+    // included). The inspector diffs the live state against this when saving. None if no main.crdt.
+    pub initial_crdt: Option<CrdtStore>,
+
+    // readiness to update, if anything blocks the scene should not run
+    pub blocked: HashSet<&'static str>,
+
+    // total scene run time in seconds
+    pub total_runtime: f64,
+    // scene tick number
+    pub tick_number: u32,
+    // last tick delta
+    pub last_update_dt: f64,
+
+    // message buffer
+    pub logs: RingBuffer<SceneLogMessage>,
+    log_to_stdout: bool,
+
+    // last time a pointer event occurred
+    pub last_action_event: Option<f64>,
+    // sdk version
+    pub sdk_version: &'static str,
+
+    // if set, re-insert FROZEN_BLOCK into blocked when tick_number reaches this value
+    pub refreeze_at_tick: Option<u32>,
+
+    // if an inspector is attached
+    pub inspected: bool,
+
+    // does the scene use an authoritative multiplayer server
+    pub authoritative_multiplayer: bool,
+
+    // latest cumulative resource-counter snapshot from the scene thread
+    pub resource_counters: Option<SceneResourceCounters>,
+}
+
+/// Block reason used by /freeze_scene and /tick_scene.
+pub const FROZEN_BLOCK: &str = "frozen";
+
+pub const SCENE_LOG_BUFFER_SIZE: usize = 100;
+
+// A scene tick that has been in-flight (sent to the scene, no response yet) for longer than this
+// is treated as "not responding": update_scene_priority marks the scene broken and frees its
+// thread slot, handle_out_of_world stops holding the player behind the loading screen, and the
+// loading UI surfaces a countdown to this timeout.
+pub const SCENE_NOT_RESPONDING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+// Don't surface the "not responding" message until a tick has been in-flight at least this long,
+// so a normal slow frame doesn't flicker the warning.
+pub const SCENE_NOT_RESPONDING_DISPLAY_AFTER: std::time::Duration =
+    std::time::Duration::from_secs(2);
+
+impl RendererSceneContext {
+    pub fn broken(&self) -> bool {
+        matches!(self.state, SceneState::Broken)
+    }
+
+    pub fn sender(&self) -> Option<&tokio::sync::mpsc::UnboundedSender<RendererResponse>> {
+        match &self.state {
+            SceneState::Live { handle, .. } => Some(&handle.sender),
+            _ => None,
+        }
+    }
+
+    pub fn in_flight(&self) -> bool {
+        matches!(
+            self.state,
+            SceneState::Live {
+                in_flight: true,
+                ..
+            }
+        )
+    }
+
+    // no-op unless the scene is live: `Init` and `Broken` scenes have no in-flight bit
+    pub fn set_in_flight(&mut self, value: bool) {
+        if let SceneState::Live { in_flight, .. } = &mut self.state {
+            *in_flight = value;
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        scene_id: SceneId,
+        hash: String,
+        storage_root: String,
+        is_portable: bool,
+        start_tick: u32,
+        title: String,
+        base: IVec2,
+        parcels: HashSet<IVec2>,
+        bounds: Vec<BoundRegion>,
+        scene_bounds: SceneBounds,
+        spawn_points: Vec<SpawnPoint>,
+        root: Entity,
+        priority: f32,
+        log_to_stdout: bool,
+        sdk_version: &'static str,
+        inspected: bool,
+        authoritative_multiplayer: bool,
+    ) -> Self {
+        let mut new_context = Self {
+            scene_id,
+            hash: hash.into(),
+            storage_root,
+            is_portable,
+            start_tick,
+            title,
+            base,
+            parcels,
+            bounds,
+            scene_bounds,
+            spawn_points,
+            nascent: Default::default(),
+            death_row: Default::default(),
+            outbound_born: Default::default(),
+            outbound_died: Default::default(),
+            live_entities: vec![(0, None); SceneEntityId::LIVE_TABLE_LEN],
+            unparented_entities: HashSet::new(),
+            hierarchy_changed: false,
+            last_sent: 0.0,
+            last_sent_player_transform: None,
+            last_sent_camera_transform: None,
+            last_update_frame: 0,
+            state: SceneState::Init,
+            priority,
+            crdt_store: Default::default(),
+            initial_crdt: None,
+            blocked: Default::default(),
+            total_runtime: 0.0,
+            tick_number: 0,
+            last_update_dt: 0.0,
+            logs: RingBuffer::new(1000, 100),
+            log_to_stdout,
+            refreeze_at_tick: None,
+            last_action_event: None,
+            sdk_version,
+            inspected,
+            authoritative_multiplayer,
+            resource_counters: None,
+        };
+
+        new_context.live_entities[SceneEntityId::ROOT.id as usize] =
+            (SceneEntityId::ROOT.generation, Some(root));
+        new_context
+    }
+
+    fn entity_entry(&self, id: u16) -> &(u16, Option<Entity>) {
+        // SAFETY: live_entities has LIVE_TABLE_LEN (u16::MAX + 1) entries, so any u16 index is in bounds
+        unsafe { self.live_entities.get_unchecked(id as usize) }
+    }
+
+    fn entity_entry_mut(&mut self, id: u16) -> &mut (u16, Option<Entity>) {
+        // SAFETY: live_entities has LIVE_TABLE_LEN (u16::MAX + 1) entries, so any u16 index is in bounds
+        unsafe { self.live_entities.get_unchecked_mut(id as usize) }
+    }
+
+    pub fn associate_bevy_entity(&mut self, scene_entity: SceneEntityId, bevy_entity: Entity) {
+        debug!(
+            "[{:?}] associate scene id: {} -> bevy id {:?}",
+            self.scene_id, scene_entity, bevy_entity
+        );
+        dcl_assert!(self.entity_entry(scene_entity.id).0 <= scene_entity.generation);
+        dcl_assert!(self.entity_entry(scene_entity.id).1.is_none());
+        *self.entity_entry_mut(scene_entity.id) = (scene_entity.generation, Some(bevy_entity));
+    }
+
+    pub fn bevy_entity(&self, scene_entity: SceneEntityId) -> Option<Entity> {
+        match self.entity_entry(scene_entity.id) {
+            (gen, Some(bevy_entity)) if *gen == scene_entity.generation => Some(*bevy_entity),
+            _ => None,
+        }
+    }
+
+    pub fn set_dead(&mut self, entity: SceneEntityId) {
+        let entry = self.entity_entry_mut(entity.id);
+        if entry.0 == entity.generation {
+            entry.0 += 1;
+            entry.1 = None;
+        }
+    }
+
+    pub fn is_dead(&self, entity: SceneEntityId) -> bool {
+        self.entity_entry(entity.id).0 > entity.generation
+    }
+
+    /// Iterate over scene entities known to the renderer: those with an associated bevy entity,
+    /// plus nascent entities awaiting bevy-entity creation.
+    /// Note: entities the scene created but placed no engine-recognized components on are
+    /// invisible to the renderer and will not appear here.
+    pub fn live_scene_entities(&self) -> impl Iterator<Item = SceneEntityId> + '_ {
+        let from_table =
+            self.live_entities
+                .iter()
+                .enumerate()
+                .filter_map(|(id, (generation, bevy_ent))| {
+                    bevy_ent.map(|_| SceneEntityId {
+                        id: id as u16,
+                        generation: *generation,
+                    })
+                });
+        self.nascent.iter().copied().chain(from_table)
+    }
+
+    pub fn spawn_bevy_entity(
+        &mut self,
+        commands: &mut Commands,
+        root: Entity,
+        id: SceneEntityId,
+        primaries: &PrimaryEntities,
+    ) -> Entity {
+        dcl_assert!(self.bevy_entity(id).is_none());
+
+        let spawned = commands
+            .spawn((
+                Transform::default(),
+                Visibility::default(),
+                SceneEntity {
+                    scene_id: self.scene_id,
+                    root,
+                    id,
+                },
+                TargetParent(root),
+            ))
+            .id();
+
+        commands.entity(spawned).try_insert(ContainerEntity {
+            root,
+            container: spawned,
+            container_id: id,
+        });
+
+        if id == SceneEntityId::CAMERA {
+            commands.entity(spawned).try_insert((
+                ParentPositionSync::<SceneProxyStage>::new(primaries.camera()),
+                DisableCollisions,
+            ));
+        }
+        if id == SceneEntityId::PLAYER {
+            commands.entity(spawned).try_insert((
+                ParentPositionSync::<SceneProxyStage>::new(primaries.player()),
+                DisableCollisions,
+            ));
+        }
+
+        commands.entity(root).add_child(spawned);
+
+        self.associate_bevy_entity(id, spawned);
+
+        self.hierarchy_changed = true;
+
+        debug!(
+            "spawned {:?}/{:?} -> {:?}",
+            root,
+            id,
+            self.bevy_entity(id).unwrap()
+        );
+
+        spawned
+    }
+
+    pub fn update_crdt(
+        &mut self,
+        component_id: SceneComponentId,
+        crdt_type: CrdtType,
+        id: SceneEntityId,
+        data: &impl ToDclWriter,
+    ) {
+        let mut buf = Vec::new();
+        DclWriter::new(&mut buf).write(data);
+        self.crdt_store
+            .force_update(component_id, crdt_type, id, Some(&mut DclReader::new(&buf)));
+    }
+
+    pub fn update_crdt_if_different(
+        &mut self,
+        component_id: SceneComponentId,
+        crdt_type: CrdtType,
+        id: SceneEntityId,
+        data: &impl ToDclWriter,
+    ) {
+        let mut buf = Vec::new();
+        DclWriter::new(&mut buf).write(data);
+        self.crdt_store.update_if_different(
+            component_id,
+            crdt_type,
+            id,
+            Some(&mut DclReader::new(&buf)),
+        );
+    }
+
+    pub fn clear_crdt(
+        &mut self,
+        component_id: SceneComponentId,
+        crdt_type: CrdtType,
+        id: SceneEntityId,
+    ) {
+        self.crdt_store
+            .force_update(component_id, crdt_type, id, None);
+    }
+
+    pub fn log(&mut self, log: SceneLogMessage) {
+        if self.log_to_stdout {
+            let base = if self.is_portable {
+                self.title.clone()
+            } else {
+                format!("{}", self.base)
+            };
+            match log.level {
+                dcl_types::SceneLogLevel::Log => {
+                    info!("[{} {:.2}] {}", base, log.timestamp, log.message)
+                }
+                dcl_types::SceneLogLevel::SceneError => {
+                    warn!("[{} {:.2}] {}", base, log.timestamp, log.message)
+                }
+                dcl_types::SceneLogLevel::SystemError => {
+                    error!("[{} {:.2}] {}", base, log.timestamp, log.message)
+                }
+            }
+        }
+
+        self.logs.send(log);
+    }
+}

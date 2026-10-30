@@ -1,0 +1,29 @@
+{
+  "method": "POST",
+  "url": "https://comms-gatekeeper.decentraland.org/get-server-scene-adapter",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*",
+    "content-type": "application/json"
+  },
+  "request_body": {},
+  "status": 401,
+  "status_text": "Unauthorized",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c68c8fd45d933-TXL",
+    "connection": "keep-alive",
+    "content-length": "55",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:29 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "traceparent": "0-7c4acafefac66b6eb59df7e3887a7655-0000000000000000-0",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:28Z",
+  "elapsed_ms": 149,
+  "body_bytes": 55,
+  "body_file": "get-server-scene-adapter-unauth.raw.body",
+  "redacted": false
+}

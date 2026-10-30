@@ -1,0 +1,45 @@
+use std::{cell::RefCell, rc::Rc};
+
+use anyhow::anyhow;
+use common::rpc::{RpcCall, RpcResultSender};
+use serde::Serialize;
+
+use dcl_types::RpcCalls;
+
+use super::State;
+
+#[derive(Serialize)]
+pub struct TextureSize {
+    width: f32,
+    height: f32,
+}
+
+pub async fn op_get_texture_size(
+    state: Rc<RefCell<impl State>>,
+    src: String,
+) -> Result<TextureSize, anyhow::Error> {
+    let (sx, rx) = RpcResultSender::channel();
+
+    state
+        .borrow_mut()
+        .borrow_mut::<RpcCalls>()
+        .push(RpcCall::GetTextureSize { src, response: sx })?;
+
+    let Ok(result) = rx.await.map_err(|e| anyhow::anyhow!(e)) else {
+        return Ok(TextureSize {
+            width: 1.0,
+            height: 1.0,
+        });
+    };
+
+    Ok(result
+        .map_err(|e| anyhow!(e))
+        .map(|v| TextureSize {
+            width: v.x,
+            height: v.y,
+        })
+        .unwrap_or(TextureSize {
+            width: 1.0,
+            height: 1.0,
+        }))
+}

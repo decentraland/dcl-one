@@ -1,0 +1,37 @@
+{
+  "description": "GET /v1/communities filter variant: onlyWithActiveVoiceChat=true (live set, often empty). Captured GET https://social-api.decentraland.org/v1/communities?onlyWithActiveVoiceChat=true&limit=5 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities",
+    "query": {
+      "onlyWithActiveVoiceChat": [
+        "true"
+      ],
+      "limit": [
+        "5"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "results": [],
+        "total": 0,
+        "page": 1,
+        "pages": 0,
+        "limit": 5
+      }
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities?onlyWithActiveVoiceChat=true&limit=5",
+  "captured_at": "2026-09-25T19:24:00Z",
+  "volatile_paths": [
+    "data.results[]"
+  ]
+}

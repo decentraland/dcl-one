@@ -1,0 +1,20 @@
+# A crate of its own for a build reason: its end-to-end test (tests/run.rs) installs a process-wide
+# logger and panic hook, and it needs only `bevy` (with the `wgpu` it renders with) and `common`, so
+# it builds and runs without linking V8, CEF or ffmpeg. The app is its only consumer.
+[package]
+name = "perf_output"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+common = { workspace = true }
+
+base64 = { workspace = true }
+bevy = { workspace = true }
+web-time = { workspace = true }
+# the query-set and pass-timestamp types of the GPU frame time (gpu.rs), which bevy does not re-export
+wgpu = { workspace = true }
+
+[dev-dependencies]
+# the panic hook main.rs installs, for the end-to-end test
+log-panics = { workspace = true }

@@ -1,0 +1,437 @@
+// cloud sampling:
+
+// find cloud_floor intersection
+// step through
+// at each point
+//   sample once based on xy only -> take as density at lo + 0.25 * (hi-lo)
+//   sample again based on xy only -> take as density at lo + 0.75 * (hi-lo)
+//   smooth step to get actual density at point
+
+struct Nishita {
+    ray_origin: vec3<f32>,
+    sun_position: vec3<f32>,
+    sun_intensity: f32,
+    planet_radius: f32,
+    atmosphere_radius: f32,
+    rayleigh_coefficient: vec3<f32>,
+    rayleigh_scale_height: f32,
+    mie_coefficient: f32,
+    mie_scale_height: f32,
+    mie_direction: f32,
+    time: f32,
+    cloudy: f32,
+    tick: u32,
+    sun_color: vec3<f32>,
+    dir_light_intensity: f32,
+    night_color: vec3<f32>,
+    moon_position: vec3<f32>,
+    cloud_density_cap: f32,
+    cloud_shadow: f32,
+    cloud_scale: f32,
+    cloud_steps: u32,
+    cloud_lacunarity: f32,
+    cloud_sharpness: f32,
+    cloud_sharp_mid: f32,
+}
+
+const PI: f32 = 3.141592653589793;
+const ISTEPS: u32 = 16u;
+const JSTEPS: u32 = 8u;
+
+// fake above/below shading: each step's density is weighted by how low it sits in the layer,
+// raised to this power, and the cloud darkens by up to this much as that density-weighted
+// lowness approaches 1 (all of the cloud at the base: an underside)
+const CLOUD_HEIGHT_POWER: f32 = 2.0;
+const CLOUD_HEIGHT_DARKEN: f32 = 0.33;
+
+// how much more saturated than the light colour the clouds are (1 = as the light), so the
+// moon's violet shows against the night sky fill
+const CLOUD_LIGHT_SATURATION: f32 = 1.6;
+
+// the least of the light colour clouds take when the light is dim (night, dusk): the indirect
+// factor is illuminance / 5000 lux, floored here
+const CLOUD_INDIRECT_FLOOR: f32 = 0.5;
+
+// toward the horizon the sharpened coverage fades to the cover fraction, the field's average:
+// an exponential approach that is two thirds of the way there when the march starts this far
+// away (metres, horizontal), so it begins close in and settles slowly
+const CLOUD_FAR_DISTANCE: f32 = 25000.0;
+
+fn rsi(rd: vec3<f32>, r0: vec3<f32>, sr: f32) -> vec2<f32> {
+    // ray-sphere intersection that assumes
+    // the sphere is centered at the origin.
+    // No intersection when result.x > result.y
+    let a = dot(rd, rd);
+    let b = 2.0 * dot(rd, r0);
+    let c = dot(r0, r0) - (sr * sr);
+    let d = (b * b) - (4.0 * a * c);
+
+    if d < 0.0 {
+        return vec2<f32>(1e5, -1e5);
+    } else {
+        return vec2<f32>(
+            (-b - sqrt(d)) / (2.0 * a),
+            (-b + sqrt(d)) / (2.0 * a)
+        );
+    }
+}
+
+fn render_nishita(r_full: vec3<f32>, r0: vec3<f32>, p_sun_full: vec3<f32>, i_sun: f32, r_planet: f32, r_atmos: f32, k_rlh: vec3<f32>, k_mie: f32, sh_rlh: f32, sh_mie: f32, g: f32) -> vec3<f32> {
+    // Normalize the ray direction and sun position.
+    let r = normalize(r_full);
+    let p_sun = normalize(p_sun_full);
+
+    // Calculate the step size of the primary ray.
+    var p = rsi(r, r0, r_atmos);
+    if p.x > p.y { return vec3<f32>(0f); }
+    p.y = min(p.y, rsi(r, r0, r_planet).x);
+    let i_step_size = (p.y - p.x) / f32(ISTEPS);
+
+    // Initialize the primary ray depth.
+    var i_depth = 0.0;
+
+    // Initialize accumulators for Rayleigh and Mie scattering.
+    var total_rlh = vec3<f32>(0f);
+    var total_mie = vec3<f32>(0f);
+
+    // Initialize optical depth accumulators for the primary ray.
+    var i_od_rlh = 0f;
+    var i_od_mie = 0f;
+
+    // Calculate the Rayleigh and Mie phases.
+    let mu = dot(r, p_sun);
+    let mumu = mu * mu;
+    let gg = g * g;
+    let p_rlh = 3.0 / (16.0 * PI) * (1.0 + mumu);
+    let p_mie = 3.0 / (8.0 * PI) * ((1.0 - gg) * (mumu + 1.0)) / (pow(1.0 + gg - 2.0 * mu * g, 1.5) * (2.0 + gg));
+
+    // Sample the primary ray.
+    for (var i = 0u; i < ISTEPS; i++) {
+        // Calculate the primary ray sample position.
+        let i_pos = r0 + r * (i_depth + i_step_size * 0.5);
+
+        // Calculate the height of the sample.
+        let i_height = length(i_pos) - r_planet;
+
+        // Calculate the optical depth of the Rayleigh and Mie scattering for this step.
+        let od_step_rlh = exp(-i_height / sh_rlh) * i_step_size;
+        let od_step_mie = exp(-i_height / sh_mie) * i_step_size;
+
+        // Accumulate optical depth.
+        i_od_rlh += od_step_rlh;
+        i_od_mie += od_step_mie;
+
+        // Calculate the step size of the secondary ray.
+        let j_step_size = rsi(p_sun, i_pos, r_atmos).y / f32(JSTEPS);
+
+        // Initialize the secondary ray depth.
+        var j_depth = 0f;
+
+        // Initialize optical depth accumulators for the secondary ray.
+        var j_od_rlh = 0f;
+        var j_od_mie = 0f;
+
+        // Sample the secondary ray.
+        for (var j = 0u; j < JSTEPS; j++) {
+
+            // Calculate the secondary ray sample position.
+            let j_pos = i_pos + p_sun * (j_depth + j_step_size * 0.5);
+
+            // Calculate the height of the sample.
+            let j_height = length(j_pos) - r_planet;
+
+            // Accumulate the optical depth.
+            j_od_rlh += exp(-j_height / sh_rlh) * j_step_size;
+            j_od_mie += exp(-j_height / sh_mie) * j_step_size;
+
+            // Increment the secondary ray depth.
+            j_depth += j_step_size;
+        }
+
+        // Calculate attenuation.
+        let attn = exp(-(k_mie * (i_od_mie + j_od_mie) + k_rlh * (i_od_rlh + j_od_rlh)));
+
+        // Accumulate scattering.
+        total_rlh += od_step_rlh * attn;
+        total_mie += od_step_mie * attn;
+
+        // Increment the primary ray depth.
+        i_depth += i_step_size;
+    }
+
+    // Calculate and return the final color.
+    return i_sun * (p_rlh * k_rlh * total_rlh + p_mie * k_mie * total_mie);
+}
+
+@group(0) @binding(0) var<uniform> nishita: Nishita;
+@group(0) @binding(1) var noise_texture: texture_2d<f32>;
+@group(0) @binding(2) var noise_sampler: sampler;
+
+const CLOUD_LOWER: f32 = 3300.0;
+const CLOUD_UPPER: f32 = 4800.0;
+
+fn noise(x: vec2<f32>) -> f32 {
+    return textureSampleLevel(noise_texture, noise_sampler, x / 65536.0, 0.0).r;
+}
+
+// pure rotation between octaves; the per-octave frequency step (lacunarity) is
+// applied separately so it can be tuned (cloud_lacunarity, default 2.345).
+const m_base: mat3x3<f32> = mat3x3<f32>( 0.00,  0.80,  0.60,
+                                        -0.80,  0.36, -0.48,
+                                        -0.60, -0.48,  0.64 );
+
+// `m` is the per-octave rotation already scaled by the lacunarity; it is passed
+// in (computed once per pixel in render_cloud) rather than rebuilt every call.
+fn FBM(p0: vec3<f32>, m: mat3x3<f32>) -> f32 {
+	var p = p0 * nishita.cloud_scale;
+
+    let speed = 2.0;
+
+    p.x += nishita.time * 3.0 * speed;
+
+	var f = 0.3750 * noise(p.xz); p = m*p; p.y -= nishita.time * 20.0 * speed;
+	f += 0.3750   * noise(p.xz); p = m*p; p.y += nishita.time * 10.0 * speed;
+	f += 0.1250   * noise(p.xz); p = m*p; p.x -= nishita.time * 10.0 * speed;
+	f += 0.0625   * noise(p.xz); p = m*p;
+	f += 0.03125  * noise(p.xz); p = m*p;
+	f += 0.015625 * noise(p.xz);
+    return f;
+}
+
+fn cloudy() -> f32 {
+    return (nishita.cloudy - 0.5) * 0.666;
+}
+
+fn density(p: vec3<f32>, m: mat3x3<f32>) -> f32 {
+    let cloud_range = CLOUD_UPPER - CLOUD_LOWER;
+    let outside = clamp(abs(clamp(p.y, CLOUD_LOWER + 0.1 * cloud_range, CLOUD_UPPER - 0.1 * cloud_range) - p.y) / (0.1 * cloud_range), 0.0, 1.0);
+    // the vertical envelope is exactly zero outside the shell: skip the six noise octaves there
+    if outside == 1.0 {
+        return 0.0;
+    }
+	let density = clamp(FBM(p, m) * 0.5 + cloudy(), 0.0, 1.0);
+    return mix(density, 0.0, outside);
+}
+
+fn lighting(p: vec3<f32>, dir: vec3<f32>, sun: vec3<f32>, m: mat3x3<f32>) -> f32 {
+    let l = density(p + sun * 400.0, m);
+    return clamp(pow(l, 0.25), 0.0, 1.0);
+}
+
+fn render_cloud(sky: vec3<f32>, pos: vec3<f32>, dir: vec3<f32>) -> vec4<f32> {
+    let p_sun = normalize(nishita.sun_position);
+    let sun_amount: f32 = max(dot(dir, p_sun), 0.0);
+
+    // per-octave rotation×lacunarity, computed once for all samples this pixel
+    let m = m_base * nishita.cloud_lacunarity;
+
+    // rays along the horizon (dir.y clamped to 0) still get a march, a very long one
+    let d = vec3<f32>(dir.x, max(dir.y, 0.002), dir.z);
+	var low = ((CLOUD_LOWER-pos.y) / d.y);
+	let high = ((CLOUD_UPPER-pos.y) / d.y);
+	    
+    var p = pos + d * low;
+    // how far away the march starts: the field averages out with distance
+    let far = 1.0 - exp(-length(p.xz) / CLOUD_FAR_DISTANCE);
+
+    let add = d * ((high - low) / f32(nishita.cloud_steps));
+    var shade_sum: vec2<f32> = vec2<f32>(0.0);
+    // density weighted by lowness in the layer, normalised by the density afterwards
+    var low_sum = 0.0;
+
+    let density_cap = nishita.cloud_density_cap;
+
+    for (var i = 0u; i < nishita.cloud_steps; i += 1u) {
+        if shade_sum.y >= density_cap {
+            break;
+        }
+
+        let density = density(p, m);
+        let light = lighting(p, d, p_sun, m) * density;
+
+        let covered = 1.0 - shade_sum.y;
+        shade_sum += vec2<f32>(light, density) * covered;
+        low_sum += density * covered * pow(1.0 - f32(i) / f32(nishita.cloud_steps), CLOUD_HEIGHT_POWER);
+
+        p += add;
+    }
+
+    // a distant march saturates in its first, lowest steps, which says nothing about height:
+    // fade the lowness to a uniform column's value with distance
+    let lowness = mix(low_sum / max(shade_sum.y, 0.001), 1.0 / (CLOUD_HEIGHT_POWER + 1.0), far);
+    shade_sum /= max(shade_sum.y, density_cap);
+
+    // contrast curve on the coverage: a logistic centred on cloud_sharp_mid with steepness
+    // cloud_sharpness, renormalised so 0 -> 0 and 1 -> 1. Pulls the faint fringe toward
+    // transparent and the core toward opaque (sharpness 0 = identity)
+    if nishita.cloud_sharpness > 0.0 {
+        let k = nishita.cloud_sharpness;
+        let mid = nishita.cloud_sharp_mid;
+        let s0 = 1.0 / (1.0 + exp(k * mid));
+        let s1 = 1.0 / (1.0 + exp(-k * (1.0 - mid)));
+        let sy = 1.0 / (1.0 + exp(-k * (shade_sum.y - mid)));
+        shade_sum.y = clamp((sy - s0) / (s1 - s0), 0.0, 1.0);
+    }
+    // the distant field is seen as its average: the cover fraction
+    shade_sum.y = mix(shade_sum.y, clamp(nishita.cloudy, 0.0, 1.0), far);
+
+    // the light colour, more saturated
+    let light_luma = dot(nishita.sun_color, vec3<f32>(0.299, 0.587, 0.114));
+    let light_color = max(mix(vec3<f32>(light_luma), nishita.sun_color, CLOUD_LIGHT_SATURATION), vec3<f32>(0.0));
+    let light_cloud_color_indirect = max(vec3(nishita.cloud_shadow), saturate(light_color * 1.5) * clamp(nishita.dir_light_intensity / 5000.0, CLOUD_INDIRECT_FLOOR, 1.0));
+    let light_cloud_color_direct = max(vec3(nishita.cloud_shadow), saturate(light_color * 1.5) * min(nishita.dir_light_intensity / 1000.0, 4.0));
+    let light_cloud_color = mix(light_cloud_color_indirect, light_cloud_color_direct, pow(smoothstep(0.8 + (0.1 * shade_sum.y), 1.0, sun_amount), 5.0));
+    shade_sum.y = mix(shade_sum.y, sqrt(shade_sum.y), smoothstep(0.9, 1.0, sun_amount));
+
+    var clouds = mix(light_cloud_color, vec3(nishita.cloud_shadow), pow(shade_sum.x, 3.0));
+    // undersides: the more of the cloud's density sits low in the layer, the darker
+    clouds *= 1.0 - CLOUD_HEIGHT_DARKEN * lowness;
+    let result = mix(sky, min(clouds, vec3<f32>(1.0)), shade_sum.y);
+    // no upper clamp: the sun disc keeps its HDR brightness; alpha carries the cloud
+    // coverage for effects that treat clouds differently from the clear sky
+    return vec4<f32>(max(result, vec3<f32>(0.0)), shade_sum.y);
+}
+
+@group(1) @binding(0)
+var image: texture_storage_2d_array<rgba16float, write>;
+
+@compute @workgroup_size(8, 8, 1)
+fn main(@builtin(global_invocation_id) original_invocation_id: vec3<u32>, @builtin(num_workgroups) num_workgroups: vec3<u32>) {
+    let size = textureDimensions(image).x;
+    let scale = f32(size) / 2f;
+
+    // dither pattern for updates
+    let tick = nishita.tick & 63;
+
+    var UPDATE_OFFSETS_X: array<u32,64> = array<u32,64>(
+        0u, 4u, 4u, 0u, 2u, 6u, 6u, 2u, 2u, 6u, 6u, 2u, 0u, 4u, 4u, 0u,
+        1u, 5u, 5u, 1u, 3u, 7u, 7u, 3u, 3u, 7u, 7u, 3u, 1u, 5u, 5u, 1u,
+        1u, 5u, 5u, 1u, 3u, 7u, 7u, 3u, 3u, 7u, 7u, 3u, 1u, 5u, 5u, 1u,
+        0u, 4u, 4u, 0u, 2u, 6u, 6u, 2u, 2u, 6u, 6u, 2u, 0u, 4u, 4u, 0u
+    );
+
+    var UPDATE_OFFSETS_Y: array<u32,64> = array<u32,64>(
+        0u, 4u, 0u, 4u, 2u, 6u, 2u, 6u, 0u, 4u, 0u, 4u, 2u, 6u, 2u, 6u,
+        1u, 5u, 1u, 5u, 3u, 7u, 3u, 7u, 1u, 5u, 1u, 5u, 3u, 7u, 3u, 7u,
+        4u, 0u, 4u, 0u, 6u, 2u, 6u, 2u, 4u, 0u, 4u, 0u, 6u, 2u, 6u, 2u,
+        5u, 1u, 5u, 1u, 7u, 3u, 7u, 3u, 5u, 1u, 5u, 1u, 7u, 3u, 7u, 3u
+    );
+
+    let invocation_id = original_invocation_id * vec3(8, 8, 1) + vec3(UPDATE_OFFSETS_X[tick], UPDATE_OFFSETS_Y[tick], 0);
+
+    let dir = vec2<f32>((f32(invocation_id.x) / scale) - 1f, (f32(invocation_id.y) / scale) - 1f);
+
+    var ray: vec3<f32>;
+
+    switch invocation_id.z {
+        case 0u {
+            ray = vec3<f32>(1f, -dir.y, -dir.x); // +X
+        }
+        case 1u {
+            ray = vec3<f32>(-1f, -dir.y, dir.x);// -X
+        }
+        case 2u {
+            ray = vec3<f32>(dir.x, 1f, dir.y); // +Y
+        }
+        case 3u {
+            ray = vec3<f32>(dir.x, -1f, -dir.y);// -Y
+        }
+        case 4u {
+            ray = vec3<f32>(dir.x, -dir.y, 1f); // +Z
+        }
+        default: {
+            ray = vec3<f32>(-dir.x, -dir.y, -1f);// -Z
+        }
+    }
+
+    var initial_y = normalize(ray).y;
+    // the store below blends fully to black at and under -0.5: nothing to evaluate
+    if initial_y <= -0.5 {
+        textureStore(
+            image,
+            vec2<i32>(invocation_id.xy),
+            i32(invocation_id.z),
+            vec4<f32>(vec3<f32>(0.0), 0.0)
+        );
+        return;
+    }
+    if ray.y < 0.0 {
+        ray.y = 0.0;
+    }
+    ray = normalize(ray);
+
+
+    var render_base = vec3<f32>(0.0);
+
+    let multiplier = 1.0 + saturate(nishita.dir_light_intensity / 11000.0);
+
+    if nishita.dir_light_intensity > 0.0 {
+        render_base = render_nishita(
+            ray,
+            nishita.ray_origin,
+            nishita.sun_position,
+            nishita.sun_intensity * multiplier,
+            nishita.planet_radius,
+            nishita.atmosphere_radius,
+            nishita.rayleigh_coefficient,
+            nishita.mie_coefficient,
+            nishita.rayleigh_scale_height,
+            nishita.mie_scale_height,
+            nishita.mie_direction,
+        );
+
+        // flat night-sky colour across the sky, weighted toward the anti-solar
+        // direction: (max(-1, -sun·ray) * 0.25 + 0.75)
+        render_base += nishita.night_color
+            * (max(-1.0, -dot(normalize(nishita.sun_position), ray)) * 0.25 + 0.75);
+
+        // // add sun
+        let sun_weight = dot(ray, normalize(nishita.sun_position));
+        if sun_weight >= 0.997 {
+            render_base = max(render_base, mix(render_base, nishita.sun_color, smoothstep(0.997, 0.999, sun_weight)));
+        }
+        // sun 2 ..
+        let angle = 0.3;
+        let cosa = cos(angle);
+        let sina = sin(angle);
+        let sun_weight_2 = dot(ray, normalize(nishita.sun_position - vec3(0.3, 0.3, 0.3)));
+        if sun_weight_2 >= 0.998 {
+            render_base = max(render_base, mix(render_base, nishita.sun_color, smoothstep(0.999, 1.0, sun_weight_2)));
+        }
+    }
+
+    // night: how far the sun is below the horizon (not intensity, which floors
+    // at the horizon). the stars themselves are drawn after depth of field, in
+    // stars.wgsl
+    let night_amount = smoothstep(0.0, 0.15, -normalize(nishita.sun_position).y);
+
+    // moon: a plain disc (no tint) on its own low orbit, fading in with the
+    // night. A crescent is carved by subtracting a second disc of the same size
+    // offset toward the anti-sun side, so the lit limb faces the sun.
+    let moon_dir = normalize(nishita.moon_position);
+    let moon_dot = dot(ray, moon_dir);
+    let moon_disc = smoothstep(0.99914, 0.99971, moon_dot);
+    // tangent direction on the disc pointing away from the sun
+    let to_sun = normalize(nishita.sun_position);
+    let perp = -to_sun - moon_dir * dot(-to_sun, moon_dir);
+    let away = perp / max(length(perp), 1e-3);
+    // smaller offset -> thinner crescent; bite disc is 5% larger than the moon
+    // disc so it carves a slightly deeper inner terminator
+    let bite_dir = normalize(moon_dir + away * 0.012);
+    let bite = smoothstep(0.99905, 0.99968, dot(ray, bite_dir));
+    let crescent = moon_disc * (1.0 - bite);
+    render_base += vec3<f32>(1.6) * crescent * night_amount;
+    // faint cool halo (full circle)
+    render_base += vec3<f32>(0.5, 0.5, 0.6) * pow(max(moon_dot, 0.0), 250.0) * night_amount * 0.3;
+
+    let render = render_cloud(render_base, nishita.ray_origin * 0.0, normalize(ray));
+
+    let store_value = mix(render.rgb, vec3(0.0), 1.0 - smoothstep(-0.5, 0.0, initial_y));
+
+    textureStore(
+        image,
+        vec2<i32>(invocation_id.xy),
+        i32(invocation_id.z),
+        vec4<f32>(store_value, render.a)
+    );
+}

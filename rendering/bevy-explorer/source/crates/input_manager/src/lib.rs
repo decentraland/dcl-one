@@ -1,0 +1,977 @@
+// input settings
+
+use bevy_console::{clap, ConsoleCommand};
+use console::DoAddConsoleCommand;
+use std::collections::BTreeSet;
+use strum::IntoEnumIterator;
+
+use bevy::{
+    ecs::system::SystemParam,
+    input::{
+        gamepad::GamepadInput,
+        mouse::{MouseMotion, MouseScrollUnit, MouseWheel},
+    },
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    window::PrimaryWindow,
+};
+
+use common::{
+    inputs::{
+        Action, AxisIdentifier, BindingsData, CommonInputAction, InputDirection,
+        InputDirectionalSet, InputIdentifier, InputMap, InputMapSerialized, SystemAction,
+        SystemActionEvent, FIXED_BINDINGS, POINTER_SET, SCROLL_SET,
+    },
+    rpc::{RpcResultSender, RpcStreamSender},
+    structs::{AppConfig, CursorLocks, PlayerModifiers},
+};
+use system_bridge::SystemApi;
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default, Debug)]
+#[repr(u32)]
+pub enum InputPriority {
+    #[default]
+    None,
+    Scene,
+    /// held (InputType::All) while an external HUD surface (react menu/popup) is active:
+    /// scenes and world consumers stop receiving input, but the system-action stream —
+    /// which reads at this level — keeps flowing so the HUD can react (Cancel, hotkeys).
+    Ui,
+    Focus,
+    AvatarCollider,
+    TextEntry,
+    /// held (InputType::Keyboard) while an external HUD text field has keyboard focus.
+    /// A distinct level from TextEntry so HUD focus changes can't release the engine's
+    /// own text-entry reservation (both may be held at once; reservations are per-level).
+    UiText,
+    Scroll,
+    CancelFocus,
+    BindInput,
+}
+
+#[derive(PartialEq, Eq, Clone, Copy, Hash, Debug)]
+pub enum InputType {
+    All,
+    Keyboard,
+    Action(Action),
+}
+
+#[derive(Resource, Default, Debug, Clone, PartialEq)]
+pub struct InputPriorities {
+    reserved: HashMap<InputType, BTreeSet<InputPriority>>,
+}
+
+impl InputPriorities {
+    pub fn reserve(&mut self, ty: InputType, level: InputPriority) {
+        self.reserved.entry(ty).or_default().insert(level);
+    }
+
+    pub fn release(&mut self, ty: InputType, level: InputPriority) {
+        if let Some(set) = self.reserved.get_mut(&ty) {
+            set.remove(&level);
+            if set.is_empty() {
+                self.reserved.remove(&ty);
+            }
+        }
+    }
+
+    pub fn release_all(&mut self, level: InputPriority) {
+        self.reserved.retain(|_, set| {
+            set.remove(&level);
+            !set.is_empty()
+        })
+    }
+
+    pub fn get(&self, ty: InputType) -> InputPriority {
+        self.reserved
+            .get(&ty)
+            .and_then(|set| set.iter().next_back())
+            .copied()
+            .unwrap_or(InputPriority::None)
+    }
+
+    /// true while any consumer holds the keyboard at TextEntry level or above (e.g. a
+    /// focused text field). in this state gameplay key bindings are blocked and consumers
+    /// read raw ButtonInput, so keys must be treated as "being typed", not as shortcuts.
+    pub fn keyboard_claimed(&self) -> bool {
+        self.get(InputType::All).max(self.get(InputType::Keyboard)) >= InputPriority::TextEntry
+    }
+}
+
+// Holding any of these triggers OS-shortcut suppression for non-modifier
+// gameplay keys, but only when the held modifier is itself unbound — if the
+// user bound e.g. ControlLeft to walk, Ctrl+W still fires walk+forward and
+// the user owns that consequence.
+const SUPPRESSING_MODIFIERS: [KeyCode; 6] = [
+    KeyCode::SuperLeft,
+    KeyCode::SuperRight,
+    KeyCode::ControlLeft,
+    KeyCode::ControlRight,
+    KeyCode::AltLeft,
+    KeyCode::AltRight,
+];
+
+fn key_bound(map: &InputMap, k: KeyCode) -> bool {
+    map.inputs.values().any(|ids| {
+        ids.iter()
+            .any(|id| matches!(id, InputIdentifier::Key(bk) if *bk == k))
+    })
+}
+
+fn any_unbound_modifier_held(key_input: &ButtonInput<KeyCode>, map: &InputMap) -> bool {
+    SUPPRESSING_MODIFIERS
+        .iter()
+        .any(|m| key_input.pressed(*m) && !key_bound(map, *m))
+}
+
+// Shift doesn't trigger OS-shortcut suppression (it isn't in
+// SUPPRESSING_MODIFIERS) but it is still a modifier for stuck-key
+// force-release purposes: a genuinely-held bound Shift (e.g. shift-to-run)
+// must not be released alongside stuck non-modifiers.
+fn modifier_key(k: &KeyCode) -> bool {
+    SUPPRESSING_MODIFIERS.contains(k) || matches!(k, KeyCode::ShiftLeft | KeyCode::ShiftRight)
+}
+
+pub struct InputManagerPlugin;
+
+impl Plugin for InputManagerPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<InputPriorities>();
+        app.init_resource::<SystemActionStreams>();
+        app.insert_resource(CumulativeAxisData {
+            multipliers: HashMap::from_iter([
+                (AxisIdentifier::GamepadRight, 10.0),
+                (AxisIdentifier::MouseWheel, 10.0),
+            ]),
+            ..Default::default()
+        });
+        app.add_systems(
+            PreUpdate,
+            (
+                handle_modifier_keys.after(bevy::input::InputSystem),
+                update_deltas,
+                handle_native_input,
+                handle_get_bindings,
+                handle_set_bindings,
+                handle_set_ui_focus,
+                handle_pointer_motion,
+                handle_system_input_stream,
+            ),
+        );
+
+        app.add_console_command::<ResetControlsCommand, _>(reset_controls_command);
+    }
+}
+
+// marker to attach to components that pass mouse input through to scenes
+#[derive(Component)]
+pub struct MouseInteractionComponent;
+
+#[derive(Resource, Default)]
+pub struct CumulativeAxisData {
+    raw_mouse: Vec2,
+    current: HashMap<AxisIdentifier, Vec2>,
+    prev: HashMap<AxisIdentifier, Vec2>,
+    multipliers: HashMap<AxisIdentifier, f32>,
+}
+
+impl CumulativeAxisData {
+    fn _analog(vec: Option<&Vec2>, dir: InputDirection) -> f32 {
+        let vec = vec.copied().unwrap_or_default();
+        match dir {
+            InputDirection::Up => vec.y.max(0.0),
+            InputDirection::Down => -vec.y.min(0.0),
+            InputDirection::Left => -vec.x.min(0.0),
+            InputDirection::Right => vec.x.max(0.0),
+        }
+    }
+
+    fn check_dir(vec: Option<&Vec2>, dir: InputDirection) -> bool {
+        Self::_analog(vec, dir) > 0.0
+    }
+
+    pub fn just_down(&self, ident: AxisIdentifier, dir: InputDirection) -> bool {
+        Self::check_dir(self.current.get(&ident), dir)
+            && !Self::check_dir(self.prev.get(&ident), dir)
+    }
+
+    pub fn just_up(&self, ident: AxisIdentifier, dir: InputDirection) -> bool {
+        !Self::check_dir(self.current.get(&ident), dir)
+            && Self::check_dir(self.prev.get(&ident), dir)
+    }
+
+    pub fn down(&self, ident: AxisIdentifier, dir: InputDirection) -> bool {
+        Self::check_dir(self.current.get(&ident), dir)
+    }
+
+    pub fn analog(&self, ident: AxisIdentifier, dir: InputDirection) -> f32 {
+        Self::_analog(self.current.get(&ident), dir) * self.multipliers.get(&ident).unwrap_or(&1.0)
+    }
+}
+
+#[derive(SystemParam)]
+pub struct InputManager<'w, 's> {
+    map: Res<'w, InputMap>,
+    mouse_input: Res<'w, ButtonInput<MouseButton>>,
+    key_input: Res<'w, ButtonInput<KeyCode>>,
+    axis_data: ResMut<'w, CumulativeAxisData>,
+    gamepads: Query<'w, 's, &'static Gamepad>,
+    priorities: ResMut<'w, InputPriorities>,
+}
+
+impl InputManager<'_, '_> {
+    pub fn priorities(&mut self) -> &mut InputPriorities {
+        &mut self.priorities
+    }
+
+    pub fn any_just_acted(&self) -> bool {
+        self.mouse_input.get_just_pressed().len() != 0
+            || self.mouse_input.get_just_released().len() != 0
+            || self.key_input.get_just_pressed().len() != 0
+            || self.key_input.get_just_released().len() != 0
+            || self
+                .gamepads
+                .iter()
+                .any(|gp| gp.get_just_pressed().next().is_some())
+            || self
+                .gamepads
+                .iter()
+                .any(|gp| gp.get_just_released().next().is_some())
+            || !self.axis_data.current.is_empty()
+    }
+
+    fn inputs(&self, action: Action) -> impl Iterator<Item = &InputIdentifier> {
+        self.map
+            .inputs
+            .iter()
+            .filter(move |(a, _)| {
+                (**a == action)
+                    || (matches!(a, Action::Scene(_))
+                        && action == Action::Scene(CommonInputAction::IaAny))
+            })
+            .flat_map(|(_, v)| v.iter())
+    }
+
+    pub fn check_priority(&self, input: &InputIdentifier, priority: InputPriority) -> bool {
+        if self.priorities.get(InputType::All) > priority {
+            return false;
+        }
+
+        if matches!(input, InputIdentifier::Key(_))
+            && self.priorities.get(InputType::Keyboard) > priority
+        {
+            return false;
+        }
+
+        self.priorities.reserved.iter().all(|(k, v)| match k {
+            InputType::Action(a) => self
+                .inputs(*a)
+                .all(|i| (i != input) || (v.iter().next_back() <= Some(&priority))),
+            _ => true,
+        })
+    }
+
+    pub fn just_down<T: Into<Action>>(&self, action: T, priority: InputPriority) -> bool {
+        self.inputs(action.into()).any(|item| match item {
+            InputIdentifier::Key(k) => {
+                self.key_input.just_pressed(*k) && self.check_priority(item, priority)
+            }
+            InputIdentifier::Mouse(mb) => {
+                self.mouse_input.just_pressed(*mb) && self.check_priority(item, priority)
+            }
+            InputIdentifier::Gamepad(b) => {
+                self.gamepads
+                    .iter()
+                    .flat_map(|gp| gp.get_just_pressed())
+                    .any(|p| p == b)
+                    && self.check_priority(item, priority)
+            }
+            InputIdentifier::Analog(axis, input_direction) => {
+                self.axis_data.just_down(*axis, *input_direction)
+                    && self.check_priority(item, priority)
+            }
+        })
+    }
+
+    // true if any binding for the action was just pressed, ignoring priority reservations.
+    // `just_down` can only return true (for any priority) if this returns true.
+    pub fn just_down_any_priority<T: Into<Action>>(&self, action: T) -> bool {
+        self.inputs(action.into()).any(|item| match item {
+            InputIdentifier::Key(k) => self.key_input.just_pressed(*k),
+            InputIdentifier::Mouse(mb) => self.mouse_input.just_pressed(*mb),
+            InputIdentifier::Gamepad(b) => self
+                .gamepads
+                .iter()
+                .flat_map(|gp| gp.get_just_pressed())
+                .any(|p| p == b),
+            InputIdentifier::Analog(axis, input_direction) => {
+                self.axis_data.just_down(*axis, *input_direction)
+            }
+        })
+    }
+
+    pub fn just_up<T: Into<Action>>(&self, action: T) -> bool {
+        self.inputs(action.into()).any(|item| match item {
+            InputIdentifier::Key(k) => self.key_input.just_released(*k),
+            InputIdentifier::Mouse(mb) => self.mouse_input.just_released(*mb),
+            InputIdentifier::Gamepad(b) => self
+                .gamepads
+                .iter()
+                .flat_map(|gp| gp.get_just_released())
+                .any(|p| p == b),
+            InputIdentifier::Analog(axis, input_direction) => {
+                self.axis_data.just_up(*axis, *input_direction)
+            }
+        })
+    }
+
+    pub fn is_down<T: Into<Action>>(&self, action: T, priority: InputPriority) -> bool {
+        self.inputs(action.into()).any(|item| match item {
+            InputIdentifier::Key(k) => {
+                self.key_input.pressed(*k) && self.check_priority(item, priority)
+            }
+            InputIdentifier::Mouse(mb) => {
+                self.mouse_input.pressed(*mb) && self.check_priority(item, priority)
+            }
+            InputIdentifier::Gamepad(b) => {
+                self.gamepads
+                    .iter()
+                    .flat_map(|gp| gp.get_pressed())
+                    .any(|p| p == b)
+                    && self.check_priority(item, priority)
+            }
+            InputIdentifier::Analog(axis, input_direction) => {
+                self.axis_data.down(*axis, *input_direction) && self.check_priority(item, priority)
+            }
+        })
+    }
+
+    pub fn get_analog(&self, set: InputDirectionalSet, priority: InputPriority) -> Vec2 {
+        let mut amts = set.actions.iter().map(|a| {
+            let Some(a) = a else {
+                return 0.0;
+            };
+            self.inputs(*a)
+                .map(|item| match item {
+                    InputIdentifier::Key(k) => {
+                        if self.key_input.pressed(*k) && self.check_priority(item, priority) {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    InputIdentifier::Mouse(mb) => {
+                        if self.mouse_input.pressed(*mb) && self.check_priority(item, priority) {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    InputIdentifier::Gamepad(b) => {
+                        if self
+                            .gamepads
+                            .iter()
+                            .flat_map(|gp| gp.get_pressed())
+                            .any(|p| p == b)
+                            && self.check_priority(item, priority)
+                        {
+                            1.0
+                        } else {
+                            0.0
+                        }
+                    }
+                    InputIdentifier::Analog(axis, input_direction) => {
+                        let analog = self.axis_data.analog(*axis, *input_direction);
+                        if analog > 0.0 && self.check_priority(item, priority) {
+                            analog
+                        } else {
+                            0.0
+                        }
+                    }
+                })
+                .sum::<f32>()
+        });
+
+        let mouse = if set == POINTER_SET {
+            self.axis_data.raw_mouse
+        } else {
+            Vec2::ZERO
+        };
+
+        (mouse
+            + Vec2::new(
+                amts.next().unwrap() - amts.next().unwrap(),
+                amts.next().unwrap() - amts.next().unwrap(),
+            ))
+            * self.map.sensitivities.get(&set.label).unwrap_or(&1.0)
+    }
+
+    // only scene actions
+    pub fn iter_scene_just_down(&self) -> impl Iterator<Item = &CommonInputAction> {
+        self.map
+            .inputs
+            .iter()
+            .filter(|(_, buttons)| {
+                buttons.iter().any(|button| match button {
+                    InputIdentifier::Key(k) => {
+                        self.key_input.just_pressed(*k)
+                            && self.check_priority(button, InputPriority::Scene)
+                    }
+                    InputIdentifier::Mouse(m) => {
+                        self.mouse_input.just_pressed(*m)
+                            && self.check_priority(button, InputPriority::Scene)
+                    }
+                    InputIdentifier::Gamepad(b) => {
+                        self.gamepads
+                            .iter()
+                            .flat_map(|gp| gp.get_just_pressed())
+                            .any(|p| p == b)
+                            && self.check_priority(button, InputPriority::Scene)
+                    }
+                    InputIdentifier::Analog(axis, input_direction) => {
+                        self.axis_data.just_down(*axis, *input_direction)
+                            && self.check_priority(button, InputPriority::Scene)
+                    }
+                })
+            })
+            .flat_map(|(action, _)| {
+                if let Action::Scene(ia) = action {
+                    Some(ia)
+                } else {
+                    None
+                }
+            })
+    }
+
+    pub fn iter_scene_just_up(&self) -> impl Iterator<Item = &CommonInputAction> {
+        self.map
+            .inputs
+            .iter()
+            .filter(|(_, buttons)| {
+                buttons.iter().any(|button| match button {
+                    InputIdentifier::Key(k) => self.key_input.just_released(*k),
+                    InputIdentifier::Mouse(m) => self.mouse_input.just_released(*m),
+                    InputIdentifier::Gamepad(b) => self
+                        .gamepads
+                        .iter()
+                        .flat_map(|gp| gp.get_just_released())
+                        .any(|p| p == b),
+                    InputIdentifier::Analog(axis, input_direction) => {
+                        self.axis_data.just_up(*axis, *input_direction)
+                    }
+                })
+            })
+            .flat_map(|(action, _)| {
+                if let Action::Scene(ia) = action {
+                    Some(ia)
+                } else {
+                    None
+                }
+            })
+    }
+}
+
+struct CurrentNativeInputRequest {
+    // all pending requests resolve with the same captured input: there is no cancel, so a
+    // request whose UI was dismissed must not block a later one (callers discard stale
+    // results by request id)
+    senders: Vec<RpcResultSender<InputIdentifier>>,
+    axes: HashMap<AxisIdentifier, Vec2>,
+}
+
+impl CurrentNativeInputRequest {
+    fn resolve(self, identifier: InputIdentifier) {
+        for sender in self.senders {
+            sender.send(identifier);
+        }
+    }
+}
+
+// While an unbound OS modifier (Cmd/Ctrl/Alt) is held, suppress non-modifier
+// gameplay keys at the source so they never appear as down/just_down/just_up
+// to anything reading ButtonInput. On the transition into the shortcut
+// window, release any already-held non-modifier keys so their in-flight
+// actions get a clean just_up; while the window is open, reset newly-pressed
+// keys so they never emit a down event (so no balancing up is needed).
+//
+// Suppression is skipped while a higher-priority consumer owns the keyboard
+// (e.g. a focused text field, which reserves at TextEntry). In that state
+// gameplay keys are already blocked by priority, so there is nothing to
+// suppress — and that consumer reads raw ButtonInput modifier state (Shift
+// for selection/redo etc.) which suppression would otherwise clobber.
+//
+// Key-state correctness across focus loss is handled upstream (winit web
+// window-focus fix + bevy's KeyboardFocusLost release_all). The one state
+// workaround kept here is the force-release below: macOS (natively and in
+// Chrome) suppresses keyUp for non-modifier keys while Cmd is held, and no
+// focus transition covers that.
+fn handle_modifier_keys(
+    mut key_input: ResMut<ButtonInput<KeyCode>>,
+    map: Res<InputMap>,
+    priorities: Res<InputPriorities>,
+    mut was_active: Local<bool>,
+    mut was_super_held: Local<bool>,
+) {
+    // Any non-modifier still marked pressed when the last Super key goes up
+    // may never receive its keyup — force-release them all. Scoped to Super:
+    // keyups are delivered normally while Ctrl/Alt/Shift are held, and
+    // force-releasing on those would strand genuinely-held keys (e.g. W while
+    // tapping a bound walk/run modifier). A key genuinely still held at
+    // Cmd-up can't be told apart from a stuck one; re-pressing it is the
+    // acceptable cost, and outside text entry it was already released at
+    // Cmd-down by the suppression below.
+    let super_held =
+        key_input.pressed(KeyCode::SuperLeft) || key_input.pressed(KeyCode::SuperRight);
+    if *was_super_held && !super_held {
+        let held: Vec<KeyCode> = key_input
+            .get_pressed()
+            .copied()
+            .filter(|k| !modifier_key(k))
+            .collect();
+        for key in held {
+            key_input.release(key);
+        }
+    }
+    *was_super_held = super_held;
+
+    let active = !priorities.keyboard_claimed() && any_unbound_modifier_held(&key_input, &map);
+
+    if active && !*was_active {
+        let held: Vec<KeyCode> = key_input
+            .get_pressed()
+            .copied()
+            .filter(|k| !SUPPRESSING_MODIFIERS.contains(k))
+            .collect();
+        for key in held {
+            key_input.release(key);
+        }
+    }
+
+    if active {
+        let to_reset: Vec<KeyCode> = key_input
+            .get_just_pressed()
+            .copied()
+            .filter(|k| !SUPPRESSING_MODIFIERS.contains(k))
+            .collect();
+        for key in to_reset {
+            key_input.reset(key);
+        }
+    }
+
+    *was_active = active;
+}
+
+fn update_deltas(
+    mut axis_data: ResMut<CumulativeAxisData>,
+    mut wheel_events: EventReader<MouseWheel>,
+    gamepads: Query<&Gamepad>,
+    prio: Res<InputPriorities>,
+    mut prev: Local<InputPriorities>,
+) {
+    axis_data.prev = std::mem::take(&mut axis_data.current);
+    for ev in wheel_events.read() {
+        *axis_data
+            .current
+            .entry(AxisIdentifier::MouseWheel)
+            .or_default() += Vec2::new(ev.x, ev.y)
+            * match ev.unit {
+                MouseScrollUnit::Line => 16.0,
+                MouseScrollUnit::Pixel => 1.0,
+            };
+    }
+    for device in gamepads.iter() {
+        for axis in device.get_analog_axes() {
+            let Some(value) = device.get(*axis) else {
+                continue;
+            };
+            let GamepadInput::Axis(axis) = *axis else {
+                continue;
+            };
+
+            match axis {
+                GamepadAxis::LeftStickX => {
+                    *axis_data
+                        .current
+                        .entry(AxisIdentifier::GamepadLeft)
+                        .or_default() += Vec2::X * value
+                }
+                GamepadAxis::LeftStickY => {
+                    *axis_data
+                        .current
+                        .entry(AxisIdentifier::GamepadLeft)
+                        .or_default() += Vec2::Y * value
+                }
+                GamepadAxis::LeftZ => {
+                    *axis_data
+                        .current
+                        .entry(AxisIdentifier::GamepadLeftTrigger)
+                        .or_default() += Vec2::X * value
+                }
+                GamepadAxis::RightStickX => {
+                    *axis_data
+                        .current
+                        .entry(AxisIdentifier::GamepadRight)
+                        .or_default() += Vec2::X * value
+                }
+                GamepadAxis::RightStickY => {
+                    *axis_data
+                        .current
+                        .entry(AxisIdentifier::GamepadRight)
+                        .or_default() += Vec2::Y * value
+                }
+                GamepadAxis::RightZ => {
+                    *axis_data
+                        .current
+                        .entry(AxisIdentifier::GamepadRightTrigger)
+                        .or_default() += Vec2::Y * value
+                }
+                GamepadAxis::Other(_) => (),
+            }
+        }
+    }
+    if *prev != *prio {
+        *prev = prio.clone();
+        debug!("{prio:?}");
+    }
+}
+
+fn handle_pointer_motion(
+    locks: Res<CursorLocks>,
+    mut input_manager: InputManager,
+    mut window: Query<&mut Window, With<PrimaryWindow>>,
+    mut mouse_events: EventReader<MouseMotion>,
+    mut last_position: Local<Vec2>,
+) {
+    input_manager.axis_data.raw_mouse = Vec2::ZERO;
+    let motion = input_manager.get_analog(POINTER_SET, InputPriority::BindInput);
+
+    if let Ok(mut window) = window.single_mut() {
+        let position = window.cursor_position().unwrap_or(*last_position);
+        if window.cursor_position().is_some() {
+            *last_position = position + motion;
+        }
+
+        if locks.0.is_empty() && motion != Vec2::ZERO {
+            window.set_cursor_position(Some(position + motion));
+        }
+    }
+
+    for ev in mouse_events.read() {
+        input_manager.axis_data.raw_mouse += ev.delta;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_native_input(
+    mut events: EventReader<SystemApi>,
+    mut active: Local<Option<CurrentNativeInputRequest>>,
+    mouse_input: Res<ButtonInput<MouseButton>>,
+    key_input: Res<ButtonInput<KeyCode>>,
+    mut wheel_events: EventReader<MouseWheel>,
+    gamepads: Query<&Gamepad>,
+    mut priorities: ResMut<InputPriorities>,
+) {
+    fn vec2dir(vec: Vec2) -> InputDirection {
+        let max = vec.abs().max_element();
+        if max == vec.x {
+            InputDirection::Right
+        } else if max == vec.y {
+            InputDirection::Up
+        } else if max == -vec.x {
+            InputDirection::Left
+        } else {
+            InputDirection::Down
+        }
+    }
+
+    if let Some(mut current) = active.take() {
+        // a request arriving while a capture is pending joins it (no cancel exists, so a
+        // dismissed request must not block a later one; unread events would just expire)
+        current.senders.extend(events.read().filter_map(|e| {
+            if let SystemApi::GetNativeInput(sender) = e {
+                Some(sender.clone())
+            } else {
+                None
+            }
+        }));
+        // Super (Cmd on Mac) is not accepted as a gameplay binding — see
+        // handle_modifier_keys for the OS-shortcut suppression logic, which
+        // assumes Super is never bound.
+        if let Some(key) = key_input
+            .get_just_pressed()
+            .find(|&&k| !matches!(k, KeyCode::SuperLeft | KeyCode::SuperRight))
+        {
+            current.resolve(InputIdentifier::Key(*key));
+            return;
+        } else if let Some(mouse) = mouse_input.get_just_pressed().next() {
+            current.resolve(InputIdentifier::Mouse(*mouse));
+            return;
+        } else {
+            // mouse MOTION is deliberately not capturable: it can't help but move while the
+            // user reaches for their intended input, and button-style actions bound to a
+            // MouseMove direction have no press edge so they never fire anyway
+            if let Some(ev) = wheel_events.read().next() {
+                current.resolve(InputIdentifier::Analog(
+                    AxisIdentifier::MouseWheel,
+                    vec2dir(Vec2::new(ev.x, ev.y)),
+                ));
+                return;
+            }
+            for gamepad in gamepads.iter() {
+                if let Some(gamepad_button) = gamepad.get_just_pressed().next() {
+                    current.resolve(InputIdentifier::Gamepad(*gamepad_button));
+                    return;
+                }
+
+                for axis in gamepad.get_analog_axes() {
+                    let Some(value) = gamepad.get(*axis) else {
+                        continue;
+                    };
+                    let GamepadInput::Axis(axis) = *axis else {
+                        continue;
+                    };
+                    let (axis, value) = match axis {
+                        GamepadAxis::LeftStickX => (AxisIdentifier::GamepadLeft, Vec2::X * value),
+                        GamepadAxis::LeftStickY => (AxisIdentifier::GamepadLeft, Vec2::Y * value),
+                        GamepadAxis::LeftZ => (AxisIdentifier::GamepadLeftTrigger, Vec2::X * value),
+                        GamepadAxis::RightStickX => (AxisIdentifier::GamepadRight, Vec2::X * value),
+                        GamepadAxis::RightStickY => (AxisIdentifier::GamepadRight, Vec2::Y * value),
+                        GamepadAxis::RightZ => {
+                            (AxisIdentifier::GamepadRightTrigger, Vec2::Y * value)
+                        }
+                        GamepadAxis::Other(_) => continue,
+                    };
+                    let axis_val = current.axes.entry(axis).or_default();
+                    *axis_val += value;
+                    if axis_val.abs().max_element() > 10.0 {
+                        let dir = vec2dir(*axis_val);
+                        current.resolve(InputIdentifier::Analog(axis, dir));
+                        return;
+                    }
+                }
+            }
+
+            *active = Some(current);
+        }
+        return;
+    }
+
+    wheel_events.clear();
+    priorities.release(InputType::All, InputPriority::BindInput);
+
+    let senders = events
+        .read()
+        .filter_map(|e| {
+            if let SystemApi::GetNativeInput(sender) = e {
+                Some(sender.clone())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    if !senders.is_empty() {
+        *active = Some(CurrentNativeInputRequest {
+            senders,
+            axes: Default::default(),
+        });
+        priorities.reserve(InputType::All, InputPriority::BindInput);
+    }
+}
+
+fn handle_get_bindings(mut events: EventReader<SystemApi>, map: Res<InputMap>) {
+    for sender in events.read().filter_map(|e| {
+        if let SystemApi::GetBindings(sender) = e {
+            Some(sender)
+        } else {
+            None
+        }
+    }) {
+        sender.send(BindingsData {
+            bindings: map.inputs.clone(),
+        });
+    }
+}
+
+fn handle_set_bindings(
+    mut events: EventReader<SystemApi>,
+    mut map: ResMut<InputMap>,
+    mut config: ResMut<AppConfig>,
+) {
+    for (binding_data, sender) in events.read().filter_map(|e| {
+        if let SystemApi::SetBindings(binding_data, sender) = e {
+            Some((binding_data, sender))
+        } else {
+            None
+        }
+    }) {
+        map.inputs = binding_data.bindings.clone();
+        // fixed bindings can never be removed — re-assert over any client-supplied table
+        // (the echoed GetBindings then shows them restored).
+        for (action, id) in FIXED_BINDINGS {
+            let bindings = map.inputs.entry(action).or_default();
+            if !bindings.contains(&id) {
+                bindings.push(id);
+            }
+        }
+        config.inputs = InputMapSerialized(
+            map.inputs.clone().into_iter().collect(),
+            config.inputs.1.clone(),
+        );
+
+        platform::write_config_file(&*config);
+
+        sender.send(());
+    }
+}
+
+fn handle_set_ui_focus(
+    mut events: EventReader<SystemApi>,
+    mut priorities: ResMut<InputPriorities>,
+) {
+    for (ui, text, scroll) in events.read().filter_map(|e| {
+        if let SystemApi::SetUiFocus {
+            ui, text, scroll, ..
+        } = e
+        {
+            Some((*ui, *text, *scroll))
+        } else {
+            None
+        }
+    }) {
+        // reserve/release are set-based, so re-asserting an unchanged state is a no-op.
+        if ui {
+            priorities.reserve(InputType::All, InputPriority::Ui);
+        } else {
+            priorities.release(InputType::All, InputPriority::Ui);
+        }
+        // keyboard only: mouse/gamepad still reach scenes while a HUD text field is
+        // focused (click the world while chat has the caret), matching engine text entry.
+        if text {
+            priorities.reserve(InputType::Keyboard, InputPriority::UiText);
+        } else {
+            priorities.release(InputType::Keyboard, InputPriority::UiText);
+        }
+        // over a scrollable HUD element the SCROLL gesture belongs to the panel: reserving
+        // the Scroll ACTIONS blocks every input bound to them — wheel axis, key, gamepad
+        // button alike — for world consumers (camera zoom on a shared wheel, movement on a
+        // shared key), while the action stream, reading at the same Ui level, still
+        // resolves the Scroll actions themselves and the HUD scrolls the hovered panel
+        // from those edges. The same mechanism scene scrollables use, one level down.
+        for action in SCROLL_SET.actions.iter().flatten() {
+            if scroll {
+                priorities.reserve(InputType::Action(*action), InputPriority::Ui);
+            } else {
+                priorities.release(InputType::Action(*action), InputPriority::Ui);
+            }
+        }
+    }
+}
+
+/// The open `getSystemActionStream` consumers (the HUD bridge scene). Public so restricted
+/// actions can synthesize an action edge (`OpenExplorerUi`): the HUD then handles it exactly
+/// as it would the bound key, so panel/focus logic stays in one place.
+#[derive(Resource, Default)]
+pub struct SystemActionStreams(Vec<RpcStreamSender<SystemActionEvent>>);
+
+impl SystemActionStreams {
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Send a press + release edge pair for `action` to every consumer.
+    pub fn send_edge(&self, action: SystemAction) {
+        for pressed in [true, false] {
+            for s in &self.0 {
+                let _ = s.send(SystemActionEvent { action, pressed });
+            }
+        }
+    }
+}
+
+fn handle_system_input_stream(
+    mut events: EventReader<SystemApi>,
+    mut senders: ResMut<SystemActionStreams>,
+    input_manager: InputManager,
+    mut pressed: Local<HashSet<SystemAction>>,
+    modifiers: Query<&PlayerModifiers>,
+) {
+    let block_emote = modifiers.single().map(|m| m.block_emote).unwrap_or(false);
+    let senders: &mut Vec<_> = &mut senders.0;
+
+    let new_senders = events
+        .read()
+        .filter_map(|ev| {
+            if let SystemApi::GetSystemActionStream(s) = ev {
+                Some(s.clone())
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    for new_sender in &new_senders {
+        for &action in &pressed {
+            let _ = new_sender.send(SystemActionEvent {
+                action,
+                pressed: true,
+            });
+        }
+    }
+
+    senders.extend(new_senders);
+
+    senders.retain(|s| !s.is_closed());
+
+    let new_pressed = SystemAction::iter()
+        .filter(|a| {
+            // an action ENTERS the set only on a fresh press edge, and STAYS while held.
+            // `is_down` alone must not admit it: a key already held when a higher-priority
+            // reservation releases (binding capture, text entry) would otherwise emit a
+            // phantom press the moment the reservation lifts.
+            // reads at Ui so the stream survives the HUD's own Ui reservation (which mutes
+            // scenes) but is muted by text entry and binding capture.
+            input_manager.just_down(*a, InputPriority::Ui)
+                || (pressed.contains(a) && input_manager.is_down(*a, InputPriority::Ui))
+        })
+        .filter(|a| !block_emote || a != &SystemAction::Emote)
+        .collect::<HashSet<_>>();
+
+    for &action in new_pressed.difference(&*pressed) {
+        for s in senders.iter() {
+            let _ = s.send(SystemActionEvent {
+                action,
+                pressed: true,
+            });
+        }
+    }
+
+    for &action in pressed.difference(&new_pressed) {
+        for s in senders.iter() {
+            let _ = s.send(SystemActionEvent {
+                action,
+                pressed: false,
+            });
+        }
+    }
+
+    *pressed = new_pressed;
+}
+
+/// manually spawn a portable
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/reset_controls")]
+struct ResetControlsCommand;
+
+fn reset_controls_command(
+    mut input: ConsoleCommand<ResetControlsCommand>,
+    mut config: ResMut<AppConfig>,
+    mut map: ResMut<InputMap>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        map.inputs = InputMap::default().inputs;
+        config.inputs.0 = map.inputs.clone().into_iter().collect();
+        config.inputs_generation = common::structs::INPUTS_GENERATION;
+        platform::write_config_file(&*config);
+        input.reply_ok("Controls reset to default");
+    }
+}

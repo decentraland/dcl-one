@@ -1,0 +1,47 @@
+# Preserve the exact upstream bytes on Windows as well as Unix.
+rendering/bevy-explorer/source/** -text
+library/vendor/rusty_enet/** -text -whitespace
+
+# The vendored docs.decentraland.org media (apps/sites/content/docs, apps/sites/scripts/gen-docs-content.mts)
+# lives in Git LFS; its Markdown, JSON manifests and search index stay plain git.
+apps/sites/content/docs/**/*.[pP][nN][gG] filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.[jJ][pP][gG] filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.[jJ][pP][eE][gG] filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.[gG][iI][fF] filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.webp filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.avif filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.ico filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.mp4 filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.webm filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.mov filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.mp3 filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.wav filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.ogg filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.aac filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.glb filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.bin filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.fbx filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.obj filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.blend filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.ma filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.mb filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.max filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.c4d filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.abc filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.usdz filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.dae filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.3ds filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.psd filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.ai filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.pkr filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.unitypackage filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.pdf filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.zip filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.wasm filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.otf filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.ttf filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.woff filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.woff2 filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.apk filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.dmg filter=lfs diff=lfs merge=lfs -text
+apps/sites/content/docs/**/*.exe filter=lfs diff=lfs merge=lfs -text

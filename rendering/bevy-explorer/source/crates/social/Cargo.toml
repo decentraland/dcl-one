@@ -1,0 +1,34 @@
+[package]
+name = "social"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+[features]
+social = ["dep:dcl-rpc", "dcl_component/social"]
+
+[dependencies]
+common = { workspace = true }
+console = { workspace = true }
+dcl_component = { workspace = true }
+platform = { workspace = true }
+system_bridge = { workspace = true }
+wallet = { workspace = true }
+
+bevy = { workspace = true }
+bevy_console = { workspace = true }
+clap = { workspace = true }
+alloy-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+web-time = { workspace = true }
+http = { workspace = true }
+tungstenite = { workspace = true }
+
+dcl-rpc = { workspace = true, optional = true }
+futures-util = { workspace = true }
+async-std = { workspace = true }

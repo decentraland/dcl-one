@@ -1,0 +1,154 @@
+# One laptop's leg of Bevy Explorer / Benchmark: Chrome runs the change and base web apps,
+# warm-up first, then measured runs interleaved (change, base, change, base, ...), and the run
+# files are uploaded as benchmark-result-<label>. The job runs on a self-hosted laptop and checks
+# nothing out: it downloads the benchmark runner and both web apps from their CI runs. The
+# runner's commands are in rendering/bevy-explorer/docs/guidelines/benchmark.md.
+#
+# Laptop prerequisites: Google Chrome, a logged-in desktop session with the screen on (the window
+# must be visible), and the runner's job-started hook that empties the workspace before each job
+# (ACTIONS_RUNNER_HOOK_JOB_STARTED), as on the harness's laptops. The job also empties its own
+# folders and run files first, so an earlier session's files never reach the report without it.
+name: Bevy Explorer / Benchmark leg
+'on':
+  workflow_call:
+    inputs:
+      runs_on:
+        description: The laptop's runner label
+        type: string
+        required: true
+      label:
+        description: Names the report section (runs_on.txt) and the artifact, <runs_on>-chrome
+        type: string
+        required: true
+      runner_artifact:
+        description: The benchmark runner for the laptop's operating system
+        type: string
+        required: true
+      runner_run_id:
+        description: The CI run that uploaded runner_artifact
+        type: string
+        required: true
+      change_artifact:
+        description: The change build's web app
+        type: string
+        required: true
+      change_run_id:
+        description: The CI run that uploaded change_artifact
+        type: string
+        required: true
+      base_artifact:
+        description: The base build's web app
+        type: string
+        required: true
+      base_run_id:
+        description: The CI run that uploaded base_artifact
+        type: string
+        required: true
+      runs:
+        description: Measured runs per build (see RUN_TIMEOUT_SECONDS)
+        type: string
+        required: true
+permissions: {}
+jobs:
+  chrome:
+    name: Chrome
+    runs-on: ${{ inputs.runs_on }}
+    timeout-minutes: 90
+    permissions:
+      actions: read
+    env:
+      RUNS_ON_LABEL: ${{ inputs.label }}
+      # Per measured run; closing Chrome (up to 30 s) and the 15 s settle pause come on top. The
+      # Test builds step is cut off after 60 minutes, so runs x 2 x (480 + 45) must stay under 3600:
+      # 3 runs take about 53 minutes (tooling/benchmark-inputs.py allows no more).
+      RUN_TIMEOUT_SECONDS: '480'
+      # Per warm-up, a backstop; each warm-up step is cut off after 10 minutes.
+      WARMUP_TIMEOUT_SECONDS: '300'
+    steps:
+      # The only steps with a shell of their own per OS (PowerShell on Windows, bash on macOS) are
+      # these and the PATH steps: every later step calls `benchmark` from the PATH and takes its
+      # inputs from the environment. The workspace outlives the job on a laptop, and
+      # download-artifact adds to a folder without emptying it, so the runner, both web apps and
+      # an earlier session's run files go before anything is downloaded; a file that cannot be
+      # removed fails the job.
+      - name: Remove an earlier session's files (Windows)
+        if: runner.os == 'Windows'
+        run: >-
+          Get-Item -Force -ErrorAction SilentlyContinue -Path runner, runs_on.txt, change_build*, base_build*
+          | Remove-Item -Recurse -Force
+      - name: Remove an earlier session's files (macOS)
+        if: runner.os != 'Windows'
+        run: rm -rf runner runs_on.txt change_build* base_build*
+      - name: Download the benchmark runner
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.runner_artifact }}
+          path: runner
+          run-id: ${{ inputs.runner_run_id }}
+          github-token: ${{ github.token }}
+      - name: Put the runner on the PATH (Windows)
+        if: runner.os == 'Windows'
+        run: Join-Path $PWD.Path runner | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+      - name: Put the runner on the PATH (macOS)
+        if: runner.os != 'Windows'
+        run: |
+          chmod +x runner/benchmark
+          echo "$PWD/runner" >> "$GITHUB_PATH"
+      - name: Download the change build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.change_artifact }}
+          path: change_build
+          run-id: ${{ inputs.change_run_id }}
+          github-token: ${{ github.token }}
+      - name: Download the baseline build
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ inputs.base_artifact }}
+          path: base_build
+          run-id: ${{ inputs.base_run_id }}
+          github-token: ${{ github.token }}
+      # A warm-up signs in (the first one on a laptop creates the guest every later run reuses,
+      # kept in the Chrome profile), arrives in world and ends; its log is kept.
+      - name: Warmup change build
+        env:
+          APP_DIR: change_build
+          BUILD_NAME: change_build
+        timeout-minutes: 10
+        run: benchmark warmup
+      - name: Warmup baseline build
+        env:
+          APP_DIR: base_build
+          BUILD_NAME: base_build
+        timeout-minutes: 10
+        run: benchmark warmup
+      # Both builds are measured fresh in the same session, interleaved. The step first removes
+      # an earlier session's run files and writes runs_on.txt last.
+      - name: Test builds
+        id: measure
+        env:
+          CHANGE_BUILD_DIR: change_build
+          BASE_BUILD_DIR: base_build
+          RUNS: ${{ inputs.runs }}
+          SETTLE_SECONDS: '15'
+        timeout-minutes: 60
+        run: benchmark measure
+      # Also after a failed or cut-off Test builds, so the runs that finished can be looked at,
+      # but not when it never started: nothing of this session would be uploaded. The report reads
+      # a folder only once it holds runs_on.txt, which Test builds writes last. A re-run of the job
+      # replaces the artifact.
+      - name: Upload the results
+        if: ${{ always() && steps.measure.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: benchmark-result-${{ inputs.label }}
+          overwrite: true
+          path: |
+            runs_on.txt
+            change_build_*.log
+            change_build_*.csv
+            change_build_*.csv.partial
+            base_build_*.log
+            base_build_*.csv
+            base_build_*.csv.partial
+          retention-days: 7

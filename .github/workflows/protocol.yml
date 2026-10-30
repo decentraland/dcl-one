@@ -1,0 +1,40 @@
+name: Protocol / CI
+on:
+  push:
+    branches: [main]
+    paths:
+      - library/protocol/**
+      - .github/workflows/protocol.yml
+  pull_request:
+    paths:
+      - library/protocol/**
+      - .github/workflows/protocol.yml
+permissions:
+  contents: read
+jobs:
+  check:
+    name: Lint, build, wire compatibility, generation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: library/protocol
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # buf breaking compares against origin/main's proto tree (git archive, no LFS)
+          fetch-depth: 0
+          lfs: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Install dependencies and the google well-known types
+        run: make install
+      - name: Lint
+        run: make buf-lint
+      - name: Build the image
+        run: make buf-build
+      - name: Wire compatibility against main
+        run: make buf-breaking
+      - name: Generate out-ts/out-js and run the wire tests
+        run: make test

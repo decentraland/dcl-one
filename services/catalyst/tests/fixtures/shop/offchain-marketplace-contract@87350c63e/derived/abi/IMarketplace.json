@@ -1,0 +1,459 @@
+{
+  "contract": "IMarketplace",
+  "source": "src/credits/interfaces/IMarketplace.sol",
+  "compiler": {
+    "solc": "0.8.20+commit.a1b79de6.Emscripten.clang",
+    "settings": {
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "*": [
+            "abi",
+            "evm.methodIdentifiers"
+          ]
+        }
+      }
+    },
+    "openzeppelin": {
+      "commit": "dbb6104ce834628e473d2173bbc9d47f81a9eec3",
+      "tag": "v5.0.2",
+      "npm": "5.0.2"
+    }
+  },
+  "abi": [
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "signer",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes",
+              "name": "signature",
+              "type": "bytes"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "uses",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "expiration",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "effective",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "salt",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "contractSignatureIndex",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "signerSignatureIndex",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "allowedRoot",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "bytes32[]",
+                  "name": "allowedProof",
+                  "type": "bytes32[]"
+                },
+                {
+                  "components": [
+                    {
+                      "internalType": "address",
+                      "name": "contractAddress",
+                      "type": "address"
+                    },
+                    {
+                      "internalType": "bytes4",
+                      "name": "selector",
+                      "type": "bytes4"
+                    },
+                    {
+                      "internalType": "bytes",
+                      "name": "value",
+                      "type": "bytes"
+                    },
+                    {
+                      "internalType": "bool",
+                      "name": "required",
+                      "type": "bool"
+                    }
+                  ],
+                  "internalType": "struct IMarketplace.ExternalCheck[]",
+                  "name": "externalChecks",
+                  "type": "tuple[]"
+                }
+              ],
+              "internalType": "struct IMarketplace.Checks",
+              "name": "checks",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "assetType",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "contractAddress",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "value",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "beneficiary",
+                  "type": "address"
+                },
+                {
+                  "internalType": "bytes",
+                  "name": "extra",
+                  "type": "bytes"
+                }
+              ],
+              "internalType": "struct IMarketplace.Asset[]",
+              "name": "sent",
+              "type": "tuple[]"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "assetType",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "contractAddress",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "value",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "beneficiary",
+                  "type": "address"
+                },
+                {
+                  "internalType": "bytes",
+                  "name": "extra",
+                  "type": "bytes"
+                }
+              ],
+              "internalType": "struct IMarketplace.Asset[]",
+              "name": "received",
+              "type": "tuple[]"
+            }
+          ],
+          "internalType": "struct IMarketplace.Trade[]",
+          "name": "_trades",
+          "type": "tuple[]"
+        }
+      ],
+      "name": "accept",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "signer",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes",
+              "name": "signature",
+              "type": "bytes"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "uses",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "expiration",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "effective",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "salt",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "contractSignatureIndex",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "signerSignatureIndex",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "allowedRoot",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "bytes32[]",
+                  "name": "allowedProof",
+                  "type": "bytes32[]"
+                },
+                {
+                  "components": [
+                    {
+                      "internalType": "address",
+                      "name": "contractAddress",
+                      "type": "address"
+                    },
+                    {
+                      "internalType": "bytes4",
+                      "name": "selector",
+                      "type": "bytes4"
+                    },
+                    {
+                      "internalType": "bytes",
+                      "name": "value",
+                      "type": "bytes"
+                    },
+                    {
+                      "internalType": "bool",
+                      "name": "required",
+                      "type": "bool"
+                    }
+                  ],
+                  "internalType": "struct IMarketplace.ExternalCheck[]",
+                  "name": "externalChecks",
+                  "type": "tuple[]"
+                }
+              ],
+              "internalType": "struct IMarketplace.Checks",
+              "name": "checks",
+              "type": "tuple"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "assetType",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "contractAddress",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "value",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "beneficiary",
+                  "type": "address"
+                },
+                {
+                  "internalType": "bytes",
+                  "name": "extra",
+                  "type": "bytes"
+                }
+              ],
+              "internalType": "struct IMarketplace.Asset[]",
+              "name": "sent",
+              "type": "tuple[]"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "assetType",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "contractAddress",
+                  "type": "address"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "value",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "address",
+                  "name": "beneficiary",
+                  "type": "address"
+                },
+                {
+                  "internalType": "bytes",
+                  "name": "extra",
+                  "type": "bytes"
+                }
+              ],
+              "internalType": "struct IMarketplace.Asset[]",
+              "name": "received",
+              "type": "tuple[]"
+            }
+          ],
+          "internalType": "struct IMarketplace.Trade[]",
+          "name": "_trades",
+          "type": "tuple[]"
+        },
+        {
+          "components": [
+            {
+              "internalType": "bytes",
+              "name": "signature",
+              "type": "bytes"
+            },
+            {
+              "components": [
+                {
+                  "internalType": "uint256",
+                  "name": "uses",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "expiration",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "effective",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "salt",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "contractSignatureIndex",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "uint256",
+                  "name": "signerSignatureIndex",
+                  "type": "uint256"
+                },
+                {
+                  "internalType": "bytes32",
+                  "name": "allowedRoot",
+                  "type": "bytes32"
+                },
+                {
+                  "internalType": "bytes32[]",
+                  "name": "allowedProof",
+                  "type": "bytes32[]"
+                },
+                {
+                  "components": [
+                    {
+                      "internalType": "address",
+                      "name": "contractAddress",
+                      "type": "address"
+                    },
+                    {
+                      "internalType": "bytes4",
+                      "name": "selector",
+                      "type": "bytes4"
+                    },
+                    {
+                      "internalType": "bytes",
+                      "name": "value",
+                      "type": "bytes"
+                    },
+                    {
+                      "internalType": "bool",
+                      "name": "required",
+                      "type": "bool"
+                    }
+                  ],
+                  "internalType": "struct IMarketplace.ExternalCheck[]",
+                  "name": "externalChecks",
+                  "type": "tuple[]"
+                }
+              ],
+              "internalType": "struct IMarketplace.Checks",
+              "name": "checks",
+              "type": "tuple"
+            },
+            {
+              "internalType": "address",
+              "name": "couponAddress",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes",
+              "name": "data",
+              "type": "bytes"
+            },
+            {
+              "internalType": "bytes",
+              "name": "callerData",
+              "type": "bytes"
+            }
+          ],
+          "internalType": "struct IMarketplace.Coupon[]",
+          "name": "_coupons",
+          "type": "tuple[]"
+        }
+      ],
+      "name": "acceptWithCoupon",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "methodIdentifiers": {
+    "accept((address,bytes,(uint256,uint256,uint256,bytes32,uint256,uint256,bytes32,bytes32[],(address,bytes4,bytes,bool)[]),(uint256,address,uint256,address,bytes)[],(uint256,address,uint256,address,bytes)[])[])": "961a547e",
+    "acceptWithCoupon((address,bytes,(uint256,uint256,uint256,bytes32,uint256,uint256,bytes32,bytes32[],(address,bytes4,bytes,bool)[]),(uint256,address,uint256,address,bytes)[],(uint256,address,uint256,address,bytes)[])[],(bytes,(uint256,uint256,uint256,bytes32,uint256,uint256,bytes32,bytes32[],(address,bytes4,bytes,bool)[]),address,bytes,bytes)[])": "ad1e8700"
+  }
+}

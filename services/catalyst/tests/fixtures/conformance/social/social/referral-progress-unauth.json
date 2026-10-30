@@ -1,0 +1,23 @@
+{
+  "description": "GET /v1/referral-progress without an auth chain. Captured GET https://social-api.decentraland.org/v1/referral-progress -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/referral-progress",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Invalid Auth Chain",
+      "message": "This endpoint requires a signed fetch request. See ADR-44."
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/referral-progress",
+  "captured_at": "2026-09-25T19:24:20Z",
+  "volatile_paths": []
+}

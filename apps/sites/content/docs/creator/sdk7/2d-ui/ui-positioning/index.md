@@ -1,0 +1,331 @@
+> Set the position, scale, padding and other properties of UI entities.
+
+# UI Positioning
+
+For all kinds of UI content, use the `uiTransform` component to set the size, position, and other properties related to the entity's alignment.
+
+The `uiTransform` component works in the screen's 2d space very much like the `Transform` component works in the the scene's 3D space.
+
+_**ui.tsx file:**_
+
+```ts
+import { UiEntity, ReactEcs } from '@dcl/sdk/react-ecs'
+import { Color4 } from '@dcl/sdk/math'
+
+export const uiMenu = () => (
+	<UiEntity
+		uiTransform={{
+			width: '200px',
+			height: '100px',
+			justifyContent: 'center',
+			alignItems: 'center',
+		}}
+		uiBackground={{ color: Color4.Green() }}
+	/>
+)
+```
+
+_**index.ts file:**_
+
+```ts
+import { ReactEcsRenderer } from '@dcl/sdk/react-ecs'
+import { uiMenu } from './ui'
+
+export function main() {
+    ReactEcsRenderer.setUiRenderer(uiMenu)
+}
+```
+
+
+> [!WARNING]
+> **📔 Note**: All the following snippets in this page assume that you have a `.ts` similar to the above, running the `ReactEcsRenderer.setUiRenderer()` function.
+
+
+## Positioning properties
+
+The alignment of UI entities is based on the Flexbox alignment model. This is a very powerful model for dynamically organizing nested entities inside modals that may vary in size.
+
+
+> [!NOTE]
+> **💡 Tip**: Decentraland's UI implementation is based on that of [Yoga](https://yogalayout.com/docs/). Read [this article](https://www.joshwcomeau.com/css/interactive-guide-to-flexbox/) for a very approachable and in-depth coverage of the properties available in Flexbox.
+
+
+### Entity size
+
+Use `width` and `height` to set the size of the entity. The following kinds of values are supported:
+
+* `auto`: The size adapts to fit the content inside. This is very convenient for text that may vary in length. Write the value as "auto".
+* **Percentage**: As a percentage of the parent's measurements. Write the value as a string that ends in "%", for example `10 %`.
+* **Pixels**: Write the value as a number.
+* **Screen width or height**: Use vw (view width) and vh (view height) can be used to indicate a fraction of the full size of the window running Decentraland. For example `10vw` refers to 10% of the window's width, `25vh` to 25% of the window's height.
+
+Note that these properties affect the **default** size of that item, the size of the item before any flex grow and flex shrink calculations are performed. The final size may be interpreted differently based on the size of the parent entity, and the Flexbox properties that are set.
+
+
+> [!WARNING]
+> **📔 Note**: In properties that support both numbers and strings, to set the value in pixels, write a number. To set these fields as a percentage of the parent's measurements, write the value as a string that ends in "%", for example `10 %`. You can also set a pixel value as a string by ending the string in `px`, for example `200px`.
+> 
+> * When values are expressed as a percentage, they're always in relation to the parent's container. The top-level entity of your UI has a parent too: the renderer places it inside the area selected by [`screenInset`](/docs/creator/sdk7/2d-ui/onscreen-ui/#screen-inset-area), which by default is the device safe area. So a root-level `100%` is 100% of that area — on a phone that's narrower than the screen, on desktop the two coincide. Pass `screenInset: 'none'` if you need percentages measured against the full screen.
+> * If values are expressed in pixels, they are not affected by the parent's scale, but they are **not** raw screen pixels either: they are multiplied by the UI scale factor derived from the [virtual screen](/docs/creator/sdk7/2d-ui/onscreen-ui/#screen-virtual-scale), which is active by default. A `width: 200` means "200 px on a screen the size of the virtual screen", and grows or shrinks proportionally on any other.
+> * If values are expressed in `vh` or `vw`, they are a percentage of the full window, not affected by the parent's scale, by the virtual screen, or by `screenInset`.
+> 
+> For the `auto` width/height to work, the following rules apply:
+> 
+> * The UiTransform that uses width/height as “auto” should have `alignSelf`: `“center”`/`“flex-start”`/`“flex-end”` OR `positionType: “absolute”`
+> * If the UiTransform of a child use `positionType: “absolute”`, the parent won’t adapt to its size/position
+> * If the UiTransform of a child uses any position overwrite, the parent won’t adapt to its size/position
+
+
+These other properties are also available to adjust size in a more advanced way:
+
+* `maxWidth` and `maxHeight`: _number_ or string (like height and width). The maximum size that the entity may have.
+* `minWidth` and `minHeight`: _number_ or string (like height and width). The minimum size that the entity may have. If the parent is too small to fit the minimum size of the entities, they will overflow from their parent.
+* `flexBasis`: This is an axis-independent way of providing the default size of an item along the main axis. Setting the flex basis of a child is similar to setting the width of that child if its parent is a container with flex direction: row or setting the height of a child if its parent is a container with flex direction: column.
+
+```ts
+import { UiEntity, ReactEcs } from '@dcl/sdk/react-ecs'
+import { Color4 } from '@dcl/sdk/math'
+
+export const uiMenu = () => (
+	<UiEntity
+		uiTransform={{
+			alignSelf: 'center',
+			alignContent: 'center',
+			width: '80%',
+			height: '30%',
+			minWidth: 300,
+			maxWidth: 2500,
+			margin: { left: '10%', right: '10%' },
+		}}
+		uiBackground={{ color: Color4.Green() }}
+	/>
+)
+```
+
+### Arranging child entities
+
+By default, child entities are positioned in relation to the top-left corner of its parent. You can use properties like `justifyContent` and `alignItems` to change this behavior.
+
+
+> [!NOTE]
+> **💡 Tip**: Any properties that refer to _content_ refer to entities along the main axis (determined by `flexDirection`). Any properties that refer
+
+
+* `flexDirection`: Flex direction controls the direction in which children of a node are laid out. This is also referred to as the main axis. The main axis is the direction in which children are laid out. The cross axis is the axis perpendicular to the main axis, or the axis which wrapping lines are laid out in. It takes its value from the `FlexDirectionType` type. The following options are available:
+  * `row` (DEFAULT)
+  * `row-reverse`
+  * `column`
+  * `column-reverse`
+* `justifyContent`: This property describes how to align children within the main axis of their container. For example, you can use this property to center a child horizontally within a container with `flexDirection` set to row or vertically within a container with `flexDirection` set to column. The value of this property must be from the `JustifyType` type. Possible values are:
+  * `flex-start` (DEFAULT): Align children of a container to the start of the container's main axis.
+  * `flex-end`: Align children of a container to the end of the container's main axis.
+  * `center`: Align children of a container in the center of the container's main axis.
+  * `space-between`: Evenly space of children across the container's main axis, distributing remaining space between the children.
+  * `space-around`: Evenly space of children across the container's main axis, distributing remaining space around the children. Compared to space between using space around will result in space being distributed to the beginning of the first child and end of the last child.
+  * `space-evenly`: Evenly space of children across the container's main axis, distributing remaining space so that the gaps between children, and between the children and the container's edges, are all equal.
+* `alignItems`: Describes how to align children along the cross axis of their container. Align items is very similar to justify content but instead of applying to the main axis, align items applies to the cross axis. This property requires a value from the `AlignType` type. The following options are available:
+  * `stretch`: (DEFAULT) Stretch children of a container to match the height of the container's cross axis.
+  * `flex-start`: Align children of a container to the start of the container's cross axis.
+  * `flex-end`: Align children of a container to the end of the container's cross axis.
+  * `center`: Align children of a container in the center of the container's cross axis.
+  * `baseline`: Align children of a container along a common baseline. Individual children can be set to be the reference baseline for their parents.
+* `alignSelf`: Align self has the same options and effect as `alignItems` but instead of affecting the children within a container, you can apply this property to a single child to change its alignment within its parent. align self overrides any option set by the parent with align items. It takes its value from `AlignType`, see `alignItems` above for details on these options.
+* `alignContent`: Align content defines the distribution of lines along the cross-axis. This only has effect when items are wrapped to multiple lines using `flexWrap`. It takes its value from the `AlignType` type. The following options are available:
+  * `flex-start`: (DEFAULT) Align wrapped lines to the start of the container's cross axis.
+  * `flex-end`: Align wrapped lines to the end of the container's cross axis.
+  * `stretch`: Stretch wrapped lines to match the height of the container's cross axis.
+  * `center`: Align wrapped lines in the center of the container's cross axis.
+  * `space-between`: Evenly space wrapped lines across the container's main axis, distributing remaining space between the lines.
+  * `space-around`: Evenly space wrapped lines across the container's main axis, distributing remaining space around the lines. Compared to space between using space around will result in space being distributed to the begining of the first lines and end of the last line.
+* `flexGrow`: This describes how any space within a container should be distributed among its children along the main axis. After laying out its children, a container will distribute any remaining space according to the flex grow values specified by its children. Flex grow accepts any floating point value >= 0, with 0 being the default value. A container will distribute any remaining space among its children weighted by the child’s flex grow value.
+* `flexShrink`: Describes how to shrink children along the main axis in the case that the total size of the children overflow the size of the container on the main axis. flex shrink is very similar to flex grow and can be thought of in the same way if any overflowing size is considered to be negative remaining space. These two properties also work well together by allowing children to grow and shrink as needed. Flex shrink accepts any floating point value >= 0, with 1 being the default value. A container will shrink its children weighted by the child’s flex shrink value.
+* `overflow`: Determines what happens if the size of the children of an entity overflow its parent. It uses values from the `OverflowType` type.
+  * `hidden`: Overflowing entities are made invisible.
+  * `visible`: Overflowing entities break out of the margins of the parent.
+  * `scroll`: The area becomes scrollable, allowing the player to scroll through the overflowing content. See [Scrollable containers](#scrollable-containers) for details.
+* `flexWrap`: The flex wrap property is set on containers and controls what happens when children overflow the size of the container along the main axis. By default children are wrapped into multiple lines along the main axis if needed. If wrapping is disabled with `nowrap`, children are forced into a single line (which can shrink entities). wrap reverse behaves the same as wrap, but the order of the lines is reversed. This property takes its value from the `FlexWrapType` type.
+  * `wrap`
+  * `nowrap`
+  * `wrap-reverse`
+
+### Margins and padding
+
+* `margin`: This property affects the spacing around the outside of a node. A node with margin will offset itself from the bounds of its parent but also offset the location of any siblings. The margin of a node contributes to the total size of its parent if the parent is auto sized. Set space between the entity and its parent's margins. The expected value is an object that contains the properties `top`, `left`, `bottom`, and `right`.
+* `padding`: This property affects the size of the node it is applied to. Padding in Yoga acts as if box-sizing: border-box; was set. That is padding will not add to the total size of an entity if it has an explicit size set. For auto sized nodes padding will increase the size of the node as well as offset the location of any children. The expected value is an object that contains the properties `top`, `left`, `bottom`, and `right`.
+
+### Fine-tune position
+
+In Flexbox, entity positions are mostly determined by how they are parented, and what arrangement properties are set on the parent and child. You often don't have to set the `position` property at all. But if you do want to tweak that, or completely override the normal flow of Flexbox and set an absolute position, here are the relevant properties:
+
+* `positionType`: Defines how entities are positioned. It uses a value from the `PositionType` enum.
+  * `relative`: (DEFAULT) By default an entity is positioned relatively. This means an entity is positioned according to the normal flow of the layout, and then offset relative to that position based on the values of `top`, `right`, `bottom`, and `left`. The offset does not affect the position of any sibling or parent entities.
+  * `absolute`: When positioned absolutely, an entity doesn't take part in the normal layout flow. It is instead laid out independent of its siblings. The position is determined based on the `top`, `right`, `bottom`, and `left` values.
+* `position`: The position values `top`, `right`, `bottom`, and `left` behave differently depending on the `positionType`. For a relative entity they offset the position of the entity in the direction specified. For absolute entity though these properties specify the offset of the entity's side from the same side on the parent. The expected value is an object that contains the properties `top`, `left`, `bottom`, and `right`.
+
+
+> [!WARNING]
+> **📔 Note** : A positive value for `top` or `left` measures the distance inward from that same edge of the parent. Example: to position a component leaving a margin of 20 pixels with respect to the parent on the top and left sides, set `position` to `{ top: 20, left: 20 }`.
+
+
+### Visibility
+
+* `display`: Determines is an entity is visible or not. To make an entity invisible, set `display` to `none`.
+
+### Z Index
+
+The `zIndex` property of a `UiEntity` determines the order in which entities are rendered. Entities with a higher `zIndex` are rendered on top of entities with a lower `zIndex`. The default `zIndex` is 0.
+
+```ts
+import { UiEntity, ReactEcs } from '@dcl/sdk/react-ecs'
+import { Color4 } from '@dcl/sdk/math'
+
+export const uiMenu = () => (
+	<UiEntity
+		uiTransform={{
+			zIndex: 4
+		}}
+		uiBackground={{ color: Color4.Green() }}
+	/>
+)
+```
+
+
+> [!WARNING]
+> **📔 Note** : The `zIndex` property will only order elements relative to direct siblings, it cannot be used to render an entity on top of other parts of the layout tree. In html/CSS terms, every DCL UI element creates a new [stacking context](https://web.dev/learn/css/z-index#stacking_context). To order independent UI modules added with `addUiRenderer()` against each other, use the `zIndex` of the [renderer options](/docs/creator/sdk7/2d-ui/onscreen-ui/#stacking-order-between-ui-modules) instead.
+> 
+> The default Decentraland UI, including the map, chat, etc is always rendered on top of all other UI elements.
+
+
+## Scrollable containers
+
+When a UI entity has more content than fits in its assigned size, you can make the area scrollable by setting `overflow` to `scroll` in the entity's `uiTransform`. The player can then scroll through the content by dragging or using the mouse wheel.
+
+To create a scrollable container, the parent entity must have a fixed size (using `width` and `height`), and the children must exceed that size.
+
+```ts
+import { UiEntity, Label, ReactEcs } from '@dcl/sdk/react-ecs'
+import { Color4 } from '@dcl/sdk/math'
+
+export const scrollableMenu = () => (
+	<UiEntity
+		uiTransform={{
+			width: 300,
+			height: 400,
+			overflow: 'scroll',
+			flexDirection: 'column',
+		}}
+		uiBackground={{ color: Color4.fromHexString('#1a1a1a') }}
+	>
+		{/* These children exceed the parent's 400px height, making the area scrollable */}
+		<Label value="Item 1" fontSize={18} uiTransform={{ width: '100%', height: 80 }} />
+		<Label value="Item 2" fontSize={18} uiTransform={{ width: '100%', height: 80 }} />
+		<Label value="Item 3" fontSize={18} uiTransform={{ width: '100%', height: 80 }} />
+		<Label value="Item 4" fontSize={18} uiTransform={{ width: '100%', height: 80 }} />
+		<Label value="Item 5" fontSize={18} uiTransform={{ width: '100%', height: 80 }} />
+		<Label value="Item 6" fontSize={18} uiTransform={{ width: '100%', height: 80 }} />
+		<Label value="Item 7" fontSize={18} uiTransform={{ width: '100%', height: 80 }} />
+	</UiEntity>
+)
+```
+
+This is useful for building long lists, inventories, chat logs, leaderboards, or any panel where the content may grow beyond what fits on screen.
+
+You can also nest scrollable containers inside other UI layouts. For example, a dialog modal with a fixed header and a scrollable body:
+
+```ts
+import { UiEntity, Label, ReactEcs } from '@dcl/sdk/react-ecs'
+import { Color4 } from '@dcl/sdk/math'
+
+export const dialogWithScroll = () => (
+	<UiEntity
+		uiTransform={{
+			width: 400,
+			height: 500,
+			flexDirection: 'column',
+		}}
+		uiBackground={{ color: Color4.fromHexString('#2a2a2a') }}
+	>
+		{/* Fixed header */}
+		<Label
+			value="Leaderboard"
+			fontSize={22}
+			uiTransform={{ width: '100%', height: 60 }}
+		/>
+
+		{/* Scrollable body */}
+		<UiEntity
+			uiTransform={{
+				width: '100%',
+				flexGrow: 1,
+				overflow: 'scroll',
+				flexDirection: 'column',
+			}}
+		>
+			<Label value="1. Alice - 9500" fontSize={16} uiTransform={{ width: '100%', height: 50 }} />
+			<Label value="2. Bob - 8200" fontSize={16} uiTransform={{ width: '100%', height: 50 }} />
+			<Label value="3. Charlie - 7800" fontSize={16} uiTransform={{ width: '100%', height: 50 }} />
+			<Label value="4. Diana - 6100" fontSize={16} uiTransform={{ width: '100%', height: 50 }} />
+			<Label value="5. Eve - 5500" fontSize={16} uiTransform={{ width: '100%', height: 50 }} />
+			<Label value="6. Frank - 4900" fontSize={16} uiTransform={{ width: '100%', height: 50 }} />
+			<Label value="7. Grace - 4200" fontSize={16} uiTransform={{ width: '100%', height: 50 }} />
+			<Label value="8. Hank - 3800" fontSize={16} uiTransform={{ width: '100%', height: 50 }} />
+			<Label value="9. Ivy - 3100" fontSize={16} uiTransform={{ width: '100%', height: 50 }} />
+			<Label value="10. Jack - 2700" fontSize={16} uiTransform={{ width: '100%', height: 50 }} />
+		</UiEntity>
+	</UiEntity>
+)
+```
+
+
+> [!NOTE]
+> **💡 Tip**: Use `flexGrow: 1` on the scrollable entity to make it fill the remaining space in the parent, so it adapts if other siblings (like a header or footer) change size.
+
+
+## Responsive UI size
+
+Players with different screen sizes may see your UI layout differently. Pixel values are scaled against the [virtual screen](/docs/creator/sdk7/2d-ui/onscreen-ui/#screen-virtual-scale) for you, so the same UI keeps its proportions across resolutions — **you don't need to compute a scale factor yourself**, and doing so applies the scaling twice.
+
+
+> [!WARNING]
+> **📔 Note**: `devicePixelRatio` takes no part in UI layout. It is a display-density hint — useful to pick between a 1x, 2x or 3x version of a texture — and nothing else. If your scene was sized on an earlier SDK version, expect pixel-sized UI to render up to 2–3 times larger on high-density (retina and mobile) screens, and re-check anything that was hand-tuned.
+
+
+
+> [!CAUTION]
+> **📔 Remove your own scale factor.** If your scene multiplies its sizes by a factor it computes from `UiCanvasInformation` — typically `Math.min(width / 1920, height / 1080)` — remove that multiplier. It is the same factor the SDK now applies by default, so keeping both makes your UI grow quadratically with screen size. If you'd rather keep your own factor as the only one, disable the virtual screen with `setUiRenderer(ui, { virtualWidth: 0, virtualHeight: 0 })`.
+
+
+`UiCanvasInformation`, added by default to the scene's root entity, is still the right tool for the layout decisions that scaling can't express — a different dialog arrangement on a narrow screen, picking a texture resolution from `devicePixelRatio`, or reading the inset areas yourself. It is not the right tool for sizing.
+
+The `UiCanvasInformation` component holds the following information:
+
+* `height`: Canvas height in pixels
+* `width`: Canvas width in pixels
+* `devicePixelRatio`: The ratio of the resolution in physical pixels in the device to the pixels on the canvas. Useful as a display-density hint, for example to pick between a 1x, 2x or 3x version of a texture.
+* `interactableArea`: A `BorderRect` object, detailing the area designated for scene UI elements. This object contains values for `top`, `bottom`, `left` and `right`, each of these is the number of pixels on that margin of the screen that are taken up by the explorer UI.
+* `screenInsetArea`: A `BorderRect` object, detailing the screen inset area (safe margins) reserved by the device or platform UI, for example the notch, status bar, home indicator, or rounded corners on mobile. This object contains values for `top`, `bottom`, `left` and `right`, each of these is the number of pixels reserved on that edge of the screen. On desktop this is typically `0` on all sides.
+
+
+> [!WARNING]
+> **📔 Note** : Different Decentraland explorers will have different values for these, as the global UIs of the platform may differ, and the values might change dynamically as the user expands or hides different global UI menus.
+
+
+```ts
+import { engine, UiCanvasInformation } from "@dcl/sdk/ecs"
+
+export function Main() {
+  const canvas = UiCanvasInformation.getOrNull(engine.RootEntity)
+  if (!canvas) return
+  console.log("CANVAS DIMENSIONS: ", canvas.width, canvas.height)
+}
+```
+
+Some other best practices regarding UI sizes:
+
+* If the width or height of any UI element is dynamic, it's good to also use the `maxWidth`, `minWidth`, `maxHeight`, and `minHeight` parameters to make sure they stay within reasonable values.
+* A numeric font size is a virtual pixel value, scaled like any other. If you want a size measured against the canvas instead, so it holds regardless of the virtual screen, pass a `vw`/`vh` string — see [Responsive text size](/docs/creator/sdk7/2d-ui/ui_text/#responsive-text-size)
+
+
+> [!NOTE]
+> **💡 Tip**: For working examples of UI sizing, see the [`81,-2-ui-screen-inset-area`](https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/81,-2-ui-screen-inset-area) test scene, which runs all three `screenInset` modes (`'none'`, `'device'`, `'interactable'`) as three coexisting renderers and prints the live `screenInsetArea` and `interactableArea` values, and [`76,-10-UiCanvasInformation`](https://github.com/decentraland/sdk7-test-scenes/tree/main/scenes/76,-10-UiCanvasInformation), which reads `UiCanvasInformation` each frame to size UI responsively.
+

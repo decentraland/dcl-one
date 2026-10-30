@@ -1,0 +1,16 @@
+{
+  "case_id": "retained-recovery-v1",
+  "pulse_pin": "91e44f89dd5a857e4ebe08259bec5fc808ae797b",
+  "gatekeeper_pin": "edcaebbd9ff9cfa95d9a88d9b2cb76043eae9786",
+  "limits": { "wallets": 49146, "rooms_per_wallet": 32, "retention_passes": 300, "pass_interval_ms": 1000, "confirmed_floor_grace_seconds": 15, "plan_bytes": 65536, "completion_bytes": 4096, "takeover_id_bytes": 64, "receipts": 10000 },
+  "clock": { "unix_seconds": 100, "cutoff_margin_seconds": 5, "consumer_allowance_ms": 1000, "maximum_wait_ms_exclusive": 60000 },
+  "internal_assignment_stamp": { "wallet": "0x1111111111111111111111111111111111111111", "session": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "clusterId": "C", "realm": "R", "sourceIncarnation": "I", "assignmentVersion": 1, "tokenNotBefore": 0, "credentialNotBefore": 0 },
+  "wire": {
+    "snapshot_fields": { "wallet": "A", "session": "B", "cluster_id": "C", "realm": "R", "pass": 1, "source_incarnation": "I", "token_not_before": 0, "assignment_version": 1 },
+    "snapshot_hex": "0a01411201421a0143220152280132014940004801",
+    "completion_fields": { "takeover_id": "T", "revoke_before": 105 },
+    "completion_hex": "0a01541069"
+  },
+  "actions": ["expose A ready", "replace with B blocked", "replace with C blocked", "complete retained A at 105", "lookup acknowledges no pending and floor 105", "wait until 106000 ms", "mint with nbf at least 105", "recheck exact identity and floor", "deliver only current signed socket"],
+  "fault_seam": "adapter-controlled LiveKit; actual Cloud cutoff enforcement is external evidence"
+}

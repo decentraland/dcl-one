@@ -1,0 +1,25 @@
+{
+  "description": "GET /users/{address}/badges for an address with no progress. Captured GET https://badges.decentraland.org/users/0x0000000000000000000000000000000000000001/badges -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/users/0x0000000000000000000000000000000000000001/badges",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "achieved": [],
+        "notAchieved": []
+      }
+    }
+  },
+  "captured_from": "https://badges.decentraland.org/users/0x0000000000000000000000000000000000000001/badges",
+  "captured_at": "2026-09-25T19:24:48Z",
+  "volatile_paths": []
+}

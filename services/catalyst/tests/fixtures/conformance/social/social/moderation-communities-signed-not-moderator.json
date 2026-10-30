@@ -1,0 +1,27 @@
+{
+  "description": "GET /v1/moderation/communities signed by a wallet that is not a global moderator. Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://social-api.decentraland.org/v1/moderation/communities -> 403.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/moderation/communities",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/moderation/communities:1790364261539:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x51dcc0fc1e7caddd1557801cc5525499ae72a7adfc65429b9b2116c85339e18119a4e79f7a6cd441f9804faf62d773537e205cb86e4eb7ad6a00842effb8326b1c\"}",
+      "x-identity-timestamp": "1790364261539",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 403,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "message": "Access denied. Global moderator privileges required."
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/moderation/communities",
+  "captured_at": "2026-09-25T19:24:21Z",
+  "volatile_paths": []
+}

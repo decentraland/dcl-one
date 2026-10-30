@@ -1,0 +1,28 @@
+{
+  "description": "GET /v1/communities/{id}/requests signed by a wallet that is not the owner or a moderator. Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/requests -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/requests",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/requests:1790364257720:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0xf43e127dbb2ae0ce0a559ca66ea2684398b5c9e44b1e7c3df381c3622246c1e313b94080f5e4401d99aa5085ad9b6baf5cb917fd7d9c4c9cda049a9cf46e2eb71b\"}",
+      "x-identity-timestamp": "1790364257720",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Not Authorized",
+      "message": "The user 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f doesn't have permission to view requests"
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/requests",
+  "captured_at": "2026-09-25T19:24:18Z",
+  "volatile_paths": []
+}

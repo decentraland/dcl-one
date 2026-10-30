@@ -1,0 +1,29 @@
+{
+  "description": "GET /scene-participants?realm_name=<world>: every participant of a world room. Captured GET https://comms-gatekeeper.decentraland.org/scene-participants?realm_name=genesis.dcl.eth -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/scene-participants",
+    "query": {
+      "realm_name": [
+        "genesis.dcl.eth"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": true,
+      "data": {
+        "addresses": []
+      }
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/scene-participants?realm_name=genesis.dcl.eth",
+  "captured_at": "2026-09-25T19:29:35Z",
+  "volatile_paths": []
+}

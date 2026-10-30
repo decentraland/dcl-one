@@ -1,0 +1,23 @@
+{
+  "description": "GET /cast/presenters without an auth chain. Captured GET https://comms-gatekeeper.decentraland.org/cast/presenters -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/cast/presenters",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": false,
+      "message": "Invalid Auth Chain"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/cast/presenters",
+  "captured_at": "2026-09-25T19:24:38Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,43 @@
+name: Upsert CI status comment
+description: >-
+  Create or update the one CI status comment on a pull request, replacing only the given section
+  (build | tests | performance | automation | inworld). Seeds a skeleton with every always-present
+  section the first time it runs, appends a missing section fence to older comments (and for the
+  on-demand automation and inworld sections), and re-reads and retries so concurrent writers never
+  clobber each other's section. upsert-ci-status.sh has the details.
+inputs:
+  pr-number:
+    description: Pull request number to comment on.
+    required: true
+  section:
+    description: 'Which section to replace: one of build, tests, performance, automation, inworld.'
+    required: true
+  body:
+    description: >-
+      Markdown for this section (a badge line, then the message). Rendered between the section
+      markers after dropping marker-shaped lines; a body over 12000 chars is truncated with fences
+      and <details> re-closed and a truncation note. Keep it under about 120KB: it travels as one
+      environment string, and Linux rejects a single entry over 128KiB (E2BIG) before the
+      truncation can run. Give body or body-file.
+    required: false
+    default: ''
+  body-file:
+    description: A file holding the section's Markdown instead of body, for a body of any size.
+    required: false
+    default: ''
+  github-token:
+    description: Token with pull-requests write, used to read and upsert the comment.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Upsert the CI status comment
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        SECTION: ${{ inputs.section }}
+        SECTION_BODY: ${{ inputs.body }}
+        SECTION_BODY_FILE: ${{ inputs.body-file }}
+      run: bash "$GITHUB_ACTION_PATH/upsert-ci-status.sh"

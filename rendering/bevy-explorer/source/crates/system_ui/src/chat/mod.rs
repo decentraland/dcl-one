@@ -1,0 +1,1014 @@
+pub mod conversation_manager;
+#[cfg(feature = "livekit")]
+pub mod dm_history;
+#[cfg(feature = "livekit")]
+pub mod dm_state;
+pub mod friends;
+pub mod history;
+
+use alloy_core::primitives::Address;
+use analytics::{
+    data_definition::{SegmentEvent, SegmentEventChatMessageSent},
+    segment_system::{SegmentConfig, SegmentMetricsEvents},
+};
+use bevy::{color::palettes::css, prelude::*};
+
+use bevy_console::{ConsoleCommand, ConsoleCommandEntered, ConsoleConfiguration, PrintConsoleLine};
+use bevy_dui::{DuiCommandsExt, DuiEntities, DuiProps, DuiRegistry};
+use common::{
+    dcl_assert,
+    inputs::SystemAction,
+    rpc::RpcStreamSender,
+    sets::SetupSets,
+    structs::{PrimaryPlayerRes, PrimaryUser, SystemAudio, ToolTips, TooltipSource},
+    util::{AsH160, ModifyComponentExt, RingBuffer, RingBufferReceiver, TryPushChildrenEx},
+};
+use comms::{
+    broadcast_to, chat_marker_things,
+    chat_reaction::{
+        canonical_emoji, canonical_message_id, chat_message_id, emoji_to_atlas_index,
+        encode_wire_index, ChatReactionEvent,
+    },
+    global_crdt::{chat_wire_timestamp, ChatEvent, ForeignPlayer},
+    profile::UserProfile,
+    BroadcastTarget, Transport,
+};
+use console::DoAddConsoleCommand;
+use conversation_manager::ConversationManager;
+use dcl_component::proto_components::kernel::comms::rfc4;
+use dcl_types::{SceneLogLevel, SceneLogMessage};
+use history::ChatHistoryPlugin;
+use input_manager::{InputManager, InputPriority};
+use scene_runner::{renderer_context::RendererSceneContext, ContainingScene};
+use shlex::Shlex;
+use social::FriendshipEvent;
+use system_bridge::{ChatMessage, ChatReactionData, NativeUi, SystemApi};
+use ui_core::{
+    button::{DuiButton, TabSelection},
+    focus::Focus,
+    text_entry::{TextEntry, TextEntrySubmit},
+    text_size::FontSize,
+    ui_actions::{Click, DataChanged, HoverEnter, HoverExit, On},
+};
+
+use friends::FriendsPlugin;
+use wallet::Wallet;
+
+use super::SystemUiRoot;
+
+pub struct ChatPanelPlugin;
+
+impl Plugin for ChatPanelPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, (emit_user_chat, broadcast_nearby_chats).chain());
+        app.add_systems(Update, (pipe_chats_to_scene, pipe_chats_from_scene));
+        app.add_systems(
+            Update,
+            (
+                emit_user_reactions,
+                (broadcast_nearby_reactions, pipe_chat_reactions_to_scene),
+            )
+                .chain(),
+        );
+        app.add_console_command::<ReactCommand, _>(react);
+        #[cfg(feature = "livekit")]
+        {
+            app.add_console_command::<dm_state::DmStateCommand, _>(dm_state::dm_state);
+            app.add_systems(Update, dm_state::pipe_dm_user_state_to_scene);
+            // after both chat pipes: a DM the HUD has been told about is appended before any read
+            // it asks for in response is handled
+            app.add_systems(
+                Update,
+                (
+                    dm_history::record_dms,
+                    dm_history::handle_dm_history_requests,
+                    dm_history::run_dm_store,
+                )
+                    .chain()
+                    .after(pipe_chats_to_scene)
+                    .after(pipe_chats_from_scene)
+                    .after(pipe_chat_reactions_to_scene),
+            );
+            app.init_resource::<dm_history::DmStore>();
+            app.add_console_command::<dm_history::DmHistoryCommand, _>(dm_history::dm_history);
+            app.add_console_command::<dm_history::DmDeleteCommand, _>(dm_history::dm_delete);
+        }
+
+        let native_chat = app.world().resource::<NativeUi>().chat;
+
+        if native_chat {
+            app.add_systems(Update, display_chat);
+            app.add_systems(Update, append_chat_messages);
+            app.add_systems(Startup, setup.in_set(SetupSets::Main));
+            app.add_systems(
+                OnEnter::<ui_core::State>(ui_core::State::Ready),
+                setup_chat_popup,
+            );
+            app.add_systems(Update, keyboard_popup);
+        }
+        app.add_preview_console_command::<Rechat, _>(debug_chat);
+        app.add_event::<PrivateChatEntered>();
+        app.add_plugins((FriendsPlugin, ChatHistoryPlugin));
+    }
+}
+
+// panel component
+#[derive(Component)]
+pub struct ChatboxContainer;
+
+// text line marker
+#[derive(Component, Clone, Debug)]
+pub struct DisplayChatMessage {
+    pub timestamp: f64,
+    pub sender: Option<Address>,
+    pub message: String,
+}
+
+/// output widget
+#[derive(Component)]
+pub struct ChatBox {
+    chat_log: RingBuffer<DisplayChatMessage>,
+    pub active_tab: &'static str,
+    active_chat_sink: Option<RingBufferReceiver<DisplayChatMessage>>,
+    active_log_sink: Option<(Entity, RingBufferReceiver<SceneLogMessage>)>,
+}
+
+pub const BUTTON_SCALE: f32 = 6.0;
+
+fn setup(mut commands: Commands, asset_server: Res<AssetServer>, ui_root: Res<SystemUiRoot>) {
+    // profile button
+    let button = commands
+        .spawn((
+            ImageNode::new(asset_server.load("embedded://images/chat_button.png")),
+            Node {
+                position_type: PositionType::Absolute,
+                top: Val::VMin(BUTTON_SCALE * 3.5),
+                right: Val::VMin(BUTTON_SCALE * 0.5),
+                width: Val::VMin(BUTTON_SCALE),
+                height: Val::VMin(BUTTON_SCALE),
+                ..Default::default()
+            },
+            bevy::ui::FocusPolicy::Block,
+            Interaction::default(),
+            On::<Click>::new(
+                |mut commands: Commands, mut q: Query<&mut Node, With<ChatboxContainer>>| {
+                    if let Ok(mut style) = q.single_mut() {
+                        style.display = if style.display == Display::Flex {
+                            commands.send_event(SystemAudio(
+                                "embedded://sounds/ui/toggle_disable.wav".to_owned(),
+                            ));
+                            Display::None
+                        } else {
+                            commands.send_event(SystemAudio(
+                                "embedded://sounds/ui/toggle_enable.wav".to_owned(),
+                            ));
+                            Display::Flex
+                        };
+                    }
+                },
+            ),
+            On::<HoverEnter>::new(|mut tooltip: ResMut<ToolTips>| {
+                tooltip.0.insert(
+                    TooltipSource::Label("chat-button"),
+                    vec![("Toggle Chat: Click or press Enter".to_owned(), true)],
+                );
+            }),
+            On::<HoverExit>::new(|mut tooltip: ResMut<ToolTips>| {
+                tooltip.0.remove(&TooltipSource::Label("chat-button"));
+            }),
+        ))
+        .id();
+
+    commands.entity(ui_root.0).try_push_children(&[button]);
+}
+
+fn keyboard_popup(
+    mut commands: Commands,
+    input_manager: InputManager,
+    mut container: Query<&mut Node, With<ChatboxContainer>>,
+    entry: Query<Entity, With<ChatInput>>,
+) {
+    if input_manager.just_down(SystemAction::Chat, InputPriority::None) {
+        if let Ok(mut style) = container.single_mut() {
+            if style.display == Display::None {
+                commands.send_event(SystemAudio(
+                    "embedded://sounds/ui/toggle_enable.wav".to_owned(),
+                ));
+                style.display = Display::Flex;
+            };
+        }
+
+        if let Ok(entry) = entry.single() {
+            commands.entity(entry).try_insert(Focus);
+        }
+    }
+}
+
+fn debug_chat(
+    mut input: ConsoleCommand<Rechat>,
+    mut commands: Commands,
+    root: Res<SystemUiRoot>,
+    dui: Res<DuiRegistry>,
+    existing: Query<(Entity, &DuiEntities), With<ChatboxContainer>>,
+    mut tab: Query<&mut TabSelection, With<ChatTab>>,
+) {
+    if let Some(Ok(Rechat { arg })) = input.take() {
+        match arg.as_str() {
+            "reload" => {
+                if let Ok((existing, _)) = existing.single() {
+                    commands.entity(existing).despawn();
+                }
+
+                commands.send_event(FriendshipEvent(None));
+                setup_chat_popup(commands, root, dui);
+            }
+            "add" => {
+                tab.single_mut()
+                    .unwrap()
+                    .add(
+                        &mut commands,
+                        &dui,
+                        Some(3),
+                        DuiButton::new_enabled("new tab", || {}),
+                        false,
+                        None,
+                    )
+                    .unwrap();
+            }
+            _ => (),
+        }
+        input.ok();
+    }
+}
+
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/cdb")]
+struct Rechat {
+    arg: String,
+}
+
+#[derive(Component)]
+pub struct ChatTab;
+
+fn setup_chat_popup(mut commands: Commands, root: Res<SystemUiRoot>, dui: Res<DuiRegistry>) {
+    dcl_assert!(root.0 != Entity::PLACEHOLDER);
+
+    let chat_tab = |label: &'static str| -> DuiButton {
+        DuiButton {
+            text_size: Some(0.025 / 1.3),
+            ..DuiButton::new_enabled(label, (move || Some(label)).pipe(select_chat_tab))
+        }
+    };
+
+    let tab_labels = vec!["Nearby", "Scene Log"];
+    let chat_tabs = tab_labels
+        .clone()
+        .into_iter()
+        .map(chat_tab)
+        .collect::<Vec<_>>();
+
+    let tab_labels_changed = tab_labels.clone();
+    let tab_changed =
+        (move |selection: Query<&TabSelection, With<ChatTab>>| -> Option<&'static str> {
+            Some(
+                selection
+                    .single()
+                    .ok()
+                    .and_then(|ts| ts.selected)
+                    .and_then(|sel| tab_labels_changed.get(sel))
+                    .unwrap_or(&""),
+            )
+        })
+        .pipe(select_chat_tab);
+
+    let close_ui = |mut commands: Commands, mut q: Query<&mut Node, With<ChatboxContainer>>| {
+        let Ok(mut style) = q.single_mut() else {
+            return;
+        };
+        style.display = Display::None;
+        commands.send_event(SystemAudio(
+            "embedded://sounds/ui/toggle_disable.wav".to_owned(),
+        ));
+    };
+
+    let props = DuiProps::new()
+        .with_prop("chat-tabs", chat_tabs)
+        .with_prop("tab-changed", On::<DataChanged>::new(tab_changed))
+        .with_prop("initial-tab", Some(0usize))
+        .with_prop("close", On::<Click>::new(close_ui))
+        .with_prop("friends", On::<Click>::new(toggle_friends));
+
+    let components = commands
+        .entity(root.0)
+        .spawn_template(&dui, "chat", props)
+        .unwrap();
+
+    commands.entity(components.root).try_insert((
+        ChatboxContainer,
+        On::<Click>::new(
+            |mut commands: Commands, q: Query<Entity, With<ChatInput>>| {
+                commands.entity(q.single().unwrap()).try_insert(Focus);
+            },
+        ),
+    ));
+
+    commands
+        .entity(components.named("chat-entry"))
+        .try_insert(ChatInput);
+
+    commands
+        .entity(components.named("chat-output-inner"))
+        .try_insert(ChatBox {
+            active_tab: "Nearby",
+            chat_log: RingBuffer::new(100, 100),
+            active_chat_sink: None,
+            active_log_sink: None,
+        });
+
+    commands
+        .entity(components.named("tabs"))
+        .try_insert(ChatTab);
+}
+
+fn toggle_friends(container: Query<&DuiEntities, With<ChatboxContainer>>, mut commands: Commands) {
+    let components = container
+        .single()
+        .ok()
+        .map(|ents| (ents.root, ents.named("friends-panel")));
+    if let Some((container, friends)) = components {
+        commands
+            .entity(container)
+            .modify_component(|style: &mut Node| {
+                if style.width == Val::VMin(90.0) {
+                    style.width = Val::VMin(45.0);
+                    style.min_width = Val::VMin(30.0);
+                } else {
+                    style.width = Val::VMin(90.0);
+                    style.min_width = Val::VMin(75.0);
+                }
+            });
+        commands
+            .entity(friends)
+            .modify_component(|style: &mut Node| {
+                style.display = if style.display == Display::Flex {
+                    Display::None
+                } else {
+                    Display::Flex
+                };
+            });
+    }
+}
+
+fn append_chat_messages(
+    mut chats: EventReader<ChatEvent>,
+    mut chatbox: Query<&mut ChatBox>,
+    users: Query<&UserProfile>,
+) {
+    let Ok(mut chatbox) = chatbox.single_mut() else {
+        return;
+    };
+
+    for ev in chats.read().filter(|ev| {
+        !chat_marker_things::ALL
+            .iter()
+            .any(|marker| ev.message.starts_with(*marker))
+    }) {
+        let sender = if ev.sender == Entity::PLACEHOLDER {
+            None
+        } else {
+            let Ok(profile) = users.get(ev.sender) else {
+                warn!("can't get profile for chat sender {:?}", ev.sender);
+                continue;
+            };
+            profile.content.eth_address.as_h160()
+        };
+
+        chatbox.chat_log.send(DisplayChatMessage {
+            timestamp: ev.timestamp,
+            sender,
+            message: ev.message.to_owned(),
+        });
+    }
+}
+
+fn make_log(commands: &mut Commands, log: SceneLogMessage) -> Entity {
+    let SceneLogMessage {
+        timestamp,
+        level,
+        mut message,
+    } = log;
+
+    if message.len() > 1000 {
+        message = format!(
+            "{} ... [truncated]",
+            message.chars().take(1000).collect::<String>()
+        );
+    }
+
+    commands
+        .spawn((
+            DisplayChatMessage {
+                timestamp,
+                sender: None,
+                message: message.clone(),
+            },
+            FontSize(0.0175),
+            Text::new(message),
+            TextFont {
+                font: ui_core::user_font(ui_core::FontName::Sans, ui_core::WeightName::Bold),
+                font_size: 15.0,
+                ..Default::default()
+            },
+            TextColor(match level {
+                SceneLogLevel::Log => Color::WHITE,
+                SceneLogLevel::SceneError => css::YELLOW.into(),
+                SceneLogLevel::SystemError => css::BISQUE.into(),
+            }),
+        ))
+        .id()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn display_chat(
+    mut commands: Commands,
+    mut chatbox: Query<(Entity, &mut ChatBox, Option<&Children>)>,
+    containing_scene: ContainingScene,
+    player: Query<Entity, With<PrimaryUser>>,
+    contexts: Query<&RendererSceneContext>,
+    mut conversation: ConversationManager,
+) {
+    let Ok((entity, mut chatbox, maybe_children)) = chatbox.single_mut() else {
+        return;
+    };
+
+    if let Some(children) = maybe_children {
+        if children.len() > 255 {
+            let mut iter = children.iter();
+            for _ in 0..children.len() - 255 {
+                commands.entity(iter.next().unwrap()).despawn();
+            }
+        }
+    }
+
+    if chatbox.active_tab == "Nearby" {
+        if chatbox.active_chat_sink.is_none() {
+            let (.., receiver) = chatbox.chat_log.read();
+            chatbox.active_chat_sink = Some(receiver);
+        }
+
+        let Some(rec) = chatbox.active_chat_sink.as_mut() else {
+            panic!()
+        };
+        while let Ok(chat) = rec.try_recv() {
+            conversation.add_message(
+                entity,
+                chat.sender.or(Some(Address::ZERO)),
+                if chat.sender.is_none() {
+                    Color::srgb(0.7, 0.7, 0.7)
+                } else {
+                    Color::srgb(0.9, 0.9, 0.9)
+                },
+                chat.message,
+                false,
+            );
+        }
+
+        return;
+    }
+
+    if chatbox.active_tab == "Scene Log" {
+        let current_scene = player
+            .single()
+            .map(|player| containing_scene.get_parcel(player))
+            .unwrap_or_default();
+
+        if chatbox.active_log_sink.as_ref().map(|(id, _)| id) != current_scene.as_ref() {
+            chatbox.active_log_sink = None;
+            commands.entity(entity).despawn_related::<Children>();
+
+            if let Some(current_scene) = current_scene {
+                if let Ok(context) = contexts.get(current_scene) {
+                    let (missed, backlog, receiver) = context.logs.read();
+                    chatbox.active_log_sink = Some((current_scene, receiver));
+                    let mut msgs = Vec::default();
+
+                    if missed > 0 {
+                        msgs.push(make_log(
+                            &mut commands,
+                            SceneLogMessage {
+                                timestamp: 0.0,
+                                level: SceneLogLevel::SystemError,
+                                message: format!("(missed {missed} logs)"),
+                            },
+                        ));
+                    }
+                    for message in backlog.into_iter() {
+                        msgs.push(make_log(&mut commands, message));
+                    }
+                    commands.entity(entity).replace_children(&msgs);
+                }
+
+                if let Some((_, ref mut rec)) = chatbox.active_log_sink.as_mut() {
+                    while let Ok(log) = rec.try_recv() {
+                        let msg = make_log(&mut commands, log);
+                        commands.entity(entity).add_child(msg);
+                    }
+                }
+            }
+        } else if let Some((_, sink)) = chatbox.active_log_sink.as_mut() {
+            let mut msgs = Vec::default();
+            while let Ok(message) = sink.try_recv() {
+                msgs.push(make_log(&mut commands, message));
+            }
+            commands.entity(entity).try_push_children(&msgs);
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct ChatInput;
+
+#[derive(Event)]
+pub struct PrivateChatEntered(pub String);
+
+#[allow(clippy::too_many_arguments)]
+fn emit_user_chat(
+    mut commands: Commands,
+    mut chats: EventWriter<ChatEvent>,
+    mut private: EventWriter<PrivateChatEntered>,
+    player: Query<Entity, With<PrimaryUser>>,
+    time: Res<Time>,
+    chat_input: Query<(Entity, &TextEntrySubmit), With<ChatInput>>,
+    chat_output: Query<&ChatBox>,
+    console_config: Res<ConsoleConfiguration>,
+    mut command_entered: EventWriter<ConsoleCommandEntered>,
+    mut console_lines: EventReader<PrintConsoleLine>,
+    f: Query<Entity, With<Focus>>,
+    mut metrics: ResMut<SegmentMetricsEvents>,
+    segment_config: Res<SegmentConfig>,
+) {
+    let Ok(player) = player.single() else {
+        return;
+    };
+    let Ok(output) = chat_output.single() else {
+        return;
+    };
+
+    if let Ok((ent, TextEntrySubmit(message))) = chat_input.single() {
+        let mut cmds = commands.entity(ent);
+        cmds.remove::<TextEntrySubmit>();
+
+        if message.is_empty() {
+            for e in f.iter() {
+                commands.entity(e).remove::<Focus>();
+            }
+        } else {
+            metrics.add_event(
+                SegmentEvent::ChatMessageSent(SegmentEventChatMessageSent::new(
+                    message,
+                    output.active_tab.is_empty(),
+                )),
+                segment_config.common(),
+            );
+
+            if output.active_tab.is_empty() {
+                // private chat (what a hacky approach this is)
+                private.write(PrivateChatEntered(message.clone()));
+                return;
+            }
+
+            // cmds.insert(Focus);
+            let sender = if message.starts_with('/') {
+                Entity::PLACEHOLDER
+            } else {
+                player
+            };
+
+            chats.write(ChatEvent {
+                timestamp: chat_wire_timestamp(),
+                sender,
+                channel: output.active_tab.to_owned(),
+                message: message.clone(),
+            });
+
+            if message.starts_with('/') {
+                let mut args = Shlex::new(message).collect::<Vec<_>>();
+
+                let command_name = args.remove(0);
+                debug!("Command entered: `{command_name}`, with args: `{args:?}`");
+
+                let command = console_config.commands.get(command_name.as_str());
+
+                if command.is_some() {
+                    command_entered.write(ConsoleCommandEntered {
+                        command_name,
+                        args,
+                        responder: None,
+                    });
+                } else {
+                    debug!(
+                        "Command not recognized, recognized commands: `{:?}`",
+                        console_config.commands.keys().collect::<Vec<_>>()
+                    );
+                }
+            }
+        }
+    }
+
+    for PrintConsoleLine { line } in console_lines.read() {
+        chats.write(ChatEvent {
+            timestamp: time.elapsed_secs_f64(),
+            sender: Entity::PLACEHOLDER,
+            channel: "Nearby".to_owned(),
+            message: line.to_string(),
+        });
+    }
+}
+
+pub fn broadcast_nearby_chats(
+    mut commands: Commands,
+    mut chat_events: EventReader<ChatEvent>,
+    transports: Query<&Transport>,
+    player: Query<Entity, With<PrimaryUser>>,
+) {
+    let Ok(player) = player.single() else {
+        return;
+    };
+
+    for ev in chat_events
+        .read()
+        .filter(|ev| ev.channel == "Nearby")
+        .filter(|ev| ev.sender == player)
+        .filter(|ev| !ev.message.starts_with("/"))
+    {
+        commands.send_event(SystemAudio(
+            "embedded://sounds/ui/widget_chat_message_private_send.wav".to_owned(),
+        ));
+
+        // we display receive time
+        let timestamp = ev.timestamp;
+
+        // Nearby chat targets only the realm's byte transports that actually carry it: the websocket
+        // dev server and LiveKit (incl. the LiveKit scene room, which rides the LIVEKIT bit). It has
+        // no Archipelago use and no Pulse representation, so those are left out rather than queued and
+        // dropped.
+        broadcast_to(
+            transports.iter(),
+            BroadcastTarget::WEBSOCKET | BroadcastTarget::LIVEKIT,
+            false,
+            &rfc4::Packet {
+                message: Some(rfc4::packet::Message::Chat(rfc4::Chat {
+                    message: ev.message.clone(),
+                    timestamp,
+                    // Set by an SFU that forwards the message, never by the sender.
+                    forwarded_from: None,
+                })),
+                protocol_version: 100,
+            },
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn select_chat_tab(
+    In(tab): In<Option<&'static str>>,
+    mut commands: Commands,
+    mut chatbox: Query<(Entity, &mut ChatBox)>,
+    mut text_entry: Query<&mut TextEntry, With<ChatInput>>,
+    mut conversation: ConversationManager,
+) {
+    let Some(tab) = tab else {
+        return;
+    };
+
+    let Ok((entity, mut chatbox)) = chatbox.single_mut() else {
+        return;
+    };
+
+    let clicked_current = chatbox.active_tab == tab;
+
+    if !clicked_current {
+        commands.entity(entity).despawn_related::<Children>();
+        chatbox.active_log_sink = None;
+        chatbox.active_chat_sink = None;
+        if tab == "Nearby" {
+            conversation.clear(entity);
+            let (_, backlog, receiver) = chatbox.chat_log.read();
+            chatbox.active_chat_sink = Some(receiver);
+            for message in backlog.into_iter() {
+                conversation.add_message(
+                    entity,
+                    message.sender.or(Some(Address::ZERO)),
+                    if message.sender.is_none() {
+                        Color::srgb(0.7, 0.7, 0.7)
+                    } else {
+                        Color::srgb(0.9, 0.9, 0.9)
+                    },
+                    message.message,
+                    false,
+                );
+            }
+            text_entry.single_mut().unwrap().enabled = true;
+        } else if tab == "Scene Log" {
+            text_entry.single_mut().unwrap().enabled = false;
+        }
+
+        debug!("tab set to {}", tab);
+        chatbox.active_tab = tab;
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pipe_chats_to_scene(
+    mut chat_events: EventReader<ChatEvent>,
+    #[cfg(feature = "livekit")] mut dms: EventReader<comms::private_chat::PrivateChatReceived>,
+    #[cfg(feature = "livekit")] social: Res<social::SocialClient>,
+    mut requests: EventReader<SystemApi>,
+    mut senders: Local<Vec<RpcStreamSender<ChatMessage>>>,
+    players: Query<&ForeignPlayer>,
+    primary_player: Res<PrimaryPlayerRes>,
+    wallet: Res<Wallet>,
+) {
+    senders.extend(requests.read().filter_map(|ev| {
+        if let SystemApi::GetChatStream(sender) = ev {
+            Some(sender.clone())
+        } else {
+            None
+        }
+    }));
+    senders.retain(|s| !s.is_closed());
+
+    for chat_event in chat_events.read().filter(|ce| {
+        !chat_marker_things::ALL
+            .iter()
+            .any(|marker| ce.message.starts_with(*marker))
+    }) {
+        // System/console messages (e.g. "Realm set to `...`") have no real player behind
+        // them. Previously these defaulted to the zero address, which the frontend rendered
+        // as a fake "0x0000...0000" sender bubble instead of a system message. Send the
+        // literal "system" sentinel the chat UI's `isSystem()` check recognizes instead.
+        let (sender_address, message_id) = if chat_event.sender == Entity::PLACEHOLDER {
+            ("system".to_owned(), String::new())
+        } else {
+            let player_address = players
+                .get(chat_event.sender)
+                .ok()
+                .map(|fp| fp.address)
+                .or_else(|| {
+                    if chat_event.sender == primary_player.0 {
+                        wallet.address()
+                    } else {
+                        None
+                    }
+                });
+
+            let Some(player_address) = player_address else {
+                warn!("no player for {chat_event:?}");
+                continue;
+            };
+
+            let message_id = chat_message_id(player_address, chat_event.timestamp);
+            debug!("chat {message_id}: {}", chat_event.message);
+            (format!("{player_address:#x}"), message_id)
+        };
+
+        for sender in senders.iter() {
+            let _ = sender.send(ChatMessage {
+                sender_address: sender_address.clone(),
+                message: chat_event.message.clone(),
+                channel: chat_event.channel.clone(),
+                message_id: message_id.clone(),
+            });
+        }
+    }
+
+    // incoming DMs: the partner is both the sender and the channel; blocked senders are dropped
+    #[cfg(feature = "livekit")]
+    for dm in dms
+        .read()
+        .filter(|dm| !dm_state::blocked_by_me(&social, dm.from))
+    {
+        let partner = format!("{:#x}", dm.from);
+        let message_id = chat_message_id(dm.from, dm.timestamp);
+        debug!("dm {message_id}: {}", dm.message);
+        for sender in senders.iter() {
+            let _ = sender.send(ChatMessage {
+                sender_address: partner.clone(),
+                message: dm.message.clone(),
+                channel: partner.clone(),
+                message_id: message_id.clone(),
+            });
+        }
+    }
+}
+
+/// The local user's reaction requests become reactions from the local user, which the channel's
+/// transport sends.
+fn emit_user_reactions(
+    mut requests: EventReader<SystemApi>,
+    wallet: Res<Wallet>,
+    mut reactions: EventWriter<ChatReactionEvent>,
+) {
+    for request in requests.read() {
+        let SystemApi::SendChatReaction {
+            channel,
+            message_id,
+            emoji,
+            remove,
+        } = request
+        else {
+            continue;
+        };
+        let Some(from) = wallet.address() else {
+            continue;
+        };
+        if channel != "Nearby" && channel.as_h160().is_none() {
+            warn!("ignoring reaction in channel {channel:?}");
+            continue;
+        }
+        let (Some(message_id), Some(emoji)) =
+            (canonical_message_id(message_id), canonical_emoji(emoji))
+        else {
+            warn!("ignoring reaction {emoji:?} to {message_id:?}");
+            continue;
+        };
+        reactions.write(ChatReactionEvent {
+            channel: channel.clone(),
+            message_id,
+            emoji,
+            from,
+            remove: *remove,
+        });
+    }
+}
+
+/// The local user's reactions to nearby chat go where nearby chat goes.
+fn broadcast_nearby_reactions(
+    mut reactions: EventReader<ChatReactionEvent>,
+    transports: Query<&Transport>,
+    wallet: Res<Wallet>,
+) {
+    let Some(me) = wallet.address() else {
+        reactions.clear();
+        return;
+    };
+    for ev in reactions
+        .read()
+        .filter(|ev| ev.from == me && ev.channel == "Nearby")
+    {
+        broadcast_to(
+            transports.iter(),
+            BroadcastTarget::WEBSOCKET | BroadcastTarget::LIVEKIT,
+            false,
+            &rfc4::Packet {
+                message: Some(rfc4::packet::Message::ChatReaction(rfc4::ChatReaction {
+                    emoji_index: encode_wire_index(emoji_to_atlas_index(&ev.emoji), ev.remove),
+                    message_id: ev.message_id.clone(),
+                    address: format!("{me:#x}"),
+                    emoji: ev.emoji.clone(),
+                    remove: ev.remove,
+                })),
+                protocol_version: 100,
+            },
+        );
+    }
+}
+
+/// Every reaction, the local user's included, except from blocked users.
+fn pipe_chat_reactions_to_scene(
+    mut reactions: EventReader<ChatReactionEvent>,
+    #[cfg(feature = "livekit")] social: Res<social::SocialClient>,
+    mut requests: EventReader<SystemApi>,
+    mut senders: Local<Vec<RpcStreamSender<ChatReactionData>>>,
+) {
+    senders.extend(requests.read().filter_map(|ev| {
+        if let SystemApi::GetChatReactionStream(sender) = ev {
+            Some(sender.clone())
+        } else {
+            None
+        }
+    }));
+    senders.retain(|s| !s.is_closed());
+
+    for ev in reactions.read() {
+        #[cfg(feature = "livekit")]
+        if dm_state::blocked_by_me(&social, ev.from) {
+            continue;
+        }
+        debug!("reaction {ev:?}");
+        let data = ChatReactionData {
+            channel: ev.channel.clone(),
+            message_id: ev.message_id.clone(),
+            emoji: ev.emoji.clone(),
+            from: format!("{:#x}", ev.from),
+            remove: ev.remove,
+        };
+        for sender in senders.iter() {
+            let _ = sender.send(data.clone());
+        }
+    }
+}
+
+/// `/react <channel> <message id> <emoji> [--remove]` adds or removes a reaction, the same way the
+/// HUD does. The channel is "Nearby" or the DM partner's wallet.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/react")]
+struct ReactCommand {
+    channel: String,
+    message_id: String,
+    emoji: String,
+    #[arg(long)]
+    remove: bool,
+}
+
+fn react(mut input: ConsoleCommand<ReactCommand>, mut events: EventWriter<SystemApi>) {
+    if let Some(Ok(command)) = input.take() {
+        events.write(SystemApi::SendChatReaction {
+            channel: command.channel,
+            message_id: command.message_id,
+            emoji: command.emoji,
+            remove: command.remove,
+        });
+        input.reply_ok("");
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pipe_chats_from_scene(
+    mut sender: EventWriter<ChatEvent>,
+    primary_player: Res<PrimaryPlayerRes>,
+    mut chats: EventReader<SystemApi>,
+    time: Res<Time>,
+    console_config: Res<ConsoleConfiguration>,
+    mut command_entered: EventWriter<ConsoleCommandEntered>,
+    mut console_lines: EventReader<PrintConsoleLine>,
+    mut metrics: ResMut<SegmentMetricsEvents>,
+    segment_config: Res<SegmentConfig>,
+) {
+    for (message, channel) in chats.read().filter_map(|ev| {
+        if let SystemApi::SendChat(message, channel) = ev {
+            Some((message.clone(), channel.clone()))
+        } else {
+            None
+        }
+    }) {
+        // a wallet address as the channel is a dm
+        metrics.add_event(
+            SegmentEvent::ChatMessageSent(SegmentEventChatMessageSent::new(
+                &message,
+                channel.as_h160().is_some(),
+            )),
+            segment_config.common(),
+        );
+
+        if message.starts_with('/') {
+            sender.write(ChatEvent {
+                timestamp: time.elapsed_secs_f64(),
+                sender: primary_player.0,
+                channel: "System".to_owned(),
+                message: message.clone(),
+            });
+
+            let mut args = Shlex::new(&message).collect::<Vec<_>>();
+
+            let command_name = args.remove(0);
+            debug!("Command entered: `{command_name}`, with args: `{args:?}`");
+
+            let command = console_config.commands.get(command_name.as_str());
+
+            if command.is_some() {
+                command_entered.write(ConsoleCommandEntered {
+                    command_name,
+                    args,
+                    responder: None,
+                });
+            } else {
+                sender.write(ChatEvent {
+                    timestamp: time.elapsed_secs_f64(),
+                    sender: Entity::PLACEHOLDER,
+                    channel: "System".to_owned(),
+                    message: format!(
+                        "Command not recognized, recognized commands: `{:?}`",
+                        console_config.commands.keys().collect::<Vec<_>>()
+                    ),
+                });
+            }
+        } else {
+            sender.write(ChatEvent {
+                timestamp: chat_wire_timestamp(),
+                sender: primary_player.0,
+                channel,
+                message,
+            });
+        }
+    }
+
+    for PrintConsoleLine { line } in console_lines.read() {
+        sender.write(ChatEvent {
+            timestamp: time.elapsed_secs_f64(),
+            sender: Entity::PLACEHOLDER,
+            channel: "System".to_owned(),
+            message: line.to_string(),
+        });
+    }
+}

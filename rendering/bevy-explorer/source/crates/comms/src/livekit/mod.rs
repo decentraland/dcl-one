@@ -1,0 +1,108 @@
+// --realm https://worlds-content-server.decentraland.org/world/shibu.dcl.eth --position 1,1
+
+#[cfg(not(target_arch = "wasm32"))]
+mod kira_bridge;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod livekit_bridge;
+mod mic;
+pub mod participant;
+pub mod plugin;
+pub mod room;
+#[cfg(feature = "room_debug")]
+mod room_debug;
+mod runtime;
+pub mod track;
+#[cfg(target_arch = "wasm32")]
+pub mod web;
+
+use bevy::prelude::*;
+use kira::manager::AudioManager;
+use tokio::sync::mpsc;
+
+pub use crate::livekit::runtime::{LivekitRuntime, LivekitRuntimeRes};
+use crate::{ChannelControl, NetworkMessage};
+
+#[derive(Event)]
+pub struct StartLivekit {
+    pub entity: Entity,
+    pub address: String,
+    /// crdt context this room's transport feeds
+    pub context: Entity,
+}
+
+#[derive(Component)]
+#[require(participant::ParticipantIndex)]
+pub struct LivekitTransport {
+    pub address: String,
+    pub retries: usize,
+}
+
+#[derive(Component, Deref, DerefMut)]
+pub struct LivekitChannelControl {
+    receiver: mpsc::Receiver<ChannelControl>,
+}
+
+#[derive(Component, Deref, DerefMut)]
+pub struct LivekitNetworkMessage {
+    receiver: mpsc::Receiver<NetworkMessage>,
+}
+
+/// Components for a LiveKit room that is not a comms transport: it connects, receives and
+/// publishes like any other room, but has no `Transport`, so it never feeds a crdt context and is
+/// never a broadcast target. Returns the senders for the room's outgoing message and control
+/// channels; the control sender must be kept alive for as long as the room exists.
+pub(crate) fn standalone_room_components(
+    address: String,
+) -> (
+    (
+        LivekitTransport,
+        LivekitChannelControl,
+        LivekitNetworkMessage,
+    ),
+    mpsc::Sender<NetworkMessage>,
+    mpsc::Sender<ChannelControl>,
+) {
+    let (sender, receiver) = mpsc::channel(1000);
+    let (control_sender, control_receiver) = mpsc::channel(128);
+    (
+        (
+            LivekitTransport {
+                address,
+                retries: 0,
+            },
+            LivekitChannelControl {
+                receiver: control_receiver,
+            },
+            LivekitNetworkMessage { receiver },
+        ),
+        sender,
+        control_sender,
+    )
+}
+
+#[derive(Resource, Deref, DerefMut)]
+pub struct LivekitAudioManager {
+    manager: AudioManager,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, States)]
+pub enum ConnectionAvailability {
+    #[default]
+    Available,
+    /// If client is disconnected from room due to duplicate identity
+    /// or from being kicked, client won't try connecting again
+    Unavailable,
+}
+
+#[macro_export]
+macro_rules! make_hooks {
+    ($inserted:ty, ($($to_remove:ty),+)) => {
+        impl $inserted {
+            fn on_add(mut deferred_world: DeferredWorld, hook_context: HookContext) {
+                let entity = hook_context.entity;
+
+                deferred_world.commands().entity(entity).try_remove::<($($to_remove),+)>();
+            }
+        }
+    };
+}

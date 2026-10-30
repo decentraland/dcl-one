@@ -1,0 +1,430 @@
+use bevy::{
+    asset::{AssetLoadFailedEvent, AssetPath},
+    diagnostic::FrameCount,
+    image::TextureFormatPixelInfo,
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    tasks::{IoTaskPool, Task},
+};
+use bevy_console::ConsoleCommand;
+use common::{
+    structs::DebugInfo,
+    util::{TaskExt, UrlLoopbackExt},
+};
+use console::DoAddConsoleCommand;
+use ipfs::{ipfs_path::IpfsPath, IpfsAssetServer};
+
+#[cfg(target_arch = "wasm32")]
+use crate::CHANNELS;
+#[cfg(not(target_arch = "wasm32"))]
+use common::util::JoinRelativeExt;
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::sync::mpsc::unbounded_channel;
+
+use crate::{AssetForProcessing, ProcessingAssetType};
+
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+
+pub struct ImageProcessingPlugin;
+
+impl Plugin for ImageProcessingPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_event::<AssetForProcessing>();
+        app.add_systems(Update, (check_assets, pipe_events));
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let (req_sx, req_rx) = unbounded_channel();
+            let (resp_sx, resp_rx) = unbounded_channel();
+            app.insert_resource(Channels { req_sx, resp_rx });
+            std::thread::spawn(|| {
+                bevy::tasks::block_on(crate::processor::process_events(req_rx, resp_sx))
+            });
+        }
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            let (req_sx, resp_rx) = CHANNELS.get().unwrap().lock().unwrap().0.take().unwrap();
+            app.insert_resource(Channels { req_sx, resp_rx });
+        }
+
+        app.init_resource::<ImgReprocessStats>();
+        app.init_resource::<DebugProcessingEnabled>();
+        app.add_preview_console_command::<DebugProcessingCommand, _>(toggle_debug_processing);
+    }
+}
+
+#[derive(Resource, Default)]
+struct DebugProcessingEnabled(bool);
+
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/debug_processing")]
+struct DebugProcessingCommand {
+    on: Option<bool>,
+}
+
+fn toggle_debug_processing(
+    mut input: ConsoleCommand<DebugProcessingCommand>,
+    mut enabled: ResMut<DebugProcessingEnabled>,
+    mut debug: ResMut<DebugInfo>,
+) {
+    if let Some(Ok(command)) = input.take() {
+        enabled.0 = command.on.unwrap_or(!enabled.0);
+        if !enabled.0 {
+            debug.info.remove("processing");
+        }
+        input.reply_ok(format!("image processing debug info: {}", enabled.0));
+    }
+}
+
+#[derive(Resource)]
+struct Channels {
+    req_sx: UnboundedSender<AssetForProcessing>,
+    resp_rx: UnboundedReceiver<Result<AssetForProcessing, ()>>,
+}
+
+#[derive(Resource, Debug, Default)]
+struct ImgReprocessStats {
+    alive: bool,
+    total: usize,
+    skip_imposter: usize,
+    skip_label: usize,
+    skip_unloaded: usize,
+    skip_tiny: usize,
+    skip_unknown: usize,
+    skip_unhashable: usize,
+    skip_shouldnt_cache: usize,
+    already_compressed: usize,
+    started: usize,
+    processed: usize,
+    failed: usize,
+    swapped: usize,
+}
+
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn check_assets(
+    mut a: EventReader<AssetEvent<Image>>,
+    mut failed_gltfs: EventReader<AssetLoadFailedEvent<Gltf>>,
+    images: Res<Assets<Image>>,
+    mut w: EventWriter<AssetForProcessing>,
+    ipfas: IpfsAssetServer,
+    mut assets_to_process: Local<Vec<(ProcessingAssetType, IpfsPath, AssetPath)>>,
+    mut paths_processed: Local<HashSet<IpfsPath>>,
+    mut stats: ResMut<ImgReprocessStats>,
+    mut task: Local<Option<Task<(usize, usize, Vec<AssetForProcessing>)>>>,
+) {
+    #[cfg(not(target_arch = "wasm32"))]
+    let Some(cache_root) = ipfas.ipfs_cache_path() else {
+        return;
+    };
+
+    stats.alive = true;
+
+    for ev in a.read() {
+        if let AssetEvent::LoadedWithDependencies { id } = ev {
+            stats.total += 1;
+            let Some(handle) = ipfas.asset_server().get_id_handle(*id) else {
+                // skip non-loaded textures
+                stats.skip_unloaded += 1;
+                continue;
+            };
+            let Some(asset_path) = handle.path() else {
+                // skip non-loaded textures
+                stats.skip_unloaded += 1;
+                continue;
+            };
+            let Some(image) = images.get(*id) else {
+                // skip unloaded
+                stats.skip_unloaded += 1;
+                continue;
+            };
+            if image.is_compressed() {
+                // skip already processed
+                stats.already_compressed += 1;
+                continue;
+            };
+            if image.width() as usize
+                * image.height() as usize
+                * image.texture_descriptor.format.pixel_size()
+                <= 1024
+                || image.height() <= 2 // bc7 requires 4x4 blocks, we won't save anything
+                || image.width() <= 2
+            {
+                stats.skip_tiny += 1;
+                continue;
+            }
+            if asset_path.to_string().contains("boimp#") {
+                // skip gltf assets
+                stats.skip_imposter += 1;
+                continue;
+            }
+
+            let (ty, asset_path) = match asset_path.label() {
+                None => (ProcessingAssetType::Image, asset_path.clone_owned()),
+                Some(label) if label.starts_with("Texture") => (
+                    ProcessingAssetType::Gltf,
+                    asset_path.without_label().clone_owned(),
+                ),
+                // labeled image subassets that aren't gltf textures (e.g.
+                // `Mesh{}/Primitive{}/MorphTargets`) are raw data, not compressible
+                // pictures. processing one would fail against the source file's bytes,
+                // and its entry in `paths_processed` would block texture compression
+                // for the whole source file
+                Some(_) => {
+                    stats.skip_label += 1;
+                    continue;
+                }
+            };
+            let Ok(Some(ipfs_path)) = IpfsPath::new_from_path(asset_path.path()) else {
+                // skip ... ?
+                debug!("skip unknown {asset_path:?}");
+                stats.skip_unknown += 1;
+                continue;
+            };
+
+            if paths_processed.contains(&ipfs_path) {
+                stats.total -= 1;
+                continue;
+            }
+            paths_processed.insert(ipfs_path.clone());
+
+            if let Ok(None) = ipfs_path.context_free_hash() {
+                // skip unhashable
+                stats.skip_unhashable += 1;
+                continue;
+            }
+
+            assets_to_process.push((ty, ipfs_path, asset_path.to_owned()));
+        }
+    }
+
+    // a gltf that fails to load because it is draco-compressed (the loader
+    // rejects the extension by name, and spec-compliant draco files must list
+    // it in extensionsRequired) is run through the processor once, which
+    // decompresses and persists it. the processor independently verifies the
+    // extension against the actual bytes.
+    for ev in failed_gltfs.read() {
+        if !format!("{}", ev.error).contains("KHR_draco_mesh_compression") {
+            continue;
+        }
+        let asset_path = ev.path.clone();
+        let Ok(Some(ipfs_path)) = IpfsPath::new_from_path(asset_path.path()) else {
+            stats.skip_unknown += 1;
+            continue;
+        };
+
+        if paths_processed.contains(&ipfs_path) {
+            continue;
+        }
+        paths_processed.insert(ipfs_path.clone());
+
+        if let Ok(None) = ipfs_path.context_free_hash() {
+            stats.skip_unhashable += 1;
+            continue;
+        }
+
+        stats.total += 1;
+        assets_to_process.push((ProcessingAssetType::DracoGltf, ipfs_path, asset_path));
+    }
+
+    if task.is_none() && !assets_to_process.is_empty() {
+        let ipfs = ipfas.ipfs().clone();
+        let assets_to_process = std::mem::take(&mut *assets_to_process);
+        #[cfg(not(target_arch = "wasm32"))]
+        let cache_root = cache_root.to_owned();
+        *task = Some(IoTaskPool::get().spawn(async move {
+            let ctx = ipfs.context.read().await;
+            let mut skip_unhashable = 0;
+            let mut skip_shouldnt_cache = 0;
+
+            let results = assets_to_process
+                .into_iter()
+                .flat_map(|(ty, ipfs_path, base_path)| {
+                    let Some(hash) = ipfs_path.hash(&ctx) else {
+                        skip_unhashable += 1;
+                        return None;
+                    };
+
+                    // loopback content is never cached (see `IpfsIo::read`), so there is
+                    // nothing to process
+                    let url = ipfs_path.to_url(&ctx);
+                    let loopback = url
+                        .as_deref()
+                        .ok()
+                        .and_then(|url| url::Url::parse(url).ok())
+                        .is_some_and(|url| url.is_loopback());
+                    if ipfs_path.should_cache(&hash) && !loopback {
+                        // `hash` comes from the entity json, so it must not steer the path
+                        #[cfg(not(target_arch = "wasm32"))]
+                        let cache_path = std::path::Path::new(&cache_root)
+                            .join_relative(hash)
+                            .map(|p| p.to_string_lossy().into_owned())?;
+
+                        #[cfg(target_arch = "wasm32")]
+                        let Ok(cache_path) = url
+                        else {
+                            skip_unhashable += 1;
+                            return None;
+                        };
+
+                        Some(AssetForProcessing {
+                            cache_path,
+                            base_path,
+                            ty,
+                        })
+                    } else {
+                        skip_shouldnt_cache += 1;
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            (skip_unhashable, skip_shouldnt_cache, results)
+        }));
+    }
+
+    if let Some(mut current_task) = task.take() {
+        match current_task.complete() {
+            Some((skip_unhashable, skip_shouldnt_cache, results)) => {
+                stats.skip_unhashable += skip_unhashable;
+                stats.skip_shouldnt_cache += skip_shouldnt_cache;
+                for asset in results {
+                    w.write(asset);
+                }
+            }
+            None => *task = Some(current_task),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pipe_events(
+    mut channels: ResMut<Channels>,
+    mut events: EventReader<AssetForProcessing>,
+    asset_server: Res<AssetServer>,
+    mut stats: ResMut<ImgReprocessStats>,
+    mut debug_info: ResMut<DebugInfo>,
+    debug_enabled: Res<DebugProcessingEnabled>,
+    gltfs: Res<Assets<Gltf>>,
+    std_mats: Res<Assets<StandardMaterial>>,
+    mut images: ResMut<Assets<Image>>,
+    mut processing_gltfs: Local<HashMap<Handle<Gltf>, AssetId<Gltf>>>,
+    mut last_good: Local<u32>,
+    mut max_bad: Local<u32>,
+    tick: Res<FrameCount>,
+) {
+    for event in events.read() {
+        stats.started += 1;
+        let _ = channels.req_sx.send(event.clone());
+    }
+
+    if stats.started == 0 {
+        *last_good = tick.0;
+    }
+
+    while let Ok(res) = channels.resp_rx.try_recv() {
+        *last_good = tick.0;
+        match res {
+            Ok(req) => {
+                stats.processed += 1;
+                stats.started -= 1;
+
+                match req.ty {
+                    ProcessingAssetType::Gltf => {
+                        if let Some(h) = asset_server.get_handle::<Gltf>(&req.base_path) {
+                            // on wasm the cache path is the source url (the processed bytes
+                            // overwrite the service-worker cache entry for that url), so wrap
+                            // it in a url-form IpfsPath to make it loadable
+                            #[cfg(target_arch = "wasm32")]
+                            let cache_path = {
+                                let ext = req
+                                    .base_path
+                                    .path()
+                                    .extension()
+                                    .and_then(|e| e.to_str())
+                                    .unwrap_or("glb");
+                                std::path::PathBuf::from(&IpfsPath::new_from_url(
+                                    &req.cache_path,
+                                    ext,
+                                ))
+                            };
+                            #[cfg(not(target_arch = "wasm32"))]
+                            let cache_path = req.cache_path;
+                            processing_gltfs.insert(asset_server.load(cache_path), h.id());
+                        }
+                    }
+                    // the original never loaded, so a plain reload picks up the
+                    // repaired cache bytes (no need for the image-swap below)
+                    ProcessingAssetType::DracoGltf => asset_server.reload(req.base_path),
+                    ProcessingAssetType::Image => asset_server.reload(req.base_path),
+                };
+            }
+            Err(_) => {
+                stats.started -= 1;
+                stats.failed += 1;
+            }
+        }
+    }
+
+    if tick.0 - *last_good > *max_bad {
+        *max_bad = tick.0 - *last_good;
+        debug!("max bad: {}", *max_bad);
+    }
+
+    if debug_enabled.0 {
+        debug_info.info.insert("processing", format!("{stats:?}"));
+    }
+
+    let mut imgs_replaced = 0;
+    // gltf reload doesn't work (bevy#18267), so manually overwrite all the images
+    processing_gltfs.retain(|h_replace, id_orig| {
+        let Some(gltf) = gltfs.get(*id_orig) else {
+            return false;
+        };
+
+        match asset_server.load_state(h_replace) {
+            bevy::asset::LoadState::NotLoaded => return true,
+            bevy::asset::LoadState::Loading => return true,
+            bevy::asset::LoadState::Failed(_) => return false,
+            bevy::asset::LoadState::Loaded => (),
+        };
+
+        let Some(replace) = gltfs.get(h_replace) else {
+            return true;
+        };
+
+        for (h_mat_replace, h_mat) in replace.materials.iter().zip(gltf.materials.iter()) {
+            if let (Some(mat_replace), Some(mat)) =
+                (std_mats.get(h_mat_replace), std_mats.get(h_mat))
+            {
+                for (h_replace, h_item) in [
+                    (&mat_replace.base_color_texture, &mat.base_color_texture),
+                    (&mat_replace.normal_map_texture, &mat.normal_map_texture),
+                    (
+                        &mat_replace.metallic_roughness_texture,
+                        &mat.metallic_roughness_texture,
+                    ),
+                    (&mat_replace.emissive_texture, &mat.emissive_texture),
+                ] {
+                    if let (Some(h_replace_img), Some(h_img)) = (h_replace.clone(), h_item.clone())
+                    {
+                        let Some(img) = images.get(&h_replace_img) else {
+                            continue;
+                        };
+
+                        let img = img.clone();
+                        images.insert(h_img.id(), img.clone());
+                        imgs_replaced += 1;
+                    }
+                }
+            }
+        }
+
+        false
+    });
+
+    if imgs_replaced > 0 {
+        debug!("replaced {} imgs", imgs_replaced);
+        stats.swapped += imgs_replaced;
+    }
+}

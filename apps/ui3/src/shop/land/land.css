@@ -1,0 +1,577 @@
+/* The LAND screens of the Shop: the map, the browse, the manage and rent pages and their dialogs.
+   Tokens from atoms/primitives.css; nothing here prints a credit price. */
+
+.shop-land-mana {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.shop-land-mana__suffix {
+  color: var(--ink-6);
+}
+
+.shop-landmap {
+  position: relative;
+  overflow: hidden;
+  min-height: 320px;
+  border-radius: var(--r-card);
+  background: var(--panel, #161518);
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+}
+.shop-landmap:active {
+  cursor: grabbing;
+}
+.shop-landmap__stage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-origin: 50% 50%;
+}
+.shop-landmap__layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.shop-landmap__sale { fill: #00d3ff; opacity: 0.85; }
+.shop-landmap__owned { fill: #ff4130; }
+.shop-landmap__rented { fill: #ffbc5b; }
+.shop-landmap__selected { fill: #ff9990; stroke: #ff0044; stroke-width: 0.25; }
+.shop-landmap__zoom {
+  position: absolute;
+  right: 12px;
+  bottom: 12px;
+  display: grid;
+  gap: 6px;
+}
+.shop-landmap__zoom button,
+.shop-landmap__legend > button {
+  min-width: 36px;
+  min-height: 36px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--panel-2, #242129);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.shop-landmap__zoom button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.shop-landmap__legend {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  display: grid;
+  gap: 6px;
+  font-size: var(--fs-12);
+}
+.shop-landmap__legend > button {
+  padding: 0 12px;
+}
+.shop-landmap__legend ul {
+  margin: 0;
+  padding: 10px 12px;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+  border-radius: var(--r-control);
+  background: var(--panel-2, #242129);
+}
+.shop-landmap__swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border-radius: 2px;
+  vertical-align: -1px;
+}
+.shop-landmap__swatch--plaza { background: #70ac76; }
+.shop-landmap__swatch--owned { background: #ff4130; }
+.shop-landmap__swatch--rented { background: #ffbc5b; }
+.shop-landmap__swatch--sale { background: #00d3ff; }
+.shop-landmap__swatch--taken { background: #3d3a46; }
+.shop-landmap__popup {
+  position: absolute;
+  z-index: 2;
+  width: 240px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: var(--r-control);
+  background: var(--panel-2, #242129);
+  box-shadow: var(--shadow-panel);
+  font-size: var(--fs-12);
+  pointer-events: none;
+}
+.shop-landmap__popuphead {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.shop-landmap__popuprow {
+  display: grid;
+  gap: 2px;
+  color: var(--ink-6);
+}
+.shop-landmap__popuprow > span:last-child {
+  color: var(--text);
+}
+.shop-landmap__prices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.shop-landmap__coords {
+  color: var(--ink-6);
+  font-variant-numeric: tabular-nums;
+}
+
+.shop-land-page {
+  display: grid;
+  gap: var(--s-5);
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: var(--s-5) var(--s-4) var(--s-8);
+  color: var(--text);
+}
+.shop-land-page h1 {
+  margin: 0;
+  font-size: var(--fs-28);
+  line-height: var(--lh-tight);
+}
+.shop-land-page__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+.shop-land-page__sub {
+  margin: 4px 0 0;
+  color: var(--ink-6);
+  font-size: var(--fs-14);
+}
+.shop-land-note {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 10px 14px;
+  border-radius: var(--r-control);
+  background: var(--fill-2);
+  color: var(--ink-85);
+  font-size: var(--fs-13);
+}
+.shop-land-note--warn {
+  border-left: 3px solid var(--warning);
+}
+.shop-land-note--error {
+  border-left: 3px solid var(--error);
+}
+.shop-land-note p {
+  margin: 0;
+  flex: 1 1 240px;
+}
+.shop-land-back {
+  justify-self: start;
+  color: var(--ink-85);
+  font-size: var(--fs-13);
+  text-decoration: none;
+}
+.shop-land-back:hover {
+  text-decoration: underline;
+}
+
+.shop-lands__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--s-2) var(--s-3);
+}
+.shop-lands__segmented {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: var(--r-pill);
+  background: var(--fill-2);
+}
+.shop-lands__segmented button {
+  min-height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--ink-85);
+  font: inherit;
+  font-size: var(--fs-13);
+  cursor: pointer;
+}
+.shop-lands__segmented button[aria-pressed="true"] {
+  background: var(--fill-5);
+  color: var(--text);
+  font-weight: 600;
+}
+.shop-lands__body {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: var(--s-5);
+  align-items: start;
+}
+.shop-lands__filters {
+  display: grid;
+  gap: var(--s-4);
+  font-size: var(--fs-13);
+}
+.shop-lands__filters fieldset {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.shop-lands__filters legend {
+  margin-bottom: 6px;
+  color: var(--ink-6);
+  font-size: var(--fs-12);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.shop-lands__filters label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shop-lands__range {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.shop-land-input,
+.shop-lands__filters input[type="text"],
+.shop-lands__filters input[type="number"],
+.shop-lands__toolbar input[type="search"],
+.shop-lands__toolbar select {
+  min-height: 36px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--fill-1);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--fs-13);
+}
+.shop-lands__toolbar input[type="search"] {
+  width: min(320px, 100%);
+}
+.shop-lands__toolbar select {
+  width: auto;
+}
+.shop-lands__toolbar option {
+  background: var(--panel);
+  color: var(--text);
+}
+.shop-lands__map {
+  height: min(70vh, 640px);
+}
+.shop-lands__count {
+  margin: 0;
+  color: var(--ink-6);
+  font-size: var(--fs-13);
+}
+.shop-lands__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--s-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shop-lands__pager {
+  display: flex;
+  justify-content: center;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}
+.shop-land-card {
+  display: grid;
+  gap: 8px;
+  height: 100%;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--fill-1);
+  color: inherit;
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.shop-land-card:hover,
+.shop-land-card:focus-visible {
+  background: var(--fill-3);
+}
+.shop-land-card__thumb {
+  position: relative;
+  aspect-ratio: 4 / 3;
+  overflow: hidden;
+  border-radius: var(--r-control);
+  background: var(--panel-2, #242129);
+}
+.shop-land-card__thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.shop-land-card__badge {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: rgba(0, 0, 0, 0.6);
+  font-size: var(--fs-11);
+  font-variant-numeric: tabular-nums;
+}
+.shop-land-card__name {
+  margin: 0;
+  overflow: hidden;
+  font-size: var(--fs-14);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.shop-land-card__prices {
+  display: grid;
+  gap: 2px;
+  font-size: var(--fs-13);
+}
+.shop-land-card__label {
+  color: var(--ink-6);
+  font-size: var(--fs-12);
+}
+.shop-land-skeleton {
+  min-height: 230px;
+  border-radius: var(--r-card);
+  background: linear-gradient(90deg, var(--fill-1), var(--fill-3), var(--fill-1));
+  background-size: 200% 100%;
+  animation: shop-land-shimmer 1.4s linear infinite;
+}
+@keyframes shop-land-shimmer {
+  to { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shop-land-skeleton { animation: none; }
+}
+
+.shop-land-detail {
+  display: grid;
+  grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
+  gap: var(--s-6);
+  align-items: start;
+}
+.shop-land-detail__aside,
+.shop-land-detail__main {
+  display: grid;
+  gap: var(--s-4);
+}
+.shop-land-detail__map {
+  height: 260px;
+}
+.shop-land-box {
+  display: grid;
+  gap: var(--s-3);
+  padding: var(--s-4);
+  border: 1px solid var(--line);
+  border-radius: var(--r-card);
+  background: var(--fill-1);
+}
+.shop-land-box h2,
+.shop-land-box h3 {
+  margin: 0;
+  font-size: var(--fs-16);
+}
+.shop-land-box__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.shop-land-box__cols {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-3) var(--s-6);
+}
+.shop-land-box__col {
+  display: grid;
+  gap: 4px;
+  font-size: var(--fs-14);
+}
+.shop-land-box__col > span:first-child,
+.shop-land-dl dt {
+  color: var(--ink-6);
+  font-size: var(--fs-12);
+}
+.shop-land-dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+.shop-land-dl > div {
+  display: grid;
+  grid-template-columns: minmax(96px, max-content) 1fr;
+  gap: 12px;
+}
+.shop-land-dl dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.shop-land-highlights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shop-land-highlights li {
+  display: grid;
+  gap: 2px;
+  padding: 8px 12px;
+  border-radius: var(--r-control);
+  background: var(--fill-2);
+  font-size: var(--fs-13);
+}
+.shop-land-highlights li span {
+  color: var(--ink-6);
+  font-size: var(--fs-12);
+}
+.shop-land-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.shop-land-periods {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.shop-land-periods label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  cursor: pointer;
+}
+.shop-land-periods label:has(input:checked) {
+  border-color: var(--brand);
+  background: var(--fill-2);
+}
+.shop-land-periods small {
+  display: block;
+  color: var(--ink-6);
+}
+.shop-land-steps {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--fs-13);
+}
+.shop-land-steps li[aria-current="step"] {
+  font-weight: 600;
+}
+.shop-land-steps li[data-done="true"] {
+  color: var(--ink-6);
+}
+.shop-land-form {
+  display: grid;
+  gap: var(--s-3);
+}
+.shop-land-form label {
+  display: grid;
+  gap: 6px;
+  font-size: var(--fs-13);
+}
+.shop-land-form .shop-land-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.shop-land-form small {
+  color: var(--ink-6);
+}
+.shop-land-form small[role="alert"] {
+  color: var(--error);
+}
+.shop-land-modal {
+  display: grid;
+  gap: var(--s-4);
+  color: var(--text);
+}
+.shop-land-modal h2 {
+  margin: 0;
+  font-size: var(--fs-20);
+}
+.shop-land-modal p {
+  margin: 0;
+  color: var(--ink-85);
+  font-size: var(--fs-14);
+  line-height: var(--lh-ui);
+}
+.shop-land-cta-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.shop-land-cta-list a {
+  display: grid;
+  gap: 2px;
+  padding: 12px;
+  border-radius: var(--r-control);
+  background: var(--fill-2);
+  color: inherit;
+  text-decoration: none;
+}
+.shop-land-cta-list a span {
+  color: var(--ink-6);
+  font-size: var(--fs-12);
+}
+
+@media (max-width: 860px) {
+  .shop-lands__body,
+  .shop-land-detail {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.shop-land-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--fs-13);
+}
+.shop-land-table th,
+.shop-land-table td {
+  padding: 8px 6px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.shop-land-table th {
+  color: var(--ink-6);
+  font-weight: 500;
+}

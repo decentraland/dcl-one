@@ -1,0 +1,20 @@
+{
+  "name": "{{SLUG}}",
+  "version": "1.0.0",
+  "description": "{{DESCRIPTION}}",
+  "scripts": {
+    "start": "dcl-scene-cli start",
+    "build": "dcl-scene-cli build --built-in",
+    "deploy": "dcl-scene-cli deploy",
+    "pack": "dcl-scene-cli pack"
+  },
+  "devDependencies": {
+    "@dcl/js-runtime": "7.29.1-34986384248.commit-bb45080",
+    "@dcl/sdk": "7.29.1-34986384248.commit-bb45080",
+    "typescript": "6.0.3"
+  },
+  "engines": {
+    "node": ">=24",
+    "npm": ">=11"
+  }
+}

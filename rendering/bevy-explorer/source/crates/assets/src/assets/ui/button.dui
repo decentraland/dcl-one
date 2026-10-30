@@ -1,0 +1,78 @@
+<!-- don't use directly, use "button" template from button.rs-->
+<define-template id="button-base-text">
+    <div id="button-node" style="
+        flex-direction: column;
+        align-self: stretch;
+        align-items: center;
+        justify-content: center;
+        margin: 0.35vmin 0.7vmin 0.35vmin 0.7vmin;
+    ">
+        <bounds id="button-background" 
+            style="position-type: absolute; width: 100%; height: 100%;"
+            corner-size="1.5vmin"
+            blend-size="0.125vmin"
+            border-size="0.75vmin"
+            border-color="#9c73af"
+            styles="active: #ccccff; inactive: #7f569e; hover: #e2d1ff; disabled: #555555;"
+            sounds="hover: 'generic_button_hover.wav'; press: 'generic_button_press.wav'"
+        />
+        <div style="
+            margin: 1vmin;
+            align-self: stretch;
+            align-items: center;
+            justify-content: center;
+        ">
+            <med-text id="label" text="@label" style="
+                text-align: center;
+                color: black;
+            " />
+        </div>
+    </div>
+</define-template>
+
+<!-- don't use directly, use "button" template from button.rs-->
+<define-template id="button-base-notext">
+    <div id="button-node" style="
+        flex-direction: column;
+        align-self: stretch;
+        align-items: center;
+        justify-content: center;
+        margin: 0.35vmin 0.7vmin 0.35vmin 0.7vmin;
+        padding: 1vmin;
+    ">
+        <bounds id="button-background" 
+            style="position-type: absolute; width: 100%; height: 100%;"
+            corner-size="1.5vmin"
+            blend-size="0.125vmin"
+            border-size="0.75vmin"
+            border-color="#9c73af"
+            styles="active: #ccccff; inactive: #7f569e; hover: #e2d1ff; disabled: #555555;"
+            sounds="hover: 'generic_button_hover.wav'; press: 'generic_button_press.wav'"
+        />
+    </div>
+</define-template>
+
+<!-- don't use directly, use "button" template from button.rs-->
+<define-template id="button-base-image">
+    <div id="button-node" style="
+        flex-direction: column;
+        align-self: stretch;
+        align-items: center;
+        justify-content: center;
+        margin: 0.35vmin 0.7vmin 0.35vmin 0.7vmin;
+        width: '@width'; 
+        height: '@height';
+    ">
+        <bounds id="button-background" 
+            style="position-type: absolute; width: 100%; height: 100%;"
+            corner-size="1.5vmin"
+            blend-size="0.125vmin"
+            border-size="0.75vmin"
+            border-color="#9c73af"
+            bound-image="@img"
+            styles="active: #ccccff; inactive: #7f569e; hover: #e2d1ff; disabled: #555555;"
+            sounds="hover: 'generic_button_hover.wav'; press: 'generic_button_press.wav'"
+        >
+        </bounds>
+    </div>
+</define-template>

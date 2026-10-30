@@ -1,0 +1,354 @@
+import { useEffect, useState } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { publicTelemetryUrl } from "@/core/lib/telemetry/public-url";
+import {
+  isRouteErrorResponse,
+  Links,
+  Meta,
+  Outlet,
+  Scripts,
+  ScrollRestoration,
+  useRouteLoaderData,
+} from "react-router";
+
+import "@ui/atoms/primitives.css";
+import logo from "@ui/atoms/assets/decentraland-logo.svg?url";
+
+import SignInModalHost from "@/features/components/auth/SignInModalHost";
+import ChromeAuthBridge from "@/features/components/chrome/ChromeAuthBridge";
+import ChromeNavBridge from "@/features/components/chrome/ChromeNavBridge";
+import RoutePending, { NAV_PENDING_SCRIPT } from "@/features/components/chrome/RoutePending";
+import EmbedBridge from "@/features/components/chrome/EmbedBridge";
+import { reloadingForAccount } from "@/features/components/chrome/explorer-host";
+import SyncEngineBridge from "@/features/components/creator-hub/SyncEngineBridge";
+import StatusPage from "@ui/components/StatusPage";
+import { EMBED_BOOT_SCRIPT } from "@ui/web/frames/embed";
+import type { ShouldRevalidateFunctionArgs } from "react-router";
+import { readWallet } from "@/data/lib/auth/wallet-cookie";
+import { browserCatalystBase } from "@/data/lib/catalyst/bases";
+import { isCommitteeMember } from "@/data/lib/catalyst/creator-hub/committee-membership.server";
+import { serverShopApiMode } from "@/data/lib/shop/mode";
+import type { Route } from "./+types/root";
+
+export async function loader({ request }: Route.LoaderArgs) {
+  const thirdwebClientId =
+    (typeof process !== "undefined" && process.env.THIRDWEB_CLIENT_ID) || "";
+  const walletConnectProjectId = process.env.WALLETCONNECT_PROJECT_ID || "";
+  const telemetryUrl = publicTelemetryUrl(
+    (typeof process !== "undefined" &&
+      (process.env.VITE_TELEMETRY_URL || process.env.TELEMETRY_URL)) ||
+    undefined,
+  );
+  const docsBase = (typeof process !== "undefined" && process.env.DOCS_BASE) || "";
+  const catalystBase = browserCatalystBase();
+  const shopApiMode = serverShopApiMode();
+  const wallet = readWallet(request);
+  const committee = wallet
+    ? await isCommitteeMember(wallet, request.signal).catch(() => false)
+    : false;
+  return {
+    thirdwebClientId,
+    walletConnectProjectId,
+    telemetryUrl,
+    docsBase,
+    catalystBase,
+    shopApiMode,
+    wallet,
+    committee,
+  };
+}
+
+export function shouldRevalidate({
+  currentUrl,
+  nextUrl,
+  formMethod,
+  defaultShouldRevalidate,
+}: ShouldRevalidateFunctionArgs) {
+  if (formMethod) {
+    return defaultShouldRevalidate;
+  }
+  // The Creator Hub framed by the Explorer reloads in place for another account.
+  if (reloadingForAccount()) {
+    return true;
+  }
+  if (currentUrl.pathname === nextUrl.pathname) {
+    return false;
+  }
+  return defaultShouldRevalidate;
+}
+
+export function meta(_args: Route.MetaArgs) {
+  return [
+    { title: "Decentraland" },
+    { name: "description", content: "Explore Decentraland: discover virtual places and events, create experiences, and find wearables, emotes, NAMEs and LAND in the Shop." },
+  ];
+}
+
+export function Layout({ children }: { children: React.ReactNode }) {
+  const data = useRouteLoaderData("root") as
+    | { thirdwebClientId?: string; walletConnectProjectId?: string; telemetryUrl?: string; docsBase?: string; catalystBase?: string; shopApiMode?: string }
+    | undefined;
+  const publicEnv = JSON.stringify({
+    thirdwebClientId: data?.thirdwebClientId ?? "",
+    walletConnectProjectId: data?.walletConnectProjectId ?? "",
+    TELEMETRY_URL: data?.telemetryUrl ?? "",
+    docsBase: data?.docsBase ?? "",
+  }).replace(/</g, "\\u003c");
+  const catalystBase = data?.catalystBase
+    ? `;window.__CATALYST_BASE__=${JSON.stringify(data.catalystBase).replace(/</g, "\\u003c")}`
+    : "";
+  // The Shop client's legacy-alias fallback (ui3/src/shop/api) while the node has not mounted /shop-api.
+  const shopApiMode = data?.shopApiMode === "legacy" ? `;window.__SHOP_API_MODE__="legacy"` : "";
+
+  return (
+    // The docs theme boot script sets data-docs-theme* on <html> before hydration.
+    <html lang="en" suppressHydrationWarning>
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <script
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{
+            // Set Zod's shared configuration before route modules construct schemas.
+            // Even its caught eval capability probe produces a CSP violation.
+            __html: `globalThis.__zod_globalConfig={...globalThis.__zod_globalConfig,jitless:true};window.__DCL_PUBLIC__=${publicEnv}${catalystBase}${shopApiMode}`,
+          }}
+        />
+        <script
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{ __html: EMBED_BOOT_SCRIPT }}
+        />
+        <script
+          // eslint-disable-next-line react/no-danger
+          dangerouslySetInnerHTML={{ __html: NAV_PENDING_SCRIPT }}
+        />
+        <link rel="icon" type="image/svg+xml" href={logo} />
+        <Meta />
+        <Links />
+      </head>
+      <body>
+        {children}
+        <ScrollRestoration />
+        <Scripts />
+      </body>
+    </html>
+  );
+}
+
+const CLIENT_ERROR_ENDPOINT = "/internal/client-error";
+const CLIENT_ERROR_BUDGET = 10;
+const CLIENT_ERROR_DEDUPE_MS = 60_000;
+
+function installClientErrorReporter(): () => void {
+  if (typeof window === "undefined") return () => {};
+  // A browser under automation (headless probes, CDP-driven checks, test rigs) reports
+  // its own environment, not the product, burying the real errors.
+  if ((navigator as Navigator & { webdriver?: boolean }).webdriver) return () => {};
+
+  const seen = new Map<string, number>();
+  let sent = 0;
+  let reporting = false;
+
+  const report = (name: string, message: string, stack: string) => {
+    if (reporting || sent >= CLIENT_ERROR_BUDGET) return;
+    const now = Date.now();
+    const key = `${name}:${message}`;
+    const last = seen.get(key);
+    if (last !== undefined && now - last < CLIENT_ERROR_DEDUPE_MS) return;
+    reporting = true;
+    try {
+      seen.set(key, now);
+      sent += 1;
+      void fetch(CLIENT_ERROR_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          name,
+          stack,
+          url: window.location.href,
+          ua: navigator.userAgent,
+          ts: new Date(now).toISOString(),
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+    } finally {
+      reporting = false;
+    }
+  };
+
+  const describe = (value: unknown): string => {
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value) ?? String(value);
+    } catch {
+      return String(value);
+    }
+  };
+
+  const onError = (event: ErrorEvent) => {
+    const err = event.error;
+    if (err instanceof Error) {
+      report(err.name || "Error", err.message || event.message, err.stack ?? "");
+      return;
+    }
+    if (!event.message) return;
+    report(
+      "Error",
+      event.message,
+      `${event.filename ?? ""}:${event.lineno ?? 0}:${event.colno ?? 0}`,
+    );
+  };
+
+  const onRejection = (event: PromiseRejectionEvent) => {
+    const reason = event.reason;
+    if (reason instanceof Error) {
+      report(
+        reason.name || "UnhandledRejection",
+        reason.message || "(no message)",
+        reason.stack ?? "",
+      );
+      return;
+    }
+    report("UnhandledRejection", describe(reason) || "(no message)", "");
+  };
+
+  const onResourceError = (event: Event) => {
+    if (event instanceof ErrorEvent) return;
+    const t = event.target;
+    if (!(t instanceof Element)) return;
+    const el = t as HTMLImageElement & HTMLScriptElement & HTMLLinkElement;
+    const src = el.currentSrc || el.src || el.href || "";
+    if (!src) return;
+    report("ResourceError", `${t.tagName.toLowerCase()} failed to load: ${src}`.slice(0, 500), "");
+  };
+
+  const origError = console.error.bind(console);
+  const origWarn = console.warn.bind(console);
+  console.error = (...args: unknown[]) => {
+    origError(...args);
+    report("ConsoleError", args.map(describe).join(" ").slice(0, 500), "");
+  };
+  console.warn = (...args: unknown[]) => {
+    origWarn(...args);
+    report("ConsoleWarning", args.map(describe).join(" ").slice(0, 500), "");
+  };
+
+  window.addEventListener("error", onError);
+  window.addEventListener("unhandledrejection", onRejection);
+  window.addEventListener("error", onResourceError, true);
+  return () => {
+    window.removeEventListener("error", onError);
+    window.removeEventListener("unhandledrejection", onRejection);
+    window.removeEventListener("error", onResourceError, true);
+    console.error = origError;
+    console.warn = origWarn;
+  };
+}
+
+let appHydrated = false;
+
+export default function App() {
+  // The @ui components read profiles and the like through react-query hooks
+  // (ui3/src/data/hooks); one client per request on the server, one per page
+  // in the browser, so SSR never shares a cache between visitors.
+  const [queryClient] = useState(
+    () => new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } }),
+  );
+  useEffect(() => {
+    appHydrated = true;
+    document.documentElement.removeAttribute("data-nav-loading");
+    if (import.meta.env.DEV) {
+      import("@/features/lib/dev/dev-kit").then((m) => m.installDevKit());
+    }
+    return installClientErrorReporter();
+  }, []);
+  return (
+    <QueryClientProvider client={queryClient}>
+      <ChromeAuthBridge>
+        <ChromeNavBridge>
+          <RoutePending />
+          <Outlet />
+          <EmbedBridge />
+          <SignInModalHost />
+          <SyncEngineBridge />
+        </ChromeNavBridge>
+      </ChromeAuthBridge>
+    </QueryClientProvider>
+  );
+}
+
+export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
+  const isRouteError = isRouteErrorResponse(error);
+  const routeStatus = isRouteError ? error.status : 0;
+
+  let name = "Error";
+  let message = "An unexpected error occurred.";
+  let stack = "";
+  if (error instanceof Error) {
+    name = error.name || "Error";
+    message = error.message || message;
+    stack = error.stack || "";
+  } else if (typeof error === "string") {
+    message = error;
+  } else if (error) {
+    try {
+      message = JSON.stringify(error);
+    } catch {
+      message = String(error);
+    }
+  }
+
+  useEffect(() => {
+    if (isRouteError) {
+      if (routeStatus === 404 && appHydrated) {
+        try {
+          void fetch("/internal/page-not-found", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              path: window.location.pathname + window.location.search,
+              referrer: document.referrer,
+            }),
+            keepalive: true,
+          }).catch(() => {});
+        } catch {
+        }
+      }
+      return;
+    }
+    try {
+      void fetch(CLIENT_ERROR_ENDPOINT, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          name,
+          stack,
+          url: window.location.href,
+          ua: navigator.userAgent,
+          ts: new Date().toISOString(),
+        }),
+        keepalive: true,
+      }).catch(() => {});
+    } catch {
+    }
+  }, [isRouteError, routeStatus, name, message, stack]);
+
+  if (isRouteError) {
+    return <RouteErrorView error={error} />;
+  }
+
+  // Every visitor gets the branded 500 screen, the dev server's too (dev and prod serve
+  // alike); the trace goes to the client-error report above.
+  return <StatusPage status={500} />;
+}
+
+function RouteErrorView({
+  error,
+}: {
+  error: { status: number; statusText?: string; data?: unknown };
+}) {
+  return <StatusPage status={error.status} />;
+}

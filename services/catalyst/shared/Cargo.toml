@@ -1,0 +1,46 @@
+[package]
+name = "catalyst-shared"
+version.workspace = true
+edition = "2024"
+description = "Vocabulary every catalyst domain shares: signed fetch, identities, dRPC, LiveKit, write gates, audit, caches, HTTP helpers"
+publish = false
+
+[dependencies]
+dcl-http = { workspace = true, features = ["db"] }
+dcl-auth.workspace = true
+dcl-livekit-token.workspace = true
+tokio.workspace = true
+axum.workspace = true
+http-body = "1"
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+async-trait.workspace = true
+uuid.workspace = true
+tokio-util.workspace = true
+dashmap.workspace = true
+hex.workspace = true
+base64.workspace = true
+alloy-primitives.workspace = true
+sha2.workspace = true
+reqwest.workspace = true
+url.workspace = true
+prost.workspace = true
+hmac.workspace = true
+ts-rs = { workspace = true, optional = true }
+alloy = { workspace = true, optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
+
+[features]
+ts = ["dep:ts-rs"]
+test-support = ["dep:alloy", "dep:tower"]
+
+[dev-dependencies]
+alloy.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }

@@ -1,0 +1,17 @@
+[package]
+name = "creator-hub"
+version = "0.1.0"
+edition = "2021"
+description = "Tauri shell for the Decentraland Creator Hub (loads the web app in a native webview)"
+
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+open = "5"
+
+[profile.release]
+strip = true

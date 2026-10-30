@@ -1,0 +1,32 @@
+[package]
+name = "dcl-scene-build"
+version = "0.32.0"
+edition = "2024"
+description = "The SDK7 scene build (rolldown + oxc, prebuilt SDK chunks) without the CLI around it: builds natively and for wasm32-wasip1, where a web worker runs it over an in-memory WASI file system"
+# Ships beside dcl-scene-cli, under the same dual terms.
+license = "Apache-2.0 OR AGPL-3.0-or-later"
+workspace = "../../services/catalyst"
+
+[[bin]]
+name = "scene-build"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+dcl-scene-authoring.workspace = true
+# Pinned to dcl-scene-cli's bundler: tests/parity.rs holds both builds to the same bytes.
+rolldown = "=1.2.14"
+rolldown_common = "=1.2.14"
+rolldown_utils = "=1.2.14"
+serde_json = { workspace = true }
+# rolldown awaits tokio tasks; wasm32-wasip1 has the current-thread runtime only.
+tokio = { version = "1", default-features = false, features = ["rt"] }
+
+[build-dependencies]
+# Unpacks @dcl/sdk (the prebuilt chunks and the tsconfig chain) from dcl-scene-cli's vendored node_modules.
+zip = { workspace = true }
+
+[dev-dependencies]
+base64 = { workspace = true }
+dcl-scene-cli.workspace = true
+tokio = { workspace = true }

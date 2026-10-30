@@ -1,0 +1,35 @@
+{
+  "description": "GET /scene-bans signed with metadata signer dcl:explorer: the route wants decentraland-kernel-scene (\"Invalid metadata content\"). Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0 -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/scene-bans",
+    "query": {
+      "limit": [
+        "20"
+      ],
+      "offset": [
+        "0"
+      ]
+    },
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/scene-bans:1790364271837:{\\\"signer\\\":\\\"dcl:explorer\\\",\\\"realm\\\":{\\\"hostname\\\":\\\"realm-provider-ea.decentraland.org\\\",\\\"protocol\\\":\\\"v3\\\",\\\"serverName\\\":\\\"main\\\"},\\\"sceneId\\\":\\\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\\\",\\\"parcel\\\":\\\"-3,-2\\\"}\",\"signature\":\"0x28d5097e96bca8fee2eb94da65299784c6f6e3b71df73587c2367cb6da6c74c86500b6801a0850b1c0918075fcbe9d8e2f2916c0d336f18f97c15c0e9bbe0aeb1c\"}",
+      "x-identity-timestamp": "1790364271837",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\",\"realm\":{\"hostname\":\"realm-provider-ea.decentraland.org\",\"protocol\":\"v3\",\"serverName\":\"main\"},\"sceneId\":\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\",\"parcel\":\"-3,-2\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": false,
+      "message": "Invalid metadata content: {\"signer\":\"dcl:explorer\",\"realm\":{\"hostname\":\"realm-provider-ea.…"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0",
+  "captured_at": "2026-09-25T19:24:32Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,24 @@
+[package]
+name = "catalyst-db"
+version = "0.1.0"
+edition = "2024"
+description = "Postgres pool, the rendered fresh schema and the additive schema migrations of the catalyst node"
+publish = false
+
+[dependencies]
+tokio.workspace = true
+sqlx.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+thiserror.workspace = true
+uuid.workspace = true
+hex.workspace = true
+sha2.workspace = true
+url.workspace = true
+
+# The shared throwaway test database (`scratch`), for dependents' tests.
+[features]
+scratch = []
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

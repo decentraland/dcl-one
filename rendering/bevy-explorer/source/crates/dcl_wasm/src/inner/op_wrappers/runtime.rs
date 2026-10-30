@@ -1,0 +1,37 @@
+use crate::{serde_result, WasmError, WorkerContext};
+use wasm_bindgen::prelude::*;
+
+#[wasm_bindgen]
+pub async fn op_read_file(
+    op_state: &WorkerContext,
+    filename: String,
+) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::runtime::op_read_file(op_state.rc(), filename).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_scene_information(op_state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::runtime::op_scene_information(op_state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_realm_information(op_state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::runtime::op_realm_information(op_state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_world_time(op_state: &WorkerContext) -> Result<JsValue, WasmError> {
+    serde_result!(dcl_js::runtime::op_world_time(op_state.rc()).await)
+}
+
+#[wasm_bindgen]
+pub async fn op_camera_fov(op_state: &WorkerContext) -> Result<f32, WasmError> {
+    dcl_js::runtime::op_camera_fov(op_state.rc())
+        .await
+        .map_err(WasmError::from)
+}
+
+#[wasm_bindgen]
+pub fn op_get_platform(op_state: &WorkerContext) -> String {
+    dcl_js::runtime::op_get_platform(&*op_state.rc().borrow())
+}

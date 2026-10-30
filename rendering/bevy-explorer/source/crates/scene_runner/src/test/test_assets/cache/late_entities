@@ -1,0 +1,30 @@
+[
+    {
+        "version": "v3",
+        "type": "scene",
+        "id": "LateEntitiesTest",
+        "pointers": [],
+        "timestamp": 1,
+        "metadata": {
+            "main": "js.js",
+            "scene": {
+                "base": "0,0",
+                "parcels": [
+                    "0,0"
+                ]
+            },
+            "name": "late entities",
+            "runtimeVersion": "7"
+        },
+        "content": [
+            {
+                "file": "scene.json",
+                "hash": "late_entities_meta"
+            },
+            {
+                "file": "js.js",
+                "hash": "late_entities_js"
+            }
+        ]
+    }
+]

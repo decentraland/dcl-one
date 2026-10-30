@@ -1,0 +1,32 @@
+[package]
+name = "catalyst-price"
+version.workspace = true
+edition = "2024"
+description = "MANA and fiat price rates the shop and explore quote"
+publish = false
+
+[dependencies]
+dcl-http = { workspace = true, features = ["db"] }
+dcl-auth.workspace = true
+catalyst-jobs = { path = "../jobs" }
+catalyst-shared = { path = "../shared" }
+tokio.workspace = true
+axum.workspace = true
+sqlx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+anyhow.workspace = true
+uuid.workspace = true
+tower = { version = "0.5", features = ["util"], optional = true }
+
+[features]
+ts = ["catalyst-shared/ts"]
+test-support = ["dep:tower", "catalyst-shared/test-support"]
+
+[dev-dependencies]
+catalyst-shared = { path = "../shared", features = ["test-support"] }
+catalyst-db = { path = "../db", features = ["scratch"] }
+tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }

@@ -1,0 +1,66 @@
+{
+  "contract": "ICollectionStore",
+  "source": "src/credits/interfaces/ICollectionStore.sol",
+  "compiler": {
+    "solc": "0.8.20+commit.a1b79de6.Emscripten.clang",
+    "settings": {
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "*": [
+            "abi",
+            "evm.methodIdentifiers"
+          ]
+        }
+      }
+    },
+    "openzeppelin": {
+      "commit": "dbb6104ce834628e473d2173bbc9d47f81a9eec3",
+      "tag": "v5.0.2",
+      "npm": "5.0.2"
+    }
+  },
+  "abi": [
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "address",
+              "name": "collection",
+              "type": "address"
+            },
+            {
+              "internalType": "uint256[]",
+              "name": "ids",
+              "type": "uint256[]"
+            },
+            {
+              "internalType": "uint256[]",
+              "name": "prices",
+              "type": "uint256[]"
+            },
+            {
+              "internalType": "address[]",
+              "name": "beneficiaries",
+              "type": "address[]"
+            }
+          ],
+          "internalType": "struct ICollectionStore.ItemToBuy[]",
+          "name": "_itemsToBuy",
+          "type": "tuple[]"
+        }
+      ],
+      "name": "buy",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "methodIdentifiers": {
+    "buy((address,uint256[],uint256[],address[])[])": "a4fdc78a"
+  }
+}

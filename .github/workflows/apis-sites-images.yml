@@ -1,0 +1,289 @@
+name: APIs + Sites / Images
+on:
+  workflow_call:
+  workflow_run:
+    workflows: ['Bevy Explorer / CI']
+    types: [completed]
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the tested images to the configured Quay repositories
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+jobs:
+  source:
+    if: >-
+      github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+      run_id: ${{ steps.source.outputs.run_id }}
+      attempt: ${{ steps.source.outputs.attempt }}
+      build: ${{ steps.source.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_RUN: ${{ github.event.workflow_run.id }}
+        run: python3 tooling/bevy-ci.py source --consumer images
+  build:
+    if: github.event_name != 'workflow_run'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-26.04
+          - arch: arm64
+            runner: ubuntu-26.04-arm
+    # Cancel only compilation; publishing holds a separate non-cancelable slot.
+    concurrency:
+      group: apis-sites-build-${{ github.event_name }}-${{ github.ref }}-${{ matrix.arch }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || '' }}
+      cancel-in-progress: true
+    runs-on: ${{ matrix.runner }}
+    # Keep compilation bounded even on a cache miss. Cold ARM64 Node compilation
+    # can exceed this budget; retain dependency caches instead of extending CI.
+    timeout-minutes: 100
+    steps:
+      - name: Reserve disk space for native builds
+        run: |
+          # Hosted runners include SDKs unused by this Nix build.
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          df -h /
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: true
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: '3.12'
+      - name: Check the publication rules
+        run: |
+          python3 -m unittest discover -s tooling/tests -p 'test_image_publish.py' -v
+          python3 -m unittest discover -s tooling/tests -p 'test_ci_publication.py' -v
+      - name: Validate packaged docs before compiling applications
+        run: nix build 'git+file:.?lfs=1#sites.docsContent' --no-link -L
+      - name: Restore dependency binary cache
+        id: cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/image-nix
+          # Keep fallback restores inside this namespace: earlier caches omit
+          # Node's dev/libv8/npm outputs and cannot safely seed a partial build.
+          key: images-deps-node-all-${{ matrix.arch }}-${{ hashFiles('flake.*', 'infra/packages/**', 'services/catalyst/rust-toolchain.toml', 'services/catalyst/Cargo.lock', 'services/catalyst/**/Cargo.toml', 'apps/sites/package.json', 'apps/sites/pnpm-lock.yaml', 'apps/sites/pnpm-workspace.yaml', 'apps/sites/.npmrc') }}
+          restore-keys: |
+            images-deps-node-all-${{ matrix.arch }}-
+      - name: Identify the compiled APIs package
+        id: apis-package
+        run: |
+          drv=$(nix eval --raw .#catalyst.drvPath)
+          echo "key=apis-package-v1-${{ matrix.arch }}-${drv##*/}" >> "$GITHUB_OUTPUT"
+      - name: Restore the compiled APIs package
+        id: apis-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/apis-nix
+          # Exact Nix derivation: source, dependency pins, compiler and build flags.
+          # Container revision labels are rebuilt separately for this commit.
+          key: ${{ steps.apis-package.outputs.key }}
+      - name: Import cached store paths
+        run: |
+          for cache in .cache/image-nix .cache/apis-nix; do
+            if [ -f "$cache/nix-cache-info" ]; then
+              # Import canonical names; --all can enumerate hash-x aliases.
+              shopt -s nullglob
+              narinfo=("$cache"/*.narinfo)
+              paths=()
+              if [ ${#narinfo[@]} -gt 0 ]; then
+                mapfile -t paths < <(sed -n 's/^StorePath: //p' "${narinfo[@]}")
+              fi
+              if [ ${#paths[@]} -gt 0 ]; then
+                nix copy --no-check-sigs --from "file://$PWD/$cache" "${paths[@]}"
+              fi
+            fi
+            # Imported paths live in /nix/store. Only main exports misses below.
+            rm -rf "$cache"
+          done
+          df -h /
+      - name: Build the complete Sites toolchain
+        run: nix build .#sites-toolchain --no-link -L
+      - name: Build the APIs image
+        run: |
+          mkdir -p .cache/images
+          nix build .#image-apis --out-link .cache/images/apis -L
+      - name: Import the matching tested Bevy build for Sites
+        timeout-minutes: 95
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUIRE_PRODUCTION: ${{ github.event_name != 'pull_request' && '1' || '0' }}
+        run: |
+          flags=()
+          if [ "$REQUIRE_PRODUCTION" = 1 ]; then flags+=(--prepare-production .cache/images/play-producer.json); fi
+          python3 tooling/fetch-play.py --wait 0 "${flags[@]}"
+          echo "PLAY_WEB_DIR=$(python3 tooling/fetch-play.py --print-directory)" >> "$GITHUB_ENV"
+      - name: Build the Sites image with our Bevy artifact
+        env:
+          PLAY_ALLOW_UNOPTIMIZED: ${{ github.event_name == 'pull_request' && '1' || '0' }}
+        run: |
+          nix build --impure 'git+file:.?lfs=1#image-sites' --out-link .cache/images/sites -L
+          cp -L .cache/images/apis .cache/images/apis.tar.gz
+          cp -L .cache/images/sites .cache/images/sites.tar.gz
+          docker load --input .cache/images/apis.tar.gz
+          docker load --input .cache/images/sites.tar.gz
+          df -h /
+      - name: Test the exact images before publication
+        run: python3 tooling/image-smoke.py --revision "$GITHUB_SHA"
+      - name: Export reusable dependencies
+        if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        run: |
+          # Old restored paths are in /nix/store; save only this dependency set.
+          rm -rf .cache/image-nix
+          mkdir -p .cache/image-nix
+          nix copy --to "file://$PWD/.cache/image-nix?compression=zstd&compression-level=3" \
+            .#catalyst-deps .#catalyst-vendor .#sites-deps .#sites-runtime-deps .#sites-toolchain
+          du -sh .cache/image-nix .cache/images
+          df -h /
+      - name: Export the tested APIs package
+        if: github.ref == 'refs/heads/main' && steps.apis-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p .cache/apis-nix
+          # Runtime closure only: no extra Cargo target tree or dependency build cache.
+          nix copy --to "file://$PWD/.cache/apis-nix?compression=zstd&compression-level=3" .#catalyst
+          du -sh .cache/apis-nix
+      - name: Save the tested APIs package from main
+        if: github.ref == 'refs/heads/main' && steps.apis-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/apis-nix
+          key: ${{ steps.apis-package.outputs.key }}
+      - name: Upload tested images
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: apis-sites-images-${{ matrix.arch }}
+          path: |
+            .cache/images/*.tar.gz
+            .cache/images/play-producer.json
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+      - name: Upload the production receipt for validation
+        if: github.event_name != 'pull_request'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: apis-sites-producer-${{ matrix.arch }}
+          path: .cache/images/play-producer.json
+          if-no-files-found: error
+          retention-days: 3
+      - name: Save dependency binary cache from main
+        if: github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .cache/image-nix
+          key: ${{ steps.cache.outputs.cache-primary-key }}
+      - name: Preserve smoke logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: apis-sites-image-smoke-${{ matrix.arch }}
+          path: .cache/image-smoke/*.log
+          retention-days: 7
+  production-ready:
+    needs: [source, build]
+    if: >-
+      !cancelled() &&
+      ((github.event_name == 'workflow_run' && needs.source.result == 'success' && needs.source.outputs.build == 'true') ||
+       (needs.build.result == 'success' &&
+        ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+         (github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main')))) &&
+      vars.QUAY_APIS_REPOSITORY != '' && vars.QUAY_SITES_REPOSITORY != ''
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    concurrency:
+      group: apis-sites-validate-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || '' }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha || github.sha }}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          run-id: ${{ needs.source.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          pattern: apis-sites-producer-*
+          path: .cache/publish
+      - name: Require complete Bevy CI for both prepared images
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for arch in amd64 arm64; do
+            python3 tooling/fetch-play.py --verify-production \
+              ".cache/publish/apis-sites-producer-$arch/play-producer.json" --wait 0
+          done
+  publish:
+    concurrency:
+      group: apis-sites-publish
+      queue: max
+      cancel-in-progress: false
+    needs: [source, build, production-ready]
+    if: >-
+      !cancelled() && needs.production-ready.result == 'success'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    env:
+      IMAGE_REVISION: ${{ needs.source.outputs.sha || github.sha }}
+      IMAGE_REF: ${{ github.event_name == 'workflow_run' && 'refs/heads/main' || github.ref }}
+      QUAY_APIS_REPOSITORY: ${{ vars.QUAY_APIS_REPOSITORY }}
+      QUAY_SITES_REPOSITORY: ${{ vars.QUAY_SITES_REPOSITORY }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.source.outputs.sha || github.sha }}
+      - name: Skip superseded main publication
+        id: current
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ needs.source.outputs.run_id }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
+          SOURCE_ATTEMPT: ${{ needs.source.outputs.attempt }}
+          SOURCE_CONSUMER: images
+        run: python3 tooling/ci-publication.py
+      - uses: cachix/install-nix-action@75c75c31ebece974e48ebc36b4ad125bd97bd97b # v31.11.3
+        if: steps.current.outputs.publish == 'true'
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.current.outputs.publish == 'true'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: steps.current.outputs.publish == 'true'
+        with:
+          run-id: ${{ needs.source.outputs.run_id || github.run_id }}
+          github-token: ${{ github.token }}
+          pattern: apis-sites-images-*
+          path: .cache/publish
+      - name: Recheck producer identity before registry writes
+        if: steps.current.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for arch in amd64 arm64; do
+            python3 tooling/fetch-play.py --verify-production \
+              ".cache/publish/apis-sites-images-$arch/play-producer.json"
+          done
+      - name: Publish tested archives and multi-platform tags
+        if: steps.current.outputs.publish == 'true'
+        env:
+          QUAY_USERNAME: ${{ secrets.QUAY_USERNAME }}
+          QUAY_TOKEN: ${{ secrets.QUAY_TOKEN }}
+        run: nix shell .#image-tools --command python3 tooling/image-publish.py .cache/publish --revision "$IMAGE_REVISION" --ref "$IMAGE_REF"

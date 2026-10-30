@@ -1,0 +1,179 @@
+syntax = "proto3";
+package decentraland.kernel.apis;
+
+import "decentraland/common/vectors.proto";
+import "decentraland/sdk/components/common/avatar_mask.proto";
+import "decentraland/sdk/components/common/explorer_ui.proto";
+
+message MovePlayerToRequest {
+  decentraland.common.Vector3 new_relative_position = 1;
+  optional decentraland.common.Vector3 camera_target = 2;
+  optional decentraland.common.Vector3 avatar_target = 3;
+  optional float duration = 4; // by default (no duration param) the player is instantly moved and not interpolated
+}
+
+message TeleportToRequest {
+  // The parcel to land on. Omitted: the realm's default spawn (only meaningful with `realm`).
+  optional decentraland.common.Vector2 world_coordinates = 1;
+  // The realm the parcel belongs to: a world name (`foo.dcl.eth`) or a realm url. When set, the
+  // client changes realm (a full reconnect, even to the realm the player is in) and lands on the
+  // parcel there. Omitted: the parcel is in the player's current realm.
+  optional string realm = 2;
+}
+
+message TriggerEmoteRequest {
+  string predefined_emote = 1;
+  optional decentraland.sdk.components.common.AvatarMask mask = 2;
+}
+
+message ChangeRealmRequest {
+  string realm = 1;
+  optional string message = 2;
+}
+
+message OpenExternalUrlRequest {
+  string url = 1;
+}
+
+message OpenNftDialogRequest {
+  string urn = 1;
+}
+
+message UnblockPointerRequest {}
+
+message CommsAdapterRequest {
+  string connection_string = 1;
+}
+
+message TriggerSceneEmoteRequest {
+  string src = 1;
+  optional bool loop = 2;
+  optional decentraland.sdk.components.common.AvatarMask mask = 3;
+}
+
+message SuccessResponse {
+  bool success = 1;
+}
+
+message TriggerEmoteResponse { }
+
+message MovePlayerToResponse { 
+  bool success = 1;
+}
+
+message WalkPlayerToRequest {
+  decentraland.common.Vector3 new_relative_position = 1;
+  float stop_threshold = 2;
+  optional float timeout = 3; // max seconds before the request is failed; not passed to the movement scene
+}
+
+message WalkPlayerToResponse {
+  bool success = 1;
+}
+
+message TeleportToResponse { }
+
+message SetUiFocusRequest {
+  string element_id = 1;
+}
+
+message ClearUiFocusRequest { }
+
+message GetUiFocusRequest { }
+
+message UiFocusResponse {
+  // the element that is/was focussed
+  optional string element_id = 1;
+}
+
+message CopyToClipboardRequest {
+  string text = 1;
+}
+
+message EmptyResponse { }
+
+message StopEmoteRequest { }
+
+// Verdict of an OpenExplorerUi request (enum rather than a bool so new outcomes stay expressible).
+enum OpenExplorerUiResult {
+  UNSPECIFIED = 0;
+  OPENED = 1;
+  WAS_ALREADY_OPEN = 2;             // the slot the requested panel occupies is already in use; panels sharing a slot exclude each other
+  REJECTED_NOT_CURRENT_SCENE = 3;   // the standard restricted-actions current-scene gate rejected the call
+  REJECTED_FEATURE_DISABLED = 4;    // the requested section is hidden by feature flags or client doesn't have that feature
+  REJECTED_NO_USER_GESTURE = 5;     // rejected: the call did not originate from a user gesture
+}
+
+message OpenExplorerUiRequest {
+  decentraland.sdk.components.common.ExplorerUi ui = 1;
+  // Echoed back in the events this request produces, so they can be matched to their call.
+  // Unset means no correlation, and 0 is reserved for the same meaning on the result, so ids start at 1.
+  optional uint32 request_id = 2;
+
+  message ItemPurchaseParams {
+    string urn = 1;
+  }
+
+  oneof params {
+    ItemPurchaseParams item_purchase = 10;
+  }
+}
+
+message OpenExplorerUiResponse {
+  // Carries only the verdict of the open action. 
+  OpenExplorerUiResult open_result = 1;
+}
+
+service RestrictedActionsService {
+  // MovePlayerTo will move the player to a position relative to the current scene.
+  // If 'duration' field is used in the request, the success response depends on the
+  // whole interpolation being completed or interrupted (e.g: by input movement)
+  rpc MovePlayerTo(MovePlayerToRequest) returns (MovePlayerToResponse) {}
+
+  // TeleportTo will move the user to the specified world LAND parcel coordinates
+  // WalkPlayerTo will walk the player to a position relative to the current scene,
+  // managed by the movement controller scene. Returns success when the player reaches
+  // within stop_threshold distance, or false if the path is blocked, the player gets
+  // stuck, the player interrupts the walk with manual input, or the optional timeout expires.
+  rpc WalkPlayerTo(WalkPlayerToRequest) returns (WalkPlayerToResponse) {}
+
+  rpc TeleportTo(TeleportToRequest) returns (TeleportToResponse) {}
+
+  // TriggerEmote will trigger an emote in this current user
+  rpc TriggerEmote(TriggerEmoteRequest) returns (TriggerEmoteResponse) {}
+
+  // @deprecated, use TeleportTo with `realm` (and no `world_coordinates` for the realm's default spawn)
+  // ChangeRealm prompts the user to change to a specific realm
+  rpc ChangeRealm(ChangeRealmRequest) returns (SuccessResponse) {}
+
+  // OpenExternalUrl prompts the user to open an external link
+  rpc OpenExternalUrl(OpenExternalUrlRequest) returns (SuccessResponse) {}
+
+  // OpenNftDialog opens an NFT dialog.
+  rpc OpenNftDialog(OpenNftDialogRequest) returns (SuccessResponse) {}
+
+  // Asks the explorer to connect to other communications adapter, this feature
+  // can be used to join private game servers
+  rpc SetCommunicationsAdapter(CommsAdapterRequest) returns (SuccessResponse) {}
+
+  // TriggerSceneEmote will trigger an scene emote file in this current user
+  rpc TriggerSceneEmote(TriggerSceneEmoteRequest) returns (SuccessResponse) {}
+
+  // CopyToClipboard copies the provided text into the clipboard
+  // Sets the focus to a specific UI element
+  rpc SetUiFocus(SetUiFocusRequest) returns (UiFocusResponse) {}
+
+  // Clears the focus from any currently focused textentry or dropdown
+  rpc ClearUiFocus(ClearUiFocusRequest) returns (UiFocusResponse) {}
+
+  // Returns the element_id of any currently focused textentry or dropdown
+  rpc GetUiFocus(GetUiFocusRequest) returns (UiFocusResponse) {}
+
+  rpc CopyToClipboard(CopyToClipboardRequest) returns (EmptyResponse) {}
+
+  // StopEmote will stop the current emote
+  rpc StopEmote(StopEmoteRequest) returns (SuccessResponse) {}
+
+  // OpenExplorerUi opens an explorer panel, fullscreen or modal, and returns the open verdict.
+  rpc OpenExplorerUi(OpenExplorerUiRequest) returns (OpenExplorerUiResponse) {}
+}

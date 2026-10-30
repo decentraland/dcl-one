@@ -1,0 +1,836 @@
+/* from: marketplace@3bf3662f:webapp/src/components/AssetPage/{BaseDetail/BaseDetail.css, OnBack/OnBack.css,
+   Title/Title.module.css, JumpIn/JumpIn.module.css, Description/Description.module.css, Owner/Owner.css,
+   Highlight/Highlight.css, Highlights/Highlights.css, ProximityHighlights/ProximityHighlights.css,
+   SaleRentActionBox/SaleRentActionBox.module.css, EstateDetail/EstateDetail.css,
+   EstateDetail/ParcelCoordinates/ParcelCoordinates.module.css}, components/{Coordinate/Coordinate.module.css,
+   AssetBrowse/Box/Box.module.css, DetailsBox/DetailsBox.module.css, DetailsBox/Info/Info.module.css,
+   BidButton/BidButton.module.css, PageHeader/PageHeader.css}; decentraland-ui Badge / Button / sub header.
+   Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0. */
+
+.shop-landtoken {
+  --lt-primary: #ff2d55;
+  --lt-primary-hover: #ff5273;
+  --lt-text: #fcfcfc;
+  --lt-secondary-text: #cfcdd4;
+  --lt-muted: #736e7d;
+  --lt-badge: #37333d;
+  --lt-card: rgba(22, 21, 24, 0.64);
+  --lt-tab: rgb(31, 27, 35);
+  --lt-divider: rgba(255, 255, 255, 0.2);
+  --lt-gray: rgba(115, 110, 125, 0.24);
+  --lt-gray-hover: rgba(115, 110, 125, 0.4);
+  --lt-header-height: 420px;
+  color: var(--lt-text);
+  font-family: Inter, var(--font-sans, system-ui), sans-serif;
+  width: 100%;
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 64px 48px 96px;
+  box-sizing: border-box;
+}
+
+.shop-detail:has(> .shop-landtoken) > :not(.shop-landtoken) {
+  display: none !important;
+}
+.shop-detail:has(> .shop-landtoken) {
+  padding-top: 0;
+  padding-left: 0;
+  padding-right: 0;
+  max-width: none;
+}
+
+.shop-landtoken *,
+.shop-landtoken *::before,
+.shop-landtoken *::after {
+  box-sizing: border-box;
+}
+
+.shop-landtoken__top {
+  display: flex;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.shop-landtoken__back {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  text-decoration: none;
+  border-radius: 6px;
+}
+.shop-landtoken__back img {
+  width: 20px;
+  height: 20px;
+}
+.shop-landtoken__back:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.shop-landtoken__header {
+  position: relative;
+  height: var(--lt-header-height);
+  margin-bottom: 35px;
+  overflow: hidden;
+}
+.shop-landtoken__header--empty {
+  background: rgba(24, 20, 26, 0.6);
+}
+.shop-landtoken__map {
+  width: 100%;
+  height: 100%;
+}
+
+.shop-landatlas {
+  position: relative;
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.66);
+  touch-action: none;
+  user-select: none;
+  cursor: grab;
+  --atlas-x: 0px;
+  --atlas-y: 0px;
+}
+.shop-landatlas::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: #0d0b0e;
+  -webkit-mask-image: linear-gradient(90deg, transparent 1px, #000 1px), linear-gradient(transparent 1px, #000 1px);
+  mask-image: linear-gradient(90deg, transparent 1px, #000 1px), linear-gradient(transparent 1px, #000 1px);
+  -webkit-mask-composite: source-in;
+  mask-composite: intersect;
+  -webkit-mask-size: 7px 7px;
+  mask-size: 7px 7px;
+  -webkit-mask-position: var(--atlas-x) var(--atlas-y);
+  mask-position: var(--atlas-x) var(--atlas-y);
+}
+.shop-landatlas:active {
+  cursor: grabbing;
+}
+.shop-landatlas__stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  background: #18141a;
+}
+.shop-landatlas__image {
+  position: absolute;
+  top: calc(-100% / 680);
+  left: calc(-100% / 680);
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  pointer-events: none;
+  user-select: none;
+}
+.shop-landatlas__layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.shop-landatlas__stroke {
+  fill: #ff0044;
+}
+.shop-landatlas__fill {
+  fill: #ff9990;
+}
+.shop-landtoken__header--dissolved .shop-landtoken__map {
+  filter: blur(5px);
+  pointer-events: none;
+}
+.shop-landtoken__dissolved {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.shop-landtoken__dissolved > div {
+  background: #18141a;
+  padding: 8px;
+  border-radius: 8px;
+  color: var(--lt-text);
+}
+
+.shop-landtoken__container {
+  display: flex;
+  flex-direction: column;
+}
+.shop-landtoken__info {
+  width: 100%;
+  display: flex;
+}
+.shop-landtoken__left {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 48px;
+  margin-right: 48px;
+}
+.shop-landtoken__right {
+  display: flex;
+  flex-direction: column;
+}
+.shop-landtoken__action-box {
+  width: 330px;
+}
+.shop-landtoken__below {
+  margin-top: 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+}
+.shop-landtoken__below:empty {
+  display: none;
+}
+
+.shop-landtoken__title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 600;
+  line-height: 42px;
+  letter-spacing: 0.4px;
+  color: var(--lt-text);
+  overflow-wrap: anywhere;
+}
+.shop-landtoken__badges {
+  margin-top: 15px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.shop-landtoken__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 5px;
+  background: var(--lt-badge);
+  color: var(--lt-text);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.shop-landtoken__pin {
+  width: 16px;
+  height: 16px;
+  margin-left: -4px;
+}
+.shop-landtoken__badge--jump {
+  background: var(--lt-primary);
+  font-weight: 400;
+  text-transform: uppercase;
+  gap: 6px;
+}
+.shop-landtoken__badge--jump:hover {
+  color: var(--lt-text);
+  background: var(--lt-primary-hover);
+}
+.shop-landtoken__badge--jump img {
+  width: 16px;
+  height: 16px;
+}
+
+.shop-landtoken__subheader,
+.shop-landtoken__stat-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--lt-text);
+}
+.shop-landtoken__stat-title {
+  font-weight: 500;
+}
+.shop-landtoken__highlights .shop-landtoken__subheader,
+.shop-landtoken__parcels .shop-landtoken__subheader,
+.shop-landtoken__bids .shop-landtoken__subheader {
+  font-weight: 400;
+}
+.shop-landtoken__description-text {
+  font-size: 14px;
+  line-height: 26px;
+  letter-spacing: 0.2px;
+  overflow-wrap: break-word;
+}
+.shop-landtoken__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--lt-primary);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: none;
+}
+.shop-landtoken__link:hover {
+  color: var(--lt-primary-hover);
+}
+
+.shop-landtoken__profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--lt-text);
+  text-decoration: none;
+}
+.shop-landtoken__profile-name {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 30px;
+  letter-spacing: 0.315px;
+}
+.shop-landtoken__avatar {
+  display: inline-block;
+  flex: none;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #ecebed;
+}
+.shop-landtoken__avatar--blank {
+  background: linear-gradient(135deg, #a524b3, #ff2d55);
+}
+
+.shop-landtoken__highlights .shop-landtoken__subheader {
+  margin-bottom: 13px;
+}
+.shop-landtoken__highlight-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px 64px;
+}
+.shop-landtoken__highlight {
+  display: flex;
+  align-items: center;
+}
+.shop-landtoken__highlight-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 8px;
+  background: var(--lt-badge);
+  display: flex;
+  flex: none;
+  overflow: hidden;
+}
+.shop-landtoken__highlight-icon img {
+  width: 100%;
+  height: 100%;
+}
+.shop-landtoken__highlight-text {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  margin-left: 12px;
+  font-size: 15px;
+  line-height: 24px;
+}
+.shop-landtoken__highlight-name {
+  font-weight: 600;
+}
+.shop-landtoken__highlight-desc {
+  color: var(--lt-secondary-text);
+}
+
+.shop-landtoken__sale {
+  border-radius: 12px;
+  margin-bottom: 12px;
+  background: var(--lt-card);
+}
+.shop-landtoken__sale .shop-land-note {
+  margin: 0;
+  border-radius: 12px 12px 0 0;
+}
+.shop-landtoken__actions {
+  padding: 24px;
+}
+.shop-landtoken__views {
+  display: flex;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 12px 12px 0 0;
+}
+.shop-landtoken__view {
+  flex: 1 1 auto;
+  width: 100%;
+  background: var(--lt-tab);
+  text-align: center;
+  padding: 15px 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 500;
+  font-size: 17px;
+  border: none;
+  cursor: pointer;
+}
+.shop-landtoken__view:disabled {
+  background: transparent;
+  cursor: auto;
+}
+.shop-landtoken__price {
+  display: flex;
+  flex-direction: column;
+}
+.shop-landtoken__price-title {
+  font-weight: 500;
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--lt-muted);
+}
+.shop-landtoken__price-value {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 20px;
+}
+.shop-landtoken__price-value svg {
+  color: var(--lt-primary);
+}
+.shop-landtoken__price-mana {
+  font-size: 21px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+}
+.shop-landtoken__per-day {
+  font-size: 15px;
+  margin-left: -4px;
+}
+.shop-landtoken__fiat {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--lt-text);
+}
+.shop-landtoken__upper {
+  margin-bottom: 20px;
+  font-size: 16px;
+  line-height: 1.4;
+}
+.shop-landtoken__upper-desc {
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+.shop-landtoken__sale-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.shop-landtoken__primary,
+.shop-landtoken__manage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 40px;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--lt-primary);
+  color: #fff;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+}
+.shop-landtoken__primary:hover {
+  background: var(--lt-primary-hover);
+  color: #fff;
+}
+.shop-landtoken__primary svg {
+  color: #fff;
+}
+.shop-landtoken__primary[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.shop-landtoken__primary--builder {
+  margin-bottom: 15px;
+}
+.shop-landtoken__manage {
+  margin-top: 24px;
+  background: var(--lt-gray);
+}
+.shop-landtoken__manage:hover {
+  background: var(--lt-gray-hover);
+  color: #fff;
+}
+.shop-landtoken__bid {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 40px;
+  padding: 0 5px;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+.shop-landtoken__bid:hover {
+  color: #fff;
+}
+.shop-landtoken__bid img {
+  width: 16px;
+}
+.shop-landtoken__bid[aria-disabled="true"] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.shop-landtoken__message {
+  text-align: center;
+  font-size: 15px;
+  background: var(--lt-gray);
+  padding: 8px 0;
+  border-radius: 0 0 12px 12px;
+}
+.shop-landtoken__rented-until {
+  font-weight: 800;
+}
+
+.shop-landtoken__box {
+  border: 1px solid var(--lt-divider);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  width: 330px;
+}
+.shop-landtoken__box-header {
+  margin: 13px 20px;
+  text-transform: uppercase;
+  color: #fff;
+  font-weight: 600;
+  font-size: 13px;
+}
+.shop-landtoken__box-content {
+  padding: 0 24px;
+  margin-bottom: 8px;
+}
+.shop-landtoken__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.shop-landtoken__row-title {
+  font-weight: 400;
+  font-size: 17px;
+  line-height: 26px;
+  flex: none;
+}
+.shop-landtoken__row-content {
+  font-size: 14px;
+  line-height: 26px;
+  text-align: right;
+  min-width: 0;
+}
+.shop-landtoken__row-content a {
+  color: inherit;
+}
+.shop-landtoken__inline-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+}
+
+.shop-landtoken__parcels {
+  margin-top: 48px;
+}
+.shop-landtoken__coordinates {
+  display: grid;
+  justify-content: space-between;
+  gap: 6px;
+  grid-template-columns: repeat(auto-fill, 110px);
+  overflow: hidden;
+}
+.shop-landtoken__coordinates--collapsed {
+  max-height: 35px;
+}
+.shop-landtoken__coordinates a {
+  text-decoration: none;
+}
+.shop-landtoken__coordinates .shop-landtoken__badge {
+  width: 110px;
+  cursor: pointer;
+}
+.shop-landtoken__coordinates a:hover .shop-landtoken__badge {
+  background: var(--lt-primary);
+}
+.shop-landtoken__more-text {
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.shop-landtoken__show-more {
+  margin-top: 15px;
+  display: flex;
+  justify-content: center;
+}
+.shop-landtoken__show-more .shop-landtoken__link {
+  font-size: 15px;
+}
+
+.shop-landtoken .shop-land-box {
+  background: transparent;
+  border-color: var(--lt-divider);
+}
+
+.shop-landtoken__notice {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  font-size: 15px;
+}
+.shop-landtoken__notice p {
+  margin: 0;
+}
+
+.shop-landtoken__period-title {
+  margin-top: 18px;
+  font-weight: 500;
+  font-size: 13px;
+  text-transform: uppercase;
+  color: var(--lt-muted);
+}
+.shop-landtoken__period {
+  width: 100%;
+  height: 48px;
+  margin: 8px 0 20px;
+  padding: 0 14px;
+  border: 1px solid var(--lt-divider);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--lt-text);
+  font: inherit;
+  font-size: 15px;
+  color-scheme: dark;
+}
+.shop-landtoken__period option {
+  background: #242129;
+  color: var(--lt-text);
+}
+
+.shop-landtoken__inline-mana {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.shop-landtoken__bid-list {
+  margin-top: 13px;
+}
+.shop-landtoken__bid-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr 1fr 266px;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+  margin-bottom: 20px;
+  border-radius: 8px;
+  background: var(--lt-card);
+}
+.shop-landtoken__stat-sub {
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+  color: var(--lt-muted);
+  white-space: nowrap;
+}
+.shop-landtoken__stat-value,
+.shop-landtoken__bid-row .shop-landtoken__inline-profile {
+  margin-top: 4px;
+  font-size: 17px;
+  line-height: 26px;
+  color: var(--lt-text);
+  white-space: nowrap;
+}
+.shop-landtoken__bid-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+}
+.shop-landtoken__small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 36px;
+  padding: 0 20px;
+  border: 2px solid rgba(255, 255, 255, 0.24);
+  border-radius: 6px;
+  color: var(--lt-text);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  text-decoration: none;
+}
+.shop-landtoken__small--primary {
+  border-color: var(--lt-primary);
+  background: var(--lt-primary);
+}
+
+.shop-landtoken__table {
+  display: flex;
+  flex-direction: column;
+  margin-top: 24px;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.4);
+}
+.shop-landtoken__table-tabs {
+  display: flex;
+  align-items: center;
+  height: 69px;
+  padding-left: 20px;
+  border-bottom: 1px solid var(--lt-divider);
+}
+.shop-landtoken__table-title {
+  display: flex;
+  align-items: center;
+  height: 46px;
+  margin-top: 22px;
+  font-size: 22px;
+  font-weight: 700;
+  border-bottom: 2px solid var(--lt-primary);
+}
+.shop-landtoken__table-grid {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  line-height: 24px;
+  color: #fff;
+}
+.shop-landtoken__table-grid th {
+  padding: 18px;
+  border: 1px solid var(--lt-divider);
+  font-size: 16px;
+  font-weight: 700;
+  text-align: left;
+}
+.shop-landtoken__table-grid td {
+  height: 65px;
+  padding: 15.5px;
+  border: 1px solid var(--lt-divider);
+}
+.shop-landtoken__table-grid tr > :first-child {
+  padding: 18px;
+  border-left: 0;
+}
+.shop-landtoken__table-grid tr > :last-child {
+  border-right: 0;
+}
+.shop-landtoken__table-grid tr:last-child td {
+  border-bottom: 0;
+}
+.shop-landtoken__table-grid a {
+  color: var(--lt-text);
+}
+.shop-landtoken__pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 20px;
+  padding: 11px 20px;
+  color: var(--lt-secondary-text);
+}
+.shop-landtoken__pages {
+  display: flex;
+  align-items: center;
+}
+.shop-landtoken__page {
+  min-width: 36px;
+  height: 36px;
+  border: 0;
+  background: transparent;
+  color: var(--lt-text);
+  font: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+}
+.shop-landtoken__page[aria-current="page"] {
+  background: rgba(255, 255, 255, 0.1);
+}
+.shop-landtoken__page-gap {
+  padding: 0 8px;
+}
+
+@media (max-width: 768px) {
+  .shop-landtoken {
+    --lt-header-height: 400px;
+    padding: 24px 16px 64px;
+  }
+  .shop-landtoken__header {
+    margin-top: 20px;
+  }
+  .shop-landtoken__container {
+    padding: 0 16px;
+  }
+  .shop-landtoken__info {
+    flex-direction: column;
+    gap: 24px;
+  }
+  .shop-landtoken__left {
+    margin-right: 0;
+  }
+  .shop-landtoken__action-box,
+  .shop-landtoken__box {
+    width: 100%;
+  }
+  .shop-landtoken__highlight-row {
+    justify-content: space-between;
+    gap: 24px;
+  }
+  .shop-landtoken__bid-row {
+    grid-template-columns: 1fr 1fr;
+  }
+  .shop-landtoken__bid-actions {
+    grid-column: 1 / -1;
+    justify-content: stretch;
+  }
+  .shop-landtoken__table {
+    margin-top: 16px;
+  }
+  .shop-landtoken__table-grid [data-wide] {
+    display: none;
+  }
+  .shop-landtoken__table-grid th,
+  .shop-landtoken__table-grid td {
+    padding: 12px 10px;
+  }
+  .shop-landtoken__pagination {
+    flex-direction: column;
+    gap: 10px;
+  }
+}
+
+.shop-landtoken--rent .shop-landtoken__left {
+  gap: 24px;
+}
+.shop-landtoken--rent .shop-land-box a {
+  color: var(--lt-primary);
+}
+.shop-landtoken--rent .shop-land-box a:hover {
+  color: var(--lt-primary-hover);
+}

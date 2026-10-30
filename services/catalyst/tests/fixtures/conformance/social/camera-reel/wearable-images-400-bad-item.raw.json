@@ -1,0 +1,29 @@
+{
+  "method": "GET",
+  "url": "https://camera-reel-service.decentraland.org/api/wearables/not-an-item/images",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 400,
+  "status_text": "Bad Request",
+  "response_headers": {
+    "access-control-expose-headers": "content-type",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c69bf7d76e508-TXL",
+    "connection": "keep-alive",
+    "content-length": "67",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:25:08 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:25:08Z",
+  "elapsed_ms": 147,
+  "body_bytes": 67,
+  "body_file": "wearable-images-400-bad-item.raw.body",
+  "redacted": false
+}

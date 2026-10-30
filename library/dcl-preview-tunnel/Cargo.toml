@@ -1,0 +1,24 @@
+[package]
+name = "dcl-preview-tunnel"
+version = "0.32.0"
+edition = "2024"
+description = "Self-hosted preview tunnel for dcl-scene-cli: agents dial out one WebSocket trunk, the service allocates public /t/<id> routes and multiplexes inbound HTTP + WebSocket traffic back over the trunk. Port 5167."
+workspace = "../../services/catalyst"
+
+[[bin]]
+name = "dcl-preview-tunnel"
+path = "src/main.rs"
+
+[dependencies]
+dcl-preview-tunnel-protocol.workspace = true
+tokio = { workspace = true }
+axum = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+futures = { workspace = true }
+rand = { workspace = true }
+
+[dev-dependencies]
+tokio-tungstenite = { workspace = true }
+reqwest = { workspace = true, features = ["http2", "charset", "query", "multipart", "form"] }

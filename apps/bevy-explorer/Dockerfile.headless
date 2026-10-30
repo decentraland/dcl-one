@@ -1,0 +1,18 @@
+FROM ubuntu:22.04@sha256:0a9887931b0e38af2e3487ed39e29436b0535c4f3f52e57745baaf79d1898956
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates libasound2 libudev1 libgl1 libx11-6 libxext6 libssl3 libstdc++6 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 1000 explorer && useradd --uid 1000 --gid 1000 --home-dir /data explorer \
+    && mkdir /data && chown 1000:1000 /data
+ARG VCS_REF
+LABEL org.opencontainers.image.title="bevy-explorer-headless" \
+      org.opencontainers.image.source="https://github.com/decentraland/dcl-one" \
+      org.opencontainers.image.revision=$VCS_REF \
+      org.opencontainers.image.licenses="Apache-2.0"
+COPY --chmod=755 dist/headless/headless dist/headless/dcl_deno_ipc /usr/local/bin/
+COPY dist/headless/LICENSE /usr/share/doc/bevy-explorer/LICENSE
+ENV HOME=/data
+WORKDIR /data
+USER 1000:1000
+ENTRYPOINT ["/usr/local/bin/headless"]
+CMD ["--help"]

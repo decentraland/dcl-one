@@ -1,0 +1,207 @@
+/* from: shop@2d3bf62:app/src/components/OutfitsRow/OutfitsRow.styles.ts, app/src/components/OutfitCard/OutfitCard.styles.ts */
+.shop-chrome .shop-outfits-row__viewport {
+  --rail-arrow-top: 55%;
+}
+.shop-chrome .shop-outfits-row__track {
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: calc((100% - 80px) / 6);
+  gap: 16px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 18px;
+  margin: 0 0 0 -18px;
+  scroll-padding-inline: 18px;
+  scroll-snap-type: x mandatory;
+  scrollbar-width: none;
+}
+.shop-chrome .shop-outfits-row__track::-webkit-scrollbar {
+  display: none;
+}
+.shop-chrome .shop-outfits-row__track > * {
+  scroll-snap-align: start;
+  min-width: 0;
+}
+@media (max-width: 1200px) {
+  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 48px) / 4); }
+}
+@media (max-width: 900px) {
+  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 32px) / 3); }
+}
+@media (max-width: 720px) {
+  .shop-chrome .shop-outfits-row__track { grid-auto-columns: calc((100% - 16px) / 2); }
+}
+@media (max-width: 768px) {
+  .shop-chrome .shop-outfits-row__track {
+    grid-auto-columns: 100%;
+    padding: 12px 0;
+    margin-left: 0;
+    scroll-padding-inline: 0;
+  }
+}
+
+.shop-chrome .shop-outfit-card {
+  position: relative;
+  display: block;
+  aspect-ratio: 27 / 40;
+  color: #fff;
+  text-decoration: none;
+}
+.shop-chrome .shop-outfit-card__frame {
+  position: absolute;
+  top: 10%;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 15px;
+}
+.shop-chrome .shop-outfit-card__frame::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 20px;
+  padding: 2px;
+  background: linear-gradient(69deg, #ffbc5b 0%, #ff2d55 100%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.shop-chrome .shop-outfit-card__mask {
+  position: absolute;
+  inset: 0;
+  clip-path: inset(-1000px 0 0 0 round 0 0 15px 15px);
+  pointer-events: none;
+}
+.shop-chrome .shop-outfit-card__thumb {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform-origin: 50% 50%;
+  user-select: none;
+  transition: transform 0.2s ease;
+}
+.shop-chrome .shop-outfit-card__fade,
+.shop-chrome .shop-outfit-card__scrim {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  border-radius: 0 0 15px 15px;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+.shop-chrome .shop-outfit-card__scrim {
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, 0.8) 80%);
+  opacity: 0;
+}
+.shop-chrome .shop-outfit-card__body {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.shop-chrome .shop-outfit-card__top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  column-gap: 6px;
+  align-items: center;
+}
+.shop-chrome .shop-outfit-card__name {
+  grid-column: 1;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.6;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shop-chrome .shop-outfit-card__meta {
+  grid-column: 1;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.shop-chrome .shop-outfit-card__price {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.shop-chrome .shop-outfit-card__price-sk {
+  display: block;
+  width: 56px;
+  height: 18px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.2);
+}
+.shop-chrome .shop-outfit-card__cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 40px;
+  border: 0;
+  border-radius: 12px;
+  background: #fff;
+  color: var(--shop-text, #161518);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.046em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.shop-chrome .shop-outfit-card__cta:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+@media (hover: hover) {
+  .shop-chrome .shop-outfit-card:hover .shop-outfit-card__frame::after { opacity: 1; }
+  .shop-chrome .shop-outfit-card:hover .shop-outfit-card__thumb { transform: scale(1.035); }
+  .shop-chrome .shop-outfit-card:hover .shop-outfit-card__body { opacity: 1; pointer-events: auto; }
+  .shop-chrome .shop-outfit-card:hover .shop-outfit-card__scrim { opacity: 1; }
+  .shop-chrome .shop-outfit-card:hover .shop-outfit-card__fade { opacity: 0; }
+}
+.shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__frame::after { opacity: 1; }
+.shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__thumb { transform: scale(1.035); }
+.shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__body { opacity: 1; pointer-events: auto; }
+.shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__scrim { opacity: 1; }
+.shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__fade { opacity: 0; }
+@media (hover: none) {
+  .shop-chrome .shop-outfit-card__body { opacity: 1; pointer-events: auto; }
+  .shop-chrome .shop-outfit-card__scrim { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shop-chrome .shop-outfit-card:hover .shop-outfit-card__thumb,
+  .shop-chrome .shop-outfit-card:focus-within .shop-outfit-card__thumb { transform: none; }
+}
+@media (max-width: 768px) {
+  .shop-chrome .shop-outfit-card { aspect-ratio: 5 / 6; }
+  .shop-chrome .shop-outfit-card__frame { top: 0; }
+  .shop-chrome .shop-outfit-card__mask { clip-path: inset(0 round 15px); }
+  .shop-chrome .shop-outfit-card__thumb { object-position: top; }
+  .shop-chrome .shop-outfit-card__name { font-size: 15px; }
+  .shop-chrome .shop-outfit-card__price { grid-row: 2; font-size: 15px; }
+}

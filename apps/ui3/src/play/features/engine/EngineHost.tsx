@@ -1,0 +1,125 @@
+// Hosts the engine IN THIS DOCUMENT (Approach A — no iframe, no old boot page): renders the
+// canvas the wasm attaches to (#mygame-canvas) at z-0 behind the HUD, injects the engine's boot
+// module (deploy/web/engine/boot.js) plus its CDN media libs, and hands the EngineRpc this very
+// window — all the engine globals (__bevyLaunch, __bevyLoadProgress, __bevyPanic, window.engine)
+// live here now. Same-origin/same-document, so no postMessage or contentWindow plumbing.
+
+import { useEffect } from 'react'
+import type { EngineRpc } from '../../engine/engineRpc'
+import { bridgeChannelName } from '../../engine/protocol'
+import { engineServiceOptions } from '../../lib/baseDomain'
+import { bootMode } from '../../lib/bootMode'
+import { EDITOR_SCENE, editorSession, isEditorScene } from '../../lib/editorEmbed'
+import { PAGE_DIR } from '../../lib/publicUrl'
+import { inShell, shellRequest } from '../../lib/shell'
+// Moved to lib/systemScene.ts; whether a link may override it is lib/launchGate.ts's call.
+import { SYSTEM_SCENE } from '../../lib/systemScene'
+import { launchOptionsFromUrl, type LaunchOptions } from '../../lib/webParams'
+
+// Engine media libs the wasm expects as globals (LivekitClient, Hls) — loaded from CDNs like the
+// old boot page did. Pinned with integrity hashes: they run in the app, which the shell signs for.
+const CDN_LIBS = [
+  {
+    src: 'https://cdn.jsdelivr.net/npm/livekit-client@2.22.4/dist/livekit-client.umd.min.js',
+    integrity: 'sha384-JNwhkdJAnQYgi7FD+ASalB7FiUYwy+oCbt+5PgiIKYp7//rkJN4Gm8JGw2/13hit'
+  },
+  {
+    src: 'https://cdn.jsdelivr.net/npm/hls.js@1.7.3/dist/hls.min.js',
+    integrity: 'sha384-cciJ0zi8d1uMKC2zJd7jvPY4HQt7W4ByUI/FlMkltvBi31aW61rcpVBhpmW8/NwX'
+  }
+]
+
+let injected = false
+function injectEngine(): void {
+  // Seed window.__bridgeSession BEFORE the engine boots: engine.js forwards it to the scene
+  // sandbox, which then scopes the bridge BroadcastChannel to this tab (issue #1089). The suffix
+  // is opt-in per host page — engine.js never generates one — so this call is what turns it on.
+  // Above the guard so a host page that pre-set __bevyBootConfig (and bails below) still seeds
+  // the id the page-side channel constructors will use.
+  // In the scene editor's viewport the session is the editor's, so the editor scene's bus channel
+  // (suffixed by the sandbox) is the one the editor page opens.
+  const editor = editorSession(bootMode().systemScene, location.hash)
+  if (editor != null) (window as { __bridgeSession?: string }).__bridgeSession = editor
+  bridgeChannelName()
+
+  // Once per page — the engine is a singleton (StrictMode remounts and HMR must not double-boot).
+  if (injected || window.__bevyBootConfig != null) return
+  injected = true
+
+  const params = new URLSearchParams(location.search)
+  // pkg/ fetch base: the pinned engine artifact Sites serves next to this page (/play/engine).
+  window.PUBLIC_URL = new URL('engine', PAGE_DIR).href
+  // Every launch param the engine's web param table lists, read from the entry url; the
+  // `resolved` ones are what this HUD resolved for itself (lib/baseDomain.ts), and only the
+  // ui scene has a HUD-side default (our bundled bridge scene, unless a link overrode it).
+  // `autopilot` is never handed over, on any host: /play has no benchmark run, and the key stays
+  // out of the options altogether (not `false`), so an engine that predates the field still launches.
+  window.__bevyBootConfig = {
+    ...launchOptionsFromUrl(params, ['autopilot']),
+    ...engineServiceOptions(),
+    // the engine takes a bare value for a world name, so the editor scene goes as its full url
+    systemScene: (() => {
+      const scene = bootMode().systemScene
+      return scene == null ? SYSTEM_SCENE : isEditorScene(scene) ? EDITOR_SCENE : scene
+    })(),
+    // a host option: the engine freezes each scene after its first frame until the editor plays it
+    ...(editor != null ? { editor: true } : {})
+  }
+  // A page switch, not a launch option (native could never use it): boot.js hands it to the wasm
+  // directly. Gated like a service override (lib/launchGate.ts). A query value decodes `+` as a
+  // space; base64 has no spaces, so each one was a `+`.
+  const pulseCertificateHash = params.get('pulseCertificateHash')?.replaceAll(' ', '+')
+  if (pulseCertificateHash) window.__bevyPulseCertificateHash = pulseCertificateHash
+
+  // The engine's signer for an identity whose key the web shell holds (crates/wallet remote_signer):
+  // the ephemeral address and the message to sign, answered with the signature's hex.
+  if (inShell) {
+    window.__signMessage = (signer, message) => shellRequest<string>('sign', { signer, message })
+  }
+
+  for (const lib of CDN_LIBS) {
+    const s = document.createElement('script')
+    s.src = lib.src
+    s.integrity = lib.integrity
+    s.crossOrigin = 'anonymous'
+    document.head.appendChild(s)
+  }
+  const boot = document.createElement('script')
+  boot.type = 'module'
+  boot.src = new URL('engine/boot.js', PAGE_DIR).href
+  document.head.appendChild(boot)
+}
+
+declare global {
+  interface Window {
+    PUBLIC_URL?: string
+    // Forwarded verbatim to the engine's launch options (src/web_options.rs, keyed by the web
+    // param table) — an unknown key fails the launch.
+    __bevyBootConfig?: LaunchOptions
+    // The SHA-256 (hex or base64) of a self-signed Pulse server's certificate to pin the
+    // WebTransport connection to; boot.js passes it to engine_set_pulse_certificate_hash.
+    __bevyPulseCertificateHash?: string
+    __signMessage?: (signer: string, message: string) => Promise<string>
+  }
+}
+
+export function EngineHost({ rpc }: { rpc: EngineRpc }): React.JSX.Element {
+  useEffect(() => {
+    injectEngine()
+    rpc.setWindow(window)
+    return () => rpc.setWindow(null)
+  }, [rpc])
+
+  return (
+    <div
+      id="canvas-parent"
+      style={{ position: 'fixed', inset: 0, width: '100%', height: '100%', zIndex: 0 }}
+    >
+      {/* The wasm attaches to this canvas (bevy's canvas selector). */}
+      <canvas id="mygame-canvas" style={{ width: '100%', height: '100%', display: 'block' }} />
+      {/* gpu_cache.js flips this to flex while shaders compile; engineRpc.renderBusy() reads it
+          to hold the loading overlay until the first real frame. No visual — React owns the UI. */}
+      <div id="shader-compiling" style={{ display: 'none' }} />
+    </div>
+  )
+}

@@ -1,0 +1,114 @@
+/* from: shop@2d3bf62:app/src/pages/Cart.styles.ts (TotalLine, TotalLabel, TotalValue, TotalSide). Scoped to
+   .shop-summary. */
+.shop-summary {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  color: #fcfcfc;
+}
+
+.shop-summary__total {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.shop-summary__total dt {
+  color: var(--shop-gray-4, #cfcdd4);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.57;
+}
+
+.shop-summary__values {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 8px;
+  margin: 0;
+}
+
+.shop-summary__value {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  font-size: 24px;
+  font-weight: 700;
+}
+
+.shop-summary__value .shop-amount {
+  gap: 8px;
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.shop-summary__row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  font-size: 14px;
+}
+
+.shop-summary__row dt {
+  color: var(--shop-gray-4, #cfcdd4);
+}
+
+.shop-summary__row dd {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 8px;
+  margin: 0;
+}
+
+.shop-summary__row--balance {
+  padding-top: 12px;
+  border-top: 1px solid var(--shop-card-line, rgba(160, 155, 168, 0.25));
+}
+
+.shop-summary__sub {
+  color: var(--shop-gray-4, #cfcdd4);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1;
+}
+
+.shop-summary__short {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  color: #ffb86b;
+  font-size: 13px;
+}
+
+.shop-summary__topup {
+  padding: 4px 12px;
+  border: 1px solid #fcfcfc;
+  border-radius: var(--shop-radius-pill, 50px);
+  background: transparent;
+  color: #fcfcfc;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+@media (max-width: 880px) {
+  .shop-summary {
+    gap: 8px;
+  }
+
+  .shop-summary__value {
+    font-size: 20px;
+  }
+}

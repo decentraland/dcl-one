@@ -1,0 +1,30 @@
+{
+  "description": "CORS preflight for GET /entities/{cid}/face.png from https://decentraland.org. Captured OPTIONS https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png -> 301.",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png",
+    "query": {},
+    "headers": {
+      "origin": "https://decentraland.org",
+      "access-control-request-method": "GET",
+      "access-control-request-headers": "content-type"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 301,
+    "headers": {
+      "content-type": "text/html; charset=UTF-8",
+      "location": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png",
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, HEAD",
+      "access-control-max-age": "604800",
+      "access-control-expose-headers": "ETag, Access-Control-Allow-Origin, Cache-Control, Content-Length",
+      "vary": "Origin, Access-Control-Request-Headers, Access-Control-Request-Method"
+    },
+    "body_bytes_b64": "PGh0bWw+DQo8aGVhZD48dGl0bGU+MzAxIE1vdmVkIFBlcm1hbmVudGx5PC90aXRsZT48L2hlYWQ+DQo8Ym9keT4NCjxjZW50ZXI+PGgxPjMwMSBNb3ZlZCBQZXJtYW5lbnRseTwvaDE+PC9jZW50ZXI+DQo8aHI+PGNlbnRlcj5jbG91ZGZsYXJlPC9jZW50ZXI+DQo8L2JvZHk+DQo8L2h0bWw+DQo="
+  },
+  "captured_from": "https://profile-images.decentraland.org/entities/bafkreickiq5m2aj4i4hi4emzcyaqvh2w2wdig325ienuqnkycz5xr5l66a/face.png",
+  "captured_at": "2026-09-25T19:25:00Z",
+  "volatile_paths": []
+}

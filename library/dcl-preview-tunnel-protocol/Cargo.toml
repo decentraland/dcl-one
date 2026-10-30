@@ -1,0 +1,10 @@
+[package]
+name = "dcl-preview-tunnel-protocol"
+version = "0.32.0"
+edition = "2024"
+description = "Wire types for the dcl-scene-cli preview tunnel: the control frames and data-channel framing an agent and relay exchange over one WebSocket trunk. No transport, no I/O."
+workspace = "../../services/catalyst"
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }

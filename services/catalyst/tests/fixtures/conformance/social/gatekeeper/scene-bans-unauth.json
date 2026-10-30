@@ -1,0 +1,30 @@
+{
+  "description": "GET /scene-bans without an auth chain. Captured GET https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0 -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/scene-bans",
+    "query": {
+      "limit": [
+        "20"
+      ],
+      "offset": [
+        "0"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": false,
+      "message": "Invalid Auth Chain"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0",
+  "captured_at": "2026-09-25T19:24:31Z",
+  "volatile_paths": []
+}

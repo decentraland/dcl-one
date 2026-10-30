@@ -1,0 +1,22 @@
+[package]
+name = "dcl-scene-authoring"
+version = "0.32.0"
+edition = "2024"
+description = "Filesystem-free core of the SDK7 scene toolchain: composite normalization, jsonSchema CRDT encoding, native main.crdt and entity-names generation; builds for wasm32-unknown-unknown"
+# Ships inside the dcl-scene-cli export, under the same dual terms.
+license = "Apache-2.0 OR AGPL-3.0-or-later"
+workspace = "../../services/catalyst"
+
+[dependencies]
+# preserve_order is what dcl-scene-cli always resolved to through its bundler
+# deps, and what the node toolchain does: a composite's map-field entries
+# encode in declared order, and the schema tests build fixtures with json!.
+serde_json = { workspace = true, features = ["preserve_order"] }
+anyhow = { workspace = true }
+base64 = { workspace = true }
+# The @dcl/ecs component-id hash is a plain zlib CRC32 over the component name.
+crc32fast = "1"
+
+[build-dependencies]
+prost-types = "0.14"
+protox = "0.10"

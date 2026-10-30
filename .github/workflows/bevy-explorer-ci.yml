@@ -1,0 +1,714 @@
+# Adapted from upstream bevy-explorer's workflows for this repository's layout.
+'on':
+  push:
+    branches:
+      - main
+    paths:
+      - .cargo/**
+      - rust-toolchain*
+      - apps/bevy-explorer/**
+      - tooling/dev-regressions*
+      - tooling/bevy-ci.py
+      - tooling/play-artifact.py
+      - tooling/tests/test_play_*.py
+      - tooling/tests/test_bevy_*.py
+      - .github/workflows/bevy-explorer-*.yml
+      - .github/actions/bevy-explorer-ci-status/**
+      - flake.*
+      - rendering/bevy-explorer/**
+      - .github/workflows/bevy-explorer-ci.yml
+      - tooling/fetch-play.py
+      - infra/packages/**
+      - infra/containers/**
+      - services/catalyst/**
+      - library/**
+      - apps/sites/**
+      - apps/ui3/**
+      - tooling/image-*
+      - tooling/ci-publication.py
+      - tooling/tests/test_ci_publication.py
+      - tooling/tests/test_image_publish.py
+      - .github/workflows/apis-sites-images.yml
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+    paths:
+      - .cargo/**
+      - rust-toolchain*
+      - apps/bevy-explorer/**
+      - tooling/dev-regressions*
+      - tooling/bevy-ci.py
+      - tooling/play-artifact.py
+      - tooling/tests/test_play_*.py
+      - tooling/tests/test_bevy_*.py
+      - .github/workflows/bevy-explorer-*.yml
+      - .github/actions/bevy-explorer-ci-status/**
+      - flake.*
+      - rendering/bevy-explorer/**
+      - .github/workflows/bevy-explorer-ci.yml
+      - tooling/fetch-play.py
+      - infra/packages/**
+      - infra/containers/**
+      - services/catalyst/**
+      - library/**
+      - apps/sites/**
+      - apps/ui3/**
+      - tooling/image-*
+      - tooling/ci-publication.py
+      - tooling/tests/test_ci_publication.py
+      - tooling/tests/test_image_publish.py
+      - .github/workflows/apis-sites-images.yml
+  # Manual run of the full workflow on any ref. On a branch, setting `publish-tag`
+  # also publishes the web package (as 0.1.0-<runId>.commit-<sha>, under that npm
+  # dist-tag) and uploads it to the CDN, ready for a manual rollout. oddish ignores a
+  # custom tag on main (main always publishes next), so that combination is rejected.
+  workflow_dispatch:
+    inputs:
+      publish-tag:
+        description: 'npm dist-tag to publish the web package under from a branch (empty = build only). Not next/latest; not on main.'
+        required: false
+        default: ''
+concurrency:
+  group: bevy-explorer-ci-${{ github.ref }}
+  cancel-in-progress: true
+name: Bevy Explorer / CI
+jobs:
+  source:
+    # Every build job needs this one, so a closed PR runs only preview-cleanup.
+    if: github.event.action != 'closed'
+    name: Integration guards
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Reject a custom dist-tag from main
+        if: github.event_name == 'workflow_dispatch' && inputs.publish-tag != '' && github.ref == 'refs/heads/main'
+        run: |
+          echo 'publish-tag is for branches; main publishes next on push' >&2
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check publication and selection guards
+        run: |
+          python3 -m unittest discover -s tooling/tests -p 'test_image_publish.py' -v
+          python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py' -v
+          python3 -m unittest discover -s tooling/tests -p 'test_play_*.py' -v
+      - name: Check the CI status comment scripts
+        run: |
+          for test in .github/actions/bevy-explorer-ci-status/test-*.sh; do bash "$test"; done
+  changes:
+    name: Changes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      clippy: ${{ steps.plan.outputs.clippy }}
+      test: ${{ steps.plan.outputs.test }}
+      headless: ${{ steps.plan.outputs.headless }}
+      web: ${{ steps.plan.outputs.web }}
+      native-matrix: ${{ steps.plan.outputs.native-matrix }}
+      images: ${{ steps.consumers.outputs.images }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select engine builds from their inputs
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          # Compare the PR's tested merge tree with its actual base, not the default branch.
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: python3 tooling/bevy-ci.py plan
+      - name: Select image consumers
+        id: consumers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python3 tooling/bevy-ci.py consumer-plan
+    timeout-minutes: 10
+    needs:
+      - source
+  test:
+    name: Test Suite
+    needs:
+      - source
+      - changes
+    if: ${{ needs.changes.outputs.test == 'true' && (needs.changes.outputs.native-matrix == 'true' || github.actor != 'dependabot[bot]') }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ (needs.changes.outputs.native-matrix == 'true' && github.actor != 'dependabot[bot]') && fromJSON('["windows-2025",
+          "ubuntu-24.04", "macos-15"]') || fromJSON('["ubuntu-24.04"]') }}
+    runs-on: ${{ matrix.os == 'windows-2025' && 'windows-2025-16core' || matrix.os == 'ubuntu-24.04' && 'ubuntu-24.04-16core' || matrix.os }}
+    concurrency:
+      group: ${{ github.workflow }}-test-${{ matrix.os }}-${{ github.ref }}
+      cancel-in-progress: true
+    env:
+      SCCACHE_GHA_ENABLED: 'true'
+      SCCACHE_GHA_VERSION: dcl-bevy-windows-v1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reserve disk space on the hosted Linux runner
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |-
+          avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 100 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
+          df -h /
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - name: Prepare the pinned native toolchain for caching
+        run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: rendering/bevy-explorer/source -> target
+          key: bevy-explorer-native
+      - name: Install protoc
+        if: matrix.os != 'self-hosted-windows'
+        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
+            libasound2-dev libudev-dev ninja-build clang curl pkg-config \
+            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
+            libssl-dev libx11-dev libgl1-mesa-dev libxext-dev \
+            libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
+      - name: Install clang for webrtc-sys
+        if: runner.os == 'Linux'
+        run: ../../../apps/bevy-explorer/install-clang.sh
+      - name: install ffmpeg deps (macOs)
+        if: runner.os == 'macos'
+        run: |
+          brew install ffmpeg@6 pkg-config;
+          echo "PKG_CONFIG_PATH=/opt/homebrew/opt/ffmpeg@6/lib/pkgconfig" >> "$GITHUB_ENV"
+      - name: install ffmpeg deps (windows)
+        if: runner.os == 'windows' && matrix.os != 'self-hosted-windows'
+        run: |
+          # Prefer the standalone LLVM install (stable across runner image rolls); fall back to the VS-bundled Clang toolset, whose version moves with the image and has produced opaque bindgen structs on rollover.
+          $vsLlvm = "$(& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath)\VC\Tools\LLVM\x64\bin"
+          $libclang = @("C:\Program Files\LLVM\bin", $vsLlvm) | Where-Object { Test-Path "$_\libclang.dll" } | Select-Object -First 1
+          if (-not $libclang) { throw "libclang.dll not found (checked standalone LLVM and VS Clang toolset)" }
+          Write-Host "Using LIBCLANG_PATH=$libclang"
+          Add-Content $env:GITHUB_ENV "LIBCLANG_PATH=$libclang`n"
+          $ffUrl = "https://github.com/GyanD/codexffmpeg/releases/download/6.0/ffmpeg-6.0-full_build-shared.7z"
+          for ($i = 1; $i -le 3; $i++) {
+            try { Invoke-WebRequest $ffUrl -OutFile ffmpeg-6.0-full_build-shared.7z; break }
+            catch { if ($i -eq 3) { throw }; Write-Host "ffmpeg download failed (attempt $i), retrying..."; Start-Sleep -Seconds 5 }
+          }
+          7z x ffmpeg-6.0-full_build-shared.7z
+          mkdir ffmpeg
+          mv ffmpeg-*/* ffmpeg/
+          if (-not (Test-Path "ffmpeg\include")) { throw "ffmpeg headers missing after extract (ffmpeg\include not found)" }
+          Add-Content $env:GITHUB_ENV "FFMPEG_DIR=${pwd}\ffmpeg`n"
+          Add-Content $env:GITHUB_PATH "${pwd}\ffmpeg\bin`n"
+        shell: pwsh
+      - name: Install ninja (macos)
+        if: runner.os == 'macos'
+        run: brew install ninja
+      - name: Export CEF distribution
+        shell: bash
+        run: |
+          cargo install export-cef-dir --version "139.8.0+139.0.40"
+          export-cef-dir --force "$HOME/.local/share/cef"
+          # GITHUB_ENV/GITHUB_PATH reach native processes verbatim: on windows the git-bash
+          # $HOME (/c/Users/...) would resolve as C:\c\Users\... — write windows paths there.
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "CEF_PATH=$(cygpath -w "$HOME/.local/share/cef")" >> "$GITHUB_ENV"
+            cygpath -w "$HOME/.local/share/cef" >> "$GITHUB_PATH"
+          else
+            echo "CEF_PATH=$HOME/.local/share/cef" >> "$GITHUB_ENV"
+          fi
+          if [ "$RUNNER_OS" = "Linux" ]; then echo "LD_LIBRARY_PATH=$HOME/.local/share/cef:$LD_LIBRARY_PATH" >> "$GITHUB_ENV"; fi
+      # Scope RUSTC_WRAPPER to compilation so the dependency-cache key stays unchanged.
+      - name: Install the Windows compiler cache
+        id: compiler-cache
+        if: runner.os == 'Windows'
+        uses: Mozilla-Actions/sccache-action@fc920bf0ec8de6ee65d409111f7ec508035751ba # v0.0.11
+        with:
+          version: v0.19.0
+      - name: Build the test sidecar
+        env:
+          RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}
+        run: |
+          # Reports belong to this run, including when an older target was restored.
+          rm -rf target/cargo-timings
+          cargo build --package dcl_deno_ipc --release --locked --timings
+      - name: Run the native test suite
+        env:
+          RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}
+        run: |
+          if ! cargo test --all --release --locked --timings --no-run --message-format=json-render-diagnostics > target/native-test-artifacts.jsonl; then
+            export RUSTC_WRAPPER=
+            cargo test --all --release --locked --timings --no-run --message-format=json-render-diagnostics > target/native-test-artifacts.jsonl
+          fi
+          python3 "$GITHUB_WORKSPACE/tooling/dev-regressions.py" --bevy-artifacts target/native-test-artifacts.jsonl
+          cargo test --all --release --locked -- --test-threads=1
+      - name: Build the benchmark runner
+        # The benchmark runner, for each OS: the fleet's laptops (Windows and macOS) run the legs with
+        # it and Bevy Explorer / Benchmark writes the report with the Linux one. Name:
+        # bevy-explorer-benchmark-<os>-<arch>-<sha>, as the other products.
+        env:
+          RUSTC_WRAPPER: ${{ runner.os == 'Windows' && 'sccache' || '' }}
+        run: |
+          if ! cargo build --package benchmark --release --locked; then
+            export RUSTC_WRAPPER=
+            cargo build --package benchmark --release --locked
+          fi
+      - name: Name the benchmark runner
+        id: benchmark
+        run: |
+          os=$(echo "$RUNNER_OS" | tr '[:upper:]' '[:lower:]')
+          arch=$([ "$RUNNER_ARCH" = ARM64 ] && echo arm64 || echo amd64)
+          echo "name=bevy-explorer-benchmark-$os-$arch-${{ github.sha }}" >> "$GITHUB_OUTPUT"
+      - name: Upload the benchmark runner
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.benchmark.outputs.name }}
+          path: rendering/bevy-explorer/source/target/release/benchmark${{ runner.os == 'Windows' && '.exe' || '' }}
+          if-no-files-found: error
+          retention-days: ${{ github.ref == 'refs/heads/main' && 90 || 7 }}
+      - name: Record Windows compiler cache results
+        if: always() && runner.os == 'Windows' && steps.compiler-cache.outcome == 'success'
+        run: sccache --show-stats --stats-format=json > target/sccache-stats.json
+      - name: Upload native compilation timings
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-explorer-native-timings-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          path: |
+            rendering/bevy-explorer/source/target/cargo-timings/*.html
+            rendering/bevy-explorer/source/target/sccache-stats.json
+          if-no-files-found: ignore
+          retention-days: 7
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 100
+  headless-smoke:
+    if: needs.changes.outputs.headless == 'true'
+    name: Headless Smoke
+    runs-on: ubuntu-22.04-16core
+    concurrency:
+      group: ${{ github.workflow }}-headless-${{ github.ref }}
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reserve disk space on the hosted Linux runner
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |-
+          avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 100 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
+          df -h /
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - name: Prepare the pinned native toolchain for caching
+        run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: bevy-explorer-headless-linux-x64
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: rendering/bevy-explorer/source -> target
+      - name: Install protoc
+        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Install build dependencies
+        run: |
+          sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py clang cmake pkg-config \
+            libasound2-dev libudev-dev libgl-dev libx11-dev libxext-dev \
+            libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
+      - name: Install clang for webrtc-sys
+        run: ../../../apps/bevy-explorer/install-clang.sh
+      - name: Build headless engine and sidecar
+        run: python3 ../../../apps/bevy-explorer/build-headless.py
+      - name: Strip the Linux distribution before testing
+        run: strip ../../../apps/bevy-explorer/dist/headless/native/headless ../../../apps/bevy-explorer/dist/headless/native/dcl_deno_ipc
+      - name: Smoke test
+        run: |
+          set -o pipefail
+          ../../../apps/bevy-explorer/dist/headless/native/headless \
+            --realm https://decentraland.github.io/scene-explorer-tests/scene-explorer-tests \
+            --location 52,-52 --server-mode --preview --timeout 90 2>&1 | tee smoke.log
+      - name: Assert scenes ticked
+        run: |
+          if ! grep -q "first tick reached" smoke.log; then
+            echo "::error::headless never reached first tick"
+            exit 1
+          fi
+          if grep -q "panicked at" smoke.log; then
+            echo "::error::headless panicked"
+            grep -m5 -A5 "panicked at" smoke.log
+            exit 1
+          fi
+          # a scene that ticks once then wedges must fail too, so require progress
+          ticks=$(grep -o "max_tick=[0-9]*" smoke.log | cut -d= -f2)
+          first=$(echo "$ticks" | head -1)
+          last=$(echo "$ticks" | tail -1)
+          if [ -z "$last" ] || [ "$last" -le "$first" ]; then
+            echo "::error::scene ticks stalled (first=$first last=$last)"
+            exit 1
+          fi
+          echo "ok: ticks advanced $first -> $last"
+      - name: Upload smoke log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-explorer-headless-smoke-log-${{ github.sha }}
+          path: rendering/bevy-explorer/source/smoke.log
+          retention-days: 7
+      - name: Upload the tested headless binaries
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-explorer-headless-linux-amd64-${{ github.sha }}
+          path: apps/bevy-explorer/dist/headless/native/
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Stamp snapshot version
+        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        with:
+          cwd: ./rendering/bevy-explorer/source/deploy/headless/launcher
+          deterministic-snapshot: true
+          only-update-versions: true
+      - name: Test the packaged engine against an unavailable realm
+        run: |
+          set -euo pipefail
+          ../../../apps/bevy-explorer/dist/headless/native/headless \
+            --realm http://127.0.0.1:1 --preview --server-mode --timeout 20 2>&1 | tee package-smoke.log
+          grep -q "\[headless\]" package-smoke.log
+      - name: Assemble the tested Linux platform package
+        run: |
+          node deploy/headless/build-platform-package.js \
+            --platform linux-x64 \
+            --version "$(node -p "require('./deploy/headless/launcher/package.json').version")" \
+            --engine ../../../apps/bevy-explorer/dist/headless/native/headless \
+            --sidecar ../../../apps/bevy-explorer/dist/headless/native/dcl_deno_ipc \
+            --out deploy/headless/dist
+          cd deploy/headless/dist/bevy-headless-server-linux-x64
+          npm pack --pack-destination "$GITHUB_WORKSPACE/rendering/bevy-explorer/source/deploy/headless/dist"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-headless-linux-x64-${{ github.sha }}
+          path: rendering/bevy-explorer/source/deploy/headless/dist/*.tgz
+          if-no-files-found: error
+          retention-days: 14
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 100
+    needs:
+      - source
+      - changes
+  fmt:
+    name: Rustfmt
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - run: rustup component add rustfmt
+      - run: cargo fmt --all -- --check
+        shell: bash
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 100
+    needs:
+      - source
+  clippy:
+    if: needs.changes.outputs.clippy == 'true'
+    name: Clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Reserve disk space on the hosted Linux runner
+        if: runner.os == 'Linux'
+        working-directory: .
+        run: |-
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          df -h /
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        with:
+          toolchain: 1.99.1
+      - run: rustup component add clippy
+      - name: Prepare the pinned native toolchain for caching
+        run: python ../../../apps/bevy-explorer/prepare-native-cache.py
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          workspaces: rendering/bevy-explorer/source -> target
+          key: bevy-explorer-native
+      - name: Install protoc
+        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Install Linux build dependencies
+        run: |
+          sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py \
+            libasound2-dev libudev-dev ninja-build clang curl pkg-config \
+            libavcodec-dev libavformat-dev libavutil-dev libavfilter-dev libavdevice-dev \
+            libglib2.0-dev libdrm-dev libgbm-dev libxfixes-dev libxdamage-dev libxrandr-dev libxcomposite-dev
+      - name: Install clang for webrtc-sys
+        run: ../../../apps/bevy-explorer/install-clang.sh
+      - run: cargo clippy --locked -- -D warnings
+        shell: bash
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 100
+    needs:
+      - source
+      - changes
+  toml:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install taplo
+        run: curl -fsSL https://github.com/tamasfe/taplo/releases/download/0.10.0/taplo-linux-x86_64.gz | gzip -d - | install
+          -m 755 /dev/stdin /usr/local/bin/taplo
+      - name: Run Taplo
+        id: taplo
+        run: taplo fmt --check --diff
+      - name: Taplo info
+        if: failure()
+        run: echo "Run taplo fmt to apply TOML formatting; taplo fmt --check --diff shows the changes."
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    needs:
+      - source
+  build-deploy-web:
+    if: needs.changes.outputs.web == 'true'
+    name: Web engine, HUD and bridge scene
+    runs-on: ubuntu-24.04-16core
+    concurrency:
+      group: ${{ github.workflow }}-deploy-web-${{ github.ref }}
+    env:
+      # The Segment sources the engine reports to (crates/analytics); unset, the shared key. Part
+      # of the compiled engine's cache key (tooling/play-artifact.py engine-cache-key).
+      BEVY_SEGMENT_WRITE_KEY_PROD: ${{ vars.BEVY_SEGMENT_WRITE_KEY_PROD }}
+      BEVY_SEGMENT_WRITE_KEY_DEV: ${{ vars.BEVY_SEGMENT_WRITE_KEY_DEV }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Identify compiled engine inputs
+        id: engine-inputs
+        working-directory: .
+        run: echo "key=$(python3 tooling/play-artifact.py engine-cache-key)" >> "$GITHUB_OUTPUT"
+      - name: Restore compiled engine
+        id: engine-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: .cache/bevy-engine
+          # Every build goes through wasm-opt, on PRs as on main: Bevy Explorer / Benchmark compares
+          # a PR's web app with main's, and refuses an unoptimized one.
+          key: bevy-engine-v1-optimized-${{ steps.engine-inputs.outputs.key }}
+      - name: Verify restored engine before skipping compiler setup
+        if: steps.engine-cache.outputs.cache-matched-key != ''
+        working-directory: .
+        run: python3 tooling/play-artifact.py verify-engine .cache/bevy-engine --production
+      - name: Reserve disk space on the hosted Linux runner
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        working-directory: .
+        run: |-
+          avail=$(df --output=avail -BG / | tail -1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 100 ]; then
+            sudo rm -rf /usr/local/lib/android /usr/share/dotnet /usr/share/swift /opt/ghc /usr/local/.ghcup
+          fi
+          df -h /
+      - name: Use Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        with:
+          toolchain: nightly-2026-04-15
+          targets: wasm32-unknown-unknown
+          components: rust-src
+      - name: Stamp rust-src with the toolchain date so cached build-std artifacts stay fresh
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        run: |
+          d=$(rustc -vV | sed -n 's/^commit-date: //p')
+          find "$(rustc --print sysroot)/lib/rustlib/src" -type f -exec touch -t "${d//-/}0000" {} +
+      - name: Restore wasm target cache
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        id: wasm-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: bevy-explorer-web-${{ hashFiles('rendering/bevy-explorer/source/Cargo.lock', 'rendering/bevy-explorer/source/Cargo.toml',
+            'rendering/bevy-explorer/source/.cargo/config.toml') }}
+          restore-keys: bevy-explorer-web-
+      - name: Install protoc
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        run: python ../../../apps/bevy-explorer/install-protoc.py
+      - name: Install wasm-pack
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        run: |
+          curl -fsSL https://github.com/rustwasm/wasm-pack/releases/download/v0.15.0/wasm-pack-v0.15.0-x86_64-unknown-linux-musl.tar.gz \
+            | tar -xz --strip-components=1 -C "$HOME/.cargo/bin" wasm-pack-v0.15.0-x86_64-unknown-linux-musl/wasm-pack
+      - name: Install Linux build dependencies
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        run: sudo python3 ../../../apps/bevy-explorer/install-linux-deps.py libasound2-dev libudev-dev clang
+      - name: Build and test the local web app
+        run: python3 ../../../apps/bevy-explorer/build-web.py --engine-cache ../../../.cache/bevy-engine
+      - name: Save wasm target cache
+        if: github.ref == 'refs/heads/main' && steps.engine-cache.outputs.cache-matched-key == '' && steps.wasm-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            rendering/bevy-explorer/source/target/
+          key: ${{ steps.wasm-cache.outputs.cache-primary-key }}
+      - name: Save tested compiled engine
+        if: steps.engine-cache.outputs.cache-matched-key == ''
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          # Small finished outputs may be saved on PRs; GitHub isolates their ref.
+          # Multi-GB Cargo/Nix caches retain their main-only save policy.
+          path: .cache/bevy-engine
+          key: ${{ steps.engine-cache.outputs.cache-primary-key }}
+      - name: Upload the complete web app
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bevy-explorer-web-${{ github.sha }}
+          path: apps/bevy-explorer/dist/web/
+          if-no-files-found: error
+          # Sites reuses matching tested main builds without recompiling the engine.
+          retention-days: ${{ github.ref == 'refs/heads/main' && 90 || 7 }}
+      # From here on, upstream's publish steps: the version is stamped into the working tree's
+      # deploy/web and the page is rebuilt for its versioned CDN base. Nothing is committed.
+      - name: Set package.json version
+        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        with:
+          cwd: ./rendering/bevy-explorer/source/deploy/web
+          deterministic-snapshot: true
+          only-update-versions: true
+      - name: Install
+        run: npm i
+        working-directory: rendering/bevy-explorer/source/deploy/web
+      # PUBLIC_URL = the versioned CDN base prebuild.js just wrote into package.json homepage.
+      # build-web.py already built the page with relative URLs; vite does not empty deploy/web.
+      - name: Build react-web HUD
+        run: |
+          rm -rf ./deploy/web/assets ./deploy/web/index.html ./deploy/web/app.html
+          export PUBLIC_URL=$(node -p "require('./deploy/web/package.json').homepage || ''")
+          echo "PUBLIC_URL=$PUBLIC_URL"
+          npm run build --prefix react-web
+      - name: Bundle bridge scene
+        run: |
+          export SCENE_BASE_URL="$(node -p "require('../../deploy/web/package.json').homepage || ''")/bridge-scene/static/"
+          echo "SCENE_BASE_URL=$SCENE_BASE_URL"
+          npm run bundle
+        working-directory: rendering/bevy-explorer/source/react-web/bridge-scene
+      # Same-repo PRs publish under the pr-<n> dist-tag as a preview, which the CI status comment
+      # links; fork PRs have no secrets. oddish tags a main/master branch next whatever custom-tag
+      # says, so a PR from one never publishes.
+      - name: Publish
+        id: publish
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
+        if: (github.event_name == 'push' && github.ref == 'refs/heads/main') || (github.event_name == 'workflow_dispatch' && inputs.publish-tag != '') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.head_ref != 'main' && github.head_ref != 'master')
+        uses: decentraland/oddish-action@a4e98664bf53d4aae1f6d20d1a43ff2c79b555b3 # v1.0.1
+        with:
+          cwd: ./rendering/bevy-explorer/source/deploy/web
+          deterministic-snapshot: true
+          registry-url: 'https://registry.npmjs.org'
+          access: public
+          # npm refuses provenance for a private repository.
+          provenance: false
+          gitlab-token: ${{ secrets.GITLAB_CDN_DEPLOYER_TOKEN }}
+          gitlab-pipeline-url: ${{ secrets.GITLAB_CDN_DEPLOYER_URL }}
+          # oddish only publishes from main (-> next) or from a branch it is told about;
+          # both inputs are empty on push, leaving that behaviour unchanged.
+          custom-tag: ${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || inputs.publish-tag }}
+          branch-to-custom-tag: ${{ github.event_name == 'pull_request' && github.head_ref || (inputs.publish-tag != '' && github.ref_name || '') }}
+        env:
+          # A PR checkout is a detached merge commit, so oddish cannot read the branch from git.
+          BRANCH_NAME: ${{ github.head_ref }}
+      - name: Report a failed PR preview
+        if: github.event_name == 'pull_request' && steps.publish.outcome == 'failure'
+        run: echo '::warning::The PR preview did not publish; see the Publish step log.'
+    defaults:
+      run:
+        working-directory: rendering/bevy-explorer/source
+        shell: bash
+    timeout-minutes: 100
+    needs:
+      - source
+      - changes
+  headless-packages:
+    name: Headless packages
+    needs: [source, changes]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.changes.outputs.headless == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/bevy-explorer-headless-build.yml
+    with:
+      build-matrix: >-
+        {"include":[
+          {"platform": "macos-arm64", "npm_platform": "darwin-arm64", "runner": "macos-15", "target": "aarch64-apple-darwin"},
+          {"platform": "macos-amd64", "npm_platform": "darwin-x64", "runner": "macos-15", "target": "x86_64-apple-darwin"},
+          {"platform": "windows-amd64", "npm_platform": "win32-x64", "runner": "windows-2025", "target": "x86_64-pc-windows-msvc"}
+        ]}
+  images:
+    name: APIs + Sites
+    needs: [source, changes, build-deploy-web]
+    # A skipped web lane means inputs are unchanged: fetch-play imports a matching
+    # main producer once its upload passed. Failed/canceled producers never qualify.
+    if: >-
+      !cancelled() && needs.source.result == 'success' && needs.changes.result == 'success' &&
+      needs.changes.outputs.images == 'true' &&
+      (needs.build-deploy-web.result == 'success' || needs.build-deploy-web.result == 'skipped')
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/apis-sites-images.yml
+  preview-cleanup:
+    if: github.event.action == 'closed' && github.event.pull_request.head.repo.full_name == github.repository
+    name: Remove the PR preview tag
+    runs-on: ubuntu-24.04
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # dist-tag over OIDC needs npm 11.21.0+, newer than any Node release bundles.
+      - env:
+          TAG: pr-${{ github.event.pull_request.number }}
+        run: |
+          pkg=@dcl-regenesislabs/bevy-explorer-web
+          tags=$(npm view "$pkg" dist-tags --json)
+          if jq -e --arg t "$TAG" 'has($t)' <<<"$tags" >/dev/null; then
+            npx --yes npm@11.21.1 dist-tag rm "$pkg" "$TAG"
+          fi
+    timeout-minutes: 5
+permissions:
+  contents: read
+  pull-requests: read

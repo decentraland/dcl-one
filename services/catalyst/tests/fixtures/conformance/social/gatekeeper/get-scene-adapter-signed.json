@@ -1,0 +1,28 @@
+{
+  "description": "POST /get-scene-adapter signed with the explorer metadata (realmName main, a Genesis Plaza scene id from peer /content/entities/active): the read form of the handshake; the LiveKit token in `adapter` is redacted and volatile. Signed fetch with the run's throwaway key 0xf7e07d862ddbe561a63ebb5dd809cf0542269587 (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured POST https://comms-gatekeeper.decentraland.org/get-scene-adapter -> 200.",
+  "request": {
+    "method": "POST",
+    "path": "/get-scene-adapter",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xf7e07d862ddbe561a63ebb5dd809cf0542269587\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"post:/get-scene-adapter:1790364573929:{\\\"intent\\\":\\\"dcl:explorer:comms-handshake\\\",\\\"signer\\\":\\\"dcl:explorer\\\",\\\"isGuest\\\":false,\\\"realmName\\\":\\\"main\\\",\\\"realm\\\":{\\\"hostname\\\":\\\"realm-provider-ea.decentraland.org\\\",\\\"protocol\\\":\\\"v3\\\",\\\"serverName\\\":\\\"main\\\"},\\\"sceneId\\\":\\\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\\\",\\\"parcel\\\":\\\"-3,-2\\\"}\",\"signature\":\"0x51ae8a3b99e3898886fec5b564f54fed2669617bf36bfc4de3065ebeee4dea534d91add952a33020c8268d1c939290694e679e6357282d04d9c9873955880baf1b\"}",
+      "x-identity-timestamp": "1790364573929",
+      "x-identity-metadata": "{\"intent\":\"dcl:explorer:comms-handshake\",\"signer\":\"dcl:explorer\",\"isGuest\":false,\"realmName\":\"main\",\"realm\":{\"hostname\":\"realm-provider-ea.decentraland.org\",\"protocol\":\"v3\",\"serverName\":\"main\"},\"sceneId\":\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\",\"parcel\":\"-3,-2\"}",
+      "content-type": "application/json"
+    },
+    "body": {}
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "adapter": "livekit:wss://dcl.livekit.cloud?access_token=<<REDACTED:jwt>>"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/get-scene-adapter",
+  "captured_at": "2026-09-25T19:29:33Z",
+  "volatile_paths": []
+}

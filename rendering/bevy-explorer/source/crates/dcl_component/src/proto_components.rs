@@ -1,0 +1,468 @@
+use bevy_math::FloatOrd;
+
+use super::{FromDclReader, PositionFree, ToDclWriter};
+
+pub mod sdk {
+    #[allow(clippy::all)]
+    pub mod components {
+        include!(concat!(env!("OUT_DIR"), "/decentraland.sdk.components.rs"));
+
+        pub mod common {
+            include!(concat!(
+                env!("OUT_DIR"),
+                "/decentraland.sdk.components.common.rs"
+            ));
+        }
+    }
+
+    #[allow(clippy::all)]
+    pub mod development {
+        include!(concat!(env!("OUT_DIR"), "/decentraland.sdk.development.rs"));
+    }
+}
+
+pub mod kernel {
+    #[allow(clippy::all)]
+    pub mod comms {
+        pub mod rfc5 {
+            include!(concat!(
+                env!("OUT_DIR"),
+                "/decentraland.kernel.comms.rfc5.rs"
+            ));
+        }
+        pub mod rfc4 {
+            include!(concat!(
+                env!("OUT_DIR"),
+                "/decentraland.kernel.comms.rfc4.rs"
+            ));
+        }
+        pub mod v3 {
+            include!(concat!(env!("OUT_DIR"), "/decentraland.kernel.comms.v3.rs"));
+        }
+    }
+    #[allow(clippy::all)]
+    pub mod apis {
+        include!(concat!(env!("OUT_DIR"), "/decentraland.kernel.apis.rs"));
+    }
+}
+
+#[allow(clippy::all)]
+pub mod common {
+    include!(concat!(env!("OUT_DIR"), "/decentraland.common.rs"));
+}
+
+#[allow(clippy::all)]
+pub mod pulse {
+    include!(concat!(env!("OUT_DIR"), "/decentraland.pulse.rs"));
+    // Dequantization accessors generated from the (decentraland.common.quantized) proto options.
+    include!(concat!(env!("OUT_DIR"), "/pulse_quant.rs"));
+}
+
+pub mod social_service {
+    include!(concat!(env!("OUT_DIR"), "/decentraland.social_service.rs"));
+
+    pub mod v2 {
+        include!(concat!(
+            env!("OUT_DIR"),
+            "/decentraland.social_service.v2.rs"
+        ));
+    }
+}
+
+trait DclProtoComponent: prost::Message + Default {}
+
+impl<T: DclProtoComponent + Sync + Send + 'static> FromDclReader for T {
+    fn from_reader(buf: &mut super::DclReader) -> Result<Self, super::DclReaderError> {
+        Ok(Self::decode(buf.as_slice())?)
+    }
+}
+
+impl<T: DclProtoComponent + Sync + Send + 'static> ToDclWriter for T {
+    fn to_writer(&self, buf: &mut super::DclWriter) {
+        self.encode(buf).unwrap()
+    }
+}
+
+// TODO check if generic T impl where T: prost::Message works
+// i think it might break the primitive impls
+impl DclProtoComponent for sdk::components::PbBillboard {}
+impl DclProtoComponent for sdk::components::PbRaycast {}
+impl DclProtoComponent for sdk::components::PbRaycastResult {}
+impl DclProtoComponent for sdk::components::PbMeshRenderer {}
+impl DclProtoComponent for sdk::components::PbMeshCollider {}
+impl DclProtoComponent for sdk::components::PbMaterial {}
+impl DclProtoComponent for sdk::components::PbGltfContainer {}
+impl DclProtoComponent for sdk::components::PbAnimator {}
+impl DclProtoComponent for sdk::components::PbPointerEvents {}
+impl DclProtoComponent for sdk::components::PbPointerEventsResult {}
+impl DclProtoComponent for sdk::components::PbEngineInfo {}
+impl DclProtoComponent for sdk::components::PbGltfContainerLoadingState {}
+impl DclProtoComponent for sdk::components::PbGltfNode {}
+impl DclProtoComponent for sdk::components::PbGltfNodeState {}
+impl DclProtoComponent for sdk::components::PbAvatarShape {}
+impl DclProtoComponent for sdk::components::PbAvatarAttach {}
+impl DclProtoComponent for sdk::components::PbAvatarBase {}
+impl DclProtoComponent for sdk::components::PbAvatarEmoteCommand {}
+impl DclProtoComponent for sdk::components::PbAvatarEquippedData {}
+impl DclProtoComponent for sdk::components::PbPlayerIdentityData {}
+impl DclProtoComponent for kernel::comms::rfc4::Packet {}
+impl DclProtoComponent for sdk::components::PbUiCanvasInformation {}
+impl DclProtoComponent for sdk::components::PbUiTransform {}
+impl DclProtoComponent for sdk::components::PbUiText {}
+impl DclProtoComponent for sdk::components::PbUiBackground {}
+impl DclProtoComponent for sdk::components::PbUiInput {}
+impl DclProtoComponent for sdk::components::PbUiInputResult {}
+impl DclProtoComponent for sdk::components::PbUiDropdown {}
+impl DclProtoComponent for sdk::components::PbUiDropdownResult {}
+impl DclProtoComponent for sdk::components::PbUiLayoutFeedback {}
+impl DclProtoComponent for sdk::components::PbUiScrollResult {}
+impl DclProtoComponent for sdk::components::PbUiCanvas {}
+impl DclProtoComponent for sdk::components::PbTextShape {}
+impl DclProtoComponent for sdk::components::PbPointerLock {}
+impl DclProtoComponent for sdk::components::PbCameraMode {}
+impl DclProtoComponent for sdk::components::PbCameraModeArea {}
+impl DclProtoComponent for sdk::components::PbAudioSource {}
+impl DclProtoComponent for sdk::components::PbVideoPlayer {}
+impl DclProtoComponent for sdk::components::PbAudioStream {}
+impl DclProtoComponent for sdk::components::PbVideoEvent {}
+impl DclProtoComponent for sdk::components::PbAudioEvent {}
+impl DclProtoComponent for sdk::components::PbVisibilityComponent {}
+impl DclProtoComponent for sdk::components::PbAvatarModifierArea {}
+impl DclProtoComponent for sdk::components::PbNftShape {}
+impl DclProtoComponent for sdk::components::PbTween {}
+impl DclProtoComponent for sdk::components::PbTweenState {}
+impl DclProtoComponent for sdk::components::PbLightSource {}
+impl DclProtoComponent for sdk::components::PbGlobalLight {}
+impl DclProtoComponent for sdk::components::PbTextureCamera {}
+impl DclProtoComponent for sdk::components::PbCameraLayers {}
+impl DclProtoComponent for sdk::components::PbPrimaryPointerInfo {}
+impl DclProtoComponent for sdk::components::PbCameraLayer {}
+impl DclProtoComponent for sdk::components::PbRealmInfo {}
+impl DclProtoComponent for sdk::components::PbVirtualCamera {}
+impl DclProtoComponent for sdk::components::PbMainCamera {}
+impl DclProtoComponent for sdk::components::PbInputModifier {}
+impl DclProtoComponent for sdk::components::PbTriggerArea {}
+impl DclProtoComponent for sdk::components::PbTriggerAreaResult {}
+impl DclProtoComponent for sdk::components::PbExplorerUiEventsResult {}
+impl DclProtoComponent for sdk::components::PbGltfNodeModifiers {}
+impl DclProtoComponent for sdk::components::PbSkyboxTime {}
+impl DclProtoComponent for sdk::components::PbAvatarMovement {}
+impl DclProtoComponent for sdk::components::PbAvatarLocomotionSettings {}
+impl DclProtoComponent for sdk::components::PbAvatarMovementInfo {}
+impl DclProtoComponent for sdk::components::PbAssetLoad {}
+impl DclProtoComponent for sdk::components::PbAssetLoadLoadingState {}
+impl DclProtoComponent for sdk::components::PbPhysicsCombinedForce {}
+impl DclProtoComponent for sdk::components::PbPhysicsCombinedImpulse {}
+impl DclProtoComponent for sdk::components::PbParticleSystem {}
+impl DclProtoComponent for sdk::components::PbTouchScreenControls {}
+impl DclProtoComponent for sdk::components::PbTweenSequence {}
+impl DclProtoComponent for sdk::components::PbAudioAnalysis {}
+impl DclProtoComponent for sdk::components::PbUiInputBinding {}
+impl DclProtoComponent for sdk::components::PbAvatarNametag {}
+impl DclProtoComponent for sdk::components::PbExplorerItemPurchaseResult {}
+
+// PositionFree markers for types used with GlobalCrdtState::update_crdt
+// (these contain no embedded position data requiring localization)
+impl PositionFree for sdk::components::PbPlayerIdentityData {}
+impl PositionFree for sdk::components::PbAvatarBase {}
+impl PositionFree for sdk::components::PbAvatarEquippedData {}
+
+// VECTOR2 conversions
+impl Copy for common::Vector2 {}
+impl From<bevy_math::Vec2> for common::Vector2 {
+    fn from(value: bevy_math::Vec2) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+        }
+    }
+}
+impl From<&common::Vector2> for bevy_math::Vec2 {
+    fn from(value: &common::Vector2) -> Self {
+        Self {
+            x: value.x,
+            y: value.y,
+        }
+    }
+}
+
+// VECTOR3 conversions
+impl Copy for common::Vector3 {}
+impl std::ops::Mul<f32> for common::Vector3 {
+    type Output = common::Vector3;
+
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self {
+            x: self.x * rhs,
+            y: self.y * rhs,
+            z: self.z * rhs,
+        }
+    }
+}
+impl std::ops::Add<common::Vector3> for common::Vector3 {
+    type Output = common::Vector3;
+
+    fn add(self, rhs: common::Vector3) -> Self::Output {
+        Self {
+            x: self.x + rhs.x,
+            y: self.y + rhs.y,
+            z: self.z + rhs.z,
+        }
+    }
+}
+
+impl common::Vector3 {
+    // flip z coordinate for handedness
+    pub fn world_vec_to_vec3(&self) -> bevy_math::Vec3 {
+        let vec = bevy_math::Vec3::new(self.x, self.y, -self.z);
+        if vec.is_nan() {
+            bevy_math::Vec3::ZERO
+        } else {
+            vec
+        }
+    }
+
+    pub fn world_vec_from_vec3(vec3: &bevy_math::Vec3) -> Self {
+        Self {
+            x: vec3.x,
+            y: vec3.y,
+            z: -vec3.z,
+        }
+    }
+
+    pub fn abs_vec_to_vec3(&self) -> bevy_math::Vec3 {
+        bevy_math::Vec3::new(self.x, self.y, self.z)
+    }
+
+    pub fn abs_vec_from_vec3(vec3: &bevy_math::Vec3) -> Self {
+        Self {
+            x: vec3.x,
+            y: vec3.y,
+            z: vec3.z,
+        }
+    }
+}
+
+// QUATERNION conversions
+impl Copy for common::Quaternion {}
+impl From<common::Quaternion> for bevy_math::Quat {
+    fn from(q: common::Quaternion) -> Self {
+        bevy_math::Quat::from_xyzw(q.x, q.y, -q.z, -q.w)
+    }
+}
+
+impl common::Quaternion {
+    pub fn to_bevy_normalized(self) -> bevy_math::Quat {
+        let quat = bevy_math::Quat::from(self).normalize();
+        if quat.is_finite() {
+            quat
+        } else {
+            bevy_math::Quat::IDENTITY
+        }
+    }
+}
+
+impl From<bevy_math::Quat> for common::Quaternion {
+    fn from(q: bevy_math::Quat) -> Self {
+        common::Quaternion {
+            x: q.x,
+            y: q.y,
+            z: -q.z,
+            w: -q.w,
+        }
+    }
+}
+
+// COLOR conversions
+impl Copy for common::Color3 {}
+impl Copy for common::Color4 {}
+impl Copy for common::ColorRange {}
+
+pub trait Color4DclToBevy {
+    fn convert_linear_rgba(self) -> bevy_color::Color;
+    fn convert_srgba(self) -> bevy_color::Color;
+}
+
+impl Color4DclToBevy for common::Color4 {
+    fn convert_linear_rgba(self) -> bevy_color::Color {
+        bevy_color::Color::linear_rgba(
+            self.r.clamp(0.0, 1.0),
+            self.g.clamp(0.0, 1.0),
+            self.b.clamp(0.0, 1.0),
+            self.a.clamp(0.0, 1.0),
+        )
+    }
+    fn convert_srgba(self) -> bevy_color::Color {
+        bevy_color::Color::srgba(
+            self.r.clamp(0.0, 1.0),
+            self.g.clamp(0.0, 1.0),
+            self.b.clamp(0.0, 1.0),
+            self.a.clamp(0.0, 1.0),
+        )
+    }
+}
+
+pub trait Color4BevyToDcl {
+    fn convert_linear_rgba(self) -> common::Color4;
+    fn convert_srgba(self) -> common::Color4;
+}
+
+impl Color4BevyToDcl for bevy_color::Color {
+    fn convert_linear_rgba(self) -> common::Color4 {
+        let rgba = self.to_linear();
+        common::Color4 {
+            r: rgba.red,
+            g: rgba.green,
+            b: rgba.blue,
+            a: rgba.alpha,
+        }
+    }
+    fn convert_srgba(self) -> common::Color4 {
+        let rgba = self.to_srgba();
+        common::Color4 {
+            r: rgba.red,
+            g: rgba.green,
+            b: rgba.blue,
+            a: rgba.alpha,
+        }
+    }
+}
+
+pub trait Color3DclToBevy {
+    fn convert_linear_rgb(self) -> bevy_color::Color;
+    fn convert_srgb(self) -> bevy_color::Color;
+}
+
+impl Color3DclToBevy for common::Color3 {
+    fn convert_linear_rgb(self) -> bevy_color::Color {
+        bevy_color::Color::linear_rgb(
+            self.r.clamp(0.0, 1.0),
+            self.g.clamp(0.0, 1.0),
+            self.b.clamp(0.0, 1.0),
+        )
+    }
+    fn convert_srgb(self) -> bevy_color::Color {
+        bevy_color::Color::srgb(
+            self.r.clamp(0.0, 1.0),
+            self.g.clamp(0.0, 1.0),
+            self.b.clamp(0.0, 1.0),
+        )
+    }
+}
+
+pub trait Color3BevyToDcl {
+    fn convert_linear_rgb(self) -> common::Color3;
+    fn convert_srgb(self) -> common::Color3;
+}
+
+impl Color3BevyToDcl for bevy_color::Color {
+    fn convert_linear_rgb(self) -> common::Color3 {
+        let rgba = self.to_linear();
+        common::Color3 {
+            r: rgba.red,
+            g: rgba.green,
+            b: rgba.blue,
+        }
+    }
+    fn convert_srgb(self) -> common::Color3 {
+        let rgba = self.to_srgba();
+        common::Color3 {
+            r: rgba.red,
+            g: rgba.green,
+            b: rgba.blue,
+        }
+    }
+}
+
+impl Copy for common::BorderRect {}
+impl Copy for common::FloatRange {}
+
+// util for rounding, scenes expect near 0 to be == 0, etc
+pub trait RoughRoundExt {
+    fn round_at_pow2(self, pow2: i8) -> Self;
+}
+
+impl RoughRoundExt for bevy_math::Vec3 {
+    fn round_at_pow2(self, pow2: i8) -> Self {
+        (self * 2f32.powf(-pow2 as f32)).round() * 2f32.powf(pow2 as f32)
+    }
+}
+
+impl std::hash::Hash for sdk::components::pb_material::Material {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+        match self {
+            sdk::components::pb_material::Material::Unlit(unlit_material) => {
+                unlit_material.hash(state)
+            }
+            sdk::components::pb_material::Material::Pbr(pbr_material) => pbr_material.hash(state),
+        }
+    }
+}
+
+impl std::hash::Hash for common::texture_union::Tex {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+        match self {
+            common::texture_union::Tex::Texture(texture) => texture.hash(state),
+            common::texture_union::Tex::AvatarTexture(avatar_texture) => avatar_texture.hash(state),
+            common::texture_union::Tex::VideoTexture(video_texture) => video_texture.hash(state),
+            common::texture_union::Tex::UiTexture(ui_canvas_texture) => {
+                ui_canvas_texture.hash(state)
+            }
+        }
+    }
+}
+impl std::hash::Hash for sdk::components::pb_material::UnlitMaterial {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.texture.hash(state);
+        self.alpha_test.map(FloatOrd).hash(state);
+        self.cast_shadows.hash(state);
+        self.diffuse_color.hash(state);
+        self.alpha_texture.hash(state);
+    }
+}
+
+impl std::hash::Hash for common::Color4 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        FloatOrd(self.r).hash(state);
+        FloatOrd(self.g).hash(state);
+        FloatOrd(self.b).hash(state);
+        FloatOrd(self.a).hash(state);
+    }
+}
+
+impl std::hash::Hash for common::Color3 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        FloatOrd(self.r).hash(state);
+        FloatOrd(self.g).hash(state);
+        FloatOrd(self.b).hash(state);
+    }
+}
+
+impl std::hash::Hash for common::Vector2 {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        FloatOrd(self.x).hash(state);
+        FloatOrd(self.y).hash(state);
+    }
+}
+
+impl std::hash::Hash for sdk::components::pb_material::PbrMaterial {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.texture.hash(state);
+        self.alpha_test.map(FloatOrd).hash(state);
+        self.cast_shadows.hash(state);
+        self.alpha_texture.hash(state);
+        self.emissive_texture.hash(state);
+        self.bump_texture.hash(state);
+        self.albedo_color.hash(state);
+        self.emissive_color.hash(state);
+        self.reflectivity_color.hash(state);
+        self.transparency_mode.hash(state);
+        self.metallic.map(FloatOrd).hash(state);
+        self.roughness.map(FloatOrd).hash(state);
+        self.specular_intensity.map(FloatOrd).hash(state);
+        self.emissive_intensity.map(FloatOrd).hash(state);
+        self.direct_intensity.map(FloatOrd).hash(state);
+    }
+}

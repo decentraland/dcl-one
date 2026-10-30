@@ -1,0 +1,22 @@
+# The livekit-server that dcl-scene-cli binaries embed, so `start` has voice by
+# default with nothing installed.
+#
+# build.rs reads this file, downloads the release asset for the build target
+# into a cache, verifies it against the sha256 below, and embeds the single
+# static executable deflated. LIVEKIT_EMBED_BIN=<path> embeds that executable
+# instead (brew's on macOS, which LiveKit publishes no release for; a local
+# build) and LIVEKIT_EMBED_BIN=none embeds nothing.
+#
+# Refresh with: scripts/pin-livekit.sh [tag]   default: the latest release
+#
+# Keys are the release asset suffixes (os_arch.ext), hashes from the release's
+# checksums.txt.
+
+version = v1.13.10
+url = https://github.com/livekit/livekit/releases/download/{version}/livekit_{semver}_{asset}
+
+linux_amd64.tar.gz   = c25a3e45fb922e9a93c6443d10c0ed041ba64342097e38632331736630283165
+linux_arm64.tar.gz   = ff60607e1931ff078576882fa11c087aa5821d635ac0c47f56ff77e203e32006
+linux_armv7.tar.gz   = 53527b3a0c52661dcac726614bcefb42702e36fd7bf9b389be971f8d8e4661c1
+windows_amd64.zip    = fd4b7c2c3c1e4c71adaa4f6a046ad1c0abaaaf1e09fae904b35bf231ffae11d2
+windows_arm64.zip    = 887587684dae37cd21db8a16c1bae0647a48868bfaf49f6dc4e5972de4d850f1

@@ -1,0 +1,256 @@
+/* from: shop@2d3bf62:app/src/styles/index.css (the page field, the drifting DCL symbols, the Inter face),
+         app/src/styles/theme.ts (colors, gradients, radii), app/index.html (the Inter weights);
+         shop@2d3bf62:app/src/pages/Overview.styles.ts (Hero, HeroBg, HeroInner, HeroTitle, HeroCta; the live
+         site draws the hero at 1920/340, capped at 340px, and the live site wins over the source's 300) */
+
+@font-face { font-family: "Inter"; src: url("/fonts/Inter-Regular.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0100-04FF, U+052F, U+0E3F, U+146B, U+1D43-1D65, U+1D9C-1DA0, U+1DBB-1FFE, U+2070-20BF, U+20DB-213B, U+214D-21BB, U+21D0-21EA, U+2202-222B, U+2248, U+2260-2265, U+2303-2305, U+2318-232B, U+2380-238B, U+23CE-23CF, U+2423, U+2460-2468, U+24B6-24CF, U+24EA, U+25A0-25CF, U+25E6-25EF, U+2600-2606, U+263C, U+2661-2665, U+26A0, U+2713-2717, U+2756-2764, U+2780-2788, U+27EF-27FA, U+2B06-2B1C, U+2B4E-2B5F, U+2C7C-2C7F, U+2DFF, U+2E18, U+A69F, U+A7FF, U+A92E, U+E000-E080, U+E093-E164, U+EE01-EE05, U+F6C3, U+FE20-FE2D, U+1F12F-1F149, U+1F16A-1F16B, U+1F850-1F852; }
+@font-face { font-family: "Inter"; src: url("/fonts/Inter-Medium.woff2") format("woff2"); font-style: normal; font-weight: 500; font-display: swap; unicode-range: U+0100-04FF, U+052F, U+0E3F, U+146B, U+1D43-1D65, U+1D9C-1DA0, U+1DBB-1FFE, U+2070-20BF, U+20DB-213B, U+214D-21BB, U+21D0-21EA, U+2202-222B, U+2248, U+2260-2265, U+2303-2305, U+2318-232B, U+2380-238B, U+23CE-23CF, U+2423, U+2460-2468, U+24B6-24CF, U+24EA, U+25A0-25CF, U+25E6-25EF, U+2600-2606, U+263C, U+2661-2665, U+26A0, U+2713-2717, U+2756-2764, U+2780-2788, U+27EF-27FA, U+2B06-2B1C, U+2B4E-2B5F, U+2C7C-2C7F, U+2DFF, U+2E18, U+A69F, U+A7FF, U+A92E, U+E000-E080, U+E093-E164, U+EE01-EE05, U+F6C3, U+FE20-FE2D, U+1F12F-1F149, U+1F16A-1F16B, U+1F850-1F852; }
+@font-face { font-family: "Inter"; src: url("/fonts/Inter-SemiBold.woff2") format("woff2"); font-style: normal; font-weight: 600; font-display: swap; unicode-range: U+0100-04FF, U+052F, U+0E3F, U+146B, U+1D43-1D65, U+1D9C-1DA0, U+1DBB-1FFE, U+2070-20BF, U+20DB-213B, U+214D-21BB, U+21D0-21EA, U+2202-222B, U+2248, U+2260-2265, U+2303-2305, U+2318-232B, U+2380-238B, U+23CE-23CF, U+2423, U+2460-2468, U+24B6-24CF, U+24EA, U+25A0-25CF, U+25E6-25EF, U+2600-2606, U+263C, U+2661-2665, U+26A0, U+2713-2717, U+2756-2764, U+2780-2788, U+27EF-27FA, U+2B06-2B1C, U+2B4E-2B5F, U+2C7C-2C7F, U+2DFF, U+2E18, U+A69F, U+A7FF, U+A92E, U+E000-E080, U+E093-E164, U+EE01-EE05, U+F6C3, U+FE20-FE2D, U+1F12F-1F149, U+1F16A-1F16B, U+1F850-1F852; }
+@font-face { font-family: "Inter"; src: url("/fonts/Inter-Bold.woff2") format("woff2"); font-style: normal; font-weight: 700 800; font-display: swap; unicode-range: U+0100-04FF, U+052F, U+0E3F, U+146B, U+1D43-1D65, U+1D9C-1DA0, U+1DBB-1FFE, U+2070-20BF, U+20DB-213B, U+214D-21BB, U+21D0-21EA, U+2202-222B, U+2248, U+2260-2265, U+2303-2305, U+2318-232B, U+2380-238B, U+23CE-23CF, U+2423, U+2460-2468, U+24B6-24CF, U+24EA, U+25A0-25CF, U+25E6-25EF, U+2600-2606, U+263C, U+2661-2665, U+26A0, U+2713-2717, U+2756-2764, U+2780-2788, U+27EF-27FA, U+2B06-2B1C, U+2B4E-2B5F, U+2C7C-2C7F, U+2DFF, U+2E18, U+A69F, U+A7FF, U+A92E, U+E000-E080, U+E093-E164, U+EE01-EE05, U+F6C3, U+FE20-FE2D, U+1F12F-1F149, U+1F16A-1F16B, U+1F850-1F852; }
+@font-face { font-family: "Inter"; src: url("/fonts/Inter-Regular-latin.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Inter"; src: url("/fonts/Inter-Medium-latin.woff2") format("woff2"); font-style: normal; font-weight: 500; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Inter"; src: url("/fonts/Inter-SemiBold-latin.woff2") format("woff2"); font-style: normal; font-weight: 600; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+@font-face { font-family: "Inter"; src: url("/fonts/Inter-Bold-latin.woff2") format("woff2"); font-style: normal; font-weight: 700 800; font-display: swap; unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD; }
+
+.shop-chrome,
+.site-layout:has(.shop-chrome) {
+  --shop-text: #161518;
+  --shop-muted: #716b7c;
+  --shop-muted-1: #5e5b67;
+  --shop-muted-2: #a09ba8;
+  --shop-gray-0: #43404a;
+  --shop-gray-4: #cfcdd4;
+  --shop-gray-5: #ecebed;
+  --shop-media: #ecebed;
+  --shop-soft-white: #fcfcfc;
+  --shop-accent: #691fa9;
+  --shop-brand-violet: #a524b3;
+  --shop-dcl-red: #ff2d55;
+  --shop-orange: #ff7439;
+  --shop-field-border: #c6bcd7;
+  --shop-field-bottom-washed: #3c1556;
+  --shop-overlay: rgba(0, 0, 0, 0.4);
+  --shop-glass: rgba(255, 255, 255, 0.2);
+  --shop-glass-faint: rgba(255, 255, 255, 0.1);
+  --shop-card-line: rgba(160, 155, 168, 0.25);
+  --shop-buy-btn: linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%);
+  --shop-cerise: linear-gradient(135deg, #ff2d55 0%, #c640cd 100%);
+  --shop-amethyst: linear-gradient(180deg, #c640cd 0%, #691fa9 100%);
+  --shop-radius-card: 12px;
+  --shop-radius-btn: 8px;
+  --shop-radius-pill: 50px;
+  --shop-field: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%);
+  --shop-gutter: 54px;
+  --shop-nav-h: 72px;
+  --shop-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  --ui-canvas: #32134c;
+  --ui-shell: #32134c;
+  --ui-panel: #2e0f45;
+  --ui-raised: #3c1556;
+  --ui-hover: rgba(255, 255, 255, 0.12);
+  --ui-border: rgba(255, 255, 255, 0.14);
+  --ui-border-strong: rgba(255, 255, 255, 0.3);
+  --ui-text: #fcfcfc;
+  --ui-muted: #cfcdd4;
+  --ui-accent: #ff7439;
+  --ui-action: #ff2d55;
+  --ui-selected: rgba(255, 255, 255, 0.12);
+  --ui-card-radius: 12px;
+  --ui-font: var(--shop-sans);
+  --ui-title-size: 20px;
+  --ui-title-weight: 600;
+  --ui-title-tracking: 0;
+  --ui-page-pad: var(--shop-gutter);
+  --font-sans: var(--shop-sans);
+  --brand: #ff2d55;
+  --on-brand: #fcfcfc;
+  --site-header-h: var(--shop-nav-h);
+  --site-nav-bg: transparent;
+  --site-nav-line: transparent;
+}
+
+@media (max-width: 991px) {
+  .shop-chrome,
+  .site-layout:has(.shop-chrome) {
+    --shop-nav-h: 64px;
+  }
+}
+@media (max-width: 768px) {
+  .shop-chrome,
+  .site-layout:has(.shop-chrome) {
+    --shop-gutter: 16px;
+  }
+}
+
+.site-layout:has(.shop-chrome) {
+  position: relative;
+  isolation: isolate;
+  background: var(--shop-field) fixed;
+  background-color: #32134c;
+  color: var(--shop-soft-white);
+  font-family: var(--shop-sans);
+  -webkit-font-smoothing: antialiased;
+}
+@keyframes shop-symbol-drift {
+  from { background-position: 0 0; }
+  to { background-position: -610px -610px; }
+}
+.site-layout:has(.shop-chrome)::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: url("./assets/DCL_LogoPattern.webp") 0 0 repeat;
+  background-size: 610px 610px;
+  opacity: 0.03;
+  animation: shop-symbol-drift 150s linear infinite;
+  -webkit-mask-image: radial-gradient(75% 70% at 50% 45%, transparent 25%, #000 85%);
+  mask-image: radial-gradient(75% 70% at 50% 45%, transparent 25%, #000 85%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .site-layout:has(.shop-chrome)::before { animation: none; }
+}
+
+.site-layout:has(.shop-chrome) .site-layout__navigation {
+  --site-nav-bg: #101014;
+  --site-nav-line: rgba(255, 255, 255, 0.1);
+  --font-sans: Inter, system-ui, sans-serif;
+  font-family: var(--font-sans);
+}
+
+.shop-chrome *,
+.shop-chrome *::before,
+.shop-chrome *::after { box-sizing: border-box; }
+
+.shop-chrome {
+  color: var(--shop-soft-white);
+  font-family: var(--shop-sans);
+  background: transparent;
+}
+.shop-chrome > .cs__tools {
+  display: block;
+  padding: 0;
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 40;
+}
+.shop-chrome > .cs__body {
+  container-type: inline-size;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.shop-chrome > .cs__body > :last-child { margin-top: auto; }
+.shop-chrome :where(h1, h2, h3) { font-family: var(--shop-sans); }
+
+.shop-chrome .shop-overview {
+  max-width: 1760px;
+  padding: 0 var(--shop-gutter) 50px;
+  gap: 0;
+}
+.shop-chrome .shop-overview > * { margin-bottom: 50px; }
+.shop-chrome .shop-overview > .shop-overview__hero {
+  position: relative;
+  display: flex;
+  align-items: center;
+  box-sizing: border-box;
+  width: 100cqw;
+  min-height: 0;
+  height: min(340px, calc(100vw * 340 / 1920));
+  margin: 0 0 50px calc(50% - 50cqw);
+  padding: 0 calc(50cqw - 50%);
+  border-radius: 0;
+  background-color: #14161b;
+  background-image: url("./assets/hero-credits-outfits.webp");
+  background-size: cover;
+  background-position: center right;
+  background-repeat: no-repeat;
+}
+.shop-chrome .shop-overview__hero-inner {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 32px;
+  max-width: none;
+}
+.shop-chrome .shop-overview__hero h1 {
+  margin: 0;
+  color: #fff;
+  font-size: clamp(28px, 4vw, 48px);
+  font-weight: 700;
+  line-height: 1.235;
+}
+.shop-chrome .shop-overview__cta {
+  position: relative;
+  align-self: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 246px;
+  height: 52px;
+  padding: 0 16px;
+  border-radius: var(--shop-radius-btn);
+  background: var(--shop-buy-btn);
+  color: var(--shop-soft-white);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  text-decoration: none;
+  transition: filter 0.15s ease;
+}
+.shop-chrome .shop-overview__cta[data-testid="hero-credits-cta"]::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask: url("../icons/credits.svg") center / contain no-repeat;
+  mask: url("../icons/credits.svg") center / contain no-repeat;
+}
+.shop-chrome .shop-overview__cta::after,
+.shop-chrome .shop-buy-ring::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  border-radius: calc(var(--shop-radius-btn) + 6px);
+  padding: 2px;
+  background: var(--shop-buy-btn);
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  pointer-events: none;
+}
+.shop-chrome .shop-overview__cta:hover,
+.shop-chrome .shop-buy-ring:hover { filter: brightness(1.08); }
+.shop-chrome .shop-overview__cta:hover::after,
+.shop-chrome .shop-buy-ring:hover::after { opacity: 1; }
+.shop-chrome .shop-overview__cta:active,
+.shop-chrome .shop-buy-ring:active { filter: brightness(0.95); }
+
+@media (max-width: 768px) {
+  .shop-chrome .shop-overview > .shop-overview__hero {
+    height: auto;
+    aspect-ratio: 1 / 1;
+    max-height: none;
+    align-items: flex-end;
+    justify-content: center;
+    padding-bottom: 43px;
+    background-image: url("./assets/hero-credits-mobile.webp");
+    background-position: center;
+  }
+  .shop-chrome .shop-overview__hero-inner {
+    align-items: center;
+    text-align: center;
+  }
+  .shop-chrome .shop-overview__hero h1 { font-size: 32px; }
+}

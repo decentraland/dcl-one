@@ -1,0 +1,32 @@
+{
+  "method": "GET",
+  "url": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*",
+    "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+    "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/bans:1790364256054:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x4214f97c52a1943966179029e0acb3c1121a009c9c38267a26e46a8f0b6da0676f05056c748421b68f772b70613e10bed47172e91fb1ff8e9d3ee77c4045beb41c\"}",
+    "x-identity-timestamp": "1790364256054",
+    "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+  },
+  "request_body": null,
+  "status": 401,
+  "status_text": "Unauthorized",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c687afe75f558-TXL",
+    "connection": "keep-alive",
+    "content-length": "155",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:16 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "vary": "accept-encoding",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:16Z",
+  "elapsed_ms": 168,
+  "body_bytes": 155,
+  "body_file": "community-bans-signed-not-moderator.raw.body",
+  "redacted": false
+}

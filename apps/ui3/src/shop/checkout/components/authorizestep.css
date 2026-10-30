@@ -1,0 +1,43 @@
+.shop-authorize {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+  color: var(--text);
+  font-size: var(--fs-14);
+  line-height: 1.5;
+}
+
+.shop-authorize p {
+  margin: 0;
+}
+
+.shop-authorize__head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.shop-authorize__head h2 {
+  margin: 0;
+  font-size: var(--fs-18);
+}
+
+.shop-authorize__count {
+  color: var(--ink-6);
+  font-size: var(--fs-13);
+}
+
+.shop-authorize__note {
+  color: var(--ink-6);
+  font-size: var(--fs-13);
+}
+
+.shop-authorize__error {
+  color: var(--error);
+}
+
+.shop-authorize__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}

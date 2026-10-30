@@ -1,0 +1,244 @@
+/* from: shop@2d3bf62:app/src/pages/StoreSettings.styles.ts (Root, Card, Inner, Head, Heading, Back, Title, Guest,
+         Prefixed, Prefix, Picker, Tile, FileInput, Actions, SaveBtn, Loading), app/src/styles/field.styles.ts (Field),
+         app/src/components/Button (variant="white"), app/src/styles/theme.ts (cardLift, lineStrong, accent, muted)
+   The store editor, scoped under .shop-chrome. */
+
+.shop-chrome .seller-settings {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 0 48px;
+  color: #fcfcfc;
+}
+.shop-chrome .seller-settings__card {
+  padding: 32px 0;
+  border-radius: 24px;
+  background: rgba(165, 93, 244, 0.2);
+}
+.shop-chrome .seller-settings__inner {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  max-width: 950px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+.shop-chrome .seller-settings__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.shop-chrome .seller-settings__heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.shop-chrome .seller-settings__back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fcfcfc;
+  transition: color 0.15s linear;
+}
+.shop-chrome .seller-settings__back:hover {
+  color: #cfcdd4;
+}
+.shop-chrome .seller-settings__title {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  color: #fcfcfc;
+}
+.shop-chrome .seller-settings__guest {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #fcfcfc;
+  font-size: 14px;
+  font-weight: 700;
+  text-decoration: underline;
+}
+.shop-chrome .seller-settings__guest:hover {
+  color: #cfcdd4;
+}
+.shop-chrome .seller-settings__loading {
+  display: grid;
+  place-items: center;
+  min-height: 60vh;
+}
+.shop-chrome .seller-settings__field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+.shop-chrome .seller-settings__label {
+  font-weight: 700;
+  color: #fcfcfc;
+}
+.shop-chrome .seller-settings__field input,
+.shop-chrome .seller-settings__field textarea {
+  padding: 10px 12px;
+  border: 1px solid #a09ba8;
+  border-radius: 8px;
+  background: #fff;
+  color: #161518;
+  font: inherit;
+  font-family: var(--shop-sans);
+}
+.shop-chrome .seller-settings__field textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+.shop-chrome .seller-settings__prefixed {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  border: 1px solid #a09ba8;
+  border-radius: 8px;
+  background: #fff;
+}
+.shop-chrome .seller-settings__prefixed input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  border-radius: 0;
+}
+.shop-chrome .seller-settings__prefix {
+  display: flex;
+  align-items: center;
+  padding: 0 10px;
+  border-right: 1px solid #a09ba8;
+  background: rgba(0, 0, 0, 0.04);
+  color: #716b7c;
+  font-size: 13px;
+  white-space: nowrap;
+}
+.shop-chrome .seller-settings__picker {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: 12px;
+}
+.shop-chrome .seller-settings__tile {
+  position: relative;
+  padding: 0;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border: 2px solid #a09ba8;
+  border-radius: 12px;
+  background: #ecebed;
+  cursor: pointer;
+}
+.shop-chrome .seller-settings__tile img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.shop-chrome .seller-settings__tile[data-selected="true"] {
+  border-color: #691fa9;
+  box-shadow: 0 0 0 2px #691fa9;
+}
+.shop-chrome .seller-settings__tile[data-selected="true"]::after {
+  content: "✓";
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #691fa9;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+}
+.shop-chrome .seller-settings__tile[data-variant="upload"] {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-style: dashed;
+  background: #fff;
+  color: #716b7c;
+  font-family: var(--shop-sans);
+  font-size: 13px;
+  font-weight: 700;
+}
+.shop-chrome .seller-settings__upload-ico {
+  width: 22px;
+  height: 22px;
+  background: currentColor;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+.shop-chrome .seller-settings__tile[data-variant="upload"]:hover {
+  border-color: #691fa9;
+  color: #691fa9;
+}
+.shop-chrome .seller-settings__file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.shop-chrome .seller-settings__error {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: 8px;
+  background: rgba(255, 45, 85, 0.16);
+  color: #ffd1da;
+  font-size: 13px;
+}
+.shop-chrome .seller-settings__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
+}
+.shop-chrome .seller-settings__save {
+  min-width: 180px;
+  height: 46px;
+  padding: 0 24px;
+  border: 0;
+  border-radius: 12px;
+  background: #fcfcfc;
+  color: #242129;
+  font-family: var(--shop-sans);
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.shop-chrome .seller-settings__save:hover:not(:disabled) {
+  background: #f5f5f5;
+}
+.shop-chrome .seller-settings__save:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (max-width: 768px) {
+  .shop-chrome .seller-settings__card {
+    padding: 20px 0;
+  }
+  .shop-chrome .seller-settings__inner {
+    padding: 0 16px;
+  }
+  .shop-chrome .seller-settings__picker {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+  .shop-chrome .seller-settings__save {
+    width: 100%;
+  }
+}

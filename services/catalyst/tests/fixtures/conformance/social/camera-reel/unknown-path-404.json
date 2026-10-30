@@ -1,0 +1,20 @@
+{
+  "description": "GET a path the router does not know. Captured GET https://camera-reel-service.decentraland.org/api/does-not-exist -> 404.",
+  "request": {
+    "method": "GET",
+    "path": "/api/does-not-exist",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-length": "0"
+    },
+    "body_bytes_b64": ""
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/does-not-exist",
+  "captured_at": "2026-09-25T19:25:10Z",
+  "volatile_paths": []
+}

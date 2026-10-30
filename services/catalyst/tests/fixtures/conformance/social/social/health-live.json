@@ -1,0 +1,21 @@
+{
+  "description": "GET /health/live: the @dcl/http-server status check. Captured GET https://social-api.decentraland.org/health/live -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/health/live",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "text/plain; charset=utf-8",
+      "content-length": "5"
+    },
+    "body_bytes_b64": "YWxpdmU="
+  },
+  "captured_from": "https://social-api.decentraland.org/health/live",
+  "captured_at": "2026-10-26T20:46:17Z",
+  "volatile_paths": []
+}

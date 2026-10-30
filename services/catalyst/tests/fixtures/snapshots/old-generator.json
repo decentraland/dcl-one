@@ -1,0 +1,96 @@
+{
+  "source": "the old generator (catalyrst/crates/catalyrst-db/src/snapshot_generator.rs generate_snapshots_multi, catalyrst at 50a046f3d) run over seed.sql on a v2-schema database with search_path=content: pass 1 at endMs, pass 2 at endMs + 7 d on the same database. text is the whole file for files up to 4 KiB; the CID pins the rest.",
+  "passes": [
+    {
+      "endMs": 1610010000000,
+      "windows": [
+        {
+          "initTimestamp": 1577836800000,
+          "endTimestamp": 1606867200000,
+          "hash": "bafybeichqnbrv4gkues6h4e3k5poruaok3qcwxykf7vwes4fem6lnyofhm",
+          "numberOfEntities": 602,
+          "bytes": 461491,
+          "replacedSnapshotHashes": []
+        },
+        {
+          "initTimestamp": 1606867200000,
+          "endTimestamp": 1609286400000,
+          "hash": "bafkreia6pti3b5ufawatbeaqi5rjoyo5hjnwqqsvc4qv44hexb2gyultee",
+          "numberOfEntities": 3,
+          "bytes": 962,
+          "replacedSnapshotHashes": [],
+          "text": "### Decentraland json snapshot\n{\"entityId\":\"bafkreiboundaryscene\",\"entityType\":\"scene\",\"pointers\":[\"10,10\",\"10,11\",\"11,10\"],\"authChain\":[{\"payload\":\"0x3333333333333333333333333333333333333333\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreiboundaryscene\",\"signature\":\"0xcc\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1606867200000}\n{\"entityId\":\"bafkreimonthscenenew\",\"entityType\":\"scene\",\"pointers\":[\"20,20\"],\"authChain\":[{\"payload\":\"0x4444444444444444444444444444444444444444\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreimonthscenenew\",\"signature\":\"0xdd\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1608465600250}\n{\"entityId\":\"bafkreimonthoutfits\",\"entityType\":\"outfits\",\"pointers\":[\"0x5555555555555555555555555555555555555555:outfits\"],\"authChain\":[{\"payload\":\"0x5555555555555555555555555555555555555555\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreimonthoutfits\",\"signature\":\"0xee\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1608539400000}\n"
+        },
+        {
+          "initTimestamp": 1609286400000,
+          "endTimestamp": 1609891200000,
+          "hash": "bafkreiei57izzgsgjfvkrv5odvl37fzgb4duqiz2ms2htd4ykao6ht23uu",
+          "numberOfEntities": 3,
+          "bytes": 1051,
+          "replacedSnapshotHashes": [],
+          "text": "### Decentraland json snapshot\n{\"entityId\":\"bafkreiweektiea\",\"entityType\":\"emote\",\"pointers\":[\"urn:decentraland:matic:collections-v2:0xabc:0\"],\"authChain\":[{\"payload\":\"0x6666666666666666666666666666666666666666\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreiweektiea\",\"signature\":\"0xf1\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1609581600000}\n{\"entityId\":\"bafkreiweektieb\",\"entityType\":\"emote\",\"pointers\":[\"urn:decentraland:matic:collections-v2:0xabc:1\"],\"authChain\":[{\"payload\":\"0x6666666666666666666666666666666666666666\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreiweektieb\",\"signature\":\"0xf2\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1609581600000}\n{\"entityId\":\"bafkreiweekstore\",\"entityType\":\"store\",\"pointers\":[\"urn:decentraland:off-chain:marketplace-stores:0x7777777777777777777777777777777777777777\"],\"authChain\":[{\"payload\":\"0x7777777777777777777777777777777777777777\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreiweekstore\",\"signature\":\"0xf3\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1609718400001}\n"
+        },
+        {
+          "initTimestamp": 1609891200000,
+          "endTimestamp": 1609977600000,
+          "hash": "bafkreievtsdppv732ghdz4yvjvljoyo6xz7o7tu65u6azfa5l2bz53dgbm",
+          "numberOfEntities": 1,
+          "bytes": 365,
+          "replacedSnapshotHashes": [],
+          "text": "### Decentraland json snapshot\n{\"entityId\":\"bafkreidayendprofile\",\"entityType\":\"profile\",\"pointers\":[\"0x8888888888888888888888888888888888888888\"],\"authChain\":[{\"payload\":\"0x8888888888888888888888888888888888888888\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreidayendprofile\",\"signature\":\"0xf4\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1609977600000}\n"
+        }
+      ]
+    },
+    {
+      "endMs": 1610614800000,
+      "windows": [
+        {
+          "initTimestamp": 1577836800000,
+          "endTimestamp": 1606867200000,
+          "hash": "bafybeichqnbrv4gkues6h4e3k5poruaok3qcwxykf7vwes4fem6lnyofhm",
+          "numberOfEntities": 602,
+          "bytes": 461491,
+          "replacedSnapshotHashes": []
+        },
+        {
+          "initTimestamp": 1606867200000,
+          "endTimestamp": 1609286400000,
+          "hash": "bafkreia6pti3b5ufawatbeaqi5rjoyo5hjnwqqsvc4qv44hexb2gyultee",
+          "numberOfEntities": 3,
+          "bytes": 962,
+          "replacedSnapshotHashes": [],
+          "text": "### Decentraland json snapshot\n{\"entityId\":\"bafkreiboundaryscene\",\"entityType\":\"scene\",\"pointers\":[\"10,10\",\"10,11\",\"11,10\"],\"authChain\":[{\"payload\":\"0x3333333333333333333333333333333333333333\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreiboundaryscene\",\"signature\":\"0xcc\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1606867200000}\n{\"entityId\":\"bafkreimonthscenenew\",\"entityType\":\"scene\",\"pointers\":[\"20,20\"],\"authChain\":[{\"payload\":\"0x4444444444444444444444444444444444444444\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreimonthscenenew\",\"signature\":\"0xdd\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1608465600250}\n{\"entityId\":\"bafkreimonthoutfits\",\"entityType\":\"outfits\",\"pointers\":[\"0x5555555555555555555555555555555555555555:outfits\"],\"authChain\":[{\"payload\":\"0x5555555555555555555555555555555555555555\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreimonthoutfits\",\"signature\":\"0xee\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1608539400000}\n"
+        },
+        {
+          "initTimestamp": 1609286400000,
+          "endTimestamp": 1609891200000,
+          "hash": "bafkreiei57izzgsgjfvkrv5odvl37fzgb4duqiz2ms2htd4ykao6ht23uu",
+          "numberOfEntities": 3,
+          "bytes": 1051,
+          "replacedSnapshotHashes": [],
+          "text": "### Decentraland json snapshot\n{\"entityId\":\"bafkreiweektiea\",\"entityType\":\"emote\",\"pointers\":[\"urn:decentraland:matic:collections-v2:0xabc:0\"],\"authChain\":[{\"payload\":\"0x6666666666666666666666666666666666666666\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreiweektiea\",\"signature\":\"0xf1\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1609581600000}\n{\"entityId\":\"bafkreiweektieb\",\"entityType\":\"emote\",\"pointers\":[\"urn:decentraland:matic:collections-v2:0xabc:1\"],\"authChain\":[{\"payload\":\"0x6666666666666666666666666666666666666666\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreiweektieb\",\"signature\":\"0xf2\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1609581600000}\n{\"entityId\":\"bafkreiweekstore\",\"entityType\":\"store\",\"pointers\":[\"urn:decentraland:off-chain:marketplace-stores:0x7777777777777777777777777777777777777777\"],\"authChain\":[{\"payload\":\"0x7777777777777777777777777777777777777777\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreiweekstore\",\"signature\":\"0xf3\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1609718400001}\n"
+        },
+        {
+          "initTimestamp": 1609891200000,
+          "endTimestamp": 1610496000000,
+          "hash": "bafkreifyg6blbd4bp3itbtkaymt3a3ko3cwszoo5gbcm4syqw72ms3xhyq",
+          "numberOfEntities": 2,
+          "bytes": 691,
+          "replacedSnapshotHashes": [
+            "bafkreievtsdppv732ghdz4yvjvljoyo6xz7o7tu65u6azfa5l2bz53dgbm"
+          ],
+          "text": "### Decentraland json snapshot\n{\"entityId\":\"bafkreidayendprofile\",\"entityType\":\"profile\",\"pointers\":[\"0x8888888888888888888888888888888888888888\"],\"authChain\":[{\"payload\":\"0x8888888888888888888888888888888888888888\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreidayendprofile\",\"signature\":\"0xf4\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1609977600000}\n{\"entityId\":\"bafkreiremainder\",\"entityType\":\"profile\",\"pointers\":[\"0x9999999999999999999999999999999999999999\"],\"authChain\":[{\"payload\":\"0x9999999999999999999999999999999999999999\",\"signature\":\"\",\"type\":\"SIGNER\"},{\"payload\":\"bafkreiremainder\",\"signature\":\"0xf5\",\"type\":\"ECDSA_SIGNED_ENTITY\"}],\"entityTimestamp\":1609981200000}\n"
+        },
+        {
+          "initTimestamp": 1610496000000,
+          "endTimestamp": 1610582400000,
+          "hash": "bafkreig6sfhegnp4okzecgx3v6gj6pohh5qzw6zjtrdqtggx64743rkmz4",
+          "numberOfEntities": 0,
+          "bytes": 31,
+          "replacedSnapshotHashes": [],
+          "text": "### Decentraland json snapshot\n"
+        }
+      ]
+    }
+  ]
+}

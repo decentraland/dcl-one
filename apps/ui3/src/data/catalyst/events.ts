@@ -1,0 +1,225 @@
+import { getJSON, sendSignedJSON, type RequestOpts } from "./client";
+import { noteCopy } from "../copyAsOf";
+import { publicImageUrl } from "../publicImage";
+import { hasId, isRecord } from "./rows";
+import { EventAttendeeSchema, EventCategorySchema, EventSchema } from "./schemas/events";
+import type { DclEventWire, EventAttendeeWire, EventCategoryWire } from "./schemas/events";
+
+export function normalizeEvent(e: DclEventWire) {
+  return {
+    ...e,
+    name: e.name ?? null,
+    image: publicImageUrl(e.image) ?? null,
+    image_vertical: publicImageUrl(e.image_vertical) ?? null,
+    description: e.description ?? null,
+    start_at: e.start_at ?? null,
+    finish_at: e.finish_at ?? null,
+    next_start_at: e.next_start_at ?? null,
+    x: e.x ?? null,
+    y: e.y ?? null,
+    url: e.url ?? null,
+    user_name: e.user_name ?? null,
+    scene_name: e.scene_name ?? null,
+    estate_name: e.estate_name ?? null,
+    place_id: e.place_id ?? null,
+    server: e.server ?? null,
+  };
+}
+
+export type DclEvent = ReturnType<typeof normalizeEvent>;
+
+function normalizeEventCategory(c: EventCategoryWire) {
+  return { ...c, i18n: { en: c.i18n?.en ?? null } };
+}
+
+type EventCategory = ReturnType<typeof normalizeEventCategory>;
+
+export type EventsParams = {
+  list?: string;
+  search?: string;
+  category?: string;
+  limit?: number;
+  offset?: number;
+};
+
+function isDev(): boolean {
+  try {
+    return Boolean(import.meta?.env?.DEV);
+  } catch {
+    return false;
+  }
+}
+
+function warnInvalid(kind: string, issues: unknown): void {
+  if (isDev()) console.warn(`[catalyst] ${kind} failed schema validation`, issues);
+}
+
+function hasCategoryName(row: unknown): boolean {
+  return isRecord(row) && typeof row.name === "string";
+}
+
+export function parseEvent(raw: unknown): DclEvent | null {
+  const r = EventSchema.safeParse(raw);
+  if (!r.success) {
+    warnInvalid("Event", r.error.issues);
+    return null;
+  }
+  return hasId(r.data) ? normalizeEvent(r.data) : null;
+}
+
+function parseEvents(raw?: unknown[]): DclEvent[] {
+  const out: DclEvent[] = [];
+  for (const item of raw ?? []) {
+    const parsed = parseEvent(item);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+
+function parseEventCategory(raw: unknown): EventCategory | null {
+  const r = EventCategorySchema.safeParse(raw);
+  if (!r.success) {
+    warnInvalid("EventCategory", r.error.issues);
+    return null;
+  }
+  return hasCategoryName(r.data) ? normalizeEventCategory(r.data) : null;
+}
+
+export async function fetchEvents(
+  params: EventsParams = {},
+  opts: RequestOpts = {},
+): Promise<{ data: DclEvent[]; total: number }> {
+  const env = await getJSON<{ data?: unknown[]; total?: number }>("/api/events", {
+    service: "events",
+    ...opts,
+    query: {
+      list: params.list,
+      search: params.search,
+      category: params.category,
+      limit: params.limit,
+      offset: params.offset,
+    },
+  });
+  noteCopy("events", env);
+  const data = parseEvents(env?.data ?? []);
+  return { data, total: env?.total ?? data.length };
+}
+
+export function normalizeEventAttendee(a: EventAttendeeWire) {
+  return { ...a, user_name: a.user_name ?? null };
+}
+
+export type EventAttendee = ReturnType<typeof normalizeEventAttendee>;
+
+export function hasAttendeeUser(row: unknown): boolean {
+  return isRecord(row) && typeof row.user === "string";
+}
+
+function parseEventAttendee(raw: unknown): EventAttendee | null {
+  const r = EventAttendeeSchema.safeParse(raw);
+  if (!r.success) {
+    warnInvalid("EventAttendee", r.error.issues);
+    return null;
+  }
+  return hasAttendeeUser(r.data) ? normalizeEventAttendee(r.data) : null;
+}
+
+function parseEventAttendees(raw?: unknown[]): EventAttendee[] {
+  const out: EventAttendee[] = [];
+  for (const item of raw ?? []) {
+    const parsed = parseEventAttendee(item);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+
+export function isAttending(
+  attendees: EventAttendee[],
+  address?: string | null,
+): boolean {
+  if (!address) return false;
+  const a = address.toLowerCase();
+  return attendees.some((row) => row.user.toLowerCase() === a);
+}
+
+export async function fetchEventAttendees(
+  id: string,
+  opts: RequestOpts = {},
+): Promise<EventAttendee[]> {
+  const env = await getJSON<{ data?: unknown[] }>(
+    `/api/events/${encodeURIComponent(id)}/attendees`,
+    { service: "events", ...opts },
+  );
+  return parseEventAttendees(env?.data ?? []);
+}
+
+export async function setEventAttendance(
+  id: string,
+  interested: boolean,
+): Promise<EventAttendee[]> {
+  const env = await sendSignedJSON<{ data?: unknown[] }>(
+    `/api/events/${encodeURIComponent(id)}/attendees`,
+    { service: "events", method: interested ? "POST" : "DELETE" },
+  );
+  return parseEventAttendees(env?.data ?? []);
+}
+
+export async function fetchEventCategories(opts: RequestOpts = {}): Promise<EventCategory[]> {
+  const env = await getJSON<{ data?: unknown[] }>("/api/events/categories", {
+    service: "events",
+    ...opts,
+  });
+  const out: EventCategory[] = [];
+  for (const raw of env?.data ?? []) {
+    const parsed = parseEventCategory(raw);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+
+export { hueFor } from "../format";
+
+export function formatEventTime(iso?: string | null): string {
+  if (!iso) return "Soon";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Soon";
+  return d.toLocaleString("en-US", {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+}
+
+export function formatEventWhen(iso?: string | null): string {
+  if (!iso) return "Date to be announced";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Date to be announced";
+  return d
+    .toLocaleString("en-US", {
+      weekday: "short",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    })
+    .toUpperCase();
+}
+
+export function eventCoords(e: DclEvent | null | undefined): string {
+  const x = e?.x ?? e?.position?.[0] ?? e?.coordinates?.[0] ?? 0;
+  const y = e?.y ?? e?.position?.[1] ?? e?.coordinates?.[1] ?? 0;
+  return `(${x},${y})`;
+}
+
+export function eventStart(e: DclEvent | null | undefined): string | null {
+  return e?.next_start_at ?? e?.start_at ?? null;
+}
+
+export function eventXY(e: DclEvent | null | undefined): { x: number; y: number } {
+  const x = e?.x ?? e?.position?.[0] ?? e?.coordinates?.[0] ?? 0;
+  const y = e?.y ?? e?.position?.[1] ?? e?.coordinates?.[1] ?? 0;
+  return { x, y };
+}

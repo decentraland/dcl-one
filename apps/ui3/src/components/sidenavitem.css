@@ -1,0 +1,38 @@
+@import "./site-navigation.css";
+
+.side-nav-item {
+  box-sizing: border-box;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  min-height: 44px;
+  padding: 11px 12px;
+  border: 0;
+  border-radius: var(--r-control);
+  background: none;
+  color: var(--site-nav-ink);
+  font: 500 14px var(--font-sans);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease;
+}
+.side-nav-item:hover { background: var(--fill-2); color: var(--site-nav-active); }
+.side-nav-item:focus-visible { outline: 2px solid var(--brand); outline-offset: -2px; }
+.side-nav-item.is-active {
+  background: var(--fill-3);
+  color: var(--site-nav-active);
+  font-weight: 600;
+}
+.side-nav-item.is-active::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 3px;
+  border-radius: 0 3px 3px 0;
+  background: var(--brand);
+}

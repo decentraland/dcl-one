@@ -1,0 +1,29 @@
+{
+  "method": "GET",
+  "url": "https://camera-reel-service.decentraland.org/api/images/e9659dd5-0f87-4169-a9a6-1ec0d5faf051",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 307,
+  "status_text": "Temporary Redirect",
+  "response_headers": {
+    "access-control-expose-headers": "location",
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c706ccf8e38d9-TXL",
+    "connection": "keep-alive",
+    "content-length": "0",
+    "date": "Fri, 25 Sep 2026 19:29:41 GMT",
+    "location": "https://camera-reel-s3-bucket.decentraland.org/e9659dd5-0f87-4169-a9a6-1ec0d5faf051",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:29:41Z",
+  "elapsed_ms": 236,
+  "body_bytes": 0,
+  "body_file": "image-redirect.raw.body",
+  "redacted": false
+}

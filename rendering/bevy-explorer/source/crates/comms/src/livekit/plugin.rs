@@ -1,0 +1,296 @@
+use bevy::prelude::*;
+use common::{
+    debug_panic,
+    inputs::SystemAction,
+    rpc::{RpcCall, RpcCallEvent, RpcOrigin},
+    structs::MicState,
+};
+use dcl_component::proto_components::kernel::apis::{
+    VideoTrackSourceType, VideoTracksActiveStreamsData, VideoTracksActiveStreamsResponse,
+};
+use input_manager::{InputManager, InputPriority};
+use livestream_manager::ActiveTransmitter;
+use system_bridge::SystemApi;
+use tokio::{sync::mpsc, task::JoinHandle};
+#[cfg(not(target_arch = "wasm32"))]
+use {
+    crate::livekit::LivekitAudioManager,
+    common::structs::AudioSettings,
+    kira::{
+        manager::{AudioManager, AudioManagerSettings, DefaultBackend},
+        tween::Tween,
+    },
+};
+
+#[cfg(feature = "room_debug")]
+use crate::livekit::room_debug::RoomDebugPlugin;
+use crate::{
+    global_crdt::NetworkUpdate,
+    livekit::{
+        mic::MicPlugin,
+        participant::{plugin::LivekitParticipantPlugin, HostingParticipants, LivekitParticipant},
+        room::plugin::LivekitRoomPlugin,
+        runtime::LivekitRuntimePlugin,
+        track::{
+            plugin::LivekitTrackPlugin, Camera as LivekitSourceCamera, LivekitTrack, Publishing,
+            ScreenshareVideo as LivekitSourceScreenshare, Video,
+        },
+        ConnectionAvailability, LivekitChannelControl, LivekitNetworkMessage, LivekitRuntime,
+        LivekitTransport, StartLivekit,
+    },
+    SceneRoom, Transport, TransportType,
+};
+
+pub struct LivekitPlugin;
+
+impl Plugin for LivekitPlugin {
+    fn build(&self, app: &mut App) {
+        #[cfg(not(target_arch = "wasm32"))]
+        app.init_resource::<PlayerUpdateTasks>();
+        #[cfg(target_arch = "wasm32")]
+        app.init_non_send_resource::<PlayerUpdateTasks>();
+        app.init_state::<ConnectionAvailability>();
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            app.insert_resource(crate::livekit::web::take_event_receiver())
+                .init_resource::<crate::livekit::web::MicrophoneStatus>()
+                .add_systems(PreUpdate, crate::livekit::web::dispatch_page_events);
+        }
+
+        // a headless app has no microphone, and plays no voices
+        let headless = app
+            .world()
+            .get_resource::<common::structs::NoRenderApp>()
+            .is_some();
+        if !headless {
+            app.add_plugins(MicPlugin);
+        }
+        app.add_plugins(LivekitRuntimePlugin);
+        app.add_plugins(LivekitRoomPlugin);
+        app.add_plugins(LivekitParticipantPlugin);
+        app.add_plugins(LivekitTrackPlugin);
+
+        app.add_systems(Update, (start_livekit, verify_player_update_tasks));
+        // on the web the page plays voice (livekit-client), and the engine worker has no audio
+        // output; a headless app plays nothing, so opens no audio device
+        #[cfg(not(target_arch = "wasm32"))]
+        if !headless {
+            app.add_systems(Startup, build_kira_audio_manager);
+            app.add_systems(
+                Update,
+                respond_to_audio_settings_change
+                    .run_if(resource_exists_and_changed::<AudioSettings>),
+            );
+        }
+
+        app.add_event::<StartLivekit>();
+
+        app.add_systems(
+            Update,
+            (handle_input, respond_to_system_api, respond_to_rpc_calls),
+        );
+
+        #[cfg(feature = "room_debug")]
+        app.add_plugins(RoomDebugPlugin);
+    }
+}
+
+/// Holds [`LivekitRuntime`]s, so on the web it is non-send like them (see `runtime.rs`).
+#[derive(Default, Deref, DerefMut)]
+#[cfg_attr(not(target_arch = "wasm32"), derive(Resource))]
+pub(super) struct PlayerUpdateTasks(Vec<PlayerUpdateTask>);
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(super) type PlayerUpdateTasksMut<'w> = ResMut<'w, PlayerUpdateTasks>;
+#[cfg(target_arch = "wasm32")]
+pub(super) type PlayerUpdateTasksMut<'w> = NonSendMut<'w, PlayerUpdateTasks>;
+
+pub(super) struct PlayerUpdateTask {
+    pub runtime: LivekitRuntime,
+    pub task: JoinHandle<Result<(), mpsc::error::SendError<NetworkUpdate>>>,
+}
+
+fn start_livekit(mut commands: Commands, mut room_events: EventReader<StartLivekit>) {
+    for ev in room_events.read() {
+        info!("starting livekit protocol");
+        let (sender, receiver) = tokio::sync::mpsc::channel(1000);
+        let (control_sender, control_receiver) = tokio::sync::mpsc::channel(128);
+
+        // No connect-time profile announce here — `profile::mod` periodically announces the version
+        // over PRIMARY (Pulse + websocket dev server), and the Pulse handshake carries the
+        // connect-time version. Peers reach this transport for guest profile request/response by
+        // picking a profile-capable transport at request time, not off any announcement of ours.
+
+        commands.entity(ev.entity).try_insert((
+            Transport {
+                transport_type: TransportType::Livekit,
+                sender,
+                control: Some(control_sender),
+                context: ev.context,
+            },
+            LivekitTransport {
+                address: ev.address.to_owned(),
+                retries: 0,
+            },
+            LivekitChannelControl {
+                receiver: control_receiver,
+            },
+            LivekitNetworkMessage { receiver },
+        ));
+    }
+}
+
+fn verify_player_update_tasks(mut player_update_tasks: PlayerUpdateTasksMut) {
+    let mut done = vec![];
+    for (
+        i,
+        PlayerUpdateTask {
+            runtime,
+            ref mut task,
+        },
+    ) in player_update_tasks.iter_mut().enumerate()
+    {
+        if task.is_finished() {
+            done.push(i);
+            let res = runtime.block_on(task);
+            match res {
+                Ok(res) => {
+                    if let Err(err) = res {
+                        debug_panic!("Failed to send PlayerUpdate due to {err}.");
+                    }
+                }
+                Err(err) => {
+                    debug_panic!("Failed to pull PlayerUpdateTask due to '{err}'.");
+                }
+            }
+        }
+    }
+
+    while let Some(i) = done.pop() {
+        player_update_tasks.remove(i);
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn build_kira_audio_manager(mut commands: Commands) {
+    match AudioManager::new(AudioManagerSettings::<DefaultBackend>::default()) {
+        Ok(manager) => {
+            debug!("Livekit AudioManager built.");
+            commands.insert_resource(LivekitAudioManager { manager });
+        }
+        Err(err) => {
+            debug_panic!("Failed to livekit build AudioManager due to '{err}'.");
+        }
+    };
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn respond_to_audio_settings_change(
+    mut livekit_audio_manager: ResMut<LivekitAudioManager>,
+    audio_settings: Res<AudioSettings>,
+) {
+    livekit_audio_manager
+        .main_track()
+        .set_volume(audio_settings.scene() as f64, Tween::default());
+}
+
+fn handle_input(
+    input_manager: InputManager,
+    mut mic_state: ResMut<MicState>,
+    mut pressed: Local<bool>,
+) {
+    if *pressed {
+        if input_manager.just_up(SystemAction::Microphone) {
+            *pressed = false;
+            mic_state.enabled = !mic_state.enabled;
+        }
+    } else if input_manager.just_down(SystemAction::Microphone, InputPriority::None) {
+        *pressed = true;
+        mic_state.enabled = !mic_state.enabled;
+    }
+}
+
+fn respond_to_system_api(mut events: EventReader<SystemApi>, mut mic: ResMut<MicState>) {
+    for ev in events.read() {
+        match ev {
+            SystemApi::GetMicState(rpc_result_sender) => {
+                rpc_result_sender.send(mic.clone());
+            }
+            SystemApi::SetMicEnabled(enabled) => {
+                mic.enabled = mic.available && *enabled;
+            }
+            _ => (),
+        }
+    }
+}
+
+#[expect(clippy::type_complexity, reason = "Queries are complex")]
+fn respond_to_rpc_calls(
+    mut rpc_calls: EventReader<RpcCallEvent>,
+    participants: Query<(&LivekitParticipant, &Publishing)>,
+    tracks: Query<
+        (
+            &LivekitTrack,
+            AnyOf<(&LivekitSourceCamera, &LivekitSourceScreenshare)>,
+            Has<ActiveTransmitter>,
+        ),
+        With<Video>,
+    >,
+    scene_rooms: Query<(&HostingParticipants, &SceneRoom)>,
+) {
+    for RpcCallEvent { origin, call } in rpc_calls.read() {
+        #[expect(clippy::single_match, reason = "may be expanded later")]
+        match call {
+            RpcCall::ActiveVideoStreams { response } => {
+                let RpcOrigin::Scene { entity: _, hash } = origin else {
+                    response.send(VideoTracksActiveStreamsResponse { streams: vec![] });
+                    continue;
+                };
+                let Some((hosting_participants, _)) = scene_rooms
+                    .iter()
+                    .find(|(_, scene_room)| scene_room.0.as_str() == &**hash)
+                else {
+                    debug!("No mapping between RpcCall origin and a transport.");
+                    continue;
+                };
+
+                let mut streams = vec![];
+                for (participant, publishing) in
+                    participants.iter_many(hosting_participants.collection())
+                {
+                    for (track, source, has_active_streamer) in
+                        tracks.iter_many(publishing.collection())
+                    {
+                        let identity = participant.identity().0;
+                        let track_sid = format!("livekit-video://{}/{}", identity, track.sid());
+
+                        if has_active_streamer {
+                            streams.push(VideoTracksActiveStreamsData {
+                                identity: participant.identity().0.clone(),
+                                track_sid: "livekit-video://current-stream".to_owned(),
+                                source_type: match source {
+                                    (Some(_), _) => VideoTrackSourceType::VtstCamera as i32,
+                                    (_, Some(_)) => VideoTrackSourceType::VtstScreenShare as i32,
+                                    _ => VideoTrackSourceType::VtstUnknown as i32,
+                                },
+                            });
+                        }
+
+                        streams.push(VideoTracksActiveStreamsData {
+                            identity: participant.identity().0,
+                            track_sid,
+                            source_type: match source {
+                                (Some(_), _) => VideoTrackSourceType::VtstCamera as i32,
+                                (_, Some(_)) => VideoTrackSourceType::VtstScreenShare as i32,
+                                _ => VideoTrackSourceType::VtstUnknown as i32,
+                            },
+                        });
+                    }
+                }
+                response.send(VideoTracksActiveStreamsResponse { streams });
+            }
+            _ => (),
+        }
+    }
+}

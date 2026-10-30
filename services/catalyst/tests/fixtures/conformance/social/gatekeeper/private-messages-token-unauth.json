@@ -1,0 +1,23 @@
+{
+  "description": "GET /private-messages/token without an auth chain (the explorer sends it signed; the signed form mints a LiveKit token and is not captured). Captured GET https://comms-gatekeeper.decentraland.org/private-messages/token -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/private-messages/token",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": false,
+      "message": "Invalid Auth Chain"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/private-messages/token",
+  "captured_at": "2026-09-25T19:24:35Z",
+  "volatile_paths": []
+}

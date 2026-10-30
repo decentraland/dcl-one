@@ -1,0 +1,6 @@
+{
+  "core": [],
+  "data": ["core"],
+  "features": ["core", "data"],
+  "routes": ["core", "data", "features"]
+}

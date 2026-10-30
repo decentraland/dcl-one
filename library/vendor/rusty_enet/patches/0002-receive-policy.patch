@@ -1,0 +1,2569 @@
+diff --git a/examples/client.rs b/examples/client.rs
+index d07c00e3..000c9e19 100644
+--- a/examples/client.rs
++++ b/examples/client.rs
+@@ -26,6 +26,7 @@ fn main() {
+     loop {
+         while let Some(event) = host.service().unwrap() {
+             match event {
++                enet::Event::ReceiveLimitExceeded { .. } => {}
+                 enet::Event::Connect { peer, .. } => {
+                     println!("Connected");
+                     let packet = enet::Packet::reliable("hello world".as_bytes());
+diff --git a/examples/read_write.rs b/examples/read_write.rs
+index 18d647bd..db794e87 100644
+--- a/examples/read_write.rs
++++ b/examples/read_write.rs
+@@ -47,6 +47,7 @@ fn update_host(
+ ) {
+     while let Some(event) = host.service().unwrap() {
+         match event {
++            enet::Event::ReceiveLimitExceeded { .. } => {}
+             enet::Event::Connect { peer, data } => {
+                 println!(
+                     "[{}] Connected to {:?} with data: {}",
+diff --git a/examples/server.rs b/examples/server.rs
+index a46dd098..c079105d 100644
+--- a/examples/server.rs
++++ b/examples/server.rs
+@@ -23,6 +23,7 @@ fn main() {
+     loop {
+         while let Some(event) = host.service().unwrap() {
+             match event {
++                enet::Event::ReceiveLimitExceeded { .. } => {}
+                 enet::Event::Connect { peer, .. } => {
+                     println!("Peer {} connected", peer.id().0);
+                 }
+diff --git a/src/c.rs b/src/c.rs
+index 90e3a6c1..41908006 100644
+--- a/src/c.rs
++++ b/src/c.rs
+@@ -71,6 +71,7 @@ pub(crate) struct ENetIncomingCommand {
+     pub(crate) fragments_remaining: u32,
+     pub(crate) fragments: *mut u32,
+     pub(crate) packet: *mut ENetPacket,
++    pub(crate) receive_charge: usize,
+ }
+ #[allow(clippy::cast_possible_truncation)]
+ pub(crate) unsafe fn enet_time_get<S: Socket>(host: *mut ENetHost<S>) -> u32 {
+diff --git a/src/c/event.rs b/src/c/event.rs
+index c59dd4dd..70076efe 100644
+--- a/src/c/event.rs
++++ b/src/c/event.rs
+@@ -1,6 +1,7 @@
+ use crate::{ENetPacket, ENetPeer, Socket};
+ 
+ pub(crate) type ENetEventType = u32;
++pub(crate) const ENET_EVENT_TYPE_RECEIVE_LIMIT_EXCEEDED: ENetEventType = 4;
+ pub(crate) const ENET_EVENT_TYPE_RECEIVE: ENetEventType = 3;
+ pub(crate) const ENET_EVENT_TYPE_DISCONNECT: ENetEventType = 2;
+ pub(crate) const ENET_EVENT_TYPE_CONNECT: ENetEventType = 1;
+diff --git a/src/c/host.rs b/src/c/host.rs
+index ff35ac5a..d6b097e5 100644
+--- a/src/c/host.rs
++++ b/src/c/host.rs
+@@ -47,6 +47,7 @@ pub(crate) struct ENetHost<S: Socket> {
+     pub(crate) duplicate_peers: usize,
+     pub(crate) maximum_packet_size: usize,
+     pub(crate) maximum_waiting_data: usize,
++    pub(crate) receive_policy: Option<crate::ReceivePolicy>,
+ }
+ pub(crate) unsafe fn enet_host_create<S: Socket>(
+     mut socket: S,
+@@ -104,6 +105,7 @@ pub(crate) unsafe fn enet_host_create<S: Socket>(
+     (*host).duplicate_peers = PROTOCOL_MAXIMUM_PEER_ID as i32 as usize;
+     (*host).maximum_packet_size = HOST_DEFAULT_MAXIMUM_PACKET_SIZE as i32 as usize;
+     (*host).maximum_waiting_data = HOST_DEFAULT_MAXIMUM_WAITING_DATA as i32 as usize;
++    (*host).receive_policy = None;
+     (*host).compressor.write(None);
+     enet_list_clear(&mut (*host).dispatch_queue);
+     current_peer = (*host).peers;
+diff --git a/src/c/malloc.rs b/src/c/malloc.rs
+index ed6fd433..a0ef5dba 100644
+--- a/src/c/malloc.rs
++++ b/src/c/malloc.rs
+@@ -5,7 +5,25 @@ use alloc::alloc::{alloc, dealloc, handle_alloc_error};
+ #[cfg(feature = "std")]
+ use std::alloc::{alloc, dealloc, handle_alloc_error};
+ 
++#[cfg(all(test, feature = "std"))]
++std::thread_local! {
++    static ALLOCATION_PEAK: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
++}
++
++#[cfg(all(test, feature = "std"))]
++pub(crate) fn enet_test_allocation_peak(reset: bool) -> usize {
++    ALLOCATION_PEAK.with(|peak| {
++        let value = peak.get();
++        if reset {
++            peak.set(0);
++        }
++        value
++    })
++}
++
+ pub(crate) unsafe fn enet_malloc(layout: Layout) -> *mut u8 {
++    #[cfg(all(test, feature = "std"))]
++    ALLOCATION_PEAK.with(|peak| peak.set(peak.get().max(layout.size())));
+     let ptr = unsafe { alloc(layout) };
+     if ptr.is_null() {
+         handle_alloc_error(layout);
+diff --git a/src/c/peer.rs b/src/c/peer.rs
+index e49c35c2..f6be30ae 100644
+--- a/src/c/peer.rs
++++ b/src/c/peer.rs
+@@ -98,6 +98,12 @@ pub(crate) struct ENetPeer<S: Socket> {
+     pub(crate) unsequenced_window: [u32; 32],
+     pub(crate) event_data: u32,
+     pub(crate) total_waiting_data: usize,
++    pub(crate) queued_receive_bytes: usize,
++    pub(crate) queued_receive_commands: usize,
++    // Fixed pending state: 0 none, 1 payload (terminal), 2 bytes, 3 commands.
++    pub(crate) receive_limit: u8,
++    pub(crate) receive_limit_channel: u8,
++    pub(crate) receive_terminal: bool,
+ }
+ pub(crate) unsafe fn enet_peer_throttle_configure<S: Socket>(
+     peer: *mut ENetPeer<S>,
+@@ -281,10 +287,170 @@ pub(crate) unsafe fn enet_peer_send<S: Socket>(
+     }
+     Ok(())
+ }
++// Reuse the peer's dispatch node. A terminal violation replaces any aggregate report.
++pub(crate) unsafe fn enet_peer_receive_limit<S: Socket>(
++    peer: *mut ENetPeer<S>,
++    channel: u8,
++    kind: u8,
++) {
++    if (*peer).receive_terminal {
++        return;
++    }
++    if kind == 1 {
++        (*peer).receive_terminal = true;
++    }
++    if kind == 1 || (*peer).receive_limit == 0 {
++        (*peer).receive_limit = kind;
++        (*peer).receive_limit_channel = channel;
++    }
++    if (*peer).flags & ENET_PEER_FLAG_NEEDS_DISPATCH as u16 != 0 {
++        enet_list_remove(&mut (*peer).dispatch_list);
++    }
++    let queue = &mut (*(*peer).host).dispatch_queue;
++    enet_list_insert(
++        (*queue).sentinel.next,
++        core::ptr::addr_of_mut!((*peer).dispatch_list).cast(),
++    );
++    (*peer).flags |= ENET_PEER_FLAG_NEEDS_DISPATCH as u16;
++}
++
++pub(crate) unsafe fn enet_peer_check_receive_payload<S: Socket>(
++    peer: *mut ENetPeer<S>,
++    channel: u8,
++    length: usize,
++) -> bool {
++    if (*(*peer).host)
++        .receive_policy
++        .is_some_and(|p| length > p.maximum_packet_size)
++    {
++        enet_peer_receive_limit(peer, channel, 1);
++        return false;
++    }
++    !(*peer).receive_terminal
++}
++
++pub(crate) fn enet_receive_charge(length: usize, fragments: u32) -> Option<usize> {
++    let words = (fragments as usize).checked_add(31)?.checked_div(32)?;
++    length
++        .checked_add(words.checked_mul(core::mem::size_of::<u32>())?)?
++        .checked_add(core::mem::size_of::<ENetIncomingCommand>())?
++        .checked_add(core::mem::size_of::<ENetPacket>())
++}
++
++unsafe fn enet_peer_release_receive<S: Socket>(
++    peer: *mut ENetPeer<S>,
++    command: *mut ENetIncomingCommand,
++) {
++    let charge = (*command).receive_charge;
++    if charge != 0 {
++        (*peer).queued_receive_bytes = (*peer)
++            .queued_receive_bytes
++            .checked_sub(charge)
++            .expect("receive charge underflow");
++        (*peer).queued_receive_commands = (*peer)
++            .queued_receive_commands
++            .checked_sub(1)
++            .expect("receive command underflow");
++        (*peer).total_waiting_data = (*peer)
++            .total_waiting_data
++            .checked_sub((*(*command).packet).data_length)
++            .expect("receive payload underflow");
++        (*command).receive_charge = 0;
++    }
++}
++
++// Called only after window/duplicate selection. All allocating branches share this admission.
++unsafe fn enet_peer_allocate_incoming<S: Socket>(
++    peer: *mut ENetPeer<S>,
++    command: *const ENetProtocol,
++    data: *const u8,
++    length: usize,
++    flags: u32,
++    fragments: u32,
++    unreliable: u32,
++    position: ENetListIterator,
++    channel: *mut ENetChannel,
++) -> *mut ENetIncomingCommand {
++    if !enet_peer_check_receive_payload(peer, (*command).header.channel_id, length) {
++        return core::ptr::null_mut();
++    }
++    let charge = if let Some(policy) = (*(*peer).host).receive_policy {
++        let Some(charge) = enet_receive_charge(length, fragments) else {
++            enet_peer_receive_limit(peer, (*command).header.channel_id, 2);
++            return core::ptr::null_mut();
++        };
++        let Some(bytes) = (*peer)
++            .queued_receive_bytes
++            .checked_add(charge)
++            .filter(|v| *v <= policy.maximum_queued_bytes)
++        else {
++            enet_peer_receive_limit(peer, (*command).header.channel_id, 2);
++            return core::ptr::null_mut();
++        };
++        let Some(commands) = (*peer)
++            .queued_receive_commands
++            .checked_add(1)
++            .filter(|v| *v <= policy.maximum_queued_commands)
++        else {
++            enet_peer_receive_limit(peer, (*command).header.channel_id, 3);
++            return core::ptr::null_mut();
++        };
++        // Reservation precedes packet, command and bitmap allocation. enet_malloc aborts on OOM.
++        (*peer).queued_receive_bytes = bytes;
++        (*peer).queued_receive_commands = commands;
++        charge
++    } else {
++        if (*peer).total_waiting_data >= (*(*peer).host).maximum_waiting_data {
++            return core::ptr::null_mut();
++        }
++        0
++    };
++    // The parser bounds fragment count, but internal callers can refuse recoverably too.
++    if fragments > PROTOCOL_MAXIMUM_FRAGMENT_COUNT as u32 {
++        if charge != 0 {
++            (*peer).queued_receive_bytes =
++                (*peer).queued_receive_bytes.checked_sub(charge).unwrap();
++            (*peer).queued_receive_commands =
++                (*peer).queued_receive_commands.checked_sub(1).unwrap();
++        }
++        return core::ptr::null_mut();
++    }
++    let packet = enet_packet_create(data, length, flags);
++    let incoming: *mut ENetIncomingCommand =
++        enet_malloc(Layout::new::<ENetIncomingCommand>()).cast();
++    (*incoming).reliable_sequence_number = (*command).header.reliable_sequence_number;
++    (*incoming).unreliable_sequence_number = unreliable as u16;
++    (*incoming).command = *command;
++    (*incoming).fragment_count = fragments;
++    (*incoming).fragments_remaining = fragments;
++    (*incoming).packet = packet;
++    (*incoming).receive_charge = charge;
++    (*incoming).fragments = core::ptr::null_mut();
++    if fragments != 0 {
++        let words = ((fragments as usize) + 31) / 32;
++        (*incoming).fragments = enet_malloc(Layout::array::<u32>(words).unwrap()).cast();
++        write_bytes((*incoming).fragments, 0, words);
++    }
++    (*packet).reference_count += 1;
++    (*peer).total_waiting_data = (*peer)
++        .total_waiting_data
++        .checked_add(length)
++        .expect("receive payload overflow");
++    enet_list_insert((*position).next, incoming.cast());
++    match (*command).header.command as u32 & ENET_PROTOCOL_COMMAND_MASK {
++        8 | 6 => enet_peer_dispatch_incoming_reliable_commands(peer, channel, incoming),
++        _ => enet_peer_dispatch_incoming_unreliable_commands(peer, channel, incoming),
++    }
++    incoming
++}
++
+ pub(crate) unsafe fn enet_peer_receive<S: Socket>(
+     peer: *mut ENetPeer<S>,
+     channel_id: *mut u8,
+ ) -> *mut ENetPacket {
++    if (*peer).receive_terminal {
++        return core::ptr::null_mut();
++    }
+     if (*peer).dispatched_commands.sentinel.next
+         == core::ptr::addr_of_mut!((*peer).dispatched_commands.sentinel)
+     {
+@@ -295,6 +461,8 @@ pub(crate) unsafe fn enet_peer_receive<S: Socket>(
+     if !channel_id.is_null() {
+         *channel_id = (*incoming_command).command.header.channel_id;
+     }
++    let charged = (*incoming_command).receive_charge != 0;
++    enet_peer_release_receive(peer, incoming_command);
+     let packet = (*incoming_command).packet;
+     (*packet).reference_count = ((*packet).reference_count).wrapping_sub(1);
+     if !((*incoming_command).fragments).is_null() {
+@@ -311,9 +479,11 @@ pub(crate) unsafe fn enet_peer_receive<S: Socket>(
+         incoming_command.cast(),
+         Layout::new::<ENetIncomingCommand>(),
+     );
+-    (*peer).total_waiting_data = (*peer)
+-        .total_waiting_data
+-        .wrapping_sub((*packet).data_length) as usize as usize;
++    if !charged {
++        (*peer).total_waiting_data = (*peer)
++            .total_waiting_data
++            .wrapping_sub((*packet).data_length);
++    }
+     packet
+ }
+ unsafe fn enet_peer_reset_outgoing_commands(queue: *mut ENetList) {
+@@ -333,7 +503,8 @@ unsafe fn enet_peer_reset_outgoing_commands(queue: *mut ENetList) {
+         );
+     }
+ }
+-unsafe fn enet_peer_remove_incoming_commands(
++unsafe fn enet_peer_remove_incoming_commands<S: Socket>(
++    peer: *mut ENetPeer<S>,
+     mut _queue: *mut ENetList,
+     start_command: ENetListIterator,
+     end_command: ENetListIterator,
+@@ -348,6 +519,7 @@ unsafe fn enet_peer_remove_incoming_commands(
+             continue;
+         }
+         enet_list_remove(&mut (*incoming_command).incoming_command_list);
++        enet_peer_release_receive(peer, incoming_command);
+         if !((*incoming_command).packet).is_null() {
+             (*(*incoming_command).packet).reference_count =
+                 ((*(*incoming_command).packet).reference_count).wrapping_sub(1);
+@@ -371,8 +543,12 @@ unsafe fn enet_peer_remove_incoming_commands(
+         );
+     }
+ }
+-unsafe fn enet_peer_reset_incoming_commands(queue: *mut ENetList) {
++unsafe fn enet_peer_reset_incoming_commands<S: Socket>(
++    peer: *mut ENetPeer<S>,
++    queue: *mut ENetList,
++) {
+     enet_peer_remove_incoming_commands(
++        peer,
+         queue,
+         (*queue).sentinel.next,
+         &mut (*queue).sentinel,
+@@ -396,12 +572,12 @@ pub(crate) unsafe fn enet_peer_reset_queues<S: Socket>(peer: *mut ENetPeer<S>) {
+     enet_peer_reset_outgoing_commands(&mut (*peer).sent_reliable_commands);
+     enet_peer_reset_outgoing_commands(&mut (*peer).outgoing_commands);
+     enet_peer_reset_outgoing_commands(&mut (*peer).outgoing_send_reliable_commands);
+-    enet_peer_reset_incoming_commands(&mut (*peer).dispatched_commands);
++    enet_peer_reset_incoming_commands(peer, &mut (*peer).dispatched_commands);
+     if !((*peer).channels).is_null() && (*peer).channel_count > 0_i32 as usize {
+         channel = (*peer).channels;
+         while channel < ((*peer).channels).add((*peer).channel_count) {
+-            enet_peer_reset_incoming_commands(&mut (*channel).incoming_reliable_commands);
+-            enet_peer_reset_incoming_commands(&mut (*channel).incoming_unreliable_commands);
++            enet_peer_reset_incoming_commands(peer, &mut (*channel).incoming_reliable_commands);
++            enet_peer_reset_incoming_commands(peer, &mut (*channel).incoming_unreliable_commands);
+             channel = channel.offset(1);
+         }
+         enet_free(
+@@ -478,10 +654,15 @@ pub(crate) unsafe fn enet_peer_reset<S: Socket>(peer: *mut ENetPeer<S>) {
+     (*peer).incoming_unsequenced_group = 0_i32 as u16;
+     (*peer).outgoing_unsequenced_group = 0_i32 as u16;
+     (*peer).event_data = 0_i32 as u32;
+-    (*peer).total_waiting_data = 0_i32 as usize;
+-    (*peer).flags = 0_i32 as u16;
+     write_bytes(((*peer).unsequenced_window).as_mut_ptr(), 0, 32);
+     enet_peer_reset_queues(peer);
++    (*peer).flags = 0;
++    (*peer).total_waiting_data = 0;
++    assert_eq!((*peer).queued_receive_bytes, 0);
++    assert_eq!((*peer).queued_receive_commands, 0);
++    (*peer).receive_limit = 0;
++    (*peer).receive_limit_channel = 0;
++    (*peer).receive_terminal = false;
+ }
+ pub(crate) unsafe fn enet_peer_ping<S: Socket>(peer: *mut ENetPeer<S>) {
+     let mut command: ENetProtocol = ENetProtocol {
+@@ -888,6 +1069,7 @@ pub(crate) unsafe fn enet_peer_dispatch_incoming_unreliable_commands<S: Socket>(
+         dropped_command = current_command;
+     }
+     enet_peer_remove_incoming_commands(
++        peer,
+         &mut (*channel).incoming_unreliable_commands,
+         (*channel).incoming_unreliable_commands.sentinel.next,
+         dropped_command,
+@@ -967,6 +1149,7 @@ pub(crate) unsafe fn enet_peer_queue_incoming_command<S: Socket>(
+         fragments_remaining: 0,
+         fragments: core::ptr::null_mut(),
+         packet: core::ptr::null_mut(),
++        receive_charge: 0,
+     };
+     let mut current_block: u64;
+     let channel: *mut ENetChannel =
+@@ -977,7 +1160,6 @@ pub(crate) unsafe fn enet_peer_queue_incoming_command<S: Socket>(
+     let current_window: u16;
+     let mut incoming_command: *mut ENetIncomingCommand;
+     let mut current_command: ENetListIterator = core::ptr::null_mut();
+-    let mut packet: *mut ENetPacket = core::ptr::null_mut();
+     if (*peer).state == ENET_PEER_STATE_DISCONNECT_LATER as i32 as u32 {
+         current_block = 9207730764507465628;
+     } else {
+@@ -1152,98 +1334,17 @@ pub(crate) unsafe fn enet_peer_queue_incoming_command<S: Socket>(
+                     match current_block {
+                         9207730764507465628 => {}
+                         _ => {
+-                            if (*peer).total_waiting_data >= (*(*peer).host).maximum_waiting_data {
+-                                current_block = 15492018734234176694;
+-                            } else {
+-                                packet = enet_packet_create(data, data_length, flags);
+-                                if packet.is_null() {
+-                                    current_block = 15492018734234176694;
+-                                } else {
+-                                    incoming_command =
+-                                        enet_malloc(Layout::new::<ENetIncomingCommand>()).cast();
+-                                    if incoming_command.is_null() {
+-                                        current_block = 15492018734234176694;
+-                                    } else {
+-                                        (*incoming_command).reliable_sequence_number =
+-                                            (*command).header.reliable_sequence_number;
+-                                        (*incoming_command).unreliable_sequence_number =
+-                                            (unreliable_sequence_number & 0xffff_i32 as u32) as u16;
+-                                        (*incoming_command).command = *command;
+-                                        (*incoming_command).fragment_count = fragment_count;
+-                                        (*incoming_command).fragments_remaining = fragment_count;
+-                                        (*incoming_command).packet = packet;
+-                                        (*incoming_command).fragments = core::ptr::null_mut();
+-                                        if fragment_count > 0_i32 as u32 {
+-                                            if fragment_count
+-                                                <= PROTOCOL_MAXIMUM_FRAGMENT_COUNT as i32 as u32
+-                                            {
+-                                                let count = fragment_count
+-                                                    .wrapping_add(31_i32 as u32)
+-                                                    .wrapping_div(32_i32 as u32)
+-                                                    as usize;
+-                                                (*incoming_command).fragments = enet_malloc(
+-                                                    Layout::array::<u32>(count).unwrap(),
+-                                                )
+-                                                .cast();
+-                                            }
+-                                            if ((*incoming_command).fragments).is_null() {
+-                                                enet_free(
+-                                                    incoming_command.cast(),
+-                                                    Layout::new::<ENetIncomingCommand>(),
+-                                                );
+-                                                current_block = 15492018734234176694;
+-                                            } else {
+-                                                write_bytes(
+-                                                    (*incoming_command).fragments.cast::<u8>(),
+-                                                    0,
+-                                                    (fragment_count
+-                                                        .wrapping_add(31_i32 as u32)
+-                                                        .wrapping_div(32_i32 as u32)
+-                                                        as usize)
+-                                                        .wrapping_mul(
+-                                                            ::core::mem::size_of::<u32>(),
+-                                                        ),
+-                                                );
+-                                                current_block = 13321564401369230990;
+-                                            }
+-                                        } else {
+-                                            current_block = 13321564401369230990;
+-                                        }
+-                                        if current_block != 15492018734234176694 {
+-                                            if !packet.is_null() {
+-                                                (*packet).reference_count =
+-                                                    ((*packet).reference_count).wrapping_add(1);
+-                                                (*peer).total_waiting_data = (*peer)
+-                                                    .total_waiting_data
+-                                                    .wrapping_add((*packet).data_length);
+-                                            }
+-                                            enet_list_insert(
+-                                                (*current_command).next,
+-                                                incoming_command.cast(),
+-                                            );
+-                                            match (*command).header.command as i32
+-                                                & ENET_PROTOCOL_COMMAND_MASK as i32
+-                                            {
+-                                                8 | 6 => {
+-                                                    enet_peer_dispatch_incoming_reliable_commands(
+-                                                        peer,
+-                                                        channel,
+-                                                        incoming_command,
+-                                                    );
+-                                                }
+-                                                _ => {
+-                                                    enet_peer_dispatch_incoming_unreliable_commands(
+-                                                        peer,
+-                                                        channel,
+-                                                        incoming_command,
+-                                                    );
+-                                                }
+-                                            }
+-                                            return incoming_command;
+-                                        }
+-                                    }
+-                                }
+-                            }
++                            return enet_peer_allocate_incoming(
++                                peer,
++                                command,
++                                data,
++                                data_length,
++                                flags,
++                                fragment_count,
++                                unreliable_sequence_number,
++                                current_command,
++                                channel,
++                            );
+                         }
+                     }
+                 }
+@@ -1392,98 +1493,17 @@ pub(crate) unsafe fn enet_peer_queue_incoming_command<S: Socket>(
+                     match current_block {
+                         9207730764507465628 => {}
+                         _ => {
+-                            if (*peer).total_waiting_data >= (*(*peer).host).maximum_waiting_data {
+-                                current_block = 15492018734234176694;
+-                            } else {
+-                                packet = enet_packet_create(data, data_length, flags);
+-                                if packet.is_null() {
+-                                    current_block = 15492018734234176694;
+-                                } else {
+-                                    incoming_command =
+-                                        enet_malloc(Layout::new::<ENetIncomingCommand>()).cast();
+-                                    if incoming_command.is_null() {
+-                                        current_block = 15492018734234176694;
+-                                    } else {
+-                                        (*incoming_command).reliable_sequence_number =
+-                                            (*command).header.reliable_sequence_number;
+-                                        (*incoming_command).unreliable_sequence_number =
+-                                            (unreliable_sequence_number & 0xffff_i32 as u32) as u16;
+-                                        (*incoming_command).command = *command;
+-                                        (*incoming_command).fragment_count = fragment_count;
+-                                        (*incoming_command).fragments_remaining = fragment_count;
+-                                        (*incoming_command).packet = packet;
+-                                        (*incoming_command).fragments = core::ptr::null_mut();
+-                                        if fragment_count > 0_i32 as u32 {
+-                                            if fragment_count
+-                                                <= PROTOCOL_MAXIMUM_FRAGMENT_COUNT as i32 as u32
+-                                            {
+-                                                let count = fragment_count
+-                                                    .wrapping_add(31_i32 as u32)
+-                                                    .wrapping_div(32_i32 as u32)
+-                                                    as usize;
+-                                                (*incoming_command).fragments = enet_malloc(
+-                                                    Layout::array::<u32>(count).unwrap(),
+-                                                )
+-                                                .cast();
+-                                            }
+-                                            if ((*incoming_command).fragments).is_null() {
+-                                                enet_free(
+-                                                    incoming_command.cast(),
+-                                                    Layout::new::<ENetIncomingCommand>(),
+-                                                );
+-                                                current_block = 15492018734234176694;
+-                                            } else {
+-                                                write_bytes(
+-                                                    (*incoming_command).fragments.cast::<u8>(),
+-                                                    0,
+-                                                    (fragment_count
+-                                                        .wrapping_add(31_i32 as u32)
+-                                                        .wrapping_div(32_i32 as u32)
+-                                                        as usize)
+-                                                        .wrapping_mul(
+-                                                            ::core::mem::size_of::<u32>(),
+-                                                        ),
+-                                                );
+-                                                current_block = 13321564401369230990;
+-                                            }
+-                                        } else {
+-                                            current_block = 13321564401369230990;
+-                                        }
+-                                        if current_block != 15492018734234176694 {
+-                                            if !packet.is_null() {
+-                                                (*packet).reference_count =
+-                                                    ((*packet).reference_count).wrapping_add(1);
+-                                                (*peer).total_waiting_data = (*peer)
+-                                                    .total_waiting_data
+-                                                    .wrapping_add((*packet).data_length);
+-                                            }
+-                                            enet_list_insert(
+-                                                (*current_command).next,
+-                                                incoming_command.cast(),
+-                                            );
+-                                            match (*command).header.command as i32
+-                                                & ENET_PROTOCOL_COMMAND_MASK as i32
+-                                            {
+-                                                8 | 6 => {
+-                                                    enet_peer_dispatch_incoming_reliable_commands(
+-                                                        peer,
+-                                                        channel,
+-                                                        incoming_command,
+-                                                    );
+-                                                }
+-                                                _ => {
+-                                                    enet_peer_dispatch_incoming_unreliable_commands(
+-                                                        peer,
+-                                                        channel,
+-                                                        incoming_command,
+-                                                    );
+-                                                }
+-                                            }
+-                                            return incoming_command;
+-                                        }
+-                                    }
+-                                }
+-                            }
++                            return enet_peer_allocate_incoming(
++                                peer,
++                                command,
++                                data,
++                                data_length,
++                                flags,
++                                fragment_count,
++                                unreliable_sequence_number,
++                                current_command,
++                                channel,
++                            );
+                         }
+                     }
+                 }
+@@ -1632,98 +1652,17 @@ pub(crate) unsafe fn enet_peer_queue_incoming_command<S: Socket>(
+                     match current_block {
+                         9207730764507465628 => {}
+                         _ => {
+-                            if (*peer).total_waiting_data >= (*(*peer).host).maximum_waiting_data {
+-                                current_block = 15492018734234176694;
+-                            } else {
+-                                packet = enet_packet_create(data, data_length, flags);
+-                                if packet.is_null() {
+-                                    current_block = 15492018734234176694;
+-                                } else {
+-                                    incoming_command =
+-                                        enet_malloc(Layout::new::<ENetIncomingCommand>()).cast();
+-                                    if incoming_command.is_null() {
+-                                        current_block = 15492018734234176694;
+-                                    } else {
+-                                        (*incoming_command).reliable_sequence_number =
+-                                            (*command).header.reliable_sequence_number;
+-                                        (*incoming_command).unreliable_sequence_number =
+-                                            (unreliable_sequence_number & 0xffff_i32 as u32) as u16;
+-                                        (*incoming_command).command = *command;
+-                                        (*incoming_command).fragment_count = fragment_count;
+-                                        (*incoming_command).fragments_remaining = fragment_count;
+-                                        (*incoming_command).packet = packet;
+-                                        (*incoming_command).fragments = core::ptr::null_mut();
+-                                        if fragment_count > 0_i32 as u32 {
+-                                            if fragment_count
+-                                                <= PROTOCOL_MAXIMUM_FRAGMENT_COUNT as i32 as u32
+-                                            {
+-                                                let count = fragment_count
+-                                                    .wrapping_add(31_i32 as u32)
+-                                                    .wrapping_div(32_i32 as u32)
+-                                                    as usize;
+-                                                (*incoming_command).fragments = enet_malloc(
+-                                                    Layout::array::<u32>(count).unwrap(),
+-                                                )
+-                                                .cast();
+-                                            }
+-                                            if ((*incoming_command).fragments).is_null() {
+-                                                enet_free(
+-                                                    incoming_command.cast(),
+-                                                    Layout::new::<ENetIncomingCommand>(),
+-                                                );
+-                                                current_block = 15492018734234176694;
+-                                            } else {
+-                                                write_bytes(
+-                                                    (*incoming_command).fragments.cast::<u8>(),
+-                                                    0,
+-                                                    (fragment_count
+-                                                        .wrapping_add(31_i32 as u32)
+-                                                        .wrapping_div(32_i32 as u32)
+-                                                        as usize)
+-                                                        .wrapping_mul(
+-                                                            ::core::mem::size_of::<u32>(),
+-                                                        ),
+-                                                );
+-                                                current_block = 13321564401369230990;
+-                                            }
+-                                        } else {
+-                                            current_block = 13321564401369230990;
+-                                        }
+-                                        if current_block != 15492018734234176694 {
+-                                            if !packet.is_null() {
+-                                                (*packet).reference_count =
+-                                                    ((*packet).reference_count).wrapping_add(1);
+-                                                (*peer).total_waiting_data = (*peer)
+-                                                    .total_waiting_data
+-                                                    .wrapping_add((*packet).data_length);
+-                                            }
+-                                            enet_list_insert(
+-                                                (*current_command).next,
+-                                                incoming_command.cast(),
+-                                            );
+-                                            match (*command).header.command as i32
+-                                                & ENET_PROTOCOL_COMMAND_MASK as i32
+-                                            {
+-                                                8 | 6 => {
+-                                                    enet_peer_dispatch_incoming_reliable_commands(
+-                                                        peer,
+-                                                        channel,
+-                                                        incoming_command,
+-                                                    );
+-                                                }
+-                                                _ => {
+-                                                    enet_peer_dispatch_incoming_unreliable_commands(
+-                                                        peer,
+-                                                        channel,
+-                                                        incoming_command,
+-                                                    );
+-                                                }
+-                                            }
+-                                            return incoming_command;
+-                                        }
+-                                    }
+-                                }
+-                            }
++                            return enet_peer_allocate_incoming(
++                                peer,
++                                command,
++                                data,
++                                data_length,
++                                flags,
++                                fragment_count,
++                                unreliable_sequence_number,
++                                current_command,
++                                channel,
++                            );
+                         }
+                     }
+                 }
+@@ -1735,14 +1674,8 @@ pub(crate) unsafe fn enet_peer_queue_incoming_command<S: Socket>(
+     }
+     if let 9207730764507465628 = current_block {
+         if fragment_count <= 0_i32 as u32 {
+-            if !packet.is_null() && (*packet).reference_count == 0_i32 as usize {
+-                enet_packet_destroy(packet);
+-            }
+             return addr_of_mut!(DUMMY_COMMAND);
+         }
+     }
+-    if !packet.is_null() && (*packet).reference_count == 0_i32 as usize {
+-        enet_packet_destroy(packet);
+-    }
+     core::ptr::null_mut()
+ }
+diff --git a/src/c/protocol.rs b/src/c/protocol.rs
+index b2097c68..6e2e1d4e 100644
+--- a/src/c/protocol.rs
++++ b/src/c/protocol.rs
+@@ -249,6 +249,27 @@ unsafe fn enet_protocol_dispatch_incoming_commands<S: Socket>(
+     {
+         let peer: *mut ENetPeer<S> = enet_list_remove((*host).dispatch_queue.sentinel.next).cast();
+         (*peer).flags = ((*peer).flags as i32 & !(ENET_PEER_FLAG_NEEDS_DISPATCH as i32)) as u16;
++        if (*peer).receive_limit != 0 {
++            (*event).type_0 = crate::ENET_EVENT_TYPE_RECEIVE_LIMIT_EXCEEDED;
++            (*event).peer = peer;
++            (*event).channel_id = (*peer).receive_limit_channel;
++            (*event).data = u32::from((*peer).receive_limit);
++            (*peer).receive_limit = 0;
++            if !(*peer).receive_terminal
++                && (*peer).dispatched_commands.sentinel.next
++                    != core::ptr::addr_of_mut!((*peer).dispatched_commands.sentinel)
++            {
++                (*peer).flags |= ENET_PEER_FLAG_NEEDS_DISPATCH as u16;
++                enet_list_insert(
++                    &mut (*host).dispatch_queue.sentinel,
++                    core::ptr::addr_of_mut!((*peer).dispatch_list).cast(),
++                );
++            }
++            return true;
++        }
++        if (*peer).receive_terminal {
++            continue;
++        }
+         match (*peer).state as u32 {
+             3 | 4 => {
+                 enet_protocol_change_state(host, peer, ENET_PEER_STATE_CONNECTED);
+@@ -864,13 +885,17 @@ unsafe fn enet_protocol_handle_send_fragment<S: Socket>(
+     {
+         return 0_i32;
+     }
++    // The queue rejects this consumed sequence with a null fragment command. Do the
++    // same before attributing a payload declaration, retaining its no-ACK refusal.
++    if start_sequence_number == (*channel).incoming_reliable_sequence_number as u32 {
++        return -1;
++    }
+     let fragment_number = u32::from_be((*command).send_fragment.fragment_number);
+     let fragment_count = u32::from_be((*command).send_fragment.fragment_count);
+     let fragment_offset = u32::from_be((*command).send_fragment.fragment_offset);
+     let total_length = u32::from_be((*command).send_fragment.total_length);
+     if fragment_count > PROTOCOL_MAXIMUM_FRAGMENT_COUNT as i32 as u32
+         || fragment_number >= fragment_count
+-        || total_length as usize > (*host).maximum_packet_size
+         || total_length < fragment_count
+         || fragment_offset >= total_length
+         || fragment_length > total_length.wrapping_sub(fragment_offset)
+@@ -917,6 +942,15 @@ unsafe fn enet_protocol_handle_send_fragment<S: Socket>(
+         }
+         current_command = (*current_command).previous;
+     }
++    if !crate::enet_peer_check_receive_payload(
++        peer,
++        (*command).header.channel_id,
++        total_length as usize,
++    ) || total_length as usize > (*host).maximum_packet_size
++    {
++        return -1;
++    }
++
+     if start_command.is_null() {
+         let mut host_command: ENetProtocol = *command;
+         host_command.header.reliable_sequence_number = start_sequence_number as u16;
+@@ -1011,7 +1045,6 @@ unsafe fn enet_protocol_handle_send_unreliable_fragment<S: Socket>(
+     let total_length = u32::from_be((*command).send_fragment.total_length);
+     if fragment_count > PROTOCOL_MAXIMUM_FRAGMENT_COUNT as i32 as u32
+         || fragment_number >= fragment_count
+-        || total_length as usize > (*host).maximum_packet_size
+         || fragment_offset >= total_length
+         || fragment_length > total_length.wrapping_sub(fragment_offset)
+     {
+@@ -1063,6 +1096,15 @@ unsafe fn enet_protocol_handle_send_unreliable_fragment<S: Socket>(
+         }
+         current_command = (*current_command).previous;
+     }
++    if !crate::enet_peer_check_receive_payload(
++        peer,
++        (*command).header.channel_id,
++        total_length as usize,
++    ) || total_length as usize > (*host).maximum_packet_size
++    {
++        return -1;
++    }
++
+     if start_command.is_null() {
+         start_command = enet_peer_queue_incoming_command(
+             peer,
+@@ -1393,7 +1435,7 @@ unsafe fn enet_protocol_handle_verify_connect<S: Socket>(
+     enet_protocol_notify_connect(host, peer, event);
+     0_i32
+ }
+-unsafe fn enet_protocol_handle_incoming_commands<S: Socket>(
++pub(crate) unsafe fn enet_protocol_handle_incoming_commands<S: Socket>(
+     host: *mut ENetHost<S>,
+     event: *mut ENetEvent<S>,
+ ) -> bool {
+@@ -1448,6 +1490,9 @@ unsafe fn enet_protocol_handle_incoming_commands<S: Socket>(
+             return false;
+         }
+     }
++    if !peer.is_null() && (*peer).receive_terminal {
++        return false;
++    }
+     if flags as i32 & ENET_PROTOCOL_HEADER_FLAG_COMPRESSED as i32 != 0 {
+         let Some(compressor) = (*host).compressor.assume_init_mut() else {
+             return false;
+@@ -1650,6 +1695,11 @@ unsafe fn enet_protocol_handle_incoming_commands<S: Socket>(
+             }
+         }
+     }
++    if !event.is_null() && !peer.is_null() && (*peer).receive_terminal {
++        // A connect produced earlier in this datagram must not escape ahead of the violation.
++        (*event).type_0 = ENET_EVENT_TYPE_NONE;
++        return enet_protocol_dispatch_incoming_commands(host, event);
++    }
+     if !event.is_null() && (*event).type_0 != ENET_EVENT_TYPE_NONE as i32 as u32 {
+         return true;
+     }
+@@ -2132,6 +2182,7 @@ unsafe fn enet_protocol_send_outgoing_commands<S: Socket>(
+                     enet_protocol_send_acknowledgements(host, current_peer);
+                 }
+                 if check_for_timeouts != 0_i32
++                    && !(*current_peer).receive_terminal
+                     && ((*current_peer).sent_reliable_commands.sentinel.next
+                         != core::ptr::addr_of_mut!((*current_peer).sent_reliable_commands.sentinel))
+                     && (((*host).service_time).wrapping_sub((*current_peer).next_timeout)
+diff --git a/src/connected.rs b/src/connected.rs
+index 8f6089cc..cd7aa1dd 100644
+--- a/src/connected.rs
++++ b/src/connected.rs
+@@ -560,6 +560,15 @@ pub enum Event<'a, C: Connection + 'static> {
+         /// The actual packet data.
+         packet: crate::Packet,
+     },
++    /// An incoming command exceeded the optional receive policy.
++    ReceiveLimitExceeded {
++        /// Peer that generated the event.
++        peer: &'a mut Peer<C>,
++        /// Channel of the refused command.
++        channel_id: u8,
++        /// The exceeded limit; only packet size is terminal.
++        kind: crate::ReceiveLimitKind,
++    },
+ }
+ 
+ impl<'a, C: Connection + 'static> Event<'a, C> {
+@@ -568,6 +577,15 @@ impl<'a, C: Connection + 'static> Event<'a, C> {
+     #[must_use]
+     pub fn no_ref(self) -> EventNoRef {
+         match self {
++            Self::ReceiveLimitExceeded {
++                peer,
++                channel_id,
++                kind,
++            } => EventNoRef::ReceiveLimitExceeded {
++                peer: peer.id(),
++                channel_id,
++                kind,
++            },
+             Self::Connect { peer, data } => EventNoRef::Connect {
+                 peer: peer.id(),
+                 data,
+@@ -617,6 +635,15 @@ pub enum EventNoRef {
+         /// The actual packet data.
+         packet: crate::Packet,
+     },
++    /// An incoming command exceeded the optional receive policy.
++    ReceiveLimitExceeded {
++        /// Peer that generated the event.
++        peer: ConnectionID,
++        /// Channel of the refused command.
++        channel_id: u8,
++        /// The exceeded limit; only packet size is terminal.
++        kind: crate::ReceiveLimitKind,
++    },
+ }
+ 
+ /// A host for communicating with connection based peers.
+@@ -641,6 +668,7 @@ impl<C: Connection> Host<C> {
+     ///
+     /// Returns [`error::BadParameter`](`crate::error::BadParameter`) if one of the host settings
+     /// was invalid:
++    /// - If any configured [`crate::ReceivePolicy`] limit is `0`.
+     /// - If [`HostSettings::channel_limit`](`crate::HostSettings::channel_limit`) is equal to `0`.
+     /// - If [`HostSettings::incoming_bandwidth_limit`](`crate::HostSettings::incoming_bandwidth_limit`)
+     ///   is equal to `Some(0)`.
+@@ -746,47 +774,89 @@ impl<C: Connection> Host<C> {
+         Ok(self.peer_mut(connection_id))
+     }
+ 
+-    fn handle_event(&mut self, event: crate::EventNoRef) -> Event<C> {
++    // A terminal declaration can replace Connect in the final handshake datagram.
++    // Associate that exact native peer before exposing either event to its caller.
++    fn attach_native_peer(&mut self, native_id: crate::PeerID) -> Option<ConnectionID> {
++        let peer = self.host.peer_mut(native_id);
++        let peer_ptr = peer as *mut _;
++        let Some(native_address) = peer.address() else {
++            peer.reset();
++            return None;
++        };
++        let connection = native_address.connection_id();
++        // Another connection's early return can leave an old-generation datagram
++        // staged after its AwaitingPeer wrapper has expired or been replaced.
++        let owns_native = self
++            .peers
++            .get(connection.0)
++            .is_some_and(|peer| match &peer.state {
++                PeerState::AwaitingPeer { address, .. } => {
++                    crate::Address::same(address, &native_address)
++                }
++                PeerState::HasPeer {
++                    address,
++                    peer_ptr: current,
++                    ..
++                } => crate::Address::same(address, &native_address) && *current == peer_ptr,
++                PeerState::Disconnected { .. } | PeerState::Disconnecting { .. } => false,
++            });
++        if !owns_native {
++            // Reset only the event's native peer. The replacement wrapper and its
++            // potentially different native peer must not receive or act on it.
++            self.host.peer_mut(native_id).reset();
++            return None;
++        }
++        let connection_peer = self.peer_mut(connection);
++        connection_peer.state = match replace(
++            &mut connection_peer.state,
++            PeerState::Disconnected {
++                last_peer_ptr: None,
++            },
++        ) {
++            PeerState::AwaitingPeer {
++                connection,
++                address,
++                settings,
++                ..
++            } => {
++                unsafe { settings.apply::<C>(&mut *peer_ptr) };
++                PeerState::HasPeer {
++                    connection,
++                    address,
++                    peer_ptr,
++                }
++            }
++            PeerState::HasPeer {
++                connection,
++                address,
++                peer_ptr,
++            } => PeerState::HasPeer {
++                connection,
++                address,
++                peer_ptr,
++            },
++            _ => unreachable!(),
++        };
++        Some(connection)
++    }
++
++    fn handle_event(&mut self, event: crate::EventNoRef) -> Option<Event<C>> {
+         let now = self.host.now();
+-        match event {
++        Some(match event {
++            crate::EventNoRef::ReceiveLimitExceeded {
++                peer,
++                channel_id,
++                kind,
++            } => {
++                let connection = self.attach_native_peer(peer)?;
++                Event::ReceiveLimitExceeded {
++                    peer: self.peer_mut(connection),
++                    channel_id,
++                    kind,
++                }
++            }
+             crate::EventNoRef::Connect { peer, data } => {
+-                let peer = self.host.peer_mut(peer);
+-                let peer_ptr = peer as *mut _;
+-                let connection = peer
+-                    .address()
+-                    .expect("Peer should have an address.")
+-                    .connection_id();
+-                let connection_peer = self.peer_mut(connection);
+-                connection_peer.state = match replace(
+-                    &mut connection_peer.state,
+-                    PeerState::Disconnected {
+-                        last_peer_ptr: None,
+-                    },
+-                ) {
+-                    PeerState::AwaitingPeer {
+-                        connection,
+-                        address,
+-                        settings,
+-                        ..
+-                    } => {
+-                        unsafe { settings.apply::<C>(&mut *peer_ptr) };
+-                        PeerState::HasPeer {
+-                            connection,
+-                            address,
+-                            peer_ptr,
+-                        }
+-                    }
+-                    PeerState::HasPeer {
+-                        connection,
+-                        address,
+-                        peer_ptr,
+-                    } => PeerState::HasPeer {
+-                        connection,
+-                        address,
+-                        peer_ptr,
+-                    },
+-                    _ => unreachable!(),
+-                };
++                let connection = self.attach_native_peer(peer)?;
+                 Event::Connect {
+                     peer: self.peer_mut(connection),
+                     data,
+@@ -849,7 +919,7 @@ impl<C: Connection> Host<C> {
+                     packet,
+                 }
+             }
+-        }
++        })
+     }
+ 
+     /// Checks for any queued events on the host and dispatches one if available.
+@@ -858,7 +928,7 @@ impl<C: Connection> Host<C> {
+         match self.host.check_events() {
+             Some(event) => {
+                 let event = event.no_ref();
+-                Some(self.handle_event(event))
++                self.handle_event(event)
+             }
+             None => None,
+         }
+@@ -981,7 +1051,7 @@ impl<C: Connection> Host<C> {
+         match self.host.service() {
+             Ok(Some(event)) => {
+                 let event = event.no_ref();
+-                Some(self.handle_event(event))
++                self.handle_event(event)
+             }
+             Ok(None) => None,
+             Err(_) => {
+@@ -1189,3 +1259,560 @@ impl Connection for TcpStream {
+         }
+     }
+ }
++
++#[cfg(all(test, feature = "std"))]
++mod receive_policy_tests {
++    use super::*;
++    use crate::{Box, HostSettings, Packet, ReadWrite, ReceiveLimitKind, ReceivePolicy};
++    type Connection = ReadWrite<(), std::convert::Infallible>;
++
++    fn transfer(a: &mut Host<Connection>, b: &mut Host<Connection>) {
++        while let Some(((), bytes)) = a.peer_mut(ConnectionID(0)).connection_mut().unwrap().read() {
++            b.peer_mut(ConnectionID(0))
++                .connection_mut()
++                .unwrap()
++                .write((), bytes);
++        }
++    }
++
++    #[test]
++    fn native_receive_handshake_terminal_event_owns_peer_for_disconnect_and_reset_reuse() {
++        for reset in [false, true] {
++            let mut server = Host::new(HostSettings {
++                peer_limit: 1,
++                channel_limit: 3,
++                receive_policy: Some(ReceivePolicy {
++                    maximum_packet_size: 8192,
++                    maximum_queued_bytes: 65536,
++                    maximum_queued_commands: 256,
++                }),
++                ..Default::default()
++            })
++            .unwrap();
++            for generation in 0..2 {
++                server
++                    .add_connection(ConnectionKind::Receiver {
++                        connection: Connection::new(),
++                        timeout: Duration::from_secs(3),
++                    })
++                    .unwrap();
++                let mut client = Host::new(HostSettings {
++                    peer_limit: 1,
++                    channel_limit: 3,
++                    ..Default::default()
++                })
++                .unwrap();
++                client
++                    .add_connection(ConnectionKind::Initiator {
++                        connection: Connection::new(),
++                        channel_count: 3,
++                        data: 0,
++                    })
++                    .unwrap();
++                let mut connected = false;
++                for _ in 0..32 {
++                    if matches!(client.service(), Some(Event::Connect { .. })) {
++                        connected = true;
++                        break;
++                    }
++                    transfer(&mut client, &mut server);
++                    assert!(
++                        server.service().is_none(),
++                        "receiver must not publish Connect before final ACK"
++                    );
++                    transfer(&mut server, &mut client);
++                }
++                assert!(connected);
++                assert!(matches!(
++                    server.peer(ConnectionID(0)).state,
++                    PeerState::AwaitingPeer { .. }
++                ));
++                client
++                    .peer_mut(ConnectionID(0))
++                    .send(0, &Packet::reliable(vec![7]))
++                    .unwrap();
++                // Service twice: native service flushes the final handshake ACK plus valid input,
++                // then the connected driver copies that datagram into the connection's output.
++                assert!(client.service().is_none());
++                assert!(client.service().is_none());
++                let (_, mut bytes) = client
++                    .peer_mut(ConnectionID(0))
++                    .connection_mut()
++                    .unwrap()
++                    .read()
++                    .expect("final ACK plus reliable input datagram");
++                assert_eq!(bytes[4] & 15, 1, "final VERIFY_CONNECT ACK first");
++                assert_eq!(bytes[12] & 15, 6, "valid reliable input follows ACK");
++                // A structurally valid first fragment declaration, before any receiver Connect.
++                bytes.extend_from_slice(&[0x88, 1, 0, 1, 0, 1, 0, 1]);
++                bytes.extend_from_slice(&1u32.to_be_bytes());
++                bytes.extend_from_slice(&0u32.to_be_bytes());
++                bytes.extend_from_slice(&8193u32.to_be_bytes());
++                bytes.extend_from_slice(&0u32.to_be_bytes());
++                bytes.push(9);
++                // Following same-datagram input must not reach another channel's queue.
++                bytes.extend_from_slice(&[0x86, 2, 0, 1, 0, 1, 11]);
++                let later = bytes.clone();
++                server
++                    .peer_mut(ConnectionID(0))
++                    .connection_mut()
++                    .unwrap()
++                    .write((), bytes);
++                let event = server
++                    .service()
++                    .expect("terminal event replaces receiver Connect");
++                match event {
++                    Event::ReceiveLimitExceeded {
++                        peer,
++                        channel_id,
++                        kind,
++                    } => {
++                        assert_eq!(channel_id, 1);
++                        assert_eq!(kind, ReceiveLimitKind::PacketSize);
++                        let native = peer.peer().expect("limit event must own the native peer");
++                        assert_eq!(native.address().unwrap().generation, generation);
++                        unsafe {
++                            assert!((*native.0).receive_terminal);
++                            assert_eq!((*native.0).queued_receive_commands, 1, "queued input precedes the terminal command, following input is suppressed");
++                            assert!((*native.0).queued_receive_bytes > 1);
++                        }
++                        if reset {
++                            peer.reset();
++                        } else {
++                            peer.disconnect_now(16);
++                        }
++                    }
++                    _ => panic!("terminal declaration must suppress Connect and queued Receive"),
++                }
++                let native = server.host.peer(crate::PeerID(0)).0;
++                unsafe {
++                    assert_eq!((*native).state,crate::ENET_PEER_STATE_DISCONNECTED,"cleanup must reach exact native session, reset={reset}, generation={generation}");
++                    assert_eq!((*native).queued_receive_bytes, 0);
++                    assert_eq!((*native).queued_receive_commands, 0);
++                    assert!(!(*native).receive_terminal);
++                }
++                // The native slot is already released above. Explicit reset also releases the
++                // transport wrapper after disconnect_now, which does not close its connection.
++                server.peer_mut(ConnectionID(0)).reset();
++                // A late old-generation datagram must not resurrect a terminal native session.
++                let old_address = Address::new((), ConnectionID(0), generation);
++                server.host.socket_mut().write(old_address, later);
++                assert!(server.service().is_none());
++            }
++            // Prove a normal replacement can complete on the only native slot after both attacks.
++            server
++                .add_connection(ConnectionKind::Receiver {
++                    connection: Connection::new(),
++                    timeout: Duration::from_secs(3),
++                })
++                .unwrap();
++            let mut replacement = Host::new(HostSettings {
++                peer_limit: 1,
++                channel_limit: 3,
++                ..Default::default()
++            })
++            .unwrap();
++            replacement
++                .add_connection(ConnectionKind::Initiator {
++                    connection: Connection::new(),
++                    channel_count: 3,
++                    data: 0,
++                })
++                .unwrap();
++            let (mut a, mut b) = (false, false);
++            for _ in 0..32 {
++                a |= matches!(replacement.service(), Some(Event::Connect { .. }));
++                transfer(&mut replacement, &mut server);
++                b |= matches!(server.service(), Some(Event::Connect { .. }));
++                transfer(&mut server, &mut replacement);
++                if a && b {
++                    break;
++                }
++            }
++            assert!(
++                a && b,
++                "replacement handshake needs the released only native slot"
++            );
++        }
++    }
++    type StagedConnection = ReadWrite<(), std::io::Error>;
++    fn staged_transfer(a: &mut Host<StagedConnection>, b: &mut Host<StagedConnection>) {
++        while let Some(((), bytes)) = a.peer_mut(ConnectionID(0)).connection_mut().unwrap().read() {
++            b.peer_mut(ConnectionID(0))
++                .connection_mut()
++                .unwrap()
++                .write((), bytes);
++        }
++    }
++
++    // Reproduce public service staging: receiver0's old final ACK/data enters the native
++    // inbound queue, but receiver1's receive error returns before that queue is parsed.
++    fn staged_old_limit(reset: bool) -> Host<StagedConnection> {
++        use std::sync::{
++            atomic::{AtomicU64, Ordering},
++            Arc,
++        };
++        let clock = Arc::new(AtomicU64::new(1000));
++        let timer = clock.clone();
++        let mut server = Host::new(HostSettings {
++            peer_limit: 3,
++            channel_limit: 3,
++            time: Box::new(move || Duration::from_millis(timer.load(Ordering::SeqCst))),
++            receive_policy: Some(ReceivePolicy {
++                maximum_packet_size: 8192,
++                maximum_queued_bytes: 65536,
++                maximum_queued_commands: 256,
++            }),
++            ..Default::default()
++        })
++        .unwrap();
++        server
++            .add_connection(ConnectionKind::Receiver {
++                connection: StagedConnection::new(),
++                timeout: Duration::from_secs(1),
++            })
++            .unwrap();
++        let mut old = Host::new(HostSettings {
++            peer_limit: 1,
++            channel_limit: 3,
++            ..Default::default()
++        })
++        .unwrap();
++        old.add_connection(ConnectionKind::Initiator {
++            connection: StagedConnection::new(),
++            channel_count: 3,
++            data: 0,
++        })
++        .unwrap();
++        let mut connected = false;
++        for _ in 0..32 {
++            if matches!(old.service(), Some(Event::Connect { .. })) {
++                connected = true;
++                break;
++            }
++            staged_transfer(&mut old, &mut server);
++            assert!(server.service().is_none());
++            staged_transfer(&mut server, &mut old);
++        }
++        assert!(connected);
++        old.peer_mut(ConnectionID(0))
++            .send(0, &Packet::reliable(vec![7]))
++            .unwrap();
++        assert!(old.service().is_none());
++        assert!(old.service().is_none());
++        let (_, mut bytes) = old
++            .peer_mut(ConnectionID(0))
++            .connection_mut()
++            .unwrap()
++            .read()
++            .unwrap();
++        assert_eq!(bytes[4] & 15, 1);
++        assert_eq!(bytes[12] & 15, 6);
++        bytes.extend_from_slice(&[0x88, 1, 0, 1, 0, 1, 0, 1]);
++        bytes.extend_from_slice(&1u32.to_be_bytes());
++        bytes.extend_from_slice(&0u32.to_be_bytes());
++        bytes.extend_from_slice(&8193u32.to_be_bytes());
++        bytes.extend_from_slice(&0u32.to_be_bytes());
++        bytes.push(9);
++        server
++            .add_connection(ConnectionKind::Receiver {
++                connection: StagedConnection::new(),
++                timeout: Duration::from_secs(1),
++            })
++            .unwrap();
++        server
++            .peer_mut(ConnectionID(0))
++            .connection_mut()
++            .unwrap()
++            .write((), bytes);
++        server
++            .peer_mut(ConnectionID(1))
++            .connection_mut()
++            .unwrap()
++            .error(std::io::Error::other("later connection receive failure"));
++        assert!(
++            matches!(server.service(),Some(Event::Disconnect { peer,.. }) if peer.id()==ConnectionID(1))
++        );
++        if reset {
++            server.peer_mut(ConnectionID(0)).reset();
++        } else {
++            clock.store(2001, Ordering::SeqCst);
++            assert!(
++                matches!(server.service(),Some(Event::Disconnect { peer,.. }) if peer.id()==ConnectionID(0))
++            );
++        }
++        // AwaitingPeer never owned this native handshake, so the staged datagram still
++        // addresses a live old native session after wrapper reset/timeout.
++        unsafe {
++            assert_eq!(
++                (*server.host.peer(crate::PeerID(0)).0).state,
++                crate::ENET_PEER_STATE_ACKNOWLEDGING_CONNECT
++            );
++        }
++        server
++    }
++
++    #[test]
++    fn native_receive_staged_old_limit_cannot_attach_replacement_awaiting_or_has_peer() {
++        for reset in [false, true] {
++            for initiator in [false, true] {
++                let mut server = staged_old_limit(reset);
++                let mut replacement = Host::new(HostSettings {
++                    peer_limit: 1,
++                    channel_limit: 3,
++                    ..Default::default()
++                })
++                .unwrap();
++                let expected_ptr = if initiator {
++                    server
++                        .add_connection(ConnectionKind::Initiator {
++                            connection: StagedConnection::new(),
++                            channel_count: 3,
++                            data: 0,
++                        })
++                        .unwrap();
++                    replacement
++                        .add_connection(ConnectionKind::Receiver {
++                            connection: StagedConnection::new(),
++                            timeout: Duration::from_secs(3),
++                        })
++                        .unwrap();
++                    Some(server.peer(ConnectionID(0)).peer().unwrap().0)
++                } else {
++                    server
++                        .add_connection(ConnectionKind::Receiver {
++                            connection: StagedConnection::new(),
++                            timeout: Duration::from_secs(3),
++                        })
++                        .unwrap();
++                    replacement
++                        .add_connection(ConnectionKind::Initiator {
++                            connection: StagedConnection::new(),
++                            channel_count: 3,
++                            data: 0,
++                        })
++                        .unwrap();
++                    None
++                };
++                assert!(server.service().is_none(),"old terminal event must not be attributed to replacement, reset={reset}, initiator={initiator}");
++                let old = server.host.peer(crate::PeerID(0)).0;
++                unsafe {
++                    assert_eq!((*old).state, crate::ENET_PEER_STATE_DISCONNECTED);
++                    assert_eq!((*old).queued_receive_bytes, 0);
++                    assert_eq!((*old).queued_receive_commands, 0);
++                    assert!(!(*old).receive_terminal);
++                }
++                match &server.peer(ConnectionID(0)).state {
++                    PeerState::AwaitingPeer { address, .. } => {
++                        assert!(!initiator);
++                        assert_eq!(address.generation, 2);
++                    }
++                    PeerState::HasPeer {
++                        address, peer_ptr, ..
++                    } => {
++                        assert!(initiator);
++                        assert_eq!(address.generation, 2);
++                        assert_eq!(unsafe { (**peer_ptr).0 }, expected_ptr.unwrap());
++                    }
++                    _ => panic!("replacement wrapper was mutated by old limit"),
++                }
++                let (mut a, mut b) = (false, false);
++                for _ in 0..64 {
++                    a |= matches!(server.service(), Some(Event::Connect { .. }));
++                    staged_transfer(&mut server, &mut replacement);
++                    b |= matches!(replacement.service(), Some(Event::Connect { .. }));
++                    staged_transfer(&mut replacement, &mut server);
++                    if a && b {
++                        break;
++                    }
++                }
++                assert!(
++                    a && b,
++                    "replacement must progress after stale session release"
++                );
++                replacement
++                    .peer_mut(ConnectionID(0))
++                    .send(0, &Packet::reliable(vec![8]))
++                    .unwrap();
++                let mut received = false;
++                for _ in 0..32 {
++                    let _ = replacement.service();
++                    staged_transfer(&mut replacement, &mut server);
++                    if let Some(Event::Receive { packet, .. }) = server.service() {
++                        assert_eq!(packet.data(), [8]);
++                        received = true;
++                        break;
++                    }
++                    staged_transfer(&mut server, &mut replacement);
++                }
++                assert!(received);
++            }
++        }
++    }
++
++    #[test]
++    fn native_receive_staged_old_limit_drops_disconnected_or_closing_wrapper() {
++        for closing in [false, true] {
++            let mut server = staged_old_limit(true);
++            if closing {
++                server
++                    .add_connection(ConnectionKind::Receiver {
++                        connection: StagedConnection::new(),
++                        timeout: Duration::from_secs(3),
++                    })
++                    .unwrap();
++                let now = server.now();
++                let peer = server.peer_mut(ConnectionID(0));
++                let state = replace(
++                    &mut peer.state,
++                    PeerState::Disconnected {
++                        last_peer_ptr: None,
++                    },
++                );
++                if let PeerState::AwaitingPeer {
++                    connection,
++                    address,
++                    ..
++                } = state
++                {
++                    peer.state = PeerState::Disconnecting {
++                        connection,
++                        address,
++                        last_peer_ptr: None,
++                        last_send: now,
++                    };
++                } else {
++                    unreachable!();
++                }
++            }
++            assert!(server.service().is_none(),"stale terminal event must be discarded without mutating closing/disconnected wrapper");
++            assert!(if closing {
++                matches!(
++                    server.peer(ConnectionID(0)).state,
++                    PeerState::Disconnecting { .. }
++                )
++            } else {
++                matches!(
++                    server.peer(ConnectionID(0)).state,
++                    PeerState::Disconnected { .. }
++                )
++            });
++            unsafe {
++                let old = server.host.peer(crate::PeerID(0)).0;
++                assert_eq!((*old).state, crate::ENET_PEER_STATE_DISCONNECTED);
++                assert_eq!((*old).queued_receive_bytes, 0);
++                assert_eq!((*old).queued_receive_commands, 0);
++            }
++        }
++    }
++    struct IdentityConnection {
++        address: usize,
++        data: ReadWrite<(), std::io::Error>,
++    }
++    impl super::Connection for IdentityConnection {
++        type Address = usize;
++        type Error = std::io::Error;
++        fn init(&mut self) -> Result<usize, Self::Error> {
++            Ok(self.address)
++        }
++        fn send(&mut self, buffer: &[u8]) -> Result<usize, Self::Error> {
++            crate::Socket::send(&mut self.data, (), buffer)
++        }
++        fn receive(
++            &mut self,
++            buffer: &mut [u8; crate::MTU_MAX],
++        ) -> Result<Option<crate::PacketReceived>, Self::Error> {
++            Ok(crate::Socket::receive(&mut self.data, buffer)?.map(|(_, received)| received))
++        }
++    }
++
++    #[test]
++    fn native_receive_full_address_and_has_peer_pointer_are_checked_independently() {
++        for pointer_only in [false, true] {
++            let mut server: Host<IdentityConnection> = Host::new(HostSettings {
++                peer_limit: 2,
++                channel_limit: 3,
++                receive_policy: Some(ReceivePolicy {
++                    maximum_packet_size: 8192,
++                    maximum_queued_bytes: 65536,
++                    maximum_queued_commands: 256,
++                }),
++                ..Default::default()
++            })
++            .unwrap();
++            // Old native identity and new wrapper deliberately share index/generation.
++            // AwaitingPeer must still compare underlying address; HasPeer with the same
++            // full address must still compare its exact native peer pointer.
++            let old = server
++                .host
++                .connect(Address::new(1, ConnectionID(0), 0), 3, 0)
++                .unwrap();
++            let old_id = old.id();
++            let old_ptr = old.0;
++            unsafe {
++                crate::enet_peer_on_connect(old_ptr);
++                (*old_ptr).state = crate::ENET_PEER_STATE_CONNECTED;
++                let mut command: crate::ENetProtocol = core::mem::zeroed();
++                command.header.command = 0x86;
++                command.header.channel_id = 0;
++                command.header.reliable_sequence_number = 1;
++                assert!(!crate::enet_peer_queue_incoming_command(
++                    old_ptr,
++                    &command,
++                    [7u8].as_ptr(),
++                    1,
++                    crate::ENET_PACKET_FLAG_RELIABLE,
++                    0
++                )
++                .is_null());
++                crate::enet_peer_receive_limit(old_ptr, 0, 1);
++                assert_eq!((*old_ptr).queued_receive_commands, 1);
++            }
++            let connection = IdentityConnection {
++                address: if pointer_only { 1 } else { 2 },
++                data: ReadWrite::new(),
++            };
++            let replacement_ptr = if pointer_only {
++                server
++                    .add_connection(ConnectionKind::Initiator {
++                        connection,
++                        channel_count: 3,
++                        data: 0,
++                    })
++                    .unwrap();
++                Some(server.peer(ConnectionID(0)).peer().unwrap().0)
++            } else {
++                server
++                    .add_connection(ConnectionKind::Receiver {
++                        connection,
++                        timeout: Duration::from_secs(3),
++                    })
++                    .unwrap();
++                None
++            };
++            assert!(server
++                .handle_event(crate::EventNoRef::ReceiveLimitExceeded {
++                    peer: old_id,
++                    channel_id: 0,
++                    kind: ReceiveLimitKind::PacketSize
++                })
++                .is_none());
++            unsafe {
++                assert_eq!((*old_ptr).state, crate::ENET_PEER_STATE_DISCONNECTED);
++                assert_eq!((*old_ptr).queued_receive_bytes, 0);
++                assert_eq!((*old_ptr).queued_receive_commands, 0);
++            }
++            if let Some(expected) = replacement_ptr {
++                assert_eq!(server.peer(ConnectionID(0)).peer().unwrap().0, expected);
++                unsafe {
++                    assert_eq!((*expected).state, crate::ENET_PEER_STATE_CONNECTING);
++                }
++            } else {
++                assert!(matches!(
++                    server.peer(ConnectionID(0)).state,
++                    PeerState::AwaitingPeer { .. }
++                ));
++            }
++        }
++    }
++}
+diff --git a/src/event.rs b/src/event.rs
+index d6b6bd38..766f6167 100644
+--- a/src/event.rs
++++ b/src/event.rs
+@@ -1,5 +1,16 @@
+ use crate::{Packet, Peer, PeerID, Socket};
+ 
++/// The incoming resource limit that refused a command. This is a local event, not wire data.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub enum ReceiveLimitKind {
++    /// A structurally valid packet declaration exceeded the incoming payload bound.
++    PacketSize,
++    /// Queued payload, bitmap and descriptors would exceed the byte bound.
++    QueuedBytes,
++    /// Another queued command would exceed the command bound.
++    QueuedCommands,
++}
++
+ /// An ENet event returned by [`Host::service`](`crate::Host::service`).
+ #[derive(Debug)]
+ pub enum Event<'a, S: Socket> {
+@@ -26,6 +37,15 @@ pub enum Event<'a, S: Socket> {
+         /// The actual packet data.
+         packet: Packet,
+     },
++    /// An incoming command exceeded the optional receive policy.
++    ReceiveLimitExceeded {
++        /// Peer that generated the event.
++        peer: &'a mut Peer<S>,
++        /// Channel of the refused command.
++        channel_id: u8,
++        /// The exceeded limit; only packet size is terminal.
++        kind: crate::ReceiveLimitKind,
++    },
+ }
+ 
+ impl<S: Socket> Event<'_, S> {
+@@ -33,6 +53,15 @@ impl<S: Socket> Event<'_, S> {
+     #[must_use]
+     pub fn no_ref(self) -> EventNoRef {
+         match self {
++            Self::ReceiveLimitExceeded {
++                peer,
++                channel_id,
++                kind,
++            } => EventNoRef::ReceiveLimitExceeded {
++                peer: peer.id(),
++                channel_id,
++                kind,
++            },
+             Self::Connect { peer, data } => EventNoRef::Connect {
+                 peer: peer.id(),
+                 data,
+@@ -82,4 +111,13 @@ pub enum EventNoRef {
+         /// The actual packet data.
+         packet: Packet,
+     },
++    /// An incoming command exceeded the optional receive policy.
++    ReceiveLimitExceeded {
++        /// Peer that generated the event.
++        peer: PeerID,
++        /// Channel of the refused command.
++        channel_id: u8,
++        /// The exceeded limit; only packet size is terminal.
++        kind: crate::ReceiveLimitKind,
++    },
+ }
+diff --git a/src/host.rs b/src/host.rs
+index fb6f898c..10334d48 100644
+--- a/src/host.rs
++++ b/src/host.rs
+@@ -16,9 +16,22 @@ use crate::{
+     ENET_EVENT_TYPE_RECEIVE,
+ };
+ 
++/// Optional incoming allocation limits. Outgoing packet limits are unaffected.
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++pub struct ReceivePolicy {
++    /// Largest admitted incoming packet payload, including reassembled fragments.
++    pub maximum_packet_size: usize,
++    /// Maximum queued payload, fragment bitmap and command/packet descriptor bytes per peer.
++    pub maximum_queued_bytes: usize,
++    /// Maximum queued incoming commands per peer.
++    pub maximum_queued_commands: usize,
++}
++
+ /// Settings for a newly created host, passed into [`Host::new`].
+ #[allow(clippy::type_complexity)]
+ pub struct HostSettings {
++    /// Optional incoming resource policy; `None` preserves ENet defaults.
++    pub receive_policy: Option<ReceivePolicy>,
+     /// The maximum number of peers that should be allocated for the host.
+     pub peer_limit: usize,
+     /// The maximum number of channels allowed. Cannot be 0.
+@@ -48,6 +61,7 @@ pub struct HostSettings {
+ impl Default for HostSettings {
+     fn default() -> Self {
+         Self {
++            receive_policy: None,
+             peer_limit: PeerID::MAX,
+             channel_limit: PROTOCOL_MAXIMUM_CHANNEL_COUNT as usize,
+             incoming_bandwidth_limit: None,
+@@ -80,6 +94,7 @@ impl<S: Socket> Host<S> {
+     /// # Errors
+     ///
+     /// Returns [`HostNewError::BadParameter`] if one of the host settings was invalid:
++    /// - If any configured [`ReceivePolicy`] limit is `0`.
+     /// - If [`HostSettings::channel_limit`] is equal to `0`.
+     /// - If [`HostSettings::incoming_bandwidth_limit`] is equal to `Some(0)`.
+     /// - If [`HostSettings::outgoing_bandwidth_limit`] is equal to `Some(0)`.
+@@ -88,6 +103,16 @@ impl<S: Socket> Host<S> {
+     ///
+     /// Returns [`HostNewError::FailedToInitializeSocket`] if the call to [`Socket::init`] fails.
+     pub fn new(socket: S, settings: HostSettings) -> Result<Host<S>, HostNewError<S>> {
++        if settings.receive_policy.is_some_and(|policy| {
++            policy.maximum_packet_size == 0
++                || policy.maximum_queued_bytes == 0
++                || policy.maximum_queued_commands == 0
++        }) {
++            return Err(HostNewError::BadParameter(BadParameter {
++                method: "Host::new",
++                parameter: "settings.receive_policy",
++            }));
++        }
+         if settings.channel_limit == 0 {
+             return Err(HostNewError::BadParameter(BadParameter {
+                 method: "Host::new",
+@@ -123,6 +148,7 @@ impl<S: Socket> Host<S> {
+                 settings.seed,
+             )
+             .map_err(|err| HostNewError::FailedToInitializeSocket(err))?;
++            (*host).receive_policy = settings.receive_policy;
+             let mut peers = Vec::new();
+             peers.reserve_exact((*host).peer_count);
+             for peer_index in 0..(*host).peer_count {
+@@ -440,6 +466,16 @@ impl<S: Socket> Host<S> {
+                 channel_id: event.channel_id,
+                 packet: Packet::new_from_ptr(event.packet),
+             },
++            crate::ENET_EVENT_TYPE_RECEIVE_LIMIT_EXCEEDED => Event::ReceiveLimitExceeded {
++                peer: self.peer_mut(self.peer_index(event.peer)),
++                channel_id: event.channel_id,
++                kind: match event.data {
++                    1 => crate::ReceiveLimitKind::PacketSize,
++                    2 => crate::ReceiveLimitKind::QueuedBytes,
++                    3 => crate::ReceiveLimitKind::QueuedCommands,
++                    _ => unreachable!(),
++                },
++            },
+             _ => unreachable!(),
+         }
+     }
+diff --git a/src/lib.rs b/src/lib.rs
+index adfaf921..39ce19f5 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -166,7 +166,8 @@ pub use socket::*;
+ pub use time::*;
+ pub use version::*;
+ 
+-#[cfg(any(feature = "connected", doc))]
++// Compile the adapter in the default test suite so policy event forwarding cannot go untested.
++#[cfg(any(feature = "connected", test, doc))]
+ #[cfg_attr(docsrs, doc(cfg(feature = "connected")))]
+ pub mod connected;
+ pub mod error;
+diff --git a/src/test.rs b/src/test.rs
+index 068c4d95..bbffe68e 100644
+--- a/src/test.rs
++++ b/src/test.rs
+@@ -462,3 +462,720 @@ fn repeated_packet_sends_keep_independent_throttle_decisions() {
+         "counter wrap preserves one ordinary repeated send"
+     );
+ }
++
++mod receive_policy {
++    use crate::*;
++    use std::net::UdpSocket;
++
++    // A connected transport slot with no application admission: native allocation starts here.
++    fn rig() -> (Host<UdpSocket>, UdpSocket) {
++        let sender = UdpSocket::bind("127.0.0.1:0").unwrap();
++        let mut host = Host::new(
++            UdpSocket::bind("127.0.0.1:0").unwrap(),
++            HostSettings {
++                peer_limit: 2,
++                channel_limit: 3,
++                receive_policy: Some(ReceivePolicy {
++                    maximum_packet_size: 8192,
++                    maximum_queued_bytes: 65536,
++                    maximum_queued_commands: 256,
++                }),
++                ..Default::default()
++            },
++        )
++        .unwrap();
++        let peer = host.connect(sender.local_addr().unwrap(), 3, 0).unwrap();
++        unsafe {
++            (*peer.0).state = ENET_PEER_STATE_CONNECTED;
++            (*peer.0).outgoing_peer_id = 0;
++            (*peer.0).incoming_session_id = 0;
++        }
++        (host, sender)
++    }
++
++    fn fragment(
++        total: u32,
++        count: u32,
++        number: u32,
++        offset: u32,
++        reliable: bool,
++        channel: u8,
++        sequence: u16,
++    ) -> Vec<u8> {
++        let mut bytes = vec![0x40, 0, 0, 1, if reliable { 0x88 } else { 12 }, channel];
++        bytes.extend_from_slice(&sequence.to_be_bytes());
++        bytes.extend_from_slice(&sequence.to_be_bytes());
++        bytes.extend_from_slice(&1u16.to_be_bytes());
++        bytes.extend_from_slice(&count.to_be_bytes());
++        bytes.extend_from_slice(&number.to_be_bytes());
++        bytes.extend_from_slice(&total.to_be_bytes());
++        bytes.extend_from_slice(&offset.to_be_bytes());
++        bytes.push(42);
++        bytes
++    }
++
++    #[test]
++    fn native_receive_valid_declaration_above_old_max_reports_before_allocation() {
++        let (mut host, sender) = rig();
++        enet_test_allocation_peak(true);
++        sender
++            .send_to(
++                &fragment(64 * 1024 * 1024, 2, 0, 0, true, 0, 1),
++                host.socket().local_addr().unwrap(),
++            )
++            .unwrap();
++        let event = host.service().unwrap().map(Event::no_ref);
++        assert_eq!(
++            enet_test_allocation_peak(false),
++            0,
++            "oversized declaration must not allocate advertised buffers or descriptors"
++        );
++        assert!(
++            matches!(
++                event,
++                Some(EventNoRef::ReceiveLimitExceeded {
++                    peer: PeerID(0),
++                    channel_id: 0,
++                    kind: ReceiveLimitKind::PacketSize
++                })
++            ),
++            "valid oversized first fragment must produce a local event before allocation"
++        );
++        unsafe {
++            assert_eq!((*host.peer(PeerID(0)).0).queued_receive_bytes, 0);
++        }
++    }
++
++    fn raw(host: &Host<UdpSocket>) -> *mut ENetHost<UdpSocket> {
++        unsafe { (*host.peer(PeerID(0)).0).host }
++    }
++
++    fn inject(
++        host: &mut Host<UdpSocket>,
++        sender: &UdpSocket,
++        mut bytes: Vec<u8>,
++    ) -> Option<EventNoRef> {
++        unsafe {
++            let h = raw(host);
++            (*h).received_address
++                .write(Some(sender.local_addr().unwrap()));
++            (*h).received_data = bytes.as_mut_ptr();
++            (*h).received_data_length = bytes.len();
++            let mut event: ENetEvent<UdpSocket> = core::mem::zeroed();
++            if enet_protocol_handle_incoming_commands(h, &mut event) {
++                assert_eq!(event.type_0, ENET_EVENT_TYPE_RECEIVE_LIMIT_EXCEEDED);
++                return Some(EventNoRef::ReceiveLimitExceeded {
++                    peer: PeerID(usize::from((*event.peer).incoming_peer_id)),
++                    channel_id: event.channel_id,
++                    kind: match event.data {
++                        1 => ReceiveLimitKind::PacketSize,
++                        2 => ReceiveLimitKind::QueuedBytes,
++                        3 => ReceiveLimitKind::QueuedCommands,
++                        _ => panic!("invalid limit kind"),
++                    },
++                });
++            }
++            None
++        }
++    }
++
++    fn counters(host: &Host<UdpSocket>, peer: usize) -> (usize, usize) {
++        unsafe {
++            let peer = host.peer(PeerID(peer)).0;
++            assert!((*peer).queued_receive_bytes <= 65536);
++            assert!((*peer).queued_receive_commands <= 256);
++            (
++                (*peer).queued_receive_bytes,
++                (*peer).queued_receive_commands,
++            )
++        }
++    }
++
++    unsafe fn queue(
++        host: &mut Host<UdpSocket>,
++        peer: usize,
++        channel: u8,
++        sequence: u16,
++        unreliable: Option<u16>,
++        length: usize,
++        fragments: u32,
++    ) -> *mut ENetIncomingCommand {
++        let mut command: ENetProtocol = core::mem::zeroed();
++        command.header.command = if unreliable.is_some() { 7 } else { 6 };
++        command.header.channel_id = channel;
++        command.header.reliable_sequence_number = sequence;
++        if let Some(n) = unreliable {
++            command.send_unreliable.unreliable_sequence_number = n.to_be();
++        }
++        enet_peer_queue_incoming_command(
++            host.peer_mut(PeerID(peer)).0,
++            &command,
++            core::ptr::null(),
++            length,
++            0,
++            fragments,
++        )
++    }
++
++    fn reliable(sequence: u16, channel: u8, data: &[u8], kind: u8) -> Vec<u8> {
++        let mut bytes = vec![0x40, 0, 0, 1, kind, channel];
++        bytes.extend_from_slice(&sequence.to_be_bytes());
++        if kind == 7 || kind == 9 {
++            bytes.extend_from_slice(&sequence.to_be_bytes());
++        }
++        bytes.extend_from_slice(&(data.len() as u16).to_be_bytes());
++        bytes.extend_from_slice(data);
++        bytes
++    }
++
++    #[test]
++    fn native_receive_charge_exact_boundary_and_transfer_release() {
++        let (mut host, _) = rig();
++        unsafe {
++            let h = raw(&host);
++            let descriptor =
++                core::mem::size_of::<ENetIncomingCommand>() + core::mem::size_of::<ENetPacket>();
++            (*h).receive_policy.as_mut().unwrap().maximum_queued_bytes = 2 * (descriptor + 7);
++            assert!(!queue(&mut host, 0, 0, 1, None, 7, 0).is_null());
++            assert!(!queue(&mut host, 0, 0, 2, None, 7, 0).is_null());
++            assert_eq!(counters(&host, 0), (2 * (descriptor + 7), 2));
++            assert!(queue(&mut host, 0, 0, 3, None, 0, 0).is_null());
++            assert_eq!(counters(&host, 0), (2 * (descriptor + 7), 2));
++            assert!(matches!(
++                host.check_events(),
++                Some(Event::ReceiveLimitExceeded {
++                    kind: ReceiveLimitKind::QueuedBytes,
++                    ..
++                })
++            ));
++            assert!(matches!(host.check_events(), Some(Event::Receive { .. })));
++            assert_eq!(counters(&host, 0), (descriptor + 7, 1));
++            assert!(matches!(host.check_events(), Some(Event::Receive { .. })));
++            assert_eq!(counters(&host, 0), (0, 0));
++            assert!(!queue(&mut host, 0, 0, 3, None, 7, 0).is_null());
++        }
++    }
++
++    #[test]
++    fn native_receive_zero_payload_command_cap_duplicates_and_independent_peers() {
++        let (mut host, sender) = rig();
++        let other = UdpSocket::bind("127.0.0.1:0").unwrap();
++        let second = host.connect(other.local_addr().unwrap(), 3, 0).unwrap();
++        unsafe {
++            (*second.0).state = ENET_PEER_STATE_CONNECTED;
++        }
++        unsafe {
++            for n in 2..=257 {
++                assert!(!queue(&mut host, 0, 0, n, None, 0, 0).is_null());
++                counters(&host, 0);
++            }
++            let before = counters(&host, 0);
++            assert_eq!(before.1, 256);
++            assert!(!queue(&mut host, 0, 0, 2, None, 0, 0).is_null());
++            assert_eq!(counters(&host, 0), before);
++            assert!(queue(&mut host, 0, 0, 258, None, 0, 0).is_null());
++            assert!(matches!(
++                host.check_events(),
++                Some(Event::ReceiveLimitExceeded {
++                    kind: ReceiveLimitKind::QueuedCommands,
++                    ..
++                })
++            ));
++            assert!(!queue(&mut host, 1, 0, 1, None, 1, 0).is_null());
++            assert_eq!(counters(&host, 1).1, 1);
++            enet_peer_reset(host.peer_mut(PeerID(0)).0);
++            assert_eq!(counters(&host, 0), (0, 0));
++            assert_eq!(counters(&host, 1).1, 1);
++        }
++        drop(sender);
++    }
++
++    #[test]
++    fn native_receive_fragment_bitmap_budget_and_duplicate_reservations() {
++        for is_reliable in [true, false] {
++            let (mut host, sender) = rig();
++            assert!(inject(
++                &mut host,
++                &sender,
++                fragment(8192, 2, 0, 0, is_reliable, 1, 1)
++            )
++            .is_none());
++            let before = counters(&host, 0);
++            assert_eq!(before.1, 1);
++            assert!(inject(
++                &mut host,
++                &sender,
++                fragment(8192, 2, 0, 0, is_reliable, 1, 1)
++            )
++            .is_none());
++            assert_eq!(counters(&host, 0), before);
++            unsafe {
++                enet_peer_reset_queues(host.peer_mut(PeerID(0)).0);
++            }
++            assert_eq!(counters(&host, 0), (0, 0));
++        }
++        let (mut host, sender) = rig();
++        enet_test_allocation_peak(true);
++        assert!(inject(
++            &mut host,
++            &sender,
++            fragment(1, 1_048_576, 0, 0, false, 1, 1)
++        )
++        .is_none());
++        assert_eq!(counters(&host, 0), (0, 0));
++        assert_eq!(
++            enet_test_allocation_peak(false),
++            0,
++            "bitmap admission must precede allocation"
++        );
++        assert!(matches!(
++            host.check_events(),
++            Some(Event::ReceiveLimitExceeded {
++                kind: ReceiveLimitKind::QueuedBytes,
++                ..
++            })
++        ));
++    }
++
++    #[test]
++    fn native_receive_unfragmented_paths_enforce_payload_after_window_validation() {
++        for kind in [0x86, 7, 9] {
++            let (mut host, sender) = rig();
++            unsafe {
++                (*raw(&host))
++                    .receive_policy
++                    .as_mut()
++                    .unwrap()
++                    .maximum_packet_size = 2;
++            }
++            assert!(matches!(
++                inject(&mut host, &sender, reliable(1, 2, &[1, 2, 3], kind)),
++                Some(EventNoRef::ReceiveLimitExceeded {
++                    channel_id: 2,
++                    kind: ReceiveLimitKind::PacketSize,
++                    ..
++                })
++            ));
++            assert_eq!(counters(&host, 0), (0, 0));
++        }
++    }
++
++    #[test]
++    fn native_receive_terminal_wins_over_pending_receive_and_following_input() {
++        for is_reliable in [true, false] {
++            for total in [8193, 64 * 1024 * 1024] {
++                let (mut host, sender) = rig();
++                unsafe {
++                    assert!(!queue(&mut host, 0, 0, 1, None, 1, 0).is_null());
++                }
++                let mut bytes = fragment(total, 2, 0, 0, is_reliable, 1, 2);
++                bytes.extend_from_slice(&reliable(2, 0, &[9], 0x86)[4..]);
++                assert!(matches!(
++                    inject(&mut host, &sender, bytes),
++                    Some(EventNoRef::ReceiveLimitExceeded {
++                        kind: ReceiveLimitKind::PacketSize,
++                        ..
++                    })
++                ));
++                assert_eq!(
++                    counters(&host, 0).1,
++                    1,
++                    "no oversized or following command allocated"
++                );
++                assert!(host.check_events().is_none());
++                assert!(inject(&mut host, &sender, reliable(2, 0, &[10], 0x86)).is_none());
++                assert_eq!(counters(&host, 0).1, 1);
++                host.peer_mut(PeerID(0)).disconnect_now(16);
++                assert_eq!(counters(&host, 0), (0, 0));
++                assert!(host.check_events().is_none());
++                let peer = host.connect(sender.local_addr().unwrap(), 3, 0).unwrap();
++                assert_eq!(peer.id(), PeerID(0));
++                unsafe {
++                    (*peer.0).state = ENET_PEER_STATE_CONNECTED;
++                    (*peer.0).outgoing_peer_id = 0;
++                    (*peer.0).incoming_session_id = 0;
++                }
++                assert!(inject(&mut host, &sender, reliable(1, 0, &[11], 0x86)).is_none());
++                assert!(
++                    matches!(host.check_events(), Some(Event::Receive { packet, .. }) if packet.data()==[11])
++                );
++                assert_eq!(counters(&host, 0), (0, 0));
++            }
++        }
++    }
++
++    #[test]
++    fn native_receive_malformed_out_of_window_and_spoofed_headers_have_no_attribution() {
++        for is_reliable in [true, false] {
++            for variant in 0..7 {
++                let (mut host, sender) = rig();
++                let mut bytes = fragment(8193, 2, 0, 0, is_reliable, 0, 1);
++                match variant {
++                    0 => {
++                        bytes.pop();
++                    } // truncated payload
++                    1 => {
++                        bytes[12..16].copy_from_slice(&0u32.to_be_bytes());
++                    } // no fragments
++                    2 => {
++                        bytes[16..20].copy_from_slice(&2u32.to_be_bytes());
++                    }
++                    3 => {
++                        bytes[24..28].copy_from_slice(&8193u32.to_be_bytes());
++                    }
++                    4 => {
++                        bytes[5] = 3;
++                    } // invalid channel
++                    5 => {
++                        bytes[0] |= 0x10;
++                    } // wrong session
++                    6 => {
++                        bytes[8..10].copy_from_slice(&32768u16.to_be_bytes());
++                        bytes[6..8].copy_from_slice(&32768u16.to_be_bytes());
++                    }
++                    _ => unreachable!(),
++                }
++                assert!(
++                    inject(&mut host, &sender, bytes).is_none(),
++                    "variant {variant}"
++                );
++                assert!(host.check_events().is_none(), "variant {variant}");
++                assert_eq!(counters(&host, 0), (0, 0));
++            }
++            let (mut host, _) = rig();
++            let spoof = UdpSocket::bind("127.0.0.1:0").unwrap();
++            assert!(inject(
++                &mut host,
++                &spoof,
++                fragment(8193, 2, 0, 0, is_reliable, 0, 1)
++            )
++            .is_none());
++            assert!(host.check_events().is_none());
++        }
++    }
++
++    #[test]
++    fn native_receive_stale_unreliable_removal_releases_while_connected() {
++        let (mut host, _) = rig();
++        unsafe {
++            // Partial unreliable group is superseded once reliable channel progress reaches it.
++            assert!(!queue(&mut host, 0, 0, 1, Some(1), 13, 2).is_null());
++            assert_eq!(counters(&host, 0).1, 1);
++            assert!(!queue(&mut host, 0, 0, 1, None, 0, 0).is_null());
++            assert!(!queue(&mut host, 0, 0, 2, None, 0, 0).is_null());
++            assert_eq!(
++                counters(&host, 0).1,
++                2,
++                "stale group must be released during reliable progress"
++            );
++            while host.check_events().is_some() {}
++            assert_eq!(counters(&host, 0), (0, 0));
++            assert_eq!((*host.peer(PeerID(0)).0).state, ENET_PEER_STATE_CONNECTED);
++        }
++    }
++
++    #[test]
++    fn native_receive_checked_charge_overflow_and_recoverable_refusal_leave_no_reservation() {
++        assert_eq!(enet_receive_charge(usize::MAX, 0), None);
++        assert_eq!(enet_receive_charge(usize::MAX - 2, 32), None);
++        let (mut host, _) = rig();
++        unsafe {
++            assert!(queue(&mut host, 0, 0, 1, None, 0, 1_048_577).is_null());
++            assert_eq!(counters(&host, 0), (0, 0));
++            // Force a large policy to reach the post-reservation structural refusal path.
++            (*raw(&host))
++                .receive_policy
++                .as_mut()
++                .unwrap()
++                .maximum_queued_bytes = usize::MAX;
++            assert!(queue(&mut host, 0, 0, 1, None, 0, 1_048_577).is_null());
++            assert_eq!(counters(&host, 0), (0, 0));
++        }
++    }
++
++    #[test]
++    fn native_receive_reliable_refusal_is_not_acked_and_retry_progresses() {
++        let (mut host, sender) = rig();
++        unsafe {
++            (*raw(&host))
++                .receive_policy
++                .as_mut()
++                .unwrap()
++                .maximum_queued_commands = 1;
++        }
++        inject(&mut host, &sender, fragment(2, 2, 0, 0, true, 0, 1));
++        inject(&mut host, &sender, reliable(3, 0, &[9], 0x86));
++        unsafe {
++            let peer = host.peer(PeerID(0)).0;
++            let sentinel = core::ptr::addr_of_mut!((*peer).acknowledgements.sentinel);
++            let mut node = (*sentinel).next;
++            while node != sentinel {
++                let ack = node.cast::<ENetAcknowledgement>();
++                let sequence = (*ack).command.header.reliable_sequence_number;
++                assert_ne!(sequence, 3, "refused data must not be ACKed");
++                node = (*node).next;
++            }
++        }
++        assert!(matches!(
++            host.check_events(),
++            Some(Event::ReceiveLimitExceeded {
++                kind: ReceiveLimitKind::QueuedCommands,
++                ..
++            })
++        ));
++        let mut tail = fragment(2, 2, 1, 1, true, 0, 2);
++        tail[8..10].copy_from_slice(&1u16.to_be_bytes());
++        inject(&mut host, &sender, tail);
++        assert!(matches!(host.check_events(), Some(Event::Receive { .. })));
++        assert_eq!(counters(&host, 0), (0, 0));
++        inject(&mut host, &sender, reliable(3, 0, &[9], 0x86));
++        assert!(
++            matches!(host.check_events(),Some(Event::Receive { packet,.. }) if packet.data()==[9])
++        );
++        assert_eq!(counters(&host, 0), (0, 0));
++    }
++
++    #[test]
++    fn native_receive_default_policy_preserves_large_packets_and_settings_validation() {
++        let (mut host, sender) = rig();
++        unsafe {
++            let h = raw(&host);
++            (*h).receive_policy = None;
++            assert_eq!((*h).maximum_packet_size, 32 * 1024 * 1024);
++            assert_eq!((*h).maximum_waiting_data, 32 * 1024 * 1024);
++            assert!(inject(&mut host, &sender, fragment(8193, 2, 0, 0, true, 0, 1)).is_none());
++            assert_eq!((*host.peer(PeerID(0)).0).total_waiting_data, 8193);
++            assert_eq!(counters(&host, 0), (0, 0));
++            host.peer_mut(PeerID(0))
++                .send(0, &Packet::reliable(vec![0; 9000]))
++                .unwrap();
++        }
++        assert!(HostSettings::default().receive_policy.is_none());
++        for field in 0..3 {
++            let mut policy = ReceivePolicy {
++                maximum_packet_size: 8192,
++                maximum_queued_bytes: 65536,
++                maximum_queued_commands: 256,
++            };
++            match field {
++                0 => policy.maximum_packet_size = 0,
++                1 => policy.maximum_queued_bytes = 0,
++                _ => policy.maximum_queued_commands = 0,
++            }
++            let result = Host::new(
++                UdpSocket::bind("127.0.0.1:0").unwrap(),
++                HostSettings {
++                    receive_policy: Some(policy),
++                    ..Default::default()
++                },
++            );
++            assert!(matches!(result, Err(error::HostNewError::BadParameter(_))));
++        }
++    }
++
++    #[test]
++    fn native_receive_sequence_wrap_and_aggregate_payload_precedence() {
++        let (mut host, sender) = rig();
++        unsafe {
++            (*(*host.peer(PeerID(0)).0).channels).incoming_reliable_sequence_number = 65535;
++            (*raw(&host))
++                .receive_policy
++                .as_mut()
++                .unwrap()
++                .maximum_queued_commands = 1;
++            assert!(!queue(&mut host, 0, 0, 0, None, 1, 0).is_null());
++            assert!(queue(&mut host, 0, 1, 1, None, 1, 0).is_null());
++        }
++        // Payload must replace a pending aggregate event, even across channels and sequence wrap.
++        assert!(matches!(
++            inject(&mut host, &sender, fragment(8193, 2, 0, 0, true, 2, 1)),
++            Some(EventNoRef::ReceiveLimitExceeded {
++                channel_id: 2,
++                kind: ReceiveLimitKind::PacketSize,
++                ..
++            })
++        ));
++        assert!(host.check_events().is_none());
++        assert_eq!(counters(&host, 0).1, 1);
++        host.peer_mut(PeerID(0)).disconnect_now(16);
++        assert_eq!(counters(&host, 0), (0, 0));
++    }
++    struct FreeWitness {
++        peer: *mut ENetPeer<UdpSocket>,
++        calls: usize,
++    }
++    unsafe fn witness_release(packet: *mut ENetPacket) {
++        let witness = &mut *((*packet).user_data.cast::<FreeWitness>());
++        assert_eq!((*witness.peer).queued_receive_bytes, 0);
++        assert_eq!((*witness.peer).queued_receive_commands, 0);
++        witness.calls += 1;
++    }
++
++    #[test]
++    fn native_receive_host_destruction_releases_before_packet_free() {
++        let (mut host, _sender) = rig();
++        let mut witness = FreeWitness {
++            peer: host.peer(PeerID(0)).0,
++            calls: 0,
++        };
++        unsafe {
++            let command = queue(&mut host, 0, 0, 2, None, 7, 2);
++            assert!(!command.is_null());
++            (*(*command).packet).user_data = core::ptr::addr_of_mut!(witness).cast();
++            (*(*command).packet).free_callback = Some(witness_release);
++        }
++        assert_eq!(counters(&host, 0).1, 1);
++        drop(host);
++        assert_eq!(witness.calls, 1);
++    }
++
++    #[test]
++    fn native_receive_timeout_releases_partial_group_and_pending_reports() {
++        let (mut host, _sender) = rig();
++        unsafe {
++            assert!(!queue(&mut host, 0, 0, 2, None, 7, 2).is_null());
++        }
++        host.flush();
++        host.peer_mut(PeerID(0)).set_timeout(1, 1, 1);
++        unsafe {
++            let h = raw(&host);
++            *(*h).time.assume_init_mut() = Box::new(|| core::time::Duration::from_millis(1000));
++            let peer = host.peer(PeerID(0)).0;
++            (*peer).next_timeout = 1;
++            (*peer).earliest_timeout = 1;
++            let sent = (*peer)
++                .sent_reliable_commands
++                .sentinel
++                .next
++                .cast::<ENetOutgoingCommand>();
++            assert_ne!(
++                sent.cast::<ENetListNode>(),
++                core::ptr::addr_of_mut!((*peer).sent_reliable_commands.sentinel)
++            );
++            (*sent).sent_time = 1;
++            (*sent).round_trip_timeout = 1;
++            (*sent).send_attempts = 1;
++        }
++        assert!(matches!(
++            host.service().unwrap(),
++            Some(Event::Disconnect { .. })
++        ));
++        assert_eq!(counters(&host, 0), (0, 0));
++        assert!(host.check_events().is_none());
++    }
++    #[test]
++    fn native_receive_connected_adapter_forwards_opt_in_violation() {
++        use crate::connected::{self, ConnectionID, ConnectionKind};
++        type Connection = ReadWrite<(), std::convert::Infallible>;
++        fn transfer(a: &mut connected::Host<Connection>, b: &mut connected::Host<Connection>) {
++            while let Some(((), bytes)) =
++                a.peer_mut(ConnectionID(0)).connection_mut().unwrap().read()
++            {
++                b.peer_mut(ConnectionID(0))
++                    .connection_mut()
++                    .unwrap()
++                    .write((), bytes);
++            }
++        }
++        let settings = HostSettings {
++            peer_limit: 1,
++            channel_limit: 3,
++            receive_policy: Some(ReceivePolicy {
++                maximum_packet_size: 2,
++                maximum_queued_bytes: 65536,
++                maximum_queued_commands: 256,
++            }),
++            ..Default::default()
++        };
++        let mut server = connected::Host::new(settings).unwrap();
++        let mut client = connected::Host::new(HostSettings {
++            peer_limit: 1,
++            channel_limit: 3,
++            ..Default::default()
++        })
++        .unwrap();
++        server
++            .add_connection(ConnectionKind::Receiver {
++                connection: Connection::new(),
++                timeout: core::time::Duration::from_secs(3),
++            })
++            .unwrap();
++        client
++            .add_connection(ConnectionKind::Initiator {
++                connection: Connection::new(),
++                channel_count: 3,
++                data: 0,
++            })
++            .unwrap();
++        let (mut a, mut b) = (false, false);
++        for _ in 0..32 {
++            a |= matches!(client.service(), Some(connected::Event::Connect { .. }));
++            transfer(&mut client, &mut server);
++            b |= matches!(server.service(), Some(connected::Event::Connect { .. }));
++            transfer(&mut server, &mut client);
++            if a && b {
++                break;
++            }
++        }
++        assert!(a && b, "connected adapter handshake missing");
++        client
++            .peer_mut(ConnectionID(0))
++            .send(2, &Packet::reliable(vec![1, 2, 3]))
++            .unwrap();
++        for _ in 0..32 {
++            let _ = client.service();
++            transfer(&mut client, &mut server);
++            if let Some(event) = server.service() {
++                assert!(matches!(
++                    event.no_ref(),
++                    connected::EventNoRef::ReceiveLimitExceeded {
++                        peer: ConnectionID(0),
++                        channel_id: 2,
++                        kind: ReceiveLimitKind::PacketSize
++                    }
++                ));
++                return;
++            }
++            transfer(&mut server, &mut client);
++        }
++        panic!("connected adapter dropped receive-limit event");
++    }
++    #[test]
++    fn native_receive_consumed_reliable_fragment_is_not_attributed_and_next_sequence_progresses() {
++        for consumed in [0u16, 1, u16::MAX] {
++            let (mut host, sender) = rig();
++            if consumed != 0 {
++                unsafe {
++                    (*(*host.peer(PeerID(0)).0).channels).incoming_reliable_sequence_number =
++                        consumed - 1;
++                }
++                assert!(inject(&mut host, &sender, reliable(consumed, 0, &[7], 0x86)).is_none());
++                assert!(
++                    matches!(host.check_events(),Some(Event::Receive { packet,.. }) if packet.data()==[7])
++                );
++            }
++            enet_test_allocation_peak(true);
++            let stale = inject(
++                &mut host,
++                &sender,
++                fragment(8193, 1, 0, 0, true, 0, consumed),
++            );
++            assert!(
++                stale.is_none(),
++                "consumed sequence {consumed} must not be attributed as oversized"
++            );
++            assert_eq!(enet_test_allocation_peak(false), 0);
++            assert!(host.check_events().is_none());
++            assert_eq!(counters(&host, 0), (0, 0));
++            unsafe {
++                assert!(!(*host.peer(PeerID(0)).0).receive_terminal);
++            }
++            let next = consumed.wrapping_add(1);
++            assert!(inject(&mut host, &sender, reliable(next, 0, &[8], 0x86)).is_none());
++            assert!(
++                matches!(host.check_events(),Some(Event::Receive { packet,.. }) if packet.data()==[8])
++            );
++            assert_eq!(counters(&host, 0), (0, 0));
++        }
++    }
++}
+diff --git a/src/test/network.rs b/src/test/network.rs
+index 1571134e..409ed8e3 100644
+--- a/src/test/network.rs
++++ b/src/test/network.rs
+@@ -217,7 +217,8 @@ impl Network {
+                                 self.conditions.remove(&(host_index, peer_index));
+                                 self.connections.remove(&(host_index, peer_index));
+                             }
+-                            enet::Event::Receive { peer, .. } => {
++                            enet::Event::Receive { peer, .. }
++                            | enet::Event::ReceiveLimitExceeded { peer, .. } => {
+                                 peer_index = peer.address().unwrap();
+                             }
+                         }

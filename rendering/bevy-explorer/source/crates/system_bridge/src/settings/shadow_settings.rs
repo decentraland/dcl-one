@@ -1,0 +1,286 @@
+use bevy::{
+    ecs::system::{
+        lifetimeless::{SQuery, SRes, Write},
+        SystemParamItem,
+    },
+    pbr::{CascadeShadowConfig, CascadeShadowConfigBuilder, ShadowFilteringMethod},
+    platform::collections::HashSet,
+    prelude::*,
+};
+use common::structs::{AppConfig, PrimaryCameraRes, ShadowSetting};
+
+use super::{AppSetting, EnumAppSetting, IntAppSetting};
+
+const MIN_CASCADE: f32 = 0.1;
+
+impl EnumAppSetting for ShadowSetting {
+    fn variants() -> Vec<Self> {
+        vec![Self::Off, Self::Low, Self::High]
+    }
+
+    fn name(&self) -> String {
+        match self {
+            ShadowSetting::Off => "Off",
+            ShadowSetting::Low => "Low",
+            ShadowSetting::High => "High",
+        }
+        .to_owned()
+    }
+}
+
+impl AppSetting for ShadowSetting {
+    type Param = (
+        SRes<AppConfig>,
+        SRes<PrimaryCameraRes>,
+        SQuery<(Write<DirectionalLight>, Write<CascadeShadowConfig>)>,
+    );
+
+    fn title() -> String {
+        "Shadow settings".to_owned()
+    }
+
+    fn description(&self) -> String {
+        format!("How shadows are rendered in the world.\n\n{}", 
+        match self {
+            ShadowSetting::Off => "Off: No shadows are rendered. Fastest",
+            ShadowSetting::Low => "Low: Low quality shadows. Uses a single pass shadow map and low quality hardward 2x2 filtering. Gives blocky shadow outlines, particularly with high shadow draw distances, but is pretty fast.",
+            ShadowSetting::High => "High: Higher quality shadows. Uses a set of cascaded shadow maps and higher quality filtering for softer shadow outlines and better quality at higher shadow draw distances, but is more GPU intensive.",
+        })
+    }
+
+    fn save(&self, config: &mut AppConfig) {
+        config.graphics.shadow_settings = *self;
+    }
+
+    fn load(config: &AppConfig) -> Self {
+        config.graphics.shadow_settings
+    }
+
+    fn category() -> super::SettingCategory {
+        super::SettingCategory::Graphics
+    }
+
+    fn apply(
+        &self,
+        (config, cam_res, mut lights): SystemParamItem<Self::Param>,
+        mut commands: Commands,
+        cameras: &HashSet<Entity>,
+    ) {
+        apply_shadows(*self, config.graphics.shadow_distance, &mut lights);
+
+        let res = &(config, cam_res, lights);
+        for &cam in cameras {
+            self.apply_to_camera(res, commands.reborrow(), cam);
+        }
+    }
+
+    fn apply_to_camera(
+        &self,
+        _: &SystemParamItem<Self::Param>,
+        mut commands: Commands,
+        camera_entity: Entity,
+    ) {
+        let Ok(mut cmds) = commands.get_entity(camera_entity) else {
+            return;
+        };
+        match self {
+            ShadowSetting::Off => (),
+            ShadowSetting::Low => {
+                cmds.try_insert(ShadowFilteringMethod::Hardware2x2);
+            }
+            ShadowSetting::High => {
+                cmds.try_insert(ShadowFilteringMethod::Gaussian);
+            }
+        }
+    }
+}
+
+// The sun's shadows for a quality and a distance (settings of their own, each applying this).
+fn apply_shadows(
+    setting: ShadowSetting,
+    distance: f32,
+    lights: &mut Query<(&mut DirectionalLight, &mut CascadeShadowConfig)>,
+) {
+    let value = if distance == 0.0 {
+        ShadowSetting::Off
+    } else {
+        setting
+    };
+
+    for (mut light, mut cascades) in lights.iter_mut() {
+        match value {
+            ShadowSetting::Off => {
+                light.shadows_enabled = false;
+            }
+            ShadowSetting::Low => {
+                light.shadows_enabled = true;
+                *cascades = CascadeShadowConfigBuilder {
+                    num_cascades: 1,
+                    minimum_distance: MIN_CASCADE,
+                    maximum_distance: distance.max(MIN_CASCADE + f32::EPSILON),
+                    first_cascade_far_bound: distance.max(MIN_CASCADE + f32::EPSILON),
+                    overlap_proportion: 0.2,
+                }
+                .build()
+            }
+            ShadowSetting::High => {
+                light.shadows_enabled = true;
+                *cascades = CascadeShadowConfigBuilder {
+                    num_cascades: 4,
+                    minimum_distance: MIN_CASCADE,
+                    maximum_distance: distance.max(MIN_CASCADE + f32::EPSILON),
+                    first_cascade_far_bound: (distance / 15.0).max(MIN_CASCADE + f32::EPSILON),
+                    overlap_proportion: 0.2,
+                }
+                .build()
+            }
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ShadowDistanceSetting(i32);
+
+impl IntAppSetting for ShadowDistanceSetting {
+    fn from_int(value: i32) -> Self {
+        Self(value)
+    }
+
+    fn value(&self) -> i32 {
+        self.0
+    }
+
+    fn min() -> i32 {
+        0
+    }
+
+    fn max() -> i32 {
+        300
+    }
+}
+
+impl AppSetting for ShadowDistanceSetting {
+    type Param = (
+        SRes<AppConfig>,
+        SQuery<(Write<DirectionalLight>, Write<CascadeShadowConfig>)>,
+    );
+
+    fn apply(
+        &self,
+        (config, mut lights): SystemParamItem<Self::Param>,
+        _: Commands,
+        _: &HashSet<Entity>,
+    ) {
+        apply_shadows(ShadowSetting::load(&config), self.0 as f32, &mut lights);
+    }
+
+    fn title() -> String {
+        "Shadow Distance".to_owned()
+    }
+
+    fn description(&self) -> String {
+        "Shadow Distance\n\nDistance up to which to render shadows. To ensure that shadows are rendered even for large scenes which are at the edge of the loaded area, this can be set to a higher value (e.g. 2x) than the scene load distance. Higher values increase GPU time slightly, and may result in lower quality shadows at closer distances (particularly with Low shadow quality).".to_owned()
+    }
+
+    fn load(config: &AppConfig) -> Self {
+        Self(config.graphics.shadow_distance as i32)
+    }
+
+    fn save(&self, config: &mut AppConfig) {
+        config.graphics.shadow_distance = self.0 as f32
+    }
+
+    fn category() -> super::SettingCategory {
+        super::SettingCategory::Graphics
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct LightCountSetting(i32);
+
+impl IntAppSetting for LightCountSetting {
+    fn from_int(value: i32) -> Self {
+        Self(value)
+    }
+
+    fn value(&self) -> i32 {
+        self.0
+    }
+
+    fn min() -> i32 {
+        0
+    }
+
+    fn max() -> i32 {
+        128
+    }
+}
+
+impl AppSetting for LightCountSetting {
+    type Param = ();
+
+    fn title() -> String {
+        "Light Count".to_owned()
+    }
+
+    fn description(&self) -> String {
+        "Light Count\n\nMaximum number of scene lights (excluding the global sun light) that will be enabled at once. Each enabled light adds GPU cost even without shadows; reduce this if scenes with many lights cause slowdown. Lights from currently active scenes, and those closest/brightest relative to the player, are enabled first.".to_owned()
+    }
+
+    fn load(config: &AppConfig) -> Self {
+        Self(config.graphics.light_count as i32)
+    }
+
+    fn save(&self, config: &mut AppConfig) {
+        config.graphics.light_count = self.0 as usize
+    }
+
+    fn category() -> super::SettingCategory {
+        super::SettingCategory::Graphics
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ShadowCasterCountSetting(i32);
+
+impl IntAppSetting for ShadowCasterCountSetting {
+    fn from_int(value: i32) -> Self {
+        Self(value)
+    }
+
+    fn value(&self) -> i32 {
+        self.0
+    }
+
+    fn min() -> i32 {
+        0
+    }
+
+    fn max() -> i32 {
+        64
+    }
+}
+
+impl AppSetting for ShadowCasterCountSetting {
+    type Param = ();
+
+    fn title() -> String {
+        "Shadow Caster Count".to_owned()
+    }
+
+    fn description(&self) -> String {
+        "Shadow Caster Count\n\nMaximum number of scene lights (excluding the global sun light) that will cast shadows. Lights that cast shadows are expensive in GPU time and memory, the cost scales linearly with the number of shadow-casting lights. Reduce this if scenes with a large number of shadow-casting lights cause slowdown.\n\nLights from currently active scenes, closest to the player, will have shadows enabled first.".to_owned()
+    }
+
+    fn load(config: &AppConfig) -> Self {
+        Self(config.graphics.shadow_caster_count as i32)
+    }
+
+    fn save(&self, config: &mut AppConfig) {
+        config.graphics.shadow_caster_count = self.0 as usize
+    }
+
+    fn category() -> super::SettingCategory {
+        super::SettingCategory::Graphics
+    }
+}

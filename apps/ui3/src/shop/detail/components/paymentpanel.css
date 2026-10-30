@@ -1,0 +1,296 @@
+/* from: shop@2d3bf62:app/src/pages/ItemDetail.styles.ts (PriceBlock, PriceRow, PriceCol, StockCol, StockValue, PriceLabel,
+   Price, PriceValue, PriceInfo, Ctas, DetailCta, CtaPrice, AddCart, AddCartLabel, SaleSkeleton),
+   app/src/components/PaymentMethodStep/PaymentMethodStep.styles.ts (the method choice, ours: credits first, MANA second) */
+
+.shop-pay {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+.shop-pay__block {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.shop-pdp__nfs {
+  margin-top: 16px;
+}
+.shop-pay__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  width: 100%;
+}
+.shop-pay__pricecol {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.shop-pay__stockcol {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  text-align: right;
+}
+.shop-pay__caption {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-transform: uppercase;
+  color: #a09ba8;
+}
+.shop-pay__stock {
+  font-size: 18px;
+  font-weight: 500;
+  line-height: 1;
+  color: #fcfcfc;
+}
+.shop-pay__stock[data-out] {
+  font-size: 14px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  color: #cfcdd4;
+}
+.shop-pay__price {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+  color: #fcfcfc;
+}
+.shop-pay__price .shop-price__credits,
+.shop-pay__price .shop-price__mana {
+  gap: 8px;
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1;
+}
+.shop-pay__price .shop-price__mark {
+  width: 30px !important;
+  height: 30px !important;
+}
+.shop-pay__price[data-variant="none"] {
+  display: inline-flex;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.shop-pay__info {
+  display: inline-flex;
+  color: #a09ba8;
+  cursor: help;
+}
+.shop-pay__noprice {
+  font-size: 30px;
+  line-height: 1;
+  color: #a09ba8;
+}
+
+.shop-pay__options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.shop-pay__options legend {
+  float: left;
+  grid-column: 1 / -1;
+  margin-bottom: 6px;
+  padding: 0;
+  font-size: 12px;
+  font-weight: 500;
+  text-transform: uppercase;
+  color: #cfcdd4;
+}
+.shop-pay__option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  background: rgba(255, 255, 255, 0.06);
+  font-size: 14px;
+  cursor: pointer;
+}
+.shop-pay__option[data-selected] {
+  border-color: #fcfcfc;
+  background: rgba(255, 255, 255, 0.16);
+}
+.shop-pay__option input {
+  margin: 0;
+  accent-color: #ff2d55;
+}
+.shop-pay__label {
+  font-weight: 600;
+}
+.shop-pay__option .shop-price__credits,
+.shop-pay__option .shop-price__mana,
+.shop-pay__option .shop-pay__noprice {
+  margin-left: auto;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.shop-pay__mixed {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: #cfcdd4;
+}
+.shop-pay__mixed input {
+  accent-color: #ff2d55;
+}
+.shop-pay__network,
+.shop-pay__state {
+  margin: 0;
+  font-size: 13px;
+  color: #cfcdd4;
+}
+.shop-pay__state {
+  color: #ffb27d;
+}
+.shop-pay__reasons {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: #cfcdd4;
+}
+.shop-pay__outage,
+.shop-pay__mismatch {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 116, 57, 0.6);
+  background: rgba(255, 116, 57, 0.12);
+  font-size: 13px;
+}
+.shop-pay__outage p,
+.shop-pay__mismatch p {
+  margin: 0;
+  flex: 1;
+}
+
+.shop-pay__ctas {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+.shop-pay__buy,
+.shop-pay__cart {
+  width: 100%;
+  height: 48px;
+  padding: 0 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 16px;
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+  text-decoration: none;
+  cursor: pointer;
+}
+.shop-pay__buy {
+  background: linear-gradient(180.93deg, #ff7439 2.82%, #ff2d55 97.47%);
+  color: #fff;
+}
+.shop-pay__buy:hover:not(:disabled) {
+  background: #ff2d55;
+}
+.shop-pay__buy:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.shop-pay__ctaprice {
+  display: none;
+  align-items: center;
+  gap: 6px;
+}
+.shop-pay__ctaprice .shop-price__credits,
+.shop-pay__ctaprice .shop-price__mana {
+  font-size: 15px;
+}
+.shop-pay__ctaprice .shop-price__mark {
+  width: 18px !important;
+  height: 18px !important;
+}
+.shop-pay__cart {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fcfcfc;
+  transition: background 0.15s ease;
+}
+.shop-pay__cart:hover:not(:disabled) {
+  background: #fcfcfc;
+  color: #43404a;
+}
+.shop-pay__cart:disabled {
+  background: rgba(255, 255, 255, 0.12);
+  color: rgba(252, 252, 252, 0.7);
+  cursor: default;
+}
+
+.shop-pay__skeleton {
+  height: 30px;
+  width: 40%;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.12);
+}
+.shop-pay__skeleton--cta {
+  height: 48px;
+  width: 100%;
+  border-radius: 16px;
+}
+
+@media (max-width: 900px) {
+  .shop-pdp .shop-pay__ctas[data-dual] {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    flex-direction: row;
+    align-items: stretch;
+    margin-top: 0;
+    padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+    background: #2b0e44;
+    box-shadow: 0 -4px 16px rgba(0, 0, 0, 0.35);
+  }
+  .shop-pdp .shop-pay__ctas[data-dual] .shop-pay__buy {
+    flex: 1 1 auto;
+    width: auto;
+  }
+  .shop-pdp .shop-pay__ctas[data-dual] .shop-pay__ctaprice {
+    display: inline-flex;
+  }
+  .shop-pdp .shop-pay__ctas[data-dual] .shop-pay__cart {
+    flex: 0 0 auto;
+    width: 56px;
+    padding: 0;
+  }
+  .shop-pdp .shop-pay__ctas[data-dual] .shop-pay__cartlabel {
+    display: none;
+  }
+  .shop-pay__options {
+    grid-template-columns: 1fr;
+  }
+}

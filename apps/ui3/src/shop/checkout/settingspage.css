@@ -1,0 +1,251 @@
+/* from: marketplace@3bf3662f:webapp/src/components/SettingsPage/SettingsPage.css,
+         webapp/src/components/SettingsPage/Authorization/Authorization.css;
+         ui@8a63476:src/components/Radio/Radio.css + src/assets/check.svg (the radio), src/components/Blockie/Blockie.css,
+         src/components/Page (the Container it sits in: semantic's 1127/933/723px widths)
+   Marketplace UI: Apache-2.0, Copyright 2020 Metaverse Holdings Ltd.
+   The Marketplace settings page on the Shop's purple field. Scoped to the Shop frame. */
+
+.shop-chrome .shop-settings,
+.shop-settings {
+  --shop-settings-muted: #a09ba8;
+  --shop-settings-primary: #ff2d55;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 1127px;
+  margin: 0 auto;
+  padding: 14px 0 48px;
+  font-family: var(--shop-sans, inherit);
+  color: var(--shop-soft-white, #fcfcfc);
+}
+
+.shop-settings.shop-settings--signed-out {
+  max-width: none;
+  padding: 0;
+}
+
+.shop-settings__row {
+  display: flex;
+  padding: 14px 0;
+  margin-bottom: 70px;
+}
+
+.shop-settings__label {
+  flex: 0 0 25%;
+  box-sizing: border-box;
+  padding: 0 14px;
+  color: var(--shop-settings-muted);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.4285em;
+  text-transform: uppercase;
+}
+
+.shop-settings__value {
+  flex: 0 0 75%;
+  box-sizing: border-box;
+  min-width: 0;
+  padding: 0 14px;
+}
+
+.shop-settings__address-row {
+  display: flow-root;
+}
+
+.shop-settings__blockie {
+  float: left;
+  margin-right: 24px;
+  border-radius: 6px;
+}
+
+.shop-settings__address-container {
+  float: left;
+  max-width: 100%;
+  margin-top: 7px;
+}
+
+.shop-settings__address {
+  margin-bottom: 8px;
+  font-size: 21px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+.shop-settings__address-short {
+  display: none;
+}
+
+.shop-settings__copy {
+  display: inline-block;
+  color: var(--shop-settings-primary);
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.shop-settings__link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--shop-settings-primary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.shop-settings__link:focus-visible,
+.shop-settings-auth__radio:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: 2px;
+}
+
+.shop-settings__checks > .shop-settings__group {
+  display: block;
+  margin-bottom: 17px;
+  color: var(--shop-settings-muted);
+  font-size: 17px;
+  text-transform: capitalize;
+}
+
+.shop-settings .flow-banner,
+.shop-settings__value > [role="note"],
+.shop-settings__value > [role="status"] {
+  margin-bottom: 24px;
+}
+
+.shop-settings-auth {
+  margin: 32px;
+}
+
+.shop-settings-auth__field {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-height: 26px;
+}
+
+.shop-settings-auth:not(:last-child) {
+  margin-bottom: 41px;
+}
+
+.shop-settings-auth__radio,
+.shop-settings-auth__loader {
+  position: absolute;
+  top: 50%;
+  left: 0;
+  width: 26px;
+  height: 26px;
+  margin-top: -13px;
+}
+
+.shop-settings-auth__radio {
+  box-sizing: border-box;
+  padding: 0;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+}
+
+.shop-settings-auth__radio:hover:not(:disabled) {
+  border-color: var(--shop-settings-muted);
+}
+
+.shop-settings-auth__radio[aria-checked="true"] {
+  border-color: var(--shop-settings-primary);
+  background: var(--shop-settings-primary)
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='14' viewBox='0 0 18 14'%3E%3Cpath fill='%23FFF' d='M.58 7.796a.847.847 0 0 1-.247-.557c0-.16.082-.398.246-.557l1.15-1.115a.81.81 0 0 1 1.148 0L6.138 9.05c.165.159.41.159.575 0l8.41-8.478a.81.81 0 0 1 1.149 0l1.149 1.115a.754.754 0 0 1 0 1.114L6.959 13.428a.756.756 0 0 1-.574.239.756.756 0 0 1-.575-.24L.58 7.797z'/%3E%3C/svg%3E")
+    center / 14px auto no-repeat;
+}
+
+.shop-settings-auth__radio:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.shop-settings-auth__loader {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.shop-settings-auth__label {
+  padding-left: 35px;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 18px;
+}
+
+.shop-settings-auth__description {
+  margin: 5px 0 0 35px;
+  color: var(--shop-settings-muted);
+  font-size: 15px;
+  line-height: 1.4;
+}
+
+.shop-settings-auth__description a {
+  color: var(--shop-settings-primary);
+  text-decoration: none;
+}
+
+.shop-settings-auth__description a:hover {
+  text-decoration: underline;
+}
+
+.shop-settings-auth__error {
+  margin: 8px 0 0 35px;
+  color: #ffa900;
+  font-size: 14px;
+}
+
+@media (max-width: 1199px) {
+  .shop-settings {
+    max-width: 933px;
+  }
+}
+
+@media (max-width: 992px) {
+  .shop-settings {
+    max-width: 723px;
+  }
+  .shop-settings__row {
+    flex-direction: column;
+    margin-bottom: 48px;
+  }
+  .shop-settings__label {
+    margin-bottom: 16px;
+  }
+  .shop-settings__label,
+  .shop-settings__value {
+    flex-basis: auto;
+    width: 100%;
+  }
+  .shop-settings__blockie {
+    float: none;
+    display: block;
+  }
+}
+
+@media (max-width: 768px) {
+  .shop-settings {
+    max-width: none;
+    padding: 0 2px 48px;
+  }
+  .shop-settings__address-container {
+    float: none;
+    display: flex;
+    flex-direction: column;
+    margin-top: 24px;
+  }
+  .shop-settings__address {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .shop-settings__address-full {
+    display: none;
+  }
+  .shop-settings__address-short {
+    display: inline;
+  }
+  .shop-settings__copy {
+    align-self: flex-start;
+  }
+}

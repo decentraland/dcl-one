@@ -1,0 +1,17 @@
+[package]
+name = "input_manager"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+[dependencies]
+system_bridge = { workspace = true }
+common = { workspace = true }
+platform = { workspace = true }
+console = { workspace = true }
+
+bevy = { workspace = true }
+tokio = { workspace = true }
+strum = { workspace = true }
+bevy_console = { workspace = true }

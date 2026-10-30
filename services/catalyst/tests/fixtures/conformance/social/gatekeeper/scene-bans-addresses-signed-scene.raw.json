@@ -1,0 +1,32 @@
+{
+  "method": "GET",
+  "url": "https://comms-gatekeeper.decentraland.org/scene-bans/addresses",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*",
+    "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xf7e07d862ddbe561a63ebb5dd809cf0542269587\",\"signature\":\"\"}",
+    "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/scene-bans/addresses:1790364577570:{\\\"signer\\\":\\\"decentraland-kernel-scene\\\",\\\"realm\\\":{\\\"hostname\\\":\\\"realm-provider-ea.decentraland.org\\\",\\\"protocol\\\":\\\"v3\\\",\\\"serverName\\\":\\\"main\\\"},\\\"sceneId\\\":\\\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\\\",\\\"parcel\\\":\\\"-3,-2\\\"}\",\"signature\":\"0x8247cb29a6373477aae521f8544da8b51315f9f186d27e5aff0d97fa63ec2e0546b1dad2d78c94f478d2a7be368a32097874d76f890e240e0c8e00e802fd50b01c\"}",
+    "x-identity-timestamp": "1790364577570",
+    "x-identity-metadata": "{\"signer\":\"decentraland-kernel-scene\",\"realm\":{\"hostname\":\"realm-provider-ea.decentraland.org\",\"protocol\":\"v3\",\"serverName\":\"main\"},\"sceneId\":\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\",\"parcel\":\"-3,-2\"}"
+  },
+  "request_body": null,
+  "status": 401,
+  "status_text": "Unauthorized",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c70542b9fe505-TXL",
+    "connection": "keep-alive",
+    "content-length": "60",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:29:38 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "traceparent": "0-d0e7f2c175faba03afd704ce8638d06e-0000000000000000-0",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:29:37Z",
+  "elapsed_ms": 152,
+  "body_bytes": 60,
+  "body_file": "scene-bans-addresses-signed-scene.raw.body",
+  "redacted": false
+}

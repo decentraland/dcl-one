@@ -1,0 +1,549 @@
+// interface structs shared between renderer and js.
+// note that take_updates assumes a single lossless reader will be synchronised -
+// it resets internal "updated" markers (for lww) and removes unneeded data (for go)
+
+use bevy::{
+    log::{debug, error, warn},
+    platform::collections::{HashMap, HashSet},
+};
+use num::{FromPrimitive, ToPrimitive};
+use num_derive::{FromPrimitive, ToPrimitive};
+
+pub use dcl_component::{ComponentPosition, CrdtType};
+use dcl_component::{
+    DclReader, DclReaderError, DclWriter, SceneComponentId, SceneCrdtTimestamp, SceneEntityId,
+    ToDclWriter,
+};
+use serde::{Deserialize, Serialize};
+
+use self::crdt_context::CrdtContext;
+
+use super::crdt::{growonly::CrdtGOState, lww::CrdtLWWState};
+
+pub mod crdt_context;
+
+#[derive(Default, Serialize, Deserialize)]
+pub struct CrdtComponentInterfaces(pub HashMap<SceneComponentId, CrdtType>);
+
+const CRDT_HEADER_SIZE: usize = 8;
+
+#[derive(FromPrimitive, ToPrimitive, Debug)]
+pub enum CrdtMessageType {
+    PutComponent = 1,
+    DeleteComponent = 2,
+
+    DeleteEntity = 3,
+    AppendValue = 4,
+}
+
+impl ToDclWriter for CrdtMessageType {
+    fn to_writer(&self, buf: &mut DclWriter) {
+        buf.write_u32(ToPrimitive::to_u32(self).unwrap())
+    }
+}
+
+#[derive(Default, Debug, Clone, Serialize, Deserialize)]
+pub struct CrdtStore {
+    pub lww: HashMap<SceneComponentId, CrdtLWWState>,
+    pub go: HashMap<SceneComponentId, CrdtGOState>,
+}
+
+impl CrdtStore {
+    pub fn try_update(
+        &mut self,
+        component_id: SceneComponentId,
+        crdt_type: CrdtType,
+        entity: SceneEntityId,
+        new_timestamp: SceneCrdtTimestamp,
+        maybe_new_data: Option<&mut DclReader>,
+    ) -> bool {
+        match crdt_type {
+            CrdtType::LWW(_) => self.lww.entry(component_id).or_default().try_update(
+                entity,
+                new_timestamp,
+                maybe_new_data,
+            ),
+            CrdtType::GO(_) => {
+                self.force_update(component_id, crdt_type, entity, maybe_new_data);
+                true
+            }
+        }
+    }
+
+    pub fn force_update(
+        &mut self,
+        component_id: SceneComponentId,
+        crdt_type: CrdtType,
+        entity: SceneEntityId,
+        maybe_new_data: Option<&mut DclReader>,
+    ) -> SceneCrdtTimestamp {
+        match crdt_type {
+            CrdtType::LWW(_) => self
+                .lww
+                .entry(component_id)
+                .or_default()
+                .force_update(entity, maybe_new_data),
+            CrdtType::GO(_) => {
+                self.go
+                    .entry(component_id)
+                    .or_default()
+                    .append(entity, maybe_new_data.unwrap());
+                SceneCrdtTimestamp(0)
+            }
+        }
+    }
+
+    pub fn update_if_different(
+        &mut self,
+        component_id: SceneComponentId,
+        crdt_type: CrdtType,
+        entity: SceneEntityId,
+        maybe_new_data: Option<&mut DclReader>,
+    ) -> Option<SceneCrdtTimestamp> {
+        match crdt_type {
+            CrdtType::LWW(_) => self
+                .lww
+                .entry(component_id)
+                .or_default()
+                .update_if_different(entity, maybe_new_data),
+            CrdtType::GO(_) => {
+                self.go
+                    .entry(component_id)
+                    .or_default()
+                    .append(entity, maybe_new_data.unwrap());
+                Some(SceneCrdtTimestamp(0))
+            }
+        }
+    }
+
+    pub fn get(
+        &self,
+        component_id: SceneComponentId,
+        crdt_type: CrdtType,
+        entity: SceneEntityId,
+    ) -> Option<&[u8]> {
+        match crdt_type {
+            CrdtType::LWW(_) => self
+                .lww
+                .get(&component_id)
+                .and_then(|state| state.last_write.get(&entity))
+                .filter(|state| state.is_some)
+                .map(|state| state.data.as_slice()),
+            CrdtType::GO(_) => panic!(),
+        }
+    }
+
+    pub fn clean_up(&mut self, dead: &HashSet<SceneEntityId>) {
+        if dead.is_empty() {
+            return;
+        }
+        for state in self.lww.values_mut() {
+            for id in dead {
+                state.last_write.remove(id);
+                state.updates.remove(id);
+            }
+        }
+        for state in self.go.values_mut() {
+            for id in dead {
+                state.0.remove(id);
+            }
+        }
+    }
+
+    /// Total bytes of component payload currently retained: LWW last-write values plus any
+    /// grow-only entries. `Vec::len` is O(1), so this is O(retained entries). Used to bound
+    /// a scene's cumulative CRDT footprint.
+    pub fn retained_data_bytes(&self) -> usize {
+        let lww: usize = self
+            .lww
+            .values()
+            .flat_map(|state| state.last_write.values())
+            .map(|entry| entry.data.len())
+            .sum();
+        let go: usize = self
+            .go
+            .values()
+            .flat_map(|state| state.0.values())
+            .flat_map(|queue| queue.iter())
+            .map(|entry| entry.data.len())
+            .sum();
+        lww + go
+    }
+
+    pub fn take_updates(&mut self) -> CrdtStore {
+        let mut lww = HashMap::new();
+        for (component_id, state) in self.lww.iter_mut() {
+            if state.updates.is_empty() {
+                continue;
+            }
+            // last_write must retain authoritative state for future LWW conflict
+            // checks, so dirty entries are cloned rather than moved out.
+            let updates = std::mem::take(&mut state.updates);
+            let last_write = HashMap::from_iter(
+                updates
+                    .iter()
+                    .map(|update| (*update, state.last_write.get(update).unwrap().clone())),
+            );
+            lww.insert(
+                *component_id,
+                CrdtLWWState {
+                    last_write,
+                    updates,
+                },
+            );
+        }
+
+        let go = std::mem::take(&mut self.go);
+        CrdtStore { lww, go }
+    }
+
+    // handles a single message from the buffer
+    #[allow(clippy::too_many_arguments)]
+    pub fn process_message(
+        &mut self,
+        writers: &CrdtComponentInterfaces,
+        entity_map: &mut CrdtContext,
+        crdt_type: CrdtMessageType,
+        stream: &mut DclReader,
+        filter_components: bool,
+        // when filtering, unrecognized components are routed here (instead of dropped) so the
+        // inspector can surface custom components; `None` keeps the legacy drop behaviour.
+        mut filtered: Option<&mut CrdtStore>,
+        // parallel context tracking every entity (recognized *and* filtered) for collision-free
+        // entity allocation (see `CrdtContext::new_in_range`); `None` when not maintained.
+        mut alloc: Option<&mut CrdtContext>,
+    ) -> Result<(), DclReaderError> {
+        match crdt_type {
+            CrdtMessageType::PutComponent | CrdtMessageType::AppendValue => {
+                let default_writer = match crdt_type {
+                    CrdtMessageType::PutComponent => &CrdtType::LWW_ANY,
+                    CrdtMessageType::AppendValue => &CrdtType::GO_ANY,
+                    _ => unreachable!(),
+                };
+
+                let entity = stream.read()?;
+                let component = stream.read()?;
+                let timestamp = stream.read()?;
+                let content_len = stream.read_u32()? as usize;
+
+                debug!("PUT e:{entity:?}, c: {component:?}, timestamp: {timestamp:?}, content len: {content_len}");
+                common::util::dcl_assert!(content_len == stream.len());
+
+                // track the entity in the allocation context regardless of whether the component is
+                // recognized or filtered (the main entity_map only sees recognized ones).
+                if let Some(alloc) = alloc.as_deref_mut() {
+                    alloc.init(entity);
+                }
+
+                // check for a writer
+                let writer = match writers.0.get(&component) {
+                    Some(writer) => writer,
+                    None => {
+                        if filter_components {
+                            // unrecognized component: route to the sidecar (if any) instead of
+                            // dropping, keyed by numeric id, using the default writer for the
+                            // message kind (LWW for Put, GO for Append).
+                            if let Some(filtered) = filtered.as_deref_mut() {
+                                if !entity_map.is_dead(entity) {
+                                    filtered.try_update(
+                                        component,
+                                        *default_writer,
+                                        entity,
+                                        timestamp,
+                                        Some(stream),
+                                    );
+                                }
+                            }
+                            return Ok(());
+                        }
+
+                        // if we're not filtering this must be a user component
+                        default_writer
+                    }
+                };
+
+                if core::mem::discriminant(writer) != core::mem::discriminant(default_writer) {
+                    warn!("received a {crdt_type:?} message for a {writer:?} component: {component:?}");
+                    return Ok(());
+                }
+
+                match (writer.position(), entity == SceneEntityId::ROOT) {
+                    (ComponentPosition::RootOnly, false)
+                    | (ComponentPosition::EntityOnly, true) => {
+                        warn!("invalid position for component {:?}", component);
+                        return Ok(());
+                    }
+                    _ => (),
+                }
+
+                // create the entity (if not already dead)
+                if !entity_map.init(entity) {
+                    return Ok(());
+                }
+
+                // attempt to write (may fail due to a later write)
+                self.try_update(component, *writer, entity, timestamp, Some(stream));
+            }
+            CrdtMessageType::DeleteComponent => {
+                let entity = stream.read()?;
+                let component = stream.read()?;
+                let timestamp = stream.read()?;
+
+                // check for a writer
+                let writer = match writers.0.get(&component) {
+                    Some(writer) => writer,
+                    None => {
+                        if filter_components {
+                            // sidecar delete: custom components are stored LWW, so delete is LWW
+                            // (None payload), mirroring the Put routing above.
+                            if let Some(filtered) = filtered.as_deref_mut() {
+                                if !entity_map.is_dead(entity) {
+                                    filtered.try_update(
+                                        component,
+                                        CrdtType::LWW_ANY,
+                                        entity,
+                                        timestamp,
+                                        None,
+                                    );
+                                }
+                            }
+                            return Ok(());
+                        }
+
+                        // if we're not filtering this must be a user component
+                        &CrdtType::GO_ANY
+                    }
+                };
+
+                if !matches!(writer, CrdtType::LWW(_)) {
+                    warn!("received a LWW message for a GO component: {component:?}");
+                    return Ok(());
+                }
+
+                match (writer.position(), entity == SceneEntityId::ROOT) {
+                    (ComponentPosition::RootOnly, false)
+                    | (ComponentPosition::EntityOnly, true) => {
+                        warn!("invalid position for component {:?}", component);
+                        return Ok(());
+                    }
+                    _ => (),
+                }
+
+                // check the entity still lives (don't create here, no need)
+                if entity_map.is_dead(entity) {
+                    return Ok(());
+                }
+
+                // attempt to write (may fail due to a later write)
+                self.try_update(component, *writer, entity, timestamp, None);
+            }
+            CrdtMessageType::DeleteEntity => {
+                let entity = stream.read()?;
+                for lww in self.lww.values_mut() {
+                    lww.last_write.remove(&entity);
+                    lww.updates.remove(&entity);
+                }
+                for go in self.go.values_mut() {
+                    go.0.remove(&entity);
+                }
+                // reap the sidecar too, so deleted entities don't strand custom components
+                if let Some(filtered) = filtered {
+                    for lww in filtered.lww.values_mut() {
+                        lww.last_write.remove(&entity);
+                        lww.updates.remove(&entity);
+                    }
+                    for go in filtered.go.values_mut() {
+                        go.0.remove(&entity);
+                    }
+                }
+                entity_map.kill(entity);
+                if let Some(alloc) = alloc {
+                    alloc.kill(entity);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn process_message_stream(
+        &mut self,
+        entity_map: &mut CrdtContext,
+        writers: &CrdtComponentInterfaces,
+        stream: &mut DclReader,
+        filter_components: bool,
+        // optional sidecar for filtered-out (custom) components; see `process_message`.
+        mut filtered: Option<&mut CrdtStore>,
+        // optional allocation context tracking all entities; see `process_message`.
+        mut alloc: Option<&mut CrdtContext>,
+    ) {
+        // collect commands
+        while stream.len() > CRDT_HEADER_SIZE {
+            let pos = stream.pos();
+            let length = stream.read_u32().unwrap() as usize;
+            let crdt_type = stream.read_u32().unwrap();
+
+            debug!("[{pos}] crdt_type: {crdt_type}, length: {length}");
+            let mut message_stream = stream.take_reader(length.saturating_sub(8));
+
+            match FromPrimitive::from_u32(crdt_type) {
+                Some(crdt_type) => {
+                    if let Err(e) = self.process_message(
+                        writers,
+                        entity_map,
+                        crdt_type,
+                        &mut message_stream,
+                        filter_components,
+                        filtered.as_deref_mut(),
+                        alloc.as_deref_mut(),
+                    ) {
+                        error!("CRDT Buffer error: {:?}", e);
+                    };
+                }
+                None => error!("CRDT Header error: unhandled crdt message type {crdt_type}"),
+            }
+        }
+    }
+
+    // update with entries from another store, then apply the census's deletions.
+    // Used with `CrdtStore::take_updates` + the engine->scene census to keep a
+    // mirror (e.g. the RendererStore) in sync — without the clean_up, a deleted
+    // entity would linger in the mirror and be resurrected by `merge_newer`.
+    pub fn update_from(&mut self, other: CrdtStore, census: &crate::SceneCensus) {
+        other.lww.into_iter().for_each(|(id, update_lww)| {
+            let self_lww = self.lww.entry(id).or_default();
+            self_lww.last_write.extend(update_lww.last_write);
+        });
+        other.go.into_iter().for_each(|(id, update_go)| {
+            let self_go = self.go.entry(id).or_default();
+            self_go.0.extend(update_go.0);
+        });
+        self.clean_up(&census.died);
+    }
+
+    // track the timestamps from another store without copying data.
+    // used to keep crdt_store in sync so that force_update bumps from the correct base timestamp.
+    pub fn sync_lww_timestamps_from(&mut self, other: &CrdtStore) {
+        for (id, update_lww) in &other.lww {
+            let self_lww = self.lww.entry(*id).or_default();
+            for (entity, entry) in &update_lww.last_write {
+                let store_entry = self_lww.last_write.entry(*entity).or_default();
+                if entry.timestamp > store_entry.timestamp {
+                    store_entry.timestamp = entry.timestamp;
+                }
+            }
+        }
+    }
+
+    // merge entries from another store using LWW conflict resolution (higher timestamp wins).
+    // use this instead of `update_from` when `self` may already contain newer data than `other`.
+    pub fn merge_newer(&mut self, other: CrdtStore) {
+        other.lww.into_iter().for_each(|(id, update_lww)| {
+            let self_lww = self.lww.entry(id).or_default();
+            for (entity, entry) in update_lww.last_write {
+                let super::crdt::lww::LWWEntry {
+                    timestamp,
+                    is_some,
+                    data,
+                } = entry;
+                let maybe_data = is_some.then_some(data);
+                self_lww.try_update(
+                    entity,
+                    timestamp,
+                    maybe_data.as_deref().map(DclReader::new).as_mut(),
+                );
+            }
+        });
+        other.go.into_iter().for_each(|(id, update_go)| {
+            let self_go = self.go.entry(id).or_default();
+            self_go.0.extend(update_go.0);
+        });
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    // a peer sending 65535 as an id should not crash us
+    #[test]
+    fn max_entity_id_is_within_the_live_table() {
+        let max = SceneEntityId {
+            id: u16::MAX,
+            generation: 0,
+        };
+        let mut context = CrdtContext::new(
+            crate::SceneId::DUMMY,
+            Default::default(),
+            Default::default(),
+            false,
+            false,
+            false,
+        );
+
+        assert!(context.init(max));
+        context.kill(max);
+        assert!(context.is_dead(max));
+    }
+
+    fn entity(id: u16) -> SceneEntityId {
+        SceneEntityId { id, generation: 0 }
+    }
+
+    // retained_data_bytes must sum LWW last-write payloads and grow-only entries, and must
+    // reflect overwrites/deletes so a store that churns without growing doesn't inflate.
+    #[test]
+    fn retained_data_bytes_counts_lww_and_go() {
+        let mut store = CrdtStore::default();
+        let comp = SceneComponentId(1);
+        let ts = SceneCrdtTimestamp(1);
+
+        // two LWW entries of 10 and 25 bytes
+        store.try_update(
+            comp,
+            CrdtType::LWW_ANY,
+            entity(0),
+            ts,
+            Some(&mut DclReader::new(&[0u8; 10])),
+        );
+        store.try_update(
+            comp,
+            CrdtType::LWW_ANY,
+            entity(1),
+            ts,
+            Some(&mut DclReader::new(&[0u8; 25])),
+        );
+        assert_eq!(store.retained_data_bytes(), 35);
+
+        // a grow-only append of 40 bytes adds to the total
+        let go_comp = SceneComponentId(2);
+        store.try_update(
+            go_comp,
+            CrdtType::GO_ANY,
+            entity(0),
+            ts,
+            Some(&mut DclReader::new(&[0u8; 40])),
+        );
+        assert_eq!(store.retained_data_bytes(), 75);
+
+        // overwriting an LWW entry replaces, not adds: 10 -> 4 shrinks the total
+        store.try_update(
+            comp,
+            CrdtType::LWW_ANY,
+            entity(0),
+            SceneCrdtTimestamp(2),
+            Some(&mut DclReader::new(&[0u8; 4])),
+        );
+        assert_eq!(store.retained_data_bytes(), 69);
+
+        // a delete (None) frees the entry's payload
+        store.try_update(
+            comp,
+            CrdtType::LWW_ANY,
+            entity(1),
+            SceneCrdtTimestamp(2),
+            None,
+        );
+        assert_eq!(store.retained_data_bytes(), 44);
+    }
+}

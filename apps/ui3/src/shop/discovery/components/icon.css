@@ -1,0 +1,16 @@
+/* from: shop@94584a5c:app/src/components/Icon/Icon.css */
+.shop-ico {
+  display: inline-block;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  background-color: currentColor;
+  -webkit-mask-image: var(--shop-icon-url);
+  mask-image: var(--shop-icon-url);
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+}

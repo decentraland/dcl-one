@@ -1,0 +1,30 @@
+{
+  "description": "GET /categories: the badge categories. Captured GET https://badges.decentraland.org/categories -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/categories",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "categories": [
+          "Explorer",
+          "Collector",
+          "Creator",
+          "Socializer",
+          "Builder"
+        ]
+      }
+    }
+  },
+  "captured_from": "https://badges.decentraland.org/categories",
+  "captured_at": "2026-09-25T19:24:46Z",
+  "volatile_paths": []
+}

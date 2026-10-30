@@ -1,0 +1,29 @@
+{
+  "description": "GET /v1/referral-progress signed by a wallet with no referrals. Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://social-api.decentraland.org/v1/referral-progress -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/referral-progress",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/v1/referral-progress:1790364260446:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0xb7eb5533237f6a72447a1430f0640e4fcbdecf28bf45383c29dbcb7af7c1dc5649880cd8a226e6d671538c8935705f4bc5c702f1454e7c778662609bdeb3523d1b\"}",
+      "x-identity-timestamp": "1790364260446",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "invitedUsersAccepted": 0,
+      "invitedUsersAcceptedViewed": 0,
+      "rewardImages": []
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/referral-progress",
+  "captured_at": "2026-09-25T19:24:20Z",
+  "volatile_paths": []
+}

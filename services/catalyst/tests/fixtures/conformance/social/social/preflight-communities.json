@@ -1,0 +1,28 @@
+{
+  "description": "CORS preflight for GET /v1/communities from https://decentraland.org. Captured OPTIONS https://social-api.decentraland.org/v1/communities -> 204.",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/v1/communities",
+    "query": {},
+    "headers": {
+      "origin": "https://decentraland.org",
+      "access-control-request-method": "GET",
+      "access-control-request-headers": "content-type"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 204,
+    "headers": {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
+      "access-control-allow-headers": "*",
+      "access-control-max-age": "86400",
+      "vary": "accept-encoding"
+    },
+    "body_bytes_b64": ""
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities",
+  "captured_at": "2026-09-25T19:24:23Z",
+  "volatile_paths": []
+}

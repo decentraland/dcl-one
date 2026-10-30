@@ -1,0 +1,30 @@
+{
+  "description": "GET /v1/communities?minimal=true&search=dec without an auth chain: minimal listings require authentication. Captured GET https://social-api.decentraland.org/v1/communities?minimal=true&search=dec -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities",
+    "query": {
+      "minimal": [
+        "true"
+      ],
+      "search": [
+        "dec"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Not Authorized",
+      "message": "Authentication required for minimal community search"
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities?minimal=true&search=dec",
+  "captured_at": "2026-09-25T19:24:02Z",
+  "volatile_paths": []
+}

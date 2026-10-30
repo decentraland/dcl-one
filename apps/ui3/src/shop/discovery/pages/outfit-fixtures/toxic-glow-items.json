@@ -1,0 +1,256 @@
+{
+  "data": [
+    {
+      "id": "0xda2cfda208b9abbd6f8771f52cda1355e384d3ff-2",
+      "name": "PIP & 2AM x Klezma Beanie (VIP)",
+      "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xda2cfda208b9abbd6f8771f52cda1355e384d3ff:2/thumbnail",
+      "url": "/contracts/0xda2cfda208b9abbd6f8771f52cda1355e384d3ff/items/2",
+      "category": "wearable",
+      "contractAddress": "0xda2cfda208b9abbd6f8771f52cda1355e384d3ff",
+      "itemId": "2",
+      "rarity": "legendary",
+      "price": "45000000000000000000",
+      "available": 18,
+      "isOnSale": true,
+      "creator": "0xb35035b3caef1c1b6102689584415a4d00a69339",
+      "beneficiary": "0xb35035b3caef1c1b6102689584415a4d00a69339",
+      "createdAt": 1667573341,
+      "updatedAt": 1716226876,
+      "reviewedAt": 1667573705,
+      "soldAt": 1716226876,
+      "data": {
+        "wearable": {
+          "bodyShapes": [
+            "BaseMale",
+            "BaseFemale"
+          ],
+          "category": "hat",
+          "description": "Perks - 1hr DJ Class & Klezma Allow list",
+          "rarity": "legendary",
+          "isSmart": false
+        }
+      },
+      "network": "MATIC",
+      "chainId": 137,
+      "urn": "urn:decentraland:matic:collections-v2:0xda2cfda208b9abbd6f8771f52cda1355e384d3ff:2",
+      "firstListedAt": 1667933828000,
+      "picks": {
+        "count": 0
+      },
+      "utility": null,
+      "tradeId": null,
+      "tradeContractAddress": null,
+      "priceCredits": 40
+    },
+    {
+      "id": "0xadcdaa049904d31b192b0f868c3c68ecae928849-1",
+      "name": "Ground Work Varsity Jacket",
+      "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xadcdaa049904d31b192b0f868c3c68ecae928849:1/thumbnail",
+      "url": "/contracts/0xadcdaa049904d31b192b0f868c3c68ecae928849/items/1",
+      "category": "wearable",
+      "contractAddress": "0xadcdaa049904d31b192b0f868c3c68ecae928849",
+      "itemId": "1",
+      "rarity": "legendary",
+      "price": "10000000000000000000",
+      "available": 97,
+      "isOnSale": true,
+      "creator": "0x932c5930ca9e80fa880f5ccd25c873dc6a0c267a",
+      "beneficiary": "0x932c5930ca9e80fa880f5ccd25c873dc6a0c267a",
+      "createdAt": 1648159031,
+      "updatedAt": 1771864844,
+      "reviewedAt": 1655113080,
+      "soldAt": 1771864844,
+      "data": {
+        "wearable": {
+          "bodyShapes": [
+            "BaseMale"
+          ],
+          "category": "upper_body",
+          "description": "Varsity Jacket",
+          "rarity": "legendary",
+          "isSmart": false
+        }
+      },
+      "network": "MATIC",
+      "chainId": 137,
+      "urn": "urn:decentraland:matic:collections-v2:0xadcdaa049904d31b192b0f868c3c68ecae928849:1",
+      "firstListedAt": 1655592713000,
+      "picks": {
+        "count": 0
+      },
+      "utility": null,
+      "tradeId": null,
+      "tradeContractAddress": null,
+      "priceCredits": 9
+    },
+    {
+      "id": "0x705652b66a12dcf782b0b3d5673fbf0c1797eba2-0",
+      "name": "Hype Dad Shoes [VOGU]",
+      "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0x705652b66a12dcf782b0b3d5673fbf0c1797eba2:0/thumbnail",
+      "url": "/contracts/0x705652b66a12dcf782b0b3d5673fbf0c1797eba2/items/0",
+      "category": "wearable",
+      "contractAddress": "0x705652b66a12dcf782b0b3d5673fbf0c1797eba2",
+      "itemId": "0",
+      "rarity": "rare",
+      "price": "5000000000000000000",
+      "available": 4959,
+      "isOnSale": true,
+      "creator": "0xcc7bc60bfcc029ecc8357a9c80b4cc51af67798e",
+      "beneficiary": "0x5ad3a76721cf708f7c062ba0cf9ba794d1156336",
+      "createdAt": 1647773781,
+      "updatedAt": 1780193762,
+      "reviewedAt": 1647779995,
+      "soldAt": 1780193762,
+      "data": {
+        "wearable": {
+          "bodyShapes": [
+            "BaseMale",
+            "BaseFemale"
+          ],
+          "category": "feet",
+          "description": "",
+          "rarity": "rare",
+          "isSmart": false
+        }
+      },
+      "network": "MATIC",
+      "chainId": 137,
+      "urn": "urn:decentraland:matic:collections-v2:0x705652b66a12dcf782b0b3d5673fbf0c1797eba2:0",
+      "firstListedAt": 1648314563000,
+      "picks": {
+        "count": 0
+      },
+      "utility": null,
+      "tradeId": null,
+      "tradeContractAddress": null,
+      "priceCredits": 5
+    },
+    {
+      "id": "0x705652b66a12dcf782b0b3d5673fbf0c1797eba2-11",
+      "name": "Hype Thermal Shorts [TWOTONE]",
+      "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0x705652b66a12dcf782b0b3d5673fbf0c1797eba2:11/thumbnail",
+      "url": "/contracts/0x705652b66a12dcf782b0b3d5673fbf0c1797eba2/items/11",
+      "category": "wearable",
+      "contractAddress": "0x705652b66a12dcf782b0b3d5673fbf0c1797eba2",
+      "itemId": "11",
+      "rarity": "epic",
+      "price": "10000000000000000000",
+      "available": 994,
+      "isOnSale": true,
+      "creator": "0xcc7bc60bfcc029ecc8357a9c80b4cc51af67798e",
+      "beneficiary": "0x5ad3a76721cf708f7c062ba0cf9ba794d1156336",
+      "createdAt": 1647773781,
+      "updatedAt": 1754937056,
+      "reviewedAt": 1647779995,
+      "soldAt": 1754937056,
+      "data": {
+        "wearable": {
+          "bodyShapes": [
+            "BaseFemale",
+            "BaseMale"
+          ],
+          "category": "lower_body",
+          "description": "",
+          "rarity": "epic",
+          "isSmart": false
+        }
+      },
+      "network": "MATIC",
+      "chainId": 137,
+      "urn": "urn:decentraland:matic:collections-v2:0x705652b66a12dcf782b0b3d5673fbf0c1797eba2:11",
+      "firstListedAt": 1648314563000,
+      "picks": {
+        "count": 0
+      },
+      "utility": null,
+      "tradeId": null,
+      "tradeContractAddress": null,
+      "priceCredits": 9
+    },
+    {
+      "id": "0x9944c10d25e62a0401c5a7113081388a52ce0e3c-0",
+      "name": "Glassess bee 001 matte black",
+      "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0x9944c10d25e62a0401c5a7113081388a52ce0e3c:0/thumbnail",
+      "url": "/contracts/0x9944c10d25e62a0401c5a7113081388a52ce0e3c/items/0",
+      "category": "wearable",
+      "contractAddress": "0x9944c10d25e62a0401c5a7113081388a52ce0e3c",
+      "itemId": "0",
+      "rarity": "rare",
+      "price": "2500000000000000000",
+      "available": 4968,
+      "isOnSale": true,
+      "creator": "0x5351866b407cea55fdc34e6fc77e594d4a56cfb5",
+      "beneficiary": "0x5351866b407cea55fdc34e6fc77e594d4a56cfb5",
+      "createdAt": 1646170264,
+      "updatedAt": 1787108470,
+      "reviewedAt": 1650884314,
+      "soldAt": 1787108470,
+      "data": {
+        "wearable": {
+          "bodyShapes": [
+            "BaseMale",
+            "BaseFemale"
+          ],
+          "category": "eyewear",
+          "description": "glassess eyeframe model 001 color matte black by Be-Enby Eyewear",
+          "rarity": "rare",
+          "isSmart": false
+        }
+      },
+      "network": "MATIC",
+      "chainId": 137,
+      "urn": "urn:decentraland:matic:collections-v2:0x9944c10d25e62a0401c5a7113081388a52ce0e3c:0",
+      "firstListedAt": 1646170467000,
+      "picks": {
+        "count": 0
+      },
+      "utility": null,
+      "tradeId": null,
+      "tradeContractAddress": null,
+      "priceCredits": 3
+    },
+    {
+      "id": "0x81a1e00cc33b5ae2405c54cc906e894de8174683-1",
+      "name": "Banana Earrings",
+      "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0x81a1e00cc33b5ae2405c54cc906e894de8174683:1/thumbnail",
+      "url": "/contracts/0x81a1e00cc33b5ae2405c54cc906e894de8174683/items/1",
+      "category": "wearable",
+      "contractAddress": "0x81a1e00cc33b5ae2405c54cc906e894de8174683",
+      "itemId": "1",
+      "rarity": "epic",
+      "price": "25000000000000000000",
+      "available": 990,
+      "isOnSale": true,
+      "creator": "0x71c99d7e593e4e2b07d17feba2d080cbffe832cb",
+      "beneficiary": "0x71c99d7e593e4e2b07d17feba2d080cbffe832cb",
+      "createdAt": 1635347998,
+      "updatedAt": 1776950380,
+      "reviewedAt": 1635422851,
+      "soldAt": 1776950380,
+      "data": {
+        "wearable": {
+          "bodyShapes": [
+            "BaseMale",
+            "BaseFemale"
+          ],
+          "category": "earring",
+          "description": "",
+          "rarity": "epic",
+          "isSmart": false
+        }
+      },
+      "network": "MATIC",
+      "chainId": 137,
+      "urn": "urn:decentraland:matic:collections-v2:0x81a1e00cc33b5ae2405c54cc906e894de8174683:1",
+      "firstListedAt": 1635481058000,
+      "picks": {
+        "count": 0
+      },
+      "utility": null,
+      "tradeId": null,
+      "tradeContractAddress": null,
+      "priceCredits": 23
+    }
+  ],
+  "total": 6
+}

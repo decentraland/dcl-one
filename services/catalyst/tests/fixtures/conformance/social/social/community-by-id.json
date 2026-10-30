@@ -1,0 +1,41 @@
+{
+  "description": "GET /v1/communities/{id} for the largest public community of the first listing page. Captured GET https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "id": "e99471aa-31c4-4952-abf6-99905445f43b",
+        "name": "Decentraland Foundation",
+        "description": "Your hub for official Decentraland updates and events. \n\nKeep up with All Hands, weekly rituals, and more—all in one place.",
+        "ownerAddress": "0xbcac4dafb7e215f2f6cb3312af6d5e4f9d9e7eda",
+        "privacy": "public",
+        "active": true,
+        "membersCount": 1303,
+        "ownerName": "DCLOfficial",
+        "voiceChatStatus": {
+          "isActive": false,
+          "participantCount": 0,
+          "moderatorCount": 0
+        }
+      }
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b",
+  "captured_at": "2026-09-25T19:24:03Z",
+  "volatile_paths": [
+    "data.membersCount",
+    "data.voiceChatStatus.isActive",
+    "data.voiceChatStatus.moderatorCount",
+    "data.voiceChatStatus.participantCount"
+  ]
+}

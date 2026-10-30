@@ -1,0 +1,783 @@
+{
+  "abi": {
+    "CreditsManagerPolygon.Roles": {
+      "abiType": "(address,address,address,address,address,address,address)",
+      "named": "(address owner, address creditsSigner, address pauser, address userDenier, address creditsRevoker, address customExternalCallSigner, address customExternalCallRevoker)",
+      "fields": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "creditsSigner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "pauser",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "userDenier",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "creditsRevoker",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "customExternalCallSigner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "customExternalCallRevoker",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    "CreditsManagerPolygon.ExternalCall": {
+      "abiType": "(address,bytes4,bytes,uint256,bytes32)",
+      "named": "(address target, bytes4 selector, bytes data, uint256 expiresAt, bytes32 salt)",
+      "fields": [
+        {
+          "name": "target",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "selector",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        },
+        {
+          "name": "data",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "expiresAt",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ]
+    },
+    "IMarketplace.Trade": {
+      "abiType": "(address,bytes,(uint256,uint256,uint256,bytes32,uint256,uint256,bytes32,bytes32[],(address,bytes4,bytes,bool)[]),(uint256,address,uint256,address,bytes)[],(uint256,address,uint256,address,bytes)[])",
+      "named": "(address signer, bytes signature, (uint256 uses, uint256 expiration, uint256 effective, bytes32 salt, uint256 contractSignatureIndex, uint256 signerSignatureIndex, bytes32 allowedRoot, bytes32[] allowedProof, (address contractAddress, bytes4 selector, bytes value, bool required)[] externalChecks) checks, (uint256 assetType, address contractAddress, uint256 value, address beneficiary, bytes extra)[] sent, (uint256 assetType, address contractAddress, uint256 value, address beneficiary, bytes extra)[] received)",
+      "fields": [
+        {
+          "name": "signer",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "signature",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "checks",
+          "type": "tuple",
+          "internalType": "struct IMarketplace.Checks"
+        },
+        {
+          "name": "sent",
+          "type": "tuple[]",
+          "internalType": "struct IMarketplace.Asset[]"
+        },
+        {
+          "name": "received",
+          "type": "tuple[]",
+          "internalType": "struct IMarketplace.Asset[]"
+        }
+      ]
+    },
+    "IMarketplace.Checks": {
+      "abiType": "(uint256,uint256,uint256,bytes32,uint256,uint256,bytes32,bytes32[],(address,bytes4,bytes,bool)[])",
+      "named": "(uint256 uses, uint256 expiration, uint256 effective, bytes32 salt, uint256 contractSignatureIndex, uint256 signerSignatureIndex, bytes32 allowedRoot, bytes32[] allowedProof, (address contractAddress, bytes4 selector, bytes value, bool required)[] externalChecks)",
+      "fields": [
+        {
+          "name": "uses",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "expiration",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "effective",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "contractSignatureIndex",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "signerSignatureIndex",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "allowedRoot",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "allowedProof",
+          "type": "bytes32[]",
+          "internalType": "bytes32[]"
+        },
+        {
+          "name": "externalChecks",
+          "type": "tuple[]",
+          "internalType": "struct IMarketplace.ExternalCheck[]"
+        }
+      ]
+    },
+    "IMarketplace.ExternalCheck": {
+      "abiType": "(address,bytes4,bytes,bool)",
+      "named": "(address contractAddress, bytes4 selector, bytes value, bool required)",
+      "fields": [
+        {
+          "name": "contractAddress",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "selector",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        },
+        {
+          "name": "value",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "required",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ]
+    },
+    "IMarketplace.Asset": {
+      "abiType": "(uint256,address,uint256,address,bytes)",
+      "named": "(uint256 assetType, address contractAddress, uint256 value, address beneficiary, bytes extra)",
+      "fields": [
+        {
+          "name": "assetType",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "contractAddress",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "value",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "extra",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ]
+    },
+    "CreditsManagerPolygon.Credit": {
+      "abiType": "(uint256,uint256,bytes32)",
+      "named": "(uint256 value, uint256 expiresAt, bytes32 salt)",
+      "fields": [
+        {
+          "name": "value",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "expiresAt",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ]
+    },
+    "CreditsManagerPolygon.UseCreditsArgs": {
+      "abiType": "((uint256,uint256,bytes32)[],bytes[],(address,bytes4,bytes,uint256,bytes32),bytes,uint256,uint256)",
+      "named": "((uint256 value, uint256 expiresAt, bytes32 salt)[] credits, bytes[] creditsSignatures, (address target, bytes4 selector, bytes data, uint256 expiresAt, bytes32 salt) externalCall, bytes customExternalCallSignature, uint256 maxUncreditedValue, uint256 maxCreditedValue)",
+      "fields": [
+        {
+          "name": "credits",
+          "type": "tuple[]",
+          "internalType": "struct CreditsManagerPolygon.Credit[]"
+        },
+        {
+          "name": "creditsSignatures",
+          "type": "bytes[]",
+          "internalType": "bytes[]"
+        },
+        {
+          "name": "externalCall",
+          "type": "tuple",
+          "internalType": "struct CreditsManagerPolygon.ExternalCall"
+        },
+        {
+          "name": "customExternalCallSignature",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "maxUncreditedValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "maxCreditedValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    "CreditsManagerPolygonWithMANAClaim.Roles": {
+      "abiType": "(address,address,address,address,address,address,address)",
+      "named": "(address owner, address creditsSigner, address pauser, address userDenier, address creditsRevoker, address customExternalCallSigner, address customExternalCallRevoker)",
+      "fields": [
+        {
+          "name": "owner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "creditsSigner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "pauser",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "userDenier",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "creditsRevoker",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "customExternalCallSigner",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "customExternalCallRevoker",
+          "type": "address",
+          "internalType": "address"
+        }
+      ]
+    },
+    "CreditsManagerPolygonWithMANAClaim.ExternalCall": {
+      "abiType": "(address,bytes4,bytes,uint256,bytes32)",
+      "named": "(address target, bytes4 selector, bytes data, uint256 expiresAt, bytes32 salt)",
+      "fields": [
+        {
+          "name": "target",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "selector",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        },
+        {
+          "name": "data",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "expiresAt",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ]
+    },
+    "CreditsManagerPolygonWithMANAClaim.Credit": {
+      "abiType": "(uint256,uint256,bytes32)",
+      "named": "(uint256 value, uint256 expiresAt, bytes32 salt)",
+      "fields": [
+        {
+          "name": "value",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "expiresAt",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        }
+      ]
+    },
+    "CreditsManagerPolygonWithMANAClaim.UseCreditsArgs": {
+      "abiType": "((uint256,uint256,bytes32)[],bytes[],(address,bytes4,bytes,uint256,bytes32),bytes,uint256,uint256)",
+      "named": "((uint256 value, uint256 expiresAt, bytes32 salt)[] credits, bytes[] creditsSignatures, (address target, bytes4 selector, bytes data, uint256 expiresAt, bytes32 salt) externalCall, bytes customExternalCallSignature, uint256 maxUncreditedValue, uint256 maxCreditedValue)",
+      "fields": [
+        {
+          "name": "credits",
+          "type": "tuple[]",
+          "internalType": "struct CreditsManagerPolygonWithMANAClaim.Credit[]"
+        },
+        {
+          "name": "creditsSignatures",
+          "type": "bytes[]",
+          "internalType": "bytes[]"
+        },
+        {
+          "name": "externalCall",
+          "type": "tuple",
+          "internalType": "struct CreditsManagerPolygonWithMANAClaim.ExternalCall"
+        },
+        {
+          "name": "customExternalCallSignature",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "maxUncreditedValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "maxCreditedValue",
+          "type": "uint256",
+          "internalType": "uint256"
+        }
+      ]
+    },
+    "RegisterNameCrossChainExecutor.ExternalCall": {
+      "abiType": "(address,bytes,bytes)",
+      "named": "(address target, bytes data, bytes extra)",
+      "fields": [
+        {
+          "name": "target",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "data",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "extra",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ]
+    },
+    "IMarketplace.Coupon": {
+      "abiType": "(bytes,(uint256,uint256,uint256,bytes32,uint256,uint256,bytes32,bytes32[],(address,bytes4,bytes,bool)[]),address,bytes,bytes)",
+      "named": "(bytes signature, (uint256 uses, uint256 expiration, uint256 effective, bytes32 salt, uint256 contractSignatureIndex, uint256 signerSignatureIndex, bytes32 allowedRoot, bytes32[] allowedProof, (address contractAddress, bytes4 selector, bytes value, bool required)[] externalChecks) checks, address couponAddress, bytes data, bytes callerData)",
+      "fields": [
+        {
+          "name": "signature",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "checks",
+          "type": "tuple",
+          "internalType": "struct IMarketplace.Checks"
+        },
+        {
+          "name": "couponAddress",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "data",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "callerData",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ]
+    },
+    "ICollectionStore.ItemToBuy": {
+      "abiType": "(address,uint256[],uint256[],address[])",
+      "named": "(address collection, uint256[] ids, uint256[] prices, address[] beneficiaries)",
+      "fields": [
+        {
+          "name": "collection",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "ids",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "prices",
+          "type": "uint256[]",
+          "internalType": "uint256[]"
+        },
+        {
+          "name": "beneficiaries",
+          "type": "address[]",
+          "internalType": "address[]"
+        }
+      ]
+    },
+    "MarketplaceTypes.Trade": {
+      "abiType": "(address,bytes,(uint256,uint256,uint256,bytes32,uint256,uint256,bytes32,bytes32[],(address,bytes4,bytes,bool)[]),(uint256,address,uint256,address,bytes)[],(uint256,address,uint256,address,bytes)[])",
+      "named": "(address signer, bytes signature, (uint256 uses, uint256 expiration, uint256 effective, bytes32 salt, uint256 contractSignatureIndex, uint256 signerSignatureIndex, bytes32 allowedRoot, bytes32[] allowedProof, (address contractAddress, bytes4 selector, bytes value, bool required)[] externalChecks) checks, (uint256 assetType, address contractAddress, uint256 value, address beneficiary, bytes extra)[] sent, (uint256 assetType, address contractAddress, uint256 value, address beneficiary, bytes extra)[] received)",
+      "fields": [
+        {
+          "name": "signer",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "signature",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "checks",
+          "type": "tuple",
+          "internalType": "struct CommonTypes.Checks"
+        },
+        {
+          "name": "sent",
+          "type": "tuple[]",
+          "internalType": "struct MarketplaceTypes.Asset[]"
+        },
+        {
+          "name": "received",
+          "type": "tuple[]",
+          "internalType": "struct MarketplaceTypes.Asset[]"
+        }
+      ]
+    },
+    "CommonTypes.Checks": {
+      "abiType": "(uint256,uint256,uint256,bytes32,uint256,uint256,bytes32,bytes32[],(address,bytes4,bytes,bool)[])",
+      "named": "(uint256 uses, uint256 expiration, uint256 effective, bytes32 salt, uint256 contractSignatureIndex, uint256 signerSignatureIndex, bytes32 allowedRoot, bytes32[] allowedProof, (address contractAddress, bytes4 selector, bytes value, bool required)[] externalChecks)",
+      "fields": [
+        {
+          "name": "uses",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "expiration",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "effective",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "salt",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "contractSignatureIndex",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "signerSignatureIndex",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "allowedRoot",
+          "type": "bytes32",
+          "internalType": "bytes32"
+        },
+        {
+          "name": "allowedProof",
+          "type": "bytes32[]",
+          "internalType": "bytes32[]"
+        },
+        {
+          "name": "externalChecks",
+          "type": "tuple[]",
+          "internalType": "struct CommonTypes.ExternalCheck[]"
+        }
+      ]
+    },
+    "CommonTypes.ExternalCheck": {
+      "abiType": "(address,bytes4,bytes,bool)",
+      "named": "(address contractAddress, bytes4 selector, bytes value, bool required)",
+      "fields": [
+        {
+          "name": "contractAddress",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "selector",
+          "type": "bytes4",
+          "internalType": "bytes4"
+        },
+        {
+          "name": "value",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "required",
+          "type": "bool",
+          "internalType": "bool"
+        }
+      ]
+    },
+    "MarketplaceTypes.Asset": {
+      "abiType": "(uint256,address,uint256,address,bytes)",
+      "named": "(uint256 assetType, address contractAddress, uint256 value, address beneficiary, bytes extra)",
+      "fields": [
+        {
+          "name": "assetType",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "contractAddress",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "value",
+          "type": "uint256",
+          "internalType": "uint256"
+        },
+        {
+          "name": "beneficiary",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "extra",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ]
+    },
+    "CouponTypes.Coupon": {
+      "abiType": "(bytes,(uint256,uint256,uint256,bytes32,uint256,uint256,bytes32,bytes32[],(address,bytes4,bytes,bool)[]),address,bytes,bytes)",
+      "named": "(bytes signature, (uint256 uses, uint256 expiration, uint256 effective, bytes32 salt, uint256 contractSignatureIndex, uint256 signerSignatureIndex, bytes32 allowedRoot, bytes32[] allowedProof, (address contractAddress, bytes4 selector, bytes value, bool required)[] externalChecks) checks, address couponAddress, bytes data, bytes callerData)",
+      "fields": [
+        {
+          "name": "signature",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "checks",
+          "type": "tuple",
+          "internalType": "struct CommonTypes.Checks"
+        },
+        {
+          "name": "couponAddress",
+          "type": "address",
+          "internalType": "address"
+        },
+        {
+          "name": "data",
+          "type": "bytes",
+          "internalType": "bytes"
+        },
+        {
+          "name": "callerData",
+          "type": "bytes",
+          "internalType": "bytes"
+        }
+      ]
+    }
+  },
+  "solidity": [
+    {
+      "name": "ExternalCheck",
+      "file": "src/common/CommonTypes.sol",
+      "line": 12,
+      "solidity": "struct ExternalCheck {\n        address contractAddress;\n        bytes4 selector;\n        bytes value;\n        bool required;\n    }"
+    },
+    {
+      "name": "Checks",
+      "file": "src/common/CommonTypes.sol",
+      "line": 30,
+      "solidity": "struct Checks {\n        uint256 uses;\n        uint256 expiration;\n        uint256 effective;\n        bytes32 salt;\n        uint256 contractSignatureIndex;\n        uint256 signerSignatureIndex;\n        bytes32 allowedRoot;\n        bytes32[] allowedProof;\n        ExternalCheck[] externalChecks;\n    }"
+    },
+    {
+      "name": "CollectionDiscountCouponData",
+      "file": "src/coupons/CollectionDiscountCoupon.sol",
+      "line": 21,
+      "solidity": "struct CollectionDiscountCouponData {\n        uint256 discountType;\n        uint256 discount;\n        bytes32 root;\n    }"
+    },
+    {
+      "name": "CollectionDiscountCouponCallerData",
+      "file": "src/coupons/CollectionDiscountCoupon.sol",
+      "line": 29,
+      "solidity": "struct CollectionDiscountCouponCallerData {\n        bytes32[][] proofs;\n    }"
+    },
+    {
+      "name": "Coupon",
+      "file": "src/coupons/CouponTypes.sol",
+      "line": 14,
+      "solidity": "struct Coupon {\n        bytes signature;\n        Checks checks;\n        address couponAddress;\n        bytes data;\n        bytes callerData;\n    }"
+    },
+    {
+      "name": "Roles",
+      "file": "src/credits/CreditsManagerPolygon.sol",
+      "line": 114,
+      "solidity": "struct Roles {\n        address owner;\n        address creditsSigner;\n        address pauser;\n        address userDenier;\n        address creditsRevoker;\n        address customExternalCallSigner;\n        address customExternalCallRevoker;\n    }"
+    },
+    {
+      "name": "UseCreditsArgs",
+      "file": "src/credits/CreditsManagerPolygon.sol",
+      "line": 134,
+      "solidity": "struct UseCreditsArgs {\n        Credit[] credits;\n        bytes[] creditsSignatures;\n        ExternalCall externalCall;\n        bytes customExternalCallSignature;\n        uint256 maxUncreditedValue;\n        uint256 maxCreditedValue;\n    }"
+    },
+    {
+      "name": "Credit",
+      "file": "src/credits/CreditsManagerPolygon.sol",
+      "line": 146,
+      "solidity": "struct Credit {\n        uint256 value;\n        uint256 expiresAt;\n        bytes32 salt;\n    }"
+    },
+    {
+      "name": "ExternalCall",
+      "file": "src/credits/CreditsManagerPolygon.sol",
+      "line": 159,
+      "solidity": "struct ExternalCall {\n        address target;\n        bytes4 selector;\n        bytes data;\n        uint256 expiresAt;\n        bytes32 salt;\n    }"
+    },
+    {
+      "name": "Roles",
+      "file": "src/credits/CreditsManagerPolygonWithMANAClaim.sol",
+      "line": 114,
+      "solidity": "struct Roles {\n        address owner;\n        address creditsSigner;\n        address pauser;\n        address userDenier;\n        address creditsRevoker;\n        address customExternalCallSigner;\n        address customExternalCallRevoker;\n    }"
+    },
+    {
+      "name": "UseCreditsArgs",
+      "file": "src/credits/CreditsManagerPolygonWithMANAClaim.sol",
+      "line": 134,
+      "solidity": "struct UseCreditsArgs {\n        Credit[] credits;\n        bytes[] creditsSignatures;\n        ExternalCall externalCall;\n        bytes customExternalCallSignature;\n        uint256 maxUncreditedValue;\n        uint256 maxCreditedValue;\n    }"
+    },
+    {
+      "name": "Credit",
+      "file": "src/credits/CreditsManagerPolygonWithMANAClaim.sol",
+      "line": 146,
+      "solidity": "struct Credit {\n        uint256 value;\n        uint256 expiresAt;\n        bytes32 salt;\n    }"
+    },
+    {
+      "name": "ExternalCall",
+      "file": "src/credits/CreditsManagerPolygonWithMANAClaim.sol",
+      "line": 159,
+      "solidity": "struct ExternalCall {\n        address target;\n        bytes4 selector;\n        bytes data;\n        uint256 expiresAt;\n        bytes32 salt;\n    }"
+    },
+    {
+      "name": "ExternalCall",
+      "file": "src/credits/executors/RegisterNameCrossChainExecutor.sol",
+      "line": 52,
+      "solidity": "struct ExternalCall {\n        address target;\n        bytes data;\n        bytes extra;\n    }"
+    },
+    {
+      "name": "ItemToBuy",
+      "file": "src/credits/interfaces/ICollectionStore.sol",
+      "line": 5,
+      "solidity": "struct ItemToBuy {\n        address collection;\n        uint256[] ids;\n        uint256[] prices;\n        address[] beneficiaries;\n    }"
+    },
+    {
+      "name": "ExternalCheck",
+      "file": "src/credits/interfaces/IMarketplace.sol",
+      "line": 5,
+      "solidity": "struct ExternalCheck {\n        address contractAddress;\n        bytes4 selector;\n        bytes value;\n        bool required;\n    }"
+    },
+    {
+      "name": "Checks",
+      "file": "src/credits/interfaces/IMarketplace.sol",
+      "line": 12,
+      "solidity": "struct Checks {\n        uint256 uses;\n        uint256 expiration;\n        uint256 effective;\n        bytes32 salt;\n        uint256 contractSignatureIndex;\n        uint256 signerSignatureIndex;\n        bytes32 allowedRoot;\n        bytes32[] allowedProof;\n        ExternalCheck[] externalChecks;\n    }"
+    },
+    {
+      "name": "Asset",
+      "file": "src/credits/interfaces/IMarketplace.sol",
+      "line": 24,
+      "solidity": "struct Asset {\n        uint256 assetType;\n        address contractAddress;\n        uint256 value;\n        address beneficiary;\n        bytes extra;\n    }"
+    },
+    {
+      "name": "Trade",
+      "file": "src/credits/interfaces/IMarketplace.sol",
+      "line": 32,
+      "solidity": "struct Trade {\n        address signer;\n        bytes signature;\n        Checks checks;\n        Asset[] sent;\n        Asset[] received;\n    }"
+    },
+    {
+      "name": "Coupon",
+      "file": "src/credits/interfaces/IMarketplace.sol",
+      "line": 40,
+      "solidity": "struct Coupon {\n        bytes signature;\n        Checks checks;\n        address couponAddress;\n        bytes data;\n        bytes callerData;\n    }"
+    },
+    {
+      "name": "Asset",
+      "file": "src/marketplace/MarketplaceTypes.sol",
+      "line": 16,
+      "solidity": "struct Asset {\n        uint256 assetType;\n        address contractAddress;\n        uint256 value;\n        address beneficiary;\n        bytes extra;\n    }"
+    },
+    {
+      "name": "Trade",
+      "file": "src/marketplace/MarketplaceTypes.sol",
+      "line": 31,
+      "solidity": "struct Trade {\n        address signer;\n        bytes signature;\n        Checks checks;\n        Asset[] sent;\n        Asset[] received;\n    }"
+    }
+  ]
+}

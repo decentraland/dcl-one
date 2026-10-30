@@ -1,0 +1,41 @@
+{
+  "name": "@dcl/protocol",
+  "version": "1.0.0",
+  "description": "",
+  "private": true,
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/decentraland/dcl-one.git",
+    "directory": "library/protocol"
+  },
+  "homepage": "https://github.com/decentraland/dcl-one/tree/main/library/protocol#readme",
+  "bugs": "https://decentraland.org/help/",
+  "keywords": [],
+  "author": "",
+  "license": "Apache-2.0",
+  "main": "index.js",
+  "scripts": {
+    "build": "./scripts/generate.sh",
+    "test": "./scripts/check-proto-compabitility.sh",
+    "gen:test": "node protoc-gen-bitwise/test/generator.test.js"
+  },
+  "devDependencies": {
+    "@protobuf-ts/protoc": "^2.8.1",
+    "typescript": "^5.0.4"
+  },
+  "config": {
+    "protocVersion": "22.2"
+  },
+  "dependencies": {
+    "@dcl/ts-proto": "1.154.0",
+    "protobufjs": "7.2.4"
+  },
+  "files": [
+    "proto/decentraland",
+    "out-ts",
+    "out-js",
+    "public",
+    "protoc-gen-bitwise/*.js",
+    "protoc-gen-bitwise/runtime"
+  ]
+}

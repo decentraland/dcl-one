@@ -1,0 +1,52 @@
+{
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "**/.server/**/*.ts",
+    "**/.server/**/*.tsx",
+    "**/.client/**/*.ts",
+    "**/.client/**/*.tsx",
+    ".react-router/types/**/*",
+    "../ui3/src/overlay/dcl-globals.d.ts",
+    "../ui3/src/editor/code/monaco-modules.d.ts",
+    "../ui3/src/wearable-preview/three-shim.d.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "build",
+    "template-games"
+  ],
+  "compilerOptions": {
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "types": ["node", "vite/client"],
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "rootDirs": [".", "./.react-router/types"],
+    "paths": {
+      "react": ["./node_modules/@types/react/index.d.ts"],
+      "react/*": ["./node_modules/@types/react/*"],
+      "@ui/*": ["../ui3/src/*"],
+      // The catalyst server's DTO shapes and OpenAPI documents, shared with ui3.
+      "@catalyst-api/*": ["../../library/catalyst-api/*"],
+      // The validation seam ui3 owns. Types always resolve to the checking
+      // implementation: both expose the same surface, so either type-checks the
+      // same, and this keeps zod's types reachable.
+      "dcl-validate-impl": ["../ui3/src/validate/checked.ts"],
+      "@/*": ["./src/*"]
+    },
+    "esModuleInterop": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "allowJs": true,
+    "checkJs": false,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "isolatedModules": true
+  }
+}

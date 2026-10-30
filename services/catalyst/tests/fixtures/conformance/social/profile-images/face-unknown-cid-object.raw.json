@@ -1,0 +1,24 @@
+{
+  "method": "GET",
+  "url": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreiaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/face.png",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 404,
+  "status_text": "Not Found",
+  "response_headers": {
+    "content-type": "application/xml",
+    "date": "Fri, 25 Sep 2026 19:29:41 GMT",
+    "server": "AmazonS3",
+    "transfer-encoding": "chunked",
+    "x-amz-id-2": "F0OSt/F/Dk9kJna7zpfHxOBsWOoNLhwuwKfsKPJnN3cAc1WKCvTOWIYiJpVTEoXeBRH/yywwCmM=",
+    "x-amz-request-id": "B1Q67H3TTJRVZHJ0"
+  },
+  "captured_at": "2026-09-25T19:29:41Z",
+  "elapsed_ms": 142,
+  "body_bytes": 356,
+  "body_file": "face-unknown-cid-object.raw.body",
+  "redacted": false
+}

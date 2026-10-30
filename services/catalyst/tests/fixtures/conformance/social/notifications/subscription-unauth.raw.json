@@ -1,0 +1,27 @@
+{
+  "method": "GET",
+  "url": "https://notifications.decentraland.org/subscription",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 400,
+  "status_text": "Bad Request",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c691fda584ae6-TXL",
+    "connection": "keep-alive",
+    "content-length": "101",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:42 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:42Z",
+  "elapsed_ms": 132,
+  "body_bytes": 101,
+  "body_file": "subscription-unauth.raw.body",
+  "redacted": false
+}

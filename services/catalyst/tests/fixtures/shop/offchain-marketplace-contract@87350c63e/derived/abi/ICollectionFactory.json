@@ -1,0 +1,50 @@
+{
+  "contract": "ICollectionFactory",
+  "source": "src/credits/interfaces/ICollectionFactory.sol",
+  "compiler": {
+    "solc": "0.8.20+commit.a1b79de6.Emscripten.clang",
+    "settings": {
+      "optimizer": {
+        "enabled": true,
+        "runs": 200
+      },
+      "outputSelection": {
+        "*": {
+          "*": [
+            "abi",
+            "evm.methodIdentifiers"
+          ]
+        }
+      }
+    },
+    "openzeppelin": {
+      "commit": "dbb6104ce834628e473d2173bbc9d47f81a9eec3",
+      "tag": "v5.0.2",
+      "npm": "5.0.2"
+    }
+  },
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "_collection",
+          "type": "address"
+        }
+      ],
+      "name": "isCollectionFromFactory",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    }
+  ],
+  "methodIdentifiers": {
+    "isCollectionFromFactory(address)": "c0300011"
+  }
+}

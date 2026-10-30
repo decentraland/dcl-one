@@ -1,0 +1,226 @@
+{
+  "description": "GET /scene-admin signed as a scene (signer decentraland-kernel-scene, Genesis Plaza metadata) by a wallet that administers nothing. Signed fetch with the run's throwaway key 0xf7e07d862ddbe561a63ebb5dd809cf0542269587 (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://comms-gatekeeper.decentraland.org/scene-admin -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/scene-admin",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xf7e07d862ddbe561a63ebb5dd809cf0542269587\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/scene-admin:1790364575891:{\\\"signer\\\":\\\"decentraland-kernel-scene\\\",\\\"realm\\\":{\\\"hostname\\\":\\\"realm-provider-ea.decentraland.org\\\",\\\"protocol\\\":\\\"v3\\\",\\\"serverName\\\":\\\"main\\\"},\\\"sceneId\\\":\\\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\\\",\\\"parcel\\\":\\\"-3,-2\\\"}\",\"signature\":\"0xf14b2249d0338aedb58cde3cf1608dd2929009994b2c737db5f280ef1899f5ba571c8b712de1df53ca6c0f98d44f9b4578e7fba63fda3671a3612af58ca292c81b\"}",
+      "x-identity-timestamp": "1790364575891",
+      "x-identity-metadata": "{\"signer\":\"decentraland-kernel-scene\",\"realm\":{\"hostname\":\"realm-provider-ea.decentraland.org\",\"protocol\":\"v3\",\"serverName\":\"main\"},\"sceneId\":\"bafkreignao6tsikf77gkx5vgt2gpjmgoeu2rlydnourzlavtq474gikzoy\",\"parcel\":\"-3,-2\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": [
+      {
+        "id": "03e4900c-4496-4f5f-a523-3fa1093d1785",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0xd545b9e0a5f3638a5026d1914cc9b47ed16b5ae9",
+        "added_by": "0xd0bbe281840cf1ccebf202e547b539a94e2e9da3",
+        "created_at": "1776685367972",
+        "active": true,
+        "name": "PixelPixie",
+        "canBeRemoved": true
+      },
+      {
+        "id": "0e746b4f-52ea-4e8c-87a2-cd7cd0367dd0",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0xa7cdf25a0211c089a0338c0e5b204a34ac180489",
+        "added_by": "0xd0bbe281840cf1ccebf202e547b539a94e2e9da3",
+        "created_at": "1776685377471",
+        "active": true,
+        "name": "Dafu",
+        "canBeRemoved": true
+      },
+      {
+        "id": "15c1b6e8-399e-4afc-a035-ef32f69b10f7",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0xc9c29ab98e6bc42015985165a11153f564e9f8c2",
+        "added_by": "0xd0bbe281840cf1ccebf202e547b539a94e2e9da3",
+        "created_at": "1776685382602",
+        "active": true,
+        "name": "Ryumi",
+        "canBeRemoved": true
+      },
+      {
+        "id": "7f307567-c9a5-412d-956e-05db7a6455a0",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0x8a89a7348d464bbb8c516a4d5390e7de51affa5d",
+        "added_by": "0xd0bbe281840cf1ccebf202e547b539a94e2e9da3",
+        "created_at": "1776685388497",
+        "active": true,
+        "name": "Kenz0",
+        "canBeRemoved": true
+      },
+      {
+        "id": "26e9cae3-ce0e-4f7f-8e3d-428a710a73ad",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0x779ddb91a65cdd2a0f53e188783bef234125c5bb",
+        "added_by": "0xd0bbe281840cf1ccebf202e547b539a94e2e9da3",
+        "created_at": "1776685419523",
+        "active": true,
+        "name": "surz",
+        "canBeRemoved": true
+      },
+      {
+        "id": "03ad4888-53d2-4462-a511-c66485731c51",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0x14d98495aac90ad58dd1e651c39ba3020006a839",
+        "added_by": "0xd0bbe281840cf1ccebf202e547b539a94e2e9da3",
+        "created_at": "1776685424037",
+        "active": true,
+        "name": "pejo",
+        "canBeRemoved": true
+      },
+      {
+        "id": "a4a304fd-e160-48cf-be4d-0bdb28986f27",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0x51a514d3f28ea19775e811fc09396e808394bd12",
+        "added_by": "0x779ddb91a65cdd2a0f53e188783bef234125c5bb",
+        "created_at": "1776742032854",
+        "active": true,
+        "name": "Moonstone",
+        "canBeRemoved": true
+      },
+      {
+        "id": "507b61ca-906d-41b1-8ec6-722f330b7719",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0x1e105bb213754519903788022b962fe2b9c4b263",
+        "added_by": "0xd0bbe281840cf1ccebf202e547b539a94e2e9da3",
+        "created_at": "1778148450650",
+        "active": true,
+        "name": "BayBackner",
+        "canBeRemoved": true
+      },
+      {
+        "id": "7a6bbb1d-7a50-4a05-a742-fc8532b7b83c",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0x3385c05ca0ddb46b51f9c2d99fc597cf6f0da891",
+        "added_by": "0x779ddb91a65cdd2a0f53e188783bef234125c5bb",
+        "created_at": "1778149803536",
+        "active": true,
+        "name": "KazeNoKai",
+        "canBeRemoved": true
+      },
+      {
+        "id": "d028195d-c849-43ad-9760-5c3dd976d3ea",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0x88a6f83fb620b8937ff4ac484f821ab704ed8895",
+        "added_by": "0x779ddb91a65cdd2a0f53e188783bef234125c5bb",
+        "created_at": "1778149812025",
+        "active": true,
+        "name": "Vitsky",
+        "canBeRemoved": true
+      },
+      {
+        "id": "67e37e01-296a-4c28-b075-da645a7950c2",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0xdfb37fd867caaa33b94c37a00794e8c0d3f12911",
+        "added_by": "0x779ddb91a65cdd2a0f53e188783bef234125c5bb",
+        "created_at": "1778149822031",
+        "active": true,
+        "name": "Mitthie",
+        "canBeRemoved": true
+      },
+      {
+        "id": "23ebc22b-7562-44e5-8513-e52164abfc42",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0xc3af1190dfc0cb4184c114baf5147512a6b8d257",
+        "added_by": "0xc9c29ab98e6bc42015985165a11153f564e9f8c2",
+        "created_at": "1778244837365",
+        "active": true,
+        "name": "Rowan",
+        "canBeRemoved": true
+      },
+      {
+        "id": "a409e753-a952-497b-b5c4-e745cbd60663",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0xe2b6024873d218b2e83b462d3658d8d7c3f55a18",
+        "added_by": "0x14d98495aac90ad58dd1e651c39ba3020006a839",
+        "created_at": "1778790170190",
+        "active": true,
+        "name": "NicoE",
+        "canBeRemoved": true
+      },
+      {
+        "id": "f48e155e-41b0-4d0c-bd67-4f42980d0282",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0xe6776136c411e6620421b2c19bb8a6e45a37b998",
+        "added_by": "0xd545b9e0a5f3638a5026d1914cc9b47ed16b5ae9",
+        "created_at": "1786705243914",
+        "active": true,
+        "name": "DafneAbril",
+        "canBeRemoved": true
+      },
+      {
+        "id": "634d2f01-7247-4b9e-9bce-060180f3961c",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0x78a707a166da251c098e6e695efa5b130344a39b",
+        "added_by": "0xd545b9e0a5f3638a5026d1914cc9b47ed16b5ae9",
+        "created_at": "1786723877621",
+        "active": true,
+        "name": "ShinyPixie",
+        "canBeRemoved": true
+      },
+      {
+        "id": "6c703482-47fc-4f83-9c2a-83a3f72bc279",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0x1b7b8e45545432d230042f3cb8a12ae130079368",
+        "added_by": "0xa7cdf25a0211c089a0338c0e5b204a34ac180489",
+        "created_at": "1787051088454",
+        "active": true,
+        "name": "Cucurella#9368",
+        "canBeRemoved": true
+      },
+      {
+        "id": "3a2d7ca8-d1c7-4ec3-b712-efc79fd22a7e",
+        "place_id": "3ca25728-5b41-48f6-8e24-5cb0e3f2bb5d",
+        "admin": "0x7ba641833a2925d71046351f97a92235dc777616",
+        "added_by": "0xd545b9e0a5f3638a5026d1914cc9b47ed16b5ae9",
+        "created_at": "1790162733855",
+        "active": true,
+        "name": "NickJam",
+        "canBeRemoved": true
+      },
+      {
+        "admin": "0x5188e308fee25ac49c10f9fd9270d953c4822ce5",
+        "name": "",
+        "canBeRemoved": false
+      },
+      {
+        "admin": "0x462ab09f1a75786e0c54ced394e0fb537af03734",
+        "name": "",
+        "canBeRemoved": false
+      },
+      {
+        "admin": "0x9a4ff277dfa97504f24cb4e483deba45ada7639d",
+        "name": "Guest#639d",
+        "canBeRemoved": false
+      },
+      {
+        "admin": "0xfec12066b5b049d5795437474e3fc031745bc443",
+        "name": "ContentDev#c443",
+        "canBeRemoved": false
+      },
+      {
+        "admin": "0x123b529fddd52128322e350ff37f58508dde5c3a",
+        "name": "sz#5c3a",
+        "canBeRemoved": false
+      },
+      {
+        "admin": "0xd0bbe281840cf1ccebf202e547b539a94e2e9da3",
+        "name": "ai47patos",
+        "canBeRemoved": false
+      }
+    ]
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/scene-admin",
+  "captured_at": "2026-09-25T19:29:36Z",
+  "volatile_paths": []
+}

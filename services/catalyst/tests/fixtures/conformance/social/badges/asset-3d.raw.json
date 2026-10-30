@@ -1,0 +1,35 @@
+{
+  "method": "GET",
+  "url": "https://assets-cdn.decentraland.org/dclcitizen/3d/normal.png",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 200,
+  "status_text": "OK",
+  "response_headers": {
+    "accept-ranges": "bytes",
+    "cf-cache-status": "BYPASS",
+    "cf-ray": "a40c6955aba6e567-TXL",
+    "connection": "keep-alive",
+    "content-length": "848778",
+    "content-type": "image/png",
+    "date": "Fri, 25 Sep 2026 19:24:52 GMT",
+    "etag": "\"670e0ca43f7e6dc4d11c6e322ce9ff70\"",
+    "last-modified": "Thu, 05 Sep 2024 14:37:13 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "vary": "accept-encoding",
+    "via": "1.1 0f9c1f26e53d95127196e190a08a56b8.cloudfront.net (CloudFront)",
+    "x-amz-cf-id": "OGurOq2T31In2VbqmK77kiPCW5MlQYrsO0EJ1JE5NJTILjNnAvodvQ==",
+    "x-amz-cf-pop": "AMS58-P5",
+    "x-cache": "Miss from cloudfront",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:51Z",
+  "elapsed_ms": 1680,
+  "body_bytes": 848778,
+  "body_file": "asset-3d.raw.body",
+  "redacted": false
+}

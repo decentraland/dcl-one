@@ -1,0 +1,308 @@
+pub mod bound_node;
+pub mod button;
+pub mod color_picker;
+pub mod combo_box;
+pub mod dui_utils;
+pub mod focus;
+pub mod interact_sounds;
+pub mod interact_style;
+pub mod nine_slice;
+pub mod scrollable;
+pub mod spinner;
+pub mod stretch_uvs_image;
+pub mod text_entry;
+pub mod text_size;
+pub mod toggle;
+pub mod ui_actions;
+pub mod ui_builder;
+
+use std::{any::type_name, marker::PhantomData};
+
+use std::sync::Arc;
+
+use bevy::{
+    asset::{DependencyLoadState, LoadState, RecursiveDependencyLoadState},
+    ecs::{schedule::ScheduleConfigs, system::ScheduleSystem},
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    state::state::FreelyMutableState,
+    text::{cosmic_text::fontdb::Source, CosmicFontSystem},
+};
+use bevy_dui::{DuiNodeList, DuiPlugin, DuiRegistry};
+use bound_node::BoundedNodePlugin;
+use button::{DuiButtonSetTemplate, DuiButtonTemplate, DuiTabGroupTemplate};
+use color_picker::ColorPickerPlugin;
+use combo_box::ComboBoxPlugin;
+use interact_sounds::InteractSoundsPlugin;
+use nine_slice::Ui9SlicePlugin;
+use once_cell::sync::OnceCell;
+
+use common::{sets::SetupSets, structs::TextStyle};
+use spinner::SpinnerPlugin;
+use stretch_uvs_image::StretchUvsImagePlugin;
+use text_entry::TextEntryPlugin;
+use text_size::TextSizePlugin;
+use toggle::TogglePlugin;
+
+use self::{
+    focus::FocusPlugin, interact_style::InteractStylePlugin, scrollable::ScrollablePlugin,
+    ui_actions::UiActionPlugin,
+};
+
+pub static TITLE_TEXT_STYLE: OnceCell<TextStyle> = OnceCell::new();
+pub static BODY_TEXT_STYLE: OnceCell<TextStyle> = OnceCell::new();
+pub static HOVER_TEXT_STYLE: OnceCell<[TextStyle; 10]> = OnceCell::new();
+
+pub static FONTS: OnceCell<HashMap<(FontName, WeightName), Handle<Font>>> = OnceCell::new();
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
+pub enum FontName {
+    Mono,
+    Sans,
+    Serif,
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Hash, Debug, Clone, Copy)]
+pub enum WeightName {
+    Regular,
+    Bold,
+    Italic,
+    BoldItalic,
+}
+
+/// Scale factor applied to SDK font sizes to match the reference renderer.
+pub const FONT_SIZE_SCALE: f32 = 0.95;
+
+pub fn user_font(name: FontName, weight: WeightName) -> Handle<Font> {
+    FONTS.get().unwrap().get(&(name, weight)).unwrap().clone()
+}
+
+/// Create the SDK font assets from the embedded font files and register them with the
+/// cosmic font system, synchronously, so they exist for any text from the first frame.
+///
+/// Fonts otherwise enter the font db only when a span first uses them, and cosmic-text
+/// caches a text's glyph fallback until the text changes, so text shaped before its
+/// fallback faces exist keeps the wrong glyphs (e.g. U+25BC ▼ resolving to the emoji face).
+/// Registering every built-in first also gives them the lowest face ids, which cosmic-text
+/// prefers among equal fallback matches, ahead of any scene font. (bevy registers the asset
+/// again when text first uses it, sharing the same bytes; the copy registered here wins.)
+pub fn init_fonts(fonts: &mut Assets<Font>, font_system: &mut CosmicFontSystem) {
+    use FontName::*;
+    use WeightName::*;
+    let mut load = |bytes: &[u8]| {
+        let data = Arc::new(bytes.to_vec());
+        font_system
+            .db_mut()
+            .load_font_source(Source::Binary(data.clone()));
+        fonts.add(Font { data })
+    };
+    let mono_regular = load(include_bytes!("fonts/NotoSansMono-Regular.ttf"));
+    let mono_bold = load(include_bytes!("fonts/NotoSansMono-Bold.ttf"));
+    let _ = FONTS.set(HashMap::from_iter([
+        ((Mono, Regular), mono_regular.clone()),
+        ((Mono, Bold), mono_bold.clone()),
+        ((Mono, Italic), mono_regular),
+        ((Mono, BoldItalic), mono_bold),
+        (
+            (Sans, Regular),
+            load(include_bytes!("fonts/NotoSans-Regular.ttf")),
+        ),
+        (
+            (Sans, Bold),
+            load(include_bytes!("fonts/NotoSans-Bold.ttf")),
+        ),
+        (
+            (Sans, Italic),
+            load(include_bytes!("fonts/NotoSans-Italic.ttf")),
+        ),
+        (
+            (Sans, BoldItalic),
+            load(include_bytes!("fonts/NotoSans-BoldItalic.ttf")),
+        ),
+        (
+            (Serif, Regular),
+            load(include_bytes!("fonts/NotoSerif-Regular.ttf")),
+        ),
+        (
+            (Serif, Bold),
+            load(include_bytes!("fonts/NotoSerif-Bold.ttf")),
+        ),
+        (
+            (Serif, Italic),
+            load(include_bytes!("fonts/NotoSerif-Italic.ttf")),
+        ),
+        (
+            (Serif, BoldItalic),
+            load(include_bytes!("fonts/NotoSerif-BoldItalic.ttf")),
+        ),
+    ]));
+}
+
+pub struct UiCorePlugin;
+
+impl Plugin for UiCorePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(DuiPlugin);
+        app.add_plugins(BoundedNodePlugin);
+        app.add_plugins(UiActionPlugin);
+        app.add_plugins(FocusPlugin);
+        app.add_plugins(InteractStylePlugin);
+        app.add_plugins(InteractSoundsPlugin);
+        app.add_plugins(ScrollablePlugin);
+        app.add_plugins(Ui9SlicePlugin);
+        app.add_plugins(StretchUvsImagePlugin);
+        app.add_plugins(TogglePlugin);
+        app.add_plugins(TextSizePlugin);
+        app.add_plugins(ComboBoxPlugin);
+        app.add_plugins(TextEntryPlugin);
+        app.add_plugins(SpinnerPlugin);
+        app.add_plugins(ColorPickerPlugin);
+        app.init_state::<State>();
+        app.init_resource::<StateTracker<State>>();
+        app.add_systems(Startup, setup.in_set(SetupSets::Init));
+        app.add_systems(
+            Update,
+            StateTracker::<State>::transition_when_finished(State::Ready)
+                .run_if(in_state(State::Loading)),
+        );
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn setup(
+    asset_server: Res<AssetServer>,
+    mut tracker: ResMut<StateTracker<State>>,
+    mut dui: ResMut<DuiRegistry>,
+    mut font_system: ResMut<CosmicFontSystem>,
+    mut fonts: ResMut<Assets<Font>>,
+) {
+    // Load emoji font as fallback for all text rendering
+    font_system
+        .db_mut()
+        .load_font_data(include_bytes!("NotoColorEmoji.ttf").to_vec());
+
+    // tracker.load_asset(asset_server.load_folder("ui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/avatar.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/button.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/change-realm.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/chat.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/combo.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/dialog.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/fullscreen-block.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/login.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/minimap.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/motd.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/nft-dialog.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/oow.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/spinner.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/tracker.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/update.dui"));
+    tracker.load_asset(asset_server.load::<DuiNodeList>("embedded://ui/utils.dui"));
+
+    // tracker.load_asset(asset_server.load_folder("embedded://images"));
+
+    dui.register_template("button", DuiButtonTemplate);
+    dui.register_template("button-set", DuiButtonSetTemplate);
+    dui.register_template("tab-group", DuiTabGroupTemplate);
+
+    init_fonts(&mut fonts, &mut font_system);
+
+    TITLE_TEXT_STYLE
+        .set((
+            TextFont {
+                font: user_font(FontName::Sans, WeightName::Bold),
+                font_size: 35.0 / 1.3,
+                ..Default::default()
+            },
+            TextColor(Color::BLACK),
+        ))
+        .unwrap();
+    BODY_TEXT_STYLE
+        .set((
+            TextFont {
+                font: user_font(FontName::Sans, WeightName::Regular),
+                font_size: 25.0 / 1.3,
+                ..Default::default()
+            },
+            TextColor(Color::BLACK),
+        ))
+        .unwrap();
+    HOVER_TEXT_STYLE
+        .set(
+            (0..10)
+                .map(|i| {
+                    (
+                        TextFont {
+                            font: user_font(FontName::Sans, WeightName::Bold),
+                            font_size: 25.0 / 1.3,
+                            ..Default::default()
+                        },
+                        TextColor(Color::srgba(1.0, 1.0, 1.0, i as f32 / 9.0)),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .try_into()
+                .unwrap(),
+        )
+        .unwrap();
+}
+
+#[derive(States, Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum State {
+    #[default]
+    Loading,
+    Ready,
+}
+
+// state tracker, allows running several systems until completed, then switching to a new state
+#[derive(Resource, Default)]
+pub struct StateTracker<S: States + FreelyMutableState> {
+    assets: HashSet<UntypedHandle>,
+    systems: HashMap<&'static str, bool>,
+    _p: PhantomData<fn() -> S>,
+}
+
+impl<S: States + FreelyMutableState> StateTracker<S> {
+    pub fn load_asset<A: Asset>(&mut self, h: Handle<A>) {
+        self.assets.insert(h.untyped());
+    }
+
+    // run the system every tick until it returns false
+    pub fn run_while<M, F: IntoSystem<(), bool, M>>(f: F) -> ScheduleConfigs<ScheduleSystem> {
+        let update_cond = move |In(retain): In<bool>, mut slf: ResMut<Self>| {
+            slf.systems.insert(type_name::<F>(), !retain);
+        };
+
+        let check_cond = |slf: Res<Self>| {
+            !slf.systems
+                .get(type_name::<F>())
+                .copied()
+                .unwrap_or_default()
+        };
+
+        f.pipe(update_cond).run_if(check_cond)
+    }
+
+    // transition when all assets are loaded and all systems are finished
+    pub fn transition_when_finished(next: S) -> ScheduleConfigs<ScheduleSystem> {
+        let system = move |slf: Res<StateTracker<S>>,
+                           asset_server: Res<AssetServer>,
+                           mut next_state: ResMut<NextState<S>>| {
+            if slf.assets.iter().all(|a| {
+                matches!(
+                    asset_server.get_load_states(a.id()),
+                    Some((
+                        LoadState::Loaded,
+                        DependencyLoadState::Loaded,
+                        RecursiveDependencyLoadState::Loaded,
+                    ))
+                )
+            }) && slf.systems.values().all(|v| *v)
+            {
+                next_state.set(next.clone())
+            }
+        };
+
+        system.into_configs()
+    }
+}

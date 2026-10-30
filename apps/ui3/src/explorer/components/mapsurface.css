@@ -1,0 +1,26 @@
+/* The layers MapSurface draws inside a square positioned by its owner. */
+.map__grid {
+  position: absolute; inset: -10%; z-index: -1;
+  background-color: var(--map-base, var(--ui-raised, #25232b));
+  background-image:
+    linear-gradient(rgba(255, 255, 255, .05) 2px, transparent 2px),
+    linear-gradient(90deg, rgba(255, 255, 255, .05) 2px, transparent 2px);
+  background-size: 26px 26px, 26px 26px;
+}
+.map__roads {
+  position: absolute; inset: 0; z-index: -1; pointer-events: none; opacity: .5;
+  background-image:
+    linear-gradient(rgba(110, 120, 170, .22) 4px, transparent 4px),
+    linear-gradient(90deg, rgba(110, 120, 170, .22) 4px, transparent 4px);
+  background-size: 168px 168px, 168px 168px;
+  background-position: 0 24px, 24px 0;
+}
+.map__atlas {
+  /* The renderer puts the CENTER of the center parcel at the image's middle pixel,
+     so with center=-1,0 the 340-parcel image is half a parcel right of and below
+     parcelRectPercent's grid (measured against /v2/tiles: best fit at +3px of 6 on
+     both axes, 2026-09-23). Half a parcel of the square is 100% / 680. */
+  position: absolute; top: calc(-100% / 680); left: calc(-100% / 680); width: 100%; height: 100%; z-index: 0;
+  image-rendering: pixelated; pointer-events: none; user-select: none;
+}
+.map__satellite { position: absolute; image-rendering: pixelated; pointer-events: none; }

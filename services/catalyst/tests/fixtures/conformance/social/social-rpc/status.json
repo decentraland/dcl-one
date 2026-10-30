@@ -1,0 +1,25 @@
+{
+  "description": "GET /status on the rpc host (uWS): {version, currentTime, commitHash}. Captured GET https://rpc-social-service-ea.decentraland.org/status -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/status",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*"
+    },
+    "body_json": {
+      "version": "1.13.13",
+      "currentTime": 1793036212127,
+      "commitHash": "fb3dcb80f8cac53485696a5f7c94b720b20ae6c9"
+    }
+  },
+  "captured_from": "https://rpc-social-service-ea.decentraland.org/status",
+  "captured_at": "2026-10-26T17:36:51Z",
+  "volatile_paths": []
+}

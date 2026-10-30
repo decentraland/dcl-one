@@ -1,0 +1,20 @@
+{
+  "description": "A badge asset path that does not exist, under the same asset base. Captured GET https://assets-cdn.decentraland.org/assets/does-not-exist/2d/normal.png -> 404.",
+  "request": {
+    "method": "GET",
+    "path": "/assets/does-not-exist/2d/normal.png",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "text/html; charset=utf-8"
+    },
+    "body_bytes_b64": "PGh0bWw+CjxoZWFkPjx0aXRsZT40MDQgTm90IEZvdW5kPC90aXRsZT48L2hlYWQ+Cjxib2R5Pgo8aDE+NDA0IE5vdCBGb3VuZDwvaDE+Cjx1bD4KPGxpPkNvZGU6IE5vU3VjaEtleTwvbGk+CjxsaT5NZXNzYWdlOiBUaGUgc3BlY2lmaWVkIGtleSBkb2VzIG5vdCBleGlzdC48L2xpPgo8bGk+S2V5OiA0MDQuaHRtbDwvbGk+CjxsaT5SZXF1ZXN0SWQ6IDJINVMwVFJGRDFWR0NBS0c8L2xpPgo8bGk+SG9zdElkOiBiUFdKUGN6Z0FUbGI3bmxNR1prZ1YvTUN6YmJuN3B0ckVvU2FqVndGeFl1ME5QeW1IUDY5ZjJsay85VlRlR1NRNFVHT1llWTU4bW9QWThycUptZndJY3B3MzZJYnFKTmg8L2xpPgo8L3VsPgo8aDM+QW4gRXJyb3IgT2NjdXJyZWQgV2hpbGUgQXR0ZW1wdGluZyB0byBSZXRyaWV2ZSBhIEN1c3RvbSBFcnJvciBEb2N1bWVudDwvaDM+Cjx1bD4KPGxpPkNvZGU6IE5vU3VjaEtleTwvbGk+CjxsaT5NZXNzYWdlOiBUaGUgc3BlY2lmaWVkIGtleSBkb2VzIG5vdCBleGlzdC48L2xpPgo8bGk+S2V5OiA0MDQuaHRtbDwvbGk+CjwvdWw+Cjxoci8+CjwvYm9keT4KPC9odG1sPgo="
+  },
+  "captured_from": "https://assets-cdn.decentraland.org/assets/does-not-exist/2d/normal.png",
+  "captured_at": "2026-09-25T19:24:53Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,391 @@
+diff --git a/src/packet.rs b/src/packet.rs
+index 8169e847..393d3b2e 100644
+--- a/src/packet.rs
++++ b/src/packet.rs
+@@ -119,10 +119,27 @@ impl Packet {
+         Self::new(data, PacketKind::Reliable)
+     }
+ 
++    /// Create a packet that bypasses the sender's unreliable-packet throttle.
++    /// Sequencing, fragmentation and reliable fallback still follow `kind`.
++    #[must_use]
++    pub fn new_unthrottled<P: ToRawPacket>(data: P, kind: PacketKind) -> Self {
++        let packet = Self::new(data, kind);
++        unsafe {
++            (*packet.packet).flags |= crate::ENET_PACKET_FLAG_UNTHROTTLED;
++        }
++        packet
++    }
++
++    /// Whether this packet bypasses the local sender's unreliable-packet throttle.
++    /// This local flag is not transmitted to the receiver.
++    #[must_use]
++    pub fn is_unthrottled(&self) -> bool {
++        unsafe { (*self.packet).flags & crate::ENET_PACKET_FLAG_UNTHROTTLED != 0 }
++    }
+     /// Get this packet's [`PacketKind`].
+     #[must_use]
+     pub fn kind(&self) -> PacketKind {
+-        let flags = unsafe { (*self.packet).flags | !ENET_PACKET_FLAG_SENT };
++        let flags = unsafe { (*self.packet).flags & !ENET_PACKET_FLAG_SENT };
+         let sequenced = flags & ENET_PACKET_FLAG_UNSEQUENCED == 0;
+         if flags & ENET_PACKET_FLAG_RELIABLE != 0 {
+             PacketKind::Reliable
+diff --git a/src/c/event.rs b/src/c/event.rs
+index 5673efd7..1c541556 100644
+--- a/src/c/event.rs
++++ b/src/c/event.rs
+@@ -21,3 +21,5 @@ pub(crate) struct ENetEvent<S: Socket> {
+     pub(crate) data: u32,
+     pub(crate) packet: *mut ENetPacket,
+ }
++
++pub(crate) const ENET_PACKET_FLAG_UNTHROTTLED: ENetPacketFlag = 1 << 5;
+diff --git a/src/c/protocol.rs b/src/c/protocol.rs
+index 704893e8..b2097c68 100644
+--- a/src/c/protocol.rs
++++ b/src/c/protocol.rs
+@@ -2003,6 +2003,8 @@ unsafe fn enet_protocol_check_outgoing_commands<S: Socket>(
+             } else {
+                 if !((*outgoing_command).packet).is_null()
+                     && (*outgoing_command).fragment_offset == 0_i32 as u32
++                    && (*(*outgoing_command).packet).flags & crate::ENET_PACKET_FLAG_UNTHROTTLED
++                        == 0
+                 {
+                     (*peer).packet_throttle_counter = (*peer)
+                         .packet_throttle_counter
+@@ -2011,10 +2013,11 @@ unsafe fn enet_protocol_check_outgoing_commands<S: Socket>(
+                         .packet_throttle_counter
+                         .wrapping_rem(PEER_PACKET_THROTTLE_SCALE as i32 as u32);
+                     if (*peer).packet_throttle_counter > (*peer).packet_throttle {
+-                        let reliable_sequence_number: u16 =
+-                            (*outgoing_command).reliable_sequence_number;
+-                        let unreliable_sequence_number: u16 =
++                        let dropped_packet = (*outgoing_command).packet;
++                        let reliable_sequence_number = (*outgoing_command).reliable_sequence_number;
++                        let unreliable_sequence_number =
+                             (*outgoing_command).unreliable_sequence_number;
++                        let channel_id = (*outgoing_command).command.header.channel_id;
+                         loop {
+                             (*(*outgoing_command).packet).reference_count =
+                                 ((*(*outgoing_command).packet).reference_count).wrapping_sub(1);
+@@ -2032,10 +2035,12 @@ unsafe fn enet_protocol_check_outgoing_commands<S: Socket>(
+                                 break;
+                             }
+                             outgoing_command = current_command.cast();
+-                            if (*outgoing_command).reliable_sequence_number as i32
+-                                != reliable_sequence_number as i32
+-                                || (*outgoing_command).unreliable_sequence_number as i32
+-                                    != unreliable_sequence_number as i32
++                            if (*outgoing_command).packet != dropped_packet
++                                || (*outgoing_command).reliable_sequence_number
++                                    != reliable_sequence_number
++                                || (*outgoing_command).unreliable_sequence_number
++                                    != unreliable_sequence_number
++                                || (*outgoing_command).command.header.channel_id != channel_id
+                             {
+                                 break;
+                             }
+diff --git a/src/test.rs b/src/test.rs
+index 8f825688..068c4d95 100644
+--- a/src/test.rs
++++ b/src/test.rs
+@@ -187,3 +187,278 @@ fn timeout() {
+     assert_eq!(events.len(), 1);
+     assert!(events[0].is_disconnect_and(|event| event.from == 1));
+ }
++
++#[test]
++fn packet_kind_preserves_all_construction_kinds() {
++    for kind in [
++        enet::PacketKind::Reliable,
++        enet::PacketKind::Unreliable { sequenced: true },
++        enet::PacketKind::Unreliable { sequenced: false },
++        enet::PacketKind::AlwaysUnreliable { sequenced: true },
++        enet::PacketKind::AlwaysUnreliable { sequenced: false },
++    ] {
++        assert_eq!(enet::Packet::new(vec![1], kind).kind(), kind);
++    }
++}
++
++#[test]
++fn per_packet_unthrottled_preserves_control_lane() {
++    let mut network = Network::new();
++    let a = network.create_host(enet::HostSettings {
++        peer_limit: 1,
++        channel_limit: 3,
++        ..Default::default()
++    });
++    let b = network.create_host(enet::HostSettings {
++        peer_limit: 1,
++        channel_limit: 3,
++        ..Default::default()
++    });
++    network.connect(a, b, 3, 0);
++    network.update(3);
++    let kind = enet::PacketKind::Unreliable { sequenced: true };
++    network.force_throttle(a, b, 0);
++    for id in 0..8u8 {
++        network.send(a, b, 1, &enet::Packet::new(vec![0, id], kind));
++        let bypass = enet::Packet::new_unthrottled(vec![1, id], kind);
++        assert!(bypass.is_unthrottled());
++        assert_eq!(bypass.kind(), kind);
++        network.send(a, b, 1, &bypass);
++    }
++    let events = network.update(3);
++    let received: std::vec::Vec<_> = events.iter().filter(|e| e.is_receive()).collect();
++    assert_eq!(
++        received.len(),
++        8,
++        "only eight bypass packets survive zero throttle"
++    );
++    for (id, event) in received.iter().enumerate() {
++        assert!(event.is_receive_and(|e| e.packet.data() == [1, id as u8]
++            && e.channel_id == 1
++            && e.packet.kind() == kind));
++    }
++    network.force_throttle(a, b, enet::consts::PEER_PACKET_THROTTLE_SCALE);
++    for id in 0..8u8 {
++        network.send(a, b, 1, &enet::Packet::new(vec![2, id], kind));
++    }
++    assert_eq!(
++        network.update(3).iter().filter(|e| e.is_receive()).count(),
++        8
++    );
++    network.force_throttle(a, b, 0);
++    // Ordinary oversized unreliable packets still take ENet's reliable fallback.
++    network.send(a, b, 1, &enet::Packet::new(vec![3; 4096], kind));
++    network.send(a, b, 1, &enet::Packet::new_unthrottled(vec![4; 4096], kind));
++    network.send(a, b, 0, &enet::Packet::reliable(vec![5]));
++    let events = network.update(50);
++    assert_eq!(events.iter().filter(|e| e.is_receive()).count(), 3);
++    assert!(events.iter().any(|e| e.is_receive_and(
++        |e| e.packet.data() == [3; 4096] && e.packet.kind() == enet::PacketKind::Reliable
++    )));
++    assert!(events.iter().any(|e| e.is_receive_and(
++        |e| e.packet.data() == [4; 4096] && e.packet.kind() == enet::PacketKind::Reliable
++    )));
++    let kind = enet::PacketKind::AlwaysUnreliable { sequenced: true };
++    network.send(a, b, 1, &enet::Packet::new_unthrottled(vec![6; 4096], kind));
++    assert!(network
++        .update(5)
++        .iter()
++        .any(|e| e.is_receive_and(|e| e.packet.data() == [6; 4096] && e.packet.kind() == kind)));
++    network.disconnect_later(a, b, 16);
++    assert!(network
++        .update(10)
++        .iter()
++        .any(|e| e.is_disconnect_and(|e| e.data == 16)));
++}
++
++#[test]
++fn throttle_drop_does_not_consume_next_packet_on_other_channel() {
++    for sequenced in [false, true] {
++        let mut network = Network::new();
++        let a = network.create_host(enet::HostSettings {
++            peer_limit: 1,
++            channel_limit: 3,
++            ..Default::default()
++        });
++        let b = network.create_host(enet::HostSettings {
++            peer_limit: 1,
++            channel_limit: 3,
++            ..Default::default()
++        });
++        network.connect(a, b, 3, 0);
++        network.update(3);
++        network.force_throttle(a, b, 0);
++        let kind = enet::PacketKind::Unreliable { sequenced };
++        network.send(a, b, 0, &enet::Packet::new(vec![0], kind));
++        network.send(
++            a,
++            b,
++            if sequenced { 1 } else { 0 },
++            &enet::Packet::new_unthrottled(vec![1], kind),
++        );
++        let events = network.update(3);
++        assert_eq!(
++            events.iter().filter(|e| e.is_receive()).count(),
++            1,
++            "bypass survives preceding drop, sequenced={sequenced}"
++        );
++        assert!(events.iter().any(|e| e.is_receive_and(|e| e.channel_id
++            == if sequenced { 1 } else { 0 }
++            && e.packet.data() == [1])));
++    }
++}
++
++#[test]
++#[ignore = "requires pinned native C# probe; set PULSE_NATIVE_PROBE and PULSE_NATIVE_TRACE"]
++fn native_csharp_all_lanes_and_controlled_sender_throttle() {
++    let Some(probe) = std::env::var_os("PULSE_NATIVE_PROBE") else {
++        panic!("set PULSE_NATIVE_PROBE to built NativeProbe.dll");
++    };
++    let trace = std::env::var("PULSE_NATIVE_TRACE").expect("set PULSE_NATIVE_TRACE");
++    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
++    let port = socket.local_addr().unwrap().port();
++    let mut host = enet::Host::new(
++        socket,
++        enet::HostSettings {
++            peer_limit: 1,
++            channel_limit: 3,
++            ..Default::default()
++        },
++    )
++    .unwrap();
++    let mut child = std::process::Command::new("dotnet")
++        .arg(probe)
++        .arg(std::format!("{port}"))
++        .arg(&trace)
++        .spawn()
++        .unwrap();
++    let started = std::time::Instant::now();
++    let mut received = [false; 3];
++    let mut sent = false;
++    while started.elapsed() < std::time::Duration::from_secs(15) {
++        if let Some(event) = host.service().unwrap() {
++            match event {
++                enet::Event::Receive {
++                    channel_id, packet, ..
++                } => {
++                    assert_eq!(packet.data()[0], 10 + channel_id);
++                    assert_eq!(packet.data().len(), if channel_id == 0 { 4096 } else { 32 });
++                    received[channel_id as usize] = true;
++                    std::println!(
++                        "native->rust channel={channel_id} length={} kind={:?}",
++                        packet.data().len(),
++                        packet.kind()
++                    );
++                }
++                _ => {}
++            }
++        }
++        if !sent && received.iter().all(|v| *v) {
++            let peer = host.peer_mut(enet::PeerID(0));
++            unsafe {
++                (*peer.0).packet_throttle = 0;
++                (*peer.0).packet_throttle_limit = 0;
++                (*peer.0).packet_throttle_counter = 0;
++            }
++            peer.send(0, &enet::Packet::unreliable(vec![99])).unwrap();
++            for id in 100..108u8 {
++                peer.send(
++                    1,
++                    &enet::Packet::new_unthrottled(
++                        vec![id],
++                        enet::PacketKind::Unreliable { sequenced: true },
++                    ),
++                )
++                .unwrap();
++            }
++            host.flush();
++            let peer = host.peer_mut(enet::PeerID(0));
++            unsafe {
++                (*peer.0).packet_throttle = 32;
++                (*peer.0).packet_throttle_limit = 32;
++            }
++            for channel in 0..3 {
++                let kind = match channel {
++                    0 => enet::PacketKind::Reliable,
++                    1 => enet::PacketKind::Unreliable { sequenced: true },
++                    _ => enet::PacketKind::Unreliable { sequenced: false },
++                };
++                peer.send(
++                    channel,
++                    &enet::Packet::new(
++                        vec![10 + channel; if channel == 0 { 4096 } else { 32 }],
++                        kind,
++                    ),
++                )
++                .unwrap();
++                peer.send(channel, &enet::Packet::new(vec![110 + channel], kind))
++                    .unwrap();
++            }
++            peer.disconnect_later(16);
++            sent = true;
++        }
++        if let Some(status) = child.try_wait().unwrap() {
++            std::println!("native trace: {}", std::fs::read_to_string(&trace).unwrap());
++            assert!(received.iter().all(|v| *v));
++            assert!(status.success(), "native probe failed {status}");
++            return;
++        }
++        std::thread::sleep(std::time::Duration::from_millis(1));
++    }
++    child.kill().unwrap();
++    panic!("native probe timeout");
++}
++
++#[test]
++fn ordinary_unreliable_fragment_group_drops_without_consuming_bypass_group() {
++    let mut network = Network::new();
++    let a = network.create_host(enet::HostSettings {
++        peer_limit: 1,
++        channel_limit: 3,
++        ..Default::default()
++    });
++    let b = network.create_host(enet::HostSettings {
++        peer_limit: 1,
++        channel_limit: 3,
++        ..Default::default()
++    });
++    network.connect(a, b, 3, 0);
++    network.update(3);
++    network.force_throttle(a, b, 0);
++    let kind = enet::PacketKind::AlwaysUnreliable { sequenced: true };
++    network.send(a, b, 0, &enet::Packet::new(vec![0; 4096], kind));
++    network.send(a, b, 1, &enet::Packet::new_unthrottled(vec![1; 4096], kind));
++    let events = network.update(20);
++    assert_eq!(events.iter().filter(|e| e.is_receive()).count(), 1);
++    assert!(events
++        .iter()
++        .any(|e| e.is_receive_and(|e| e.packet.data() == [1; 4096] && e.channel_id == 1)));
++}
++
++#[test]
++fn repeated_packet_sends_keep_independent_throttle_decisions() {
++    let mut network = Network::new();
++    let a = network.create_host(enet::HostSettings {
++        peer_limit: 1,
++        channel_limit: 3,
++        ..Default::default()
++    });
++    let b = network.create_host(enet::HostSettings {
++        peer_limit: 1,
++        channel_limit: 3,
++        ..Default::default()
++    });
++    network.connect(a, b, 3, 0);
++    network.update(3);
++    network.force_throttle(a, b, 0);
++    let packet = enet::Packet::unreliable(vec![9]);
++    for _ in 0..32 {
++        network.send(a, b, 1, &packet.clone());
++    }
++    let events = network.update(5);
++    assert_eq!(
++        events.iter().filter(|e| e.is_receive()).count(),
++        1,
++        "counter wrap preserves one ordinary repeated send"
++    );
++}
+diff --git a/src/test/network.rs b/src/test/network.rs
+index 1b5c51c6..a33db547 100644
+--- a/src/test/network.rs
++++ b/src/test/network.rs
+@@ -416,3 +416,15 @@ impl Event {
+         }
+     }
+ }
++
++impl Network {
++    pub fn force_throttle(&mut self, from: usize, to: usize, throttle: u32) {
++        let id = self.resolve_peer(from, to);
++        let peer = self.hosts[from].peer_mut(id);
++        unsafe {
++            (*peer.0).packet_throttle = throttle;
++            (*peer.0).packet_throttle_limit = throttle;
++            (*peer.0).packet_throttle_counter = 0;
++        }
++    }
++}

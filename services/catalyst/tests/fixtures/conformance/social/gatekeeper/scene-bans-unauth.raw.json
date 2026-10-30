@@ -1,0 +1,28 @@
+{
+  "method": "GET",
+  "url": "https://comms-gatekeeper.decentraland.org/scene-bans?limit=20&offset=0",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 400,
+  "status_text": "Bad Request",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c68da0d07d933-TXL",
+    "connection": "keep-alive",
+    "content-length": "43",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:31 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "traceparent": "0-21371e4296761455df018fb4b056edce-0000000000000000-0",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:31Z",
+  "elapsed_ms": 143,
+  "body_bytes": 43,
+  "body_file": "scene-bans-unauth.raw.body",
+  "redacted": false
+}

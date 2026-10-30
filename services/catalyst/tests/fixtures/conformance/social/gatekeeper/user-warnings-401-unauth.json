@@ -1,0 +1,22 @@
+{
+  "description": "GET /users/{address}/warnings without an auth chain (moderator read). Captured GET https://comms-gatekeeper.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "You are not authorized to access this resource"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings",
+  "captured_at": "2026-09-25T19:24:33Z",
+  "volatile_paths": []
+}

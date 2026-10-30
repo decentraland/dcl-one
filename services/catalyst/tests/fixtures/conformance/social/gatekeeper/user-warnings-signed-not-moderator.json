@@ -1,0 +1,27 @@
+{
+  "description": "GET /users/{address}/warnings signed by a wallet without the moderator role. Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://comms-gatekeeper.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings:1790364274050:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0xb80e1eddbf2a9babd5c84e325043deecdf8481b1f5e83e7dff2c292635cb7f7033114392c5f28aebf669719a017df63ab0f5ffdf1f1c00cf71db89210d26c32a1b\"}",
+      "x-identity-timestamp": "1790364274050",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "You are not authorized to access this resource"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings",
+  "captured_at": "2026-09-25T19:24:34Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,23 @@
+{
+  "description": "GET /scene-stream-access without an auth chain. Captured GET https://comms-gatekeeper.decentraland.org/scene-stream-access -> 400.",
+  "request": {
+    "method": "GET",
+    "path": "/scene-stream-access",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "ok": false,
+      "message": "Invalid Auth Chain"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/scene-stream-access",
+  "captured_at": "2026-09-25T19:24:33Z",
+  "volatile_paths": []
+}

@@ -1,0 +1,449 @@
+{
+  "about": "POST /credits/authorize/cancel (release reserved credits by salt) and POST /credits/authorize/submitted (stamp the tx a group was submitted in). Salts and tx hashes are bytes32; only the authenticated wallet's rows move.",
+  "routes": [
+    {
+      "method": "POST",
+      "path": "/credits/authorize/cancel",
+      "pipeline": "signedFetchMiddleware, cancelRateLimit, cancelUsdIntentsHandler",
+      "source": "src/controllers/routes.ts:305"
+    },
+    {
+      "method": "POST",
+      "path": "/credits/authorize/submitted",
+      "pipeline": "signedFetchMiddleware, recordIntentSubmissionHandler",
+      "source": "src/controllers/routes.ts:314"
+    }
+  ],
+  "cancel": [
+    {
+      "name": "no auth",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:38-45",
+      "auth": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Invalid or missing signed-fetch authentication"
+        }
+      }
+    },
+    {
+      "name": "salts missing",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:56-63",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {}
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A \"salts\" array with 1 to 100 entries is required",
+          "rule": "status asserted; message from the handler",
+          "source": "src/controllers/handlers/cancel-usd-intents.ts:51"
+        }
+      }
+    },
+    {
+      "name": "salts empty",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:65-72",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": []
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "101 salts",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:74-83",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": {
+            "$repeat": 101,
+            "of": "0x<64 hex>"
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "no string salts",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:85-92",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": [
+            1,
+            2,
+            null
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "no bytes32 salts",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:94-101",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": [
+            "0xsalt1",
+            "nope",
+            "0x1234"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "No valid credit ids in \"salts\"",
+          "rule": "status asserted; message from the handler",
+          "source": "src/controllers/handlers/cancel-usd-intents.ts:56"
+        }
+      }
+    },
+    {
+      "name": "valid salts",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:122-127",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "retired": 2,
+        "spendableAtSeconds": 1800000000
+      },
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "released": 2,
+          "retired": 2,
+          "spendableAtSeconds": 1800000000
+        }
+      }
+    },
+    {
+      "name": "malformed entries dropped",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:129-133",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            42,
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2",
+            null,
+            "0xnope"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "$notAsserted": true
+        }
+      },
+      "effects": {
+        "cancelled": [
+          "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+          "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+        ]
+      }
+    },
+    {
+      "name": "nothing retired",
+      "source": "test/unit/controllers/handlers/cancel-usd-intents.spec.ts:136-145",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "retired": 0,
+        "spendableAtSeconds": null
+      },
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "released": 0,
+          "retired": 0,
+          "spendableAtSeconds": null
+        }
+      }
+    }
+  ],
+  "submitted": [
+    {
+      "name": "no auth",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:48-58",
+      "auth": null,
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Invalid or missing signed-fetch authentication"
+        }
+      }
+    },
+    {
+      "name": "txHash absent",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:71-87",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A \"txHash\" bytes32 hex string is required"
+        }
+      }
+    },
+    {
+      "name": "txHash not a string",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:71-87",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": 12345
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A \"txHash\" bytes32 hex string is required"
+        }
+      }
+    },
+    {
+      "name": "txHash too short",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:71-87",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "0xdeadbeef"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A \"txHash\" bytes32 hex string is required"
+        }
+      }
+    },
+    {
+      "name": "txHash missing the 0x prefix",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:71-87",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A \"txHash\" bytes32 hex string is required"
+        }
+      }
+    },
+    {
+      "name": "txHash not hex",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:71-87",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "0xzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A \"txHash\" bytes32 hex string is required"
+        }
+      }
+    },
+    {
+      "name": "salts absent",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:89-100",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "salts not an array",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:89-100",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": "not-an-array",
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "salts empty",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:89-100",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": [],
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "$notAsserted": true
+        }
+      }
+    },
+    {
+      "name": "no bytes32 salts",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:113-123",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "salts": [
+            "nope",
+            "0x1234"
+          ],
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "No valid credit ids in \"salts\""
+        }
+      }
+    },
+    {
+      "name": "valid",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:134-142",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "recorded": 2
+      },
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "recorded": 2
+        }
+      },
+      "effects": {
+        "stampedFor": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd"
+      }
+    },
+    {
+      "name": "no rows of the caller",
+      "source": "test/unit/controllers/handlers/record-intent-submission.spec.ts:158-165",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "recorded": 0
+      },
+      "request": {
+        "body": {
+          "salts": [
+            "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "0xb2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2"
+          ],
+          "txHash": "0xd4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "recorded": 0
+        }
+      }
+    }
+  ]
+}

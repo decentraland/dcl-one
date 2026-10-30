@@ -1,0 +1,350 @@
+# The bare-metal benchmark of a pull request's web app: on each laptop of the fleet, Chrome runs
+# the PR's web build and main's, interleaved (bevy-explorer-benchmark-leg.yml), and the report goes
+# into the performance section of the PR's CI status comment (.github/actions/bevy-explorer-ci-status).
+# It runs for every PR of this repository whose Bevy Explorer / CI run passes with a web app built,
+# which a PR that changes the explorer's web inputs gets, or by hand for any PR of this repository.
+# tooling/benchmark-inputs.py decides and finds the builds and runners in the CI runs' artifacts.
+#
+# GitHub starts `workflow_run` and `workflow_dispatch` only from the workflow file on the default
+# branch: until this file is on main, no run starts.
+#
+# Repository variables: BENCHMARK_ENABLED_RUNNERS (the laptops that are online, by runner label;
+# empty means all), BENCHMARK_RUNS (measured runs per build, 3 by default) and
+# BENCHMARK_QUEUE_TIMEOUT_MINUTES (60 by default).
+name: Bevy Explorer / Benchmark
+'on':
+  workflow_run:
+    workflows: ['Bevy Explorer / CI']
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Pull request number or URL
+        required: true
+      change_sha:
+        description: Commit of the PR to measure (empty = its head)
+        required: false
+        default: ''
+      base_sha:
+        description: Commit on main to compare with (empty = the newest main build that has each artifact)
+        required: false
+        default: ''
+      runs:
+        description: Measured runs per build, 1 to 3 (empty = BENCHMARK_RUNS, else 3)
+        required: false
+        default: ''
+permissions: {}
+# A newer CI run of the same PR makes a run in progress obsolete, so it cancels it. The PR's group
+# takes only the events setup's condition lets through; the others (a fork's PR, a failed CI run,
+# a CI run of no PR or not started by a pull_request event, such as a manual one on the PR's
+# branch) get the run's own group, so they cancel nothing. A passed CI re-run of an older commit of
+# the PR still joins: it cancels a run in progress, then the resolver skips it. A PR given by URL
+# to a manual run forms a group of its own.
+concurrency:
+  group: >-
+    bevy-explorer-benchmark-${{
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.pull_requests[0].number) ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.pr) ||
+      format('run-{0}', github.run_id) }}
+  cancel-in-progress: true
+jobs:
+  setup:
+    name: Inputs
+    # The laptops run whatever a leg is given, so only this repository's PRs reach them; the
+    # resolver checks the PR's head and the CI run again.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'pull_request' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    outputs:
+      run: ${{ steps.inputs.outputs.run }}
+      pr: ${{ steps.inputs.outputs.pr }}
+      change_sha: ${{ steps.inputs.outputs.change_sha }}
+      base_sha: ${{ steps.inputs.outputs.base_sha }}
+      runs: ${{ steps.inputs.outputs.runs }}
+      legs: ${{ steps.inputs.outputs.legs }}
+      expected_labels: ${{ steps.inputs.outputs.expected_labels }}
+      report_runner_artifact: ${{ steps.inputs.outputs.report_runner_artifact }}
+      report_runner_run_id: ${{ steps.inputs.outputs.report_runner_run_id }}
+      notes: ${{ steps.inputs.outputs.notes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: tooling
+      # The event (CI run, manual inputs) is read from GITHUB_EVENT_PATH.
+      - name: Find the builds and the legs
+        id: inputs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BENCHMARK_ENABLED_RUNNERS: ${{ vars.BENCHMARK_ENABLED_RUNNERS }}
+          BENCHMARK_RUNS: ${{ vars.BENCHMARK_RUNS }}
+        run: python3 tooling/benchmark-inputs.py
+  # A PR whose builds are unfit (an unoptimized web build, no base build, no runner, no laptop)
+  # is told why in the performance section.
+  notice:
+    name: Notice
+    needs: setup
+    if: needs.setup.outputs.run == 'false' && needs.setup.outputs.notes != ''
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Say on the PR why the benchmark did not run
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ needs.setup.outputs.pr }}
+          section: performance
+          github-token: ${{ github.token }}
+          body: |-
+            [![Performance](https://img.shields.io/badge/Performance-Not%20run-lightgrey?logo=speedtest&logoColor=white&style=for-the-badge)](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            The benchmark did not run ([run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})): ${{ needs.setup.outputs.notes }}
+  # The performance section shows the run while the legs measure.
+  running:
+    name: Running
+    needs: setup
+    if: needs.setup.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Describe the run
+        env:
+          PR_NUMBER: ${{ needs.setup.outputs.pr }}
+          CHANGE_SHA: ${{ needs.setup.outputs.change_sha }}
+          BASE_SHA: ${{ needs.setup.outputs.base_sha }}
+          EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}
+          RUNS: ${{ needs.setup.outputs.runs }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          labels=$(sed 's/,/`, `/g' <<< "$EXPECTED_LABELS")
+          {
+            printf '[![Performance](https://img.shields.io/badge/Performance-Running!-yellow?logo=speedtest&logoColor=white&style=for-the-badge)](%s)\n\n' "$RUN_URL"
+            printf 'Benchmarking #%s at `%s` against main at `%s` on `%s`, %s runs per build ([run](%s)). The report lands here.\n' \
+              "$PR_NUMBER" "${CHANGE_SHA:0:7}" "${BASE_SHA:0:7}" "$labels" "$RUNS" "$RUN_URL"
+          } > section.md
+      - name: Set the performance section to running
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ needs.setup.outputs.pr }}
+          section: performance
+          github-token: ${{ github.token }}
+          body-file: section.md
+  # A leg sent to an offline, stuck or busy laptop sits queued for 24 hours with no message;
+  # timeout-minutes only counts once a job starts. The timeout is generous because a laptop busy
+  # with another job is the likeliest cause. It ends when every leg has started, so it has no
+  # timeout of its own.
+  watchdog:
+    name: Queue watchdog
+    needs: setup
+    if: needs.setup.outputs.run == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ needs.setup.outputs.pr }}
+      QUEUE_TIMEOUT_MINUTES: ${{ vars.BENCHMARK_QUEUE_TIMEOUT_MINUTES || 60 }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Wait for every leg to start
+        id: queue
+        run: |
+          deadline=$((SECONDS + 60 * QUEUE_TIMEOUT_MINUTES))
+          queued=''
+          while sleep 60; do
+            if queued=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs?per_page=100" \
+                --jq '[.jobs[] | select(.status == "queued") | .name] | join(", ")'); then
+              [ -z "$queued" ] && exit 0
+            fi
+            [ "$SECONDS" -ge "$deadline" ] && break
+          done
+
+          message="The benchmark [run]($RUN_URL) was cancelled: **${queued:-a leg}** had not started after $QUEUE_TIMEOUT_MINUTES minutes, so the laptop is offline, stuck or busy with another job. When it is free, use *Re-run failed jobs* on the run, which keeps the legs that finished and their results; or raise the BENCHMARK_QUEUE_TIMEOUT_MINUTES variable, or leave the laptop out of the BENCHMARK_ENABLED_RUNNERS variable."
+          echo "$message" >> "$GITHUB_STEP_SUMMARY"
+          {
+            printf '[![Performance](https://img.shields.io/badge/Performance-Cancelled-lightgrey?logo=speedtest&logoColor=white&style=for-the-badge)](%s)\n\n' "$RUN_URL"
+            printf '%s\n' "$message"
+          } > section.md
+          echo "stuck=true" >> "$GITHUB_OUTPUT"
+      - name: Say on the PR that the run was cancelled
+        if: steps.queue.outputs.stuck == 'true'
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ needs.setup.outputs.pr }}
+          section: performance
+          github-token: ${{ github.token }}
+          body-file: section.md
+      - name: Cancel the run
+        if: steps.queue.outputs.stuck == 'true'
+        run: gh run cancel "$GITHUB_RUN_ID"
+  leg:
+    name: ${{ matrix.leg.label }}
+    needs: setup
+    if: needs.setup.outputs.run == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        leg: ${{ fromJSON(needs.setup.outputs.legs) }}
+    permissions:
+      actions: read
+    uses: ./.github/workflows/bevy-explorer-benchmark-leg.yml
+    with:
+      runs_on: ${{ matrix.leg.runs_on }}
+      label: ${{ matrix.leg.label }}
+      runner_artifact: ${{ matrix.leg.runner_artifact }}
+      runner_run_id: ${{ matrix.leg.runner_run_id }}
+      change_artifact: ${{ matrix.leg.change_artifact }}
+      change_run_id: ${{ matrix.leg.change_run_id }}
+      base_artifact: ${{ matrix.leg.base_artifact }}
+      base_run_id: ${{ matrix.leg.base_run_id }}
+      runs: ${{ needs.setup.outputs.runs }}
+  # The report runner may be the PR's own build, so this job has no write permission; the post
+  # job, which runs no downloaded code, comments.
+  gather:
+    name: Report
+    needs: [setup, leg]
+    # !cancelled() still reports failed legs, but not a cancelled run (the watchdog, or a newer CI
+    # run of the PR): a report without data there would replace what the newer run wrote.
+    if: ${{ !cancelled() && needs.setup.outputs.run == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+    outputs:
+      status: ${{ steps.report.outputs.status }}
+    steps:
+      - name: Download the leg results
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: benchmark-result-*
+          path: results
+      - name: Download the report runner
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.setup.outputs.report_runner_artifact }}
+          path: runner
+          run-id: ${{ needs.setup.outputs.report_runner_run_id }}
+          github-token: ${{ github.token }}
+      # Exit 2 is a report with no data; it is posted, then fails the post job. Notes name the
+      # laptops that had no runner.
+      - name: Write the report
+        id: report
+        env:
+          PR_NUMBER: ${{ needs.setup.outputs.pr }}
+          CHANGE_DESCRIPTION: '#${{ needs.setup.outputs.pr }} at ${{ needs.setup.outputs.change_sha }}'
+          BASE_DESCRIPTION: main at ${{ needs.setup.outputs.base_sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          EXPECTED_RUNS: ${{ needs.setup.outputs.runs }}
+          EXPECTED_LABELS: ${{ needs.setup.outputs.expected_labels }}
+          NOTES: ${{ needs.setup.outputs.notes }}
+        run: |
+          chmod +x runner/benchmark
+          mkdir -p results
+          status=0
+          runner/benchmark report results --out report.md || status=$?
+          if [ "$status" -ne 0 ] && [ "$status" -ne 2 ]; then
+            echo "::error::benchmark report exited $status"
+            exit "$status"
+          fi
+          if [ -n "$NOTES" ]; then printf '\n%s\n' "$NOTES" >> report.md; fi
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Upload the report
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: benchmark-report
+          path: report.md
+          overwrite: true
+          retention-days: 7
+  # Runs nothing it downloads: it only reads report.md, and checks out only the comment action.
+  post:
+    name: Post
+    needs: [setup, gather]
+    # Not after a cancelled run, as for the report job.
+    if: ${{ !cancelled() && needs.gather.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      - name: Download the report
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: benchmark-report
+          path: report
+      # The badge reads the report's Overall line; a report without data (exit 2) says so.
+      - name: Put the badge above the report
+        env:
+          STATUS: ${{ needs.gather.outputs.status }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ "$STATUS" = 2 ]; then badge='Performance-No%20data-ff0000'
+          elif grep -q '^\*\*Overall: 🔴' report/report.md; then badge='Performance-Regression-ff0000'
+          elif grep -q '^\*\*Overall: 🟢' report/report.md; then badge='Performance-Improved-3fb950'
+          elif grep -q '^\*\*Overall: ✅' report/report.md; then badge='Performance-No%20change-3fb950'
+          else badge='Performance-Not%20compared-d29922'
+          fi
+          {
+            printf '[![Performance](https://img.shields.io/badge/%s?logo=speedtest&logoColor=white&style=for-the-badge)](%s)\n\n' "$badge" "$RUN_URL"
+            cat report/report.md
+          } > section.md
+      # The action truncates a section over its cap with a note; the full report stays in the
+      # report job's summary and the benchmark-report artifact. A write it cannot confirm warns.
+      - name: Post the report
+        uses: ./.github/actions/bevy-explorer-ci-status
+        with:
+          pr-number: ${{ needs.setup.outputs.pr }}
+          section: performance
+          github-token: ${{ github.token }}
+          body-file: section.md
+      - name: Fail when no leg produced data
+        if: needs.gather.outputs.status == '2'
+        run: |
+          echo "::error::No leg produced data; the report says why"
+          exit 1

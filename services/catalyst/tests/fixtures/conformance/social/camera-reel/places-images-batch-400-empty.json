@@ -1,0 +1,26 @@
+{
+  "description": "POST /api/places/images with no place ids. Captured POST https://camera-reel-service.decentraland.org/api/places/images -> 400.",
+  "request": {
+    "method": "POST",
+    "path": "/api/places/images",
+    "query": {},
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body": {
+      "placesIds": []
+    }
+  },
+  "response": {
+    "status": 400,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "message": "no place IDs provided"
+    }
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/places/images",
+  "captured_at": "2026-09-25T19:25:07Z",
+  "volatile_paths": []
+}

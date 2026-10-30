@@ -1,0 +1,54 @@
+[package]
+name = "system_ui"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+[features]
+inspect = []
+livekit = ["comms/livekit"]
+
+[dependencies]
+common = { workspace = true }
+comms = { workspace = true }
+dcl_types = { workspace = true }
+dcl_component = { workspace = true }
+scene_runner = { workspace = true }
+ipfs = { workspace = true }
+ui_core = { workspace = true }
+avatar = { workspace = true }
+input_manager = { workspace = true }
+wallet = { workspace = true }
+collectibles = { workspace = true }
+tween = { workspace = true }
+console = { workspace = true }
+scene_material = { workspace = true }
+world_ui = { workspace = true }
+analytics = { workspace = true }
+social = { workspace = true }
+system_bridge = { workspace = true }
+platform = { workspace = true }
+
+bevy = { workspace = true }
+bevy_dui = { workspace = true }
+bevy_console = { workspace = true }
+alloy-core = { workspace = true }
+alloy-signer = { workspace = true }
+alloy-signer-local = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+base64 = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+async-std = { workspace = true }
+chrono = { workspace = true }
+clap = { workspace = true }
+build-time = { workspace = true }
+futures-lite = { workspace = true }
+web-time = { workspace = true }
+copypwasmta = { workspace = true }
+
+shlex = "1"

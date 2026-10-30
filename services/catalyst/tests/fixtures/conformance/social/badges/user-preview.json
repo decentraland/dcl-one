@@ -1,0 +1,41 @@
+{
+  "description": "GET /users/{address}/preview for the corpus address: the latest achieved badges. Captured GET https://badges.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/preview -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/preview",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "latestAchievedBadges": [
+          {
+            "id": "profile_pro",
+            "name": "Profile Pro",
+            "image": "https://assets-cdn.decentraland.org/profile_pro/2d/normal.png"
+          },
+          {
+            "id": "traveler",
+            "name": "Traveler",
+            "tierName": "Starter",
+            "image": "https://assets-cdn.decentraland.org/traveler/starter/2d/normal.png"
+          },
+          {
+            "id": "dclcitizen",
+            "name": "Decentraland Citizen",
+            "image": "https://assets-cdn.decentraland.org/dclcitizen/2d/normal.png"
+          }
+        ]
+      }
+    }
+  },
+  "captured_from": "https://badges.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/preview",
+  "captured_at": "2026-09-25T19:24:49Z",
+  "volatile_paths": []
+}

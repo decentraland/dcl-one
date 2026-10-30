@@ -1,0 +1,51 @@
+.ds {
+  padding: var(--ui-page-pad);
+  color: var(--text);
+  max-width: none;
+  margin: 0 auto;
+}
+
+.ds__headside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.ds__stamp {
+  margin: 0;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-45);
+}
+
+.ds__disclosure {
+  margin: 0 0 18px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--r-control);
+  background: var(--ui-panel);
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-7);
+}
+
+.ds__filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.ds__filtercount {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.ds__none {
+  margin: 0 0 24px;
+  font-size: 13px;
+  color: var(--ink-45);
+}
+
+@media (max-width: 600px) { .ds__headside { align-items: flex-start; } }

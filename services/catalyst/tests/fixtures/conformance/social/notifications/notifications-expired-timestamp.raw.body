@@ -1,0 +1,1 @@
+{"error":"Expired signature: signature timestamp: 0, timestamp expiration: 300000, local timestamp: 1790364282379","message":"This endpoint requires a signed fetch request. See ADR-44."}

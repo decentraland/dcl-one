@@ -1,0 +1,1513 @@
+use std::{collections::VecDeque, marker::PhantomData, time::Duration};
+
+use dcl_types::TryRecvError;
+use system_bridge::SystemApi;
+use web_time::SystemTime;
+
+use bevy::{
+    diagnostic::FrameCount,
+    ecs::{query::Has, schedule::ScheduleLabel, system::SystemParam},
+    math::{FloatOrd, Vec3A, Vec3Swizzles},
+    platform::collections::{HashMap, HashSet},
+    prelude::*,
+    scene::scene_spawner_system,
+    time::common_conditions::on_real_timer,
+    window::PrimaryWindow,
+    winit::WinitWindows,
+};
+
+use common::{
+    rpc::{RpcCall, RpcCallEvent, RpcOrigin},
+    sets::{SceneLoopSets, SceneSets},
+    structs::{
+        AppConfig, AppError, CurrentRealm, DebugInfo, EditorMode, NoRenderApp, PreviewMode,
+        PrimaryCamera, PrimaryUser, SessionGraphics, TimeOfDay,
+    },
+    util::{dcl_assert, TryPushChildrenEx},
+};
+use comms::{global_crdt::GlobalCrdtState, SceneRoomConnection, SetCurrentScene};
+use dcl_component::{
+    proto_components::{
+        common::BorderRect,
+        sdk::components::{PbEngineInfo, PbRealmInfo, PbUiCanvasInformation},
+    },
+    transform_and_parent::DclTransformAndParent,
+    DclReader, DclWriter, SceneComponentId, SceneEntityId,
+};
+use dcl_types::{
+    interface::CrdtType, scene_response_channel, RendererResponse, SceneCensus, SceneId,
+    SceneLogLevel, SceneLogMessage, SceneResponse, SceneResponseReceiver,
+    TaggedSceneResponseSender,
+};
+use initialize_scene::{PortableScenes, TestingData};
+use ipfs::SceneIpfsLocation;
+use primary_entities::PrimaryEntities;
+#[cfg(not(target_arch = "wasm32"))]
+use spin_sleep::SpinSleeper;
+use ui_core::ui_actions::{Click, On};
+use update_world::lights::LightsPlugin;
+use util::SceneUtilPlugin;
+
+use web_time::Instant;
+
+use crate::{asset_preload::plugin::AssetPreloadPlugin, initialize_scene::SuperUserScene};
+
+use self::{
+    initialize_scene::{
+        LiveScenes, PointerResult, SceneLifecyclePlugin, SceneLoading, ScenePointers, PARCEL_SIZE,
+    },
+    renderer_context::{RendererSceneContext, SceneState},
+    update_scene::SceneInputPlugin,
+    update_world::{CrdtExtractors, SceneOutputPlugin},
+};
+use dcl_component::ComponentNameRegistry;
+
+mod asset_preload;
+pub mod automatic_testing;
+/// Region decomposition, in `common` so `comms` can reach it too; re-exported here because this is
+/// where it has always lived for callers.
+pub use common::bounds_calc;
+pub mod gltf_resolver;
+pub mod initialize_scene;
+pub mod permissions;
+pub mod primary_entities;
+pub mod renderer_context;
+#[cfg(test)]
+pub mod test;
+pub mod update_scene;
+pub mod update_world;
+pub mod util;
+
+// bookkeeping struct for javascript execution of scenes
+#[derive(Resource)]
+pub struct SceneUpdates {
+    pub sender: TaggedSceneResponseSender,
+    receiver: SceneResponseReceiver,
+    pub jobs_in_flight: HashSet<Entity>,
+    pub update_deadline: SystemTime,
+    pub eligible_jobs: usize,
+    pub loop_end_time: Instant,
+    pub scene_queue: VecDeque<(Entity, FloatOrd)>,
+    /// Engine frames since startup (one per `update_scene_priority` run).
+    pub frames: u64,
+    /// Scene-frames lost because the scene's previous job was still in flight when
+    /// the eligible queue was snapshotted, so it could not be dispatched this frame.
+    pub skipped_in_flight: u64,
+    /// Scene-frames lost because the scene had already been dispatched this frame.
+    pub skipped_already_sent: u64,
+    /// Named scene entities that must be scheduled every frame (e.g. the
+    /// movement controller). These scenes bypass the `scene_threads` limit
+    /// but still occupy slots, preventing non-priority scenes from running.
+    pub priority_scenes: HashMap<&'static str, Entity>,
+}
+
+// safety: struct is sync except for the receiver.
+// receiver is only accessible via &mut handle
+unsafe impl Sync for SceneUpdates {}
+unsafe impl Send for SceneUpdates {}
+
+impl SceneUpdates {
+    pub fn receiver(&mut self) -> &mut SceneResponseReceiver {
+        &mut self.receiver
+    }
+}
+
+#[derive(Debug)]
+pub struct SceneThreadHandle {
+    pub sender: tokio::sync::mpsc::UnboundedSender<RendererResponse>,
+    // never sent on; dropping it with the handle is the kill signal the scene host
+    // listens for. None on native, where the sender drop itself crosses the IPC
+    // boundary and triggers the kill.
+    pub kill_guard: Option<tokio::sync::oneshot::Sender<()>>,
+}
+
+/// Emitted by [`receive_scene_updates`] when the scene thread responds to a
+/// [`RendererResponse::GetCrdtSnapshot`] request.
+#[derive(Event)]
+pub struct CrdtSnapshotEvent {
+    pub scene_entity: Entity,
+    pub crdt: dcl_types::interface::CrdtStore,
+}
+
+/// Carries the response to a [`RendererResponse::AllocateEntity`] request: one result per requested
+/// slot (`Ok(id)` instantiated, `Err` couldn't be allocated).
+#[derive(Event)]
+pub struct EntityAllocatedEvent {
+    pub scene_entity: Entity,
+    pub results: Vec<Result<dcl_component::SceneEntityId, dcl_types::AllocError>>,
+}
+
+// event which can be sent from anywhere to trigger replacing the current scene with the one specified
+#[derive(Event)]
+pub struct LoadSceneEvent {
+    pub entity: Option<Entity>,
+    pub location: SceneIpfsLocation,
+    pub super_user: bool,
+}
+
+// this component is present on the bevy entity which maps to a scene entity explicitly
+#[derive(Component, Debug, Clone)]
+pub struct SceneEntity {
+    pub root: Entity,
+    pub scene_id: SceneId,
+    pub id: SceneEntityId,
+}
+
+// this component is present on bevy entities which either
+// - map to a scene entity
+// - are owned by a scene entity
+#[derive(Component, Debug, Clone, Copy)]
+pub struct ContainerEntity {
+    pub container: Entity,
+    pub root: Entity,
+    pub container_id: SceneEntityId,
+}
+
+// resource for adding toasts
+#[derive(Resource, Default)]
+pub struct Toasts(pub HashMap<String, Toast>);
+
+#[derive(SystemParam)]
+pub struct Toaster<'w, 's> {
+    toasts: ResMut<'w, Toasts>,
+    time: Res<'w, Time>,
+    _p: PhantomData<&'s ()>,
+}
+
+impl Toaster<'_, '_> {
+    pub fn do_add_toast(
+        &mut self,
+        key: impl Into<String>,
+        message: impl Into<String>,
+        on_click: Option<On<Click>>,
+    ) {
+        let key = key.into();
+        let message = message.into();
+        if let Some(existing) = self.toasts.0.get_mut(&key) {
+            if existing.message == message {
+                existing.last_update = self.time.elapsed_secs_f64();
+                return;
+            }
+        }
+
+        self.toasts.0.insert(
+            key,
+            Toast {
+                message,
+                time: self.time.elapsed_secs_f64(),
+                last_update: self.time.elapsed_secs_f64(),
+                on_click,
+            },
+        );
+    }
+
+    pub fn add_toast(&mut self, key: impl Into<String>, message: impl Into<String>) {
+        self.do_add_toast(key, message, None)
+    }
+
+    pub fn add_clicky_toast(
+        &mut self,
+        key: impl Into<String>,
+        message: impl Into<String>,
+        on_click: On<Click>,
+    ) {
+        self.do_add_toast(key, message, Some(on_click))
+    }
+
+    pub fn clear_toast(&mut self, key: &str) {
+        self.toasts.0.remove(key);
+    }
+}
+
+pub struct Toast {
+    pub message: String,
+    pub time: f64,
+    pub last_update: f64,
+    pub on_click: Option<On<Click>>,
+}
+
+// plugin which creates and runs scripts
+pub struct SceneRunnerPlugin;
+
+#[derive(Resource)]
+pub struct SceneLoopSchedule {
+    schedule: Schedule,
+    /// Absolute wall-clock deadline for the end of the next frame. Accumulating this
+    /// by the frame target (rather than restarting the clock from `Instant::now()` each
+    /// frame) means a frame that overruns is repaid by a correspondingly shorter sleep,
+    /// so the long-run rate matches the target instead of losing the overshoot forever.
+    next_frame_end: Instant,
+    #[cfg(not(target_arch = "wasm32"))]
+    sleeper: SpinSleeper,
+}
+
+// left px, top px, right px, bottom px
+#[derive(Default, Resource)]
+pub struct InteractableArea(pub Option<Vec4>);
+
+/// Tells scenes they run on a phone: they get the mobile platform and the mobile client's
+/// interactable area, scaled to the window. The window keeps its own size, so the host makes it
+/// phone-shaped (on web, the editor host sizes `#mygame-canvas`). The platform is fixed in a
+/// scene's `CrdtContext` when it spawns and the SDK caches `getExplorerInformation` at module
+/// load, so a scene picks the switch up when reloaded; the canvas size and interactable area
+/// apply live. Native touch controls are not drawn.
+#[derive(Default, Resource, PartialEq)]
+pub struct MobileUiEmulation(pub bool);
+
+/// the mobile client's UI canvas width and its interactable area on it (left, top, right,
+/// bottom), as godot-explorer reports them for a 1600x720 landscape phone
+pub const MOBILE_CANVAS_WIDTH: f32 = 1600.0;
+pub const MOBILE_INTERACTABLE_AREA: Vec4 = Vec4::new(436.0, 32.0, 108.0, 45.0);
+
+impl MobileUiEmulation {
+    /// the mobile interactable area on a window this wide, or None when off
+    pub fn interactable_area(&self, width: f32) -> Option<Vec4> {
+        self.0
+            .then(|| MOBILE_INTERACTABLE_AREA * (width / MOBILE_CANVAS_WIDTH))
+    }
+}
+
+#[cfg(test)]
+mod mobile_ui_tests {
+    use super::*;
+
+    #[test]
+    fn scales_the_interactable_area_from_the_phone_width() {
+        let on = MobileUiEmulation(true);
+        assert_eq!(on.interactable_area(1600.0), Some(MOBILE_INTERACTABLE_AREA));
+        let half = on.interactable_area(800.0).unwrap();
+        assert!(
+            half.abs_diff_eq(Vec4::new(218.0, 16.0, 54.0, 22.5), 1e-4),
+            "{half}"
+        );
+    }
+
+    #[test]
+    fn no_area_when_off() {
+        assert_eq!(MobileUiEmulation(false).interactable_area(1600.0), None);
+    }
+}
+
+#[derive(SystemParam)]
+struct ScreenAreas<'w> {
+    interactable: Res<'w, InteractableArea>,
+    mobile: Res<'w, MobileUiEmulation>,
+}
+
+/// A full-screen HUD surface covers the world (`SystemApi::SetUiFocus.covered`).
+#[derive(Default, Resource)]
+pub struct HudFullscreen(pub bool);
+
+/// A HUD surface (panel, popup, prompt) is active (`SystemApi::SetUiFocus.ui`).
+#[derive(Default, Resource)]
+pub struct HudFocus(pub bool);
+
+/// Frame-global inputs to `PBEngineInfo`. The world is hidden from the user while the engine's
+/// loading backdrop (player `OutOfWorld`) or a full-screen HUD surface covers it.
+#[derive(SystemParam)]
+struct EngineInfoSource<'w, 's> {
+    frame: Res<'w, FrameCount>,
+    hud_fullscreen: Res<'w, HudFullscreen>,
+    oow: Query<'w, 's, (), (With<PrimaryUser>, With<OutOfWorld>)>,
+}
+
+impl EngineInfoSource<'_, '_> {
+    fn scene_hidden(&self) -> bool {
+        self.hud_fullscreen.0 || !self.oow.is_empty()
+    }
+}
+
+impl InteractableArea {
+    pub fn get_or_default(&self, width: f32, height: f32) -> Vec4 {
+        self.0.unwrap_or_else(|| {
+            let vmin = width.min(height);
+            Vec4::new(vmin * 0.27, vmin * 0.06, vmin * 0.12, vmin * 0.06)
+        })
+    }
+}
+
+#[derive(ScheduleLabel, Hash, PartialEq, Eq, Clone, Copy, Debug)]
+pub struct SceneLoopLabel;
+
+impl Plugin for SceneRunnerPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<CrdtExtractors>();
+        app.init_resource::<ComponentNameRegistry>();
+        app.init_resource::<DebugInfo>();
+        app.init_resource::<Toasts>();
+        app.init_resource::<TestingData>();
+        app.init_resource::<InteractableArea>();
+        app.init_resource::<MobileUiEmulation>();
+        app.init_resource::<HudFullscreen>();
+        app.init_resource::<HudFocus>();
+        // shared by pointer results, trigger areas and the avatar crate — owned here so
+        // trigger areas keep working when the pointer-result systems are skipped
+        app.init_resource::<update_scene::pointer_results::AvatarColliders>();
+        app.init_resource::<update_scene::pointer_results::PointerRay>();
+        // Default false; the app entry overrides it from the --editor arg / boot param.
+        app.init_resource::<EditorMode>();
+
+        // let (sender, receiver) = tokio::sync::mpsc::channel(1000);
+        let (sender, receiver) = scene_response_channel();
+        app.insert_resource(SceneUpdates {
+            sender,
+            receiver,
+            jobs_in_flight: Default::default(),
+            update_deadline: web_time::SystemTime::now(),
+            eligible_jobs: 0,
+            scene_queue: Default::default(),
+            loop_end_time: Instant::now(),
+            priority_scenes: Default::default(),
+            frames: 0,
+            skipped_in_flight: 0,
+            skipped_already_sent: 0,
+        });
+
+        app.add_event::<LoadSceneEvent>();
+        app.add_event::<AppError>();
+        app.add_event::<CrdtSnapshotEvent>();
+        app.add_event::<EntityAllocatedEvent>();
+
+        app.configure_sets(
+            Update,
+            (
+                SceneSets::UiActions,
+                SceneSets::Init.after(scene_spawner_system),
+                SceneSets::PostInit,
+                SceneSets::Input,
+                SceneSets::RunLoop,
+                SceneSets::PostLoop,
+                SceneSets::RestrictedActions,
+            )
+                .chain(),
+        );
+
+        app.add_plugins(SceneLifecyclePlugin);
+
+        app.add_systems(
+            Update,
+            (update_scene_priority, run_scene_loop)
+                .chain()
+                .in_set(SceneSets::RunLoop),
+        );
+
+        let mut scene_schedule = Schedule::new(SceneLoopLabel);
+
+        scene_schedule.configure_sets(
+            (
+                SceneLoopSets::SendToScene,
+                SceneLoopSets::ReceiveFromScene,
+                SceneLoopSets::Lifecycle,
+                SceneLoopSets::UpdateWorld,
+            )
+                .chain(),
+        );
+
+        scene_schedule.add_systems(send_scene_updates.in_set(SceneLoopSets::SendToScene));
+        scene_schedule.add_systems(receive_scene_updates.in_set(SceneLoopSets::ReceiveFromScene));
+        scene_schedule.add_systems(process_scene_entity_lifecycle.in_set(SceneLoopSets::Lifecycle));
+
+        app.insert_resource(SceneLoopSchedule {
+            schedule: scene_schedule,
+            next_frame_end: Instant::now(),
+            #[cfg(not(target_arch = "wasm32"))]
+            sleeper: SpinSleeper::default(),
+        });
+
+        app.add_plugins(SceneInputPlugin);
+        app.add_plugins(SceneOutputPlugin);
+        app.add_plugins(SceneUtilPlugin);
+        if app.world().get_resource::<NoRenderApp>().is_none() {
+            app.add_plugins(LightsPlugin);
+        }
+        app.add_plugins(AssetPreloadPlugin);
+
+        app.add_systems(Update, update_scene_room.in_set(SceneSets::PostLoop));
+        app.add_systems(Update, log_app_errors.in_set(SceneSets::PostLoop));
+        app.add_systems(Update, set_ui_constraints.in_set(SceneSets::PostLoop));
+
+        app.add_systems(
+            Update,
+            push_time_to_crdt
+                .in_set(SceneSets::Input)
+                .run_if(on_real_timer(Duration::from_secs(1))),
+        );
+        app.add_systems(Update, push_camera_fov_to_crdt.in_set(SceneSets::Input));
+
+        app.add_systems(PostUpdate, consume_toasts);
+    }
+}
+
+fn run_scene_loop(world: &mut World) {
+    let mut window_query = world.query_filtered::<Entity, With<PrimaryWindow>>();
+    let winit_windows = world.get_non_send_resource::<WinitWindows>();
+    let refresh_rate = window_query
+        .single(world)
+        .ok()
+        .and_then(|window_ent| winit_windows.and_then(|ww| ww.get_window(window_ent)))
+        .and_then(|window| window.current_monitor())
+        .and_then(|monitor| monitor.refresh_rate_millihertz());
+    let config = world.resource::<AppConfig>();
+    let fps_target = world
+        .get_resource::<SessionGraphics>()
+        .map_or(config.graphics.fps_target, |session| {
+            session.fps_target(config)
+        });
+    let fps = if config.graphics.vsync {
+        // TODO this should use video mode if we add fullscreen video modes
+        refresh_rate
+            .map(|rr| ((rr as f64 + 999.0) / 1000.0).ceil())
+            .unwrap_or(fps_target as f64)
+    } else {
+        fps_target as f64
+    };
+    let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
+    let mut schedule = std::mem::take(&mut loop_schedule.schedule);
+
+    let frame_target_duration = if fps == 0.0 {
+        Duration::from_secs(100)
+    } else {
+        Duration::from_nanos((1e9 / fps) as u64)
+    };
+    let start_loop_time = Instant::now();
+    // Bounded so we neither burn through a backlog after a hitch (a deadline already in
+    // the past still leaves a 1ms floor to make progress) nor run a frame longer than the
+    // target if the deadline is stale — e.g. after an fps change, or an uncapped frame.
+    let earliest_end = start_loop_time + Duration::from_millis(1);
+    let latest_end = start_loop_time + frame_target_duration.max(Duration::from_millis(1));
+    let target_end_time = loop_schedule.next_frame_end.clamp(earliest_end, latest_end);
+    loop_schedule.next_frame_end = target_end_time + frame_target_duration;
+
+    world.resource_mut::<SceneUpdates>().loop_end_time = target_end_time;
+
+    // run at least once to collect updates even if no scenes are eligible
+    let mut run_once = false;
+
+    // run until time elapsed or all scenes are updated
+    while !run_once
+        || (Instant::now() < target_end_time
+            && (world.resource::<SceneUpdates>().eligible_jobs > 0
+                || !world.resource::<SceneUpdates>().jobs_in_flight.is_empty()))
+    {
+        schedule.run(world);
+        run_once = true;
+    }
+
+    let mut loop_schedule = world.resource_mut::<SceneLoopSchedule>();
+    loop_schedule.schedule = schedule;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    if fps != 0.0 {
+        if let Some(sleep_time) = target_end_time.checked_duration_since(Instant::now()) {
+            loop_schedule.sleeper.sleep(sleep_time);
+        }
+    }
+}
+
+fn update_scene_priority(
+    mut scenes: Query<
+        (
+            Entity,
+            &GlobalTransform,
+            &mut RendererSceneContext,
+            Option<&SuperUserScene>,
+        ),
+        Without<SceneLoading>,
+    >,
+    player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
+    mut updates: ResMut<SceneUpdates>,
+    time: Res<Time>,
+    containing_scene: ContainingScene,
+) {
+    updates.eligible_jobs = 0;
+    updates.frames += 1;
+
+    let (active_scenes, player_translation) = player
+        .single()
+        .map(|(e, gt)| (containing_scene.get(e), gt.translation()))
+        .unwrap_or_default();
+
+    // mark scenes that have been in-flight past the timeout as broken and free their
+    // slot, so a wedged scene worker can't hold a scene thread forever
+    let elapsed = time.elapsed_secs_f64();
+    for (ent, _, mut context, _) in scenes.iter_mut() {
+        if context.in_flight()
+            && !context.inspected
+            && elapsed - context.last_sent
+                > renderer_context::SCENE_NOT_RESPONDING_TIMEOUT.as_secs_f64()
+        {
+            warn!(
+                "scene {} ({} @ {}) has not responded for {:.0}s, marking broken",
+                context.hash,
+                context.title,
+                context.base,
+                elapsed - context.last_sent
+            );
+            // dropping the thread handle closes the scene's renderer channel, which
+            // signals the scene host to terminate the worker's isolate
+            context.state = SceneState::Broken;
+            updates.jobs_in_flight.remove(&ent);
+        }
+    }
+
+    // check all in-flight scenes still exist
+    let mut missing_in_flight = updates.jobs_in_flight.clone();
+
+    // scene-frames lost this frame, tallied locally: the two closures below cannot
+    // both borrow `updates` mutably at once.
+    let mut skipped_in_flight = 0u64;
+    let mut skipped_already_sent = 0u64;
+
+    // sort eligible scenes
+    updates.scene_queue = scenes
+        .iter_mut()
+        .filter(|(ent, _, context, maybe_super)| {
+            missing_in_flight.remove(ent);
+            let allow = !context.in_flight()
+                && !context.broken()
+                && (context.blocked.is_empty() || maybe_super.is_some());
+            if context.in_flight() {
+                skipped_in_flight += 1;
+            }
+            if !allow {
+                debug!(
+                    "skipping {ent} (@{}) on {:?}",
+                    context.base,
+                    (
+                        context.in_flight(),
+                        context.broken(),
+                        &context.blocked,
+                        maybe_super.is_some()
+                    )
+                )
+            }
+            allow
+        })
+        .filter_map(|(ent, transform, mut context, _)| {
+            // clamp to scene bounds instead of using distance to scene origin
+            let nearest_point = player_translation.xz().clamp(
+                transform.translation().xz() - Vec2::Y * PARCEL_SIZE,
+                transform.translation().xz() + Vec2::X * PARCEL_SIZE,
+            );
+            let distance = (nearest_point - player_translation.xz()).length_squared();
+            context.priority = if active_scenes.contains(&ent) {
+                0.0
+            } else {
+                distance
+            };
+            let not_yet_run = context.last_sent < time.elapsed_secs_f64();
+
+            if !context.in_flight() && !not_yet_run {
+                skipped_already_sent += 1;
+            }
+
+            (!context.in_flight() && not_yet_run).then(|| {
+                updates.eligible_jobs += 1;
+                let priority = FloatOrd(
+                    context.priority / (time.elapsed_secs_f64() - context.last_sent) as f32,
+                );
+                (ent, priority)
+            })
+        })
+        .collect();
+    updates.skipped_in_flight += skipped_in_flight;
+    updates.skipped_already_sent += skipped_already_sent;
+    updates
+        .scene_queue
+        .make_contiguous()
+        .sort_by_key(|(_, priority)| *priority);
+
+    // remove any scenes we didn't see from the in-flight set
+    updates.jobs_in_flight = &updates.jobs_in_flight - &missing_in_flight;
+}
+
+// TODO: work out how to set this intelligently
+// we need to keep enough scheduler time to ensure the main loop wakes enough
+// otherwise we end up overrunning the budget
+// also consider
+// - reduce bevy async thread pool
+// - reduce bevy primary thread pool
+// - see if we can get v8 single threaded / no native threads working
+// const MAX_CONCURRENT_SCENES: usize = 8;
+
+pub use common::structs::OutOfWorld;
+
+// helper to get the scene entity containing a given world position
+#[derive(SystemParam)]
+pub struct ContainingScene<'w, 's> {
+    pub transforms: Query<'w, 's, (&'static GlobalTransform, Has<OutOfWorld>)>,
+    pointers: Res<'w, ScenePointers>,
+    live_scenes: Res<'w, LiveScenes>,
+    portable_scenes: Res<'w, PortableScenes>,
+}
+
+pub fn vec3_to_parcel(position: Vec3) -> IVec2 {
+    (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
+        .floor()
+        .as_ivec2()
+}
+
+pub fn parcel_to_vec3(parcel: IVec2) -> Vec3 {
+    Vec3::new(
+        (parcel.x as f32 + 0.5) * PARCEL_SIZE,
+        0.,
+        -(parcel.y as f32 + 0.5) * PARCEL_SIZE,
+    )
+}
+
+impl ContainingScene<'_, '_> {
+    // true if the set/placement of scenes changed this frame (pointer grid, live scenes,
+    // portables). NOTE: this does NOT track entity movement — the `get*`/`get_area` lookups that
+    // map an entity position to a scene also depend on that entity's GlobalTransform, so callers
+    // gating on this must additionally detect the relevant position changing themselves.
+    pub fn scene_layout_changed(&self) -> bool {
+        self.pointers.is_changed()
+            || self.live_scenes.is_changed()
+            || self.portable_scenes.is_changed()
+    }
+
+    // just the parcel at the position
+    pub fn get_parcel_position(&self, position: Vec3) -> Option<Entity> {
+        let parcel = vec3_to_parcel(position);
+
+        if let Some(PointerResult::Exists { hash, .. }) = self.pointers.get(parcel) {
+            self.live_scenes.scenes.get(hash).copied()
+        } else {
+            None
+        }
+    }
+
+    // just the parcel at the entity's position
+    pub fn get_parcel(&self, ent: Entity) -> Option<Entity> {
+        self.transforms.get(ent).ok().and_then(|(gt, oow)| {
+            if oow {
+                None
+            } else {
+                self.get_parcel_position(gt.translation())
+            }
+        })
+    }
+
+    // just the parcel at the entity's position, even if they are out of world
+    pub fn get_parcel_oow(&self, ent: Entity) -> Option<Entity> {
+        self.transforms
+            .get(ent)
+            .map(|(gt, _)| self.get_parcel_position(gt.translation()))
+            .unwrap_or_default()
+    }
+
+    // the parcel at the position, plus any global scenes
+    pub fn get_position(&self, position: Vec3) -> HashSet<Entity> {
+        let parcel = (position.xz() * Vec2::new(1.0, -1.0) / PARCEL_SIZE)
+            .floor()
+            .as_ivec2();
+
+        let mut results = HashSet::default();
+
+        if let Some(PointerResult::Exists { hash, .. }) = self.pointers.get(parcel) {
+            if let Some(scene) = self.live_scenes.scenes.get(hash) {
+                results.insert(*scene);
+            }
+        }
+
+        results.extend(self.get_portables(false));
+        results
+    }
+
+    pub fn get_portables(&self, only_super: bool) -> HashSet<Entity> {
+        self.portable_scenes
+            .iter()
+            .flat_map(|(hash, source)| {
+                if !source.super_user && only_super {
+                    None
+                } else {
+                    self.live_scenes.scenes.get(hash)
+                }
+            })
+            .copied()
+            .collect()
+    }
+
+    // the parcel at the entity's position, plus any global scenes
+    pub fn get(&self, ent: Entity) -> HashSet<Entity> {
+        self.transforms
+            .get(ent)
+            .map(|(gt, oow)| {
+                if oow {
+                    self.get_portables(true)
+                } else {
+                    self.get_position(gt.translation())
+                }
+            })
+            .unwrap_or_default()
+    }
+
+    // get all scenes within radius of the given entity, plus any global scenes
+    pub fn get_area(&self, ent: Entity, radius: f32) -> HashSet<Entity> {
+        let Some(focus) = self.transforms.get(ent).ok().and_then(|(gt, oow)| {
+            if oow {
+                None
+            } else {
+                Some(gt.translation().xz() * Vec2::new(1.0, -1.0))
+            }
+        }) else {
+            return self.get_portables(false);
+        };
+
+        let min_point = focus - Vec2::splat(radius);
+        let max_point = focus + Vec2::splat(radius);
+
+        let min_parcel = (min_point / PARCEL_SIZE).floor().as_ivec2();
+        let max_parcel = (max_point / PARCEL_SIZE).floor().as_ivec2();
+
+        let mut results = HashSet::default();
+
+        for parcel_x in min_parcel.x..=max_parcel.x {
+            for parcel_y in min_parcel.y..=max_parcel.y {
+                if let Some(PointerResult::Exists { hash, .. }) =
+                    self.pointers.get(IVec2::new(parcel_x, parcel_y))
+                {
+                    if let Some(scene) = self.live_scenes.scenes.get(hash).copied() {
+                        results.insert(scene);
+                    }
+                }
+            }
+        }
+
+        results.extend(self.get_portables(false));
+        results
+    }
+
+    // get all scenes along a ray ordered by closest point, together with distance to closest point
+    pub fn get_ray(&self, mut position: Vec3, mut ray: Vec3) -> Vec<(Entity, f32)> {
+        // global scenes first
+        let mut results: Vec<(Entity, f32)> = self
+            .portable_scenes
+            .iter()
+            .flat_map(|(hash, _)| self.live_scenes.scenes.get(hash))
+            .map(|ent| (*ent, 0.0))
+            .collect();
+
+        let mut distance = 0.0;
+
+        if ray.length() == 0.0 {
+            return results;
+        }
+
+        if ray.length() > 1000.0 {
+            ray = ray.normalize() * 1000.0;
+        }
+
+        let offset: Vec3 = Vec3::new(ray.x.signum() * 0.01, 0.0, ray.z.signum() * 0.01);
+
+        loop {
+            let adj_position = position + offset;
+
+            results.extend(
+                self.get_parcel_position(position)
+                    .map(|parcel| (parcel, distance)),
+            );
+
+            let x_dist = if ray.x < 0.0 {
+                (((adj_position.x / 16.0).floor() * 16.0) - position.x) / ray.x
+            } else if ray.x > 0.0 {
+                (((adj_position.x / 16.0).ceil() * 16.0) - position.x) / ray.x
+            } else {
+                999.0
+            };
+            let z_dist = if ray.z < 0.0 {
+                (((adj_position.z / 16.0).floor() * 16.0) - position.z) / ray.z
+            } else if ray.z > 0.0 {
+                (((adj_position.z / 16.0).ceil() * 16.0) - position.z) / ray.z
+            } else {
+                999.0
+            };
+
+            let step_fraction = x_dist.min(z_dist);
+            if step_fraction > 1.0 {
+                return results;
+            }
+
+            let step = ray * step_fraction;
+            position += step;
+            distance += step.length();
+            ray -= step;
+        }
+    }
+}
+
+/// Replace the value of an `access_token` query param with `REDACTED`, preserving
+/// the rest of the adapter string. Used to keep the server-minted LiveKit room
+/// credential out of RealmInfo (which scene JS can read via op_realm_information).
+fn redact_access_token(adapter: &str) -> String {
+    match adapter.split_once("access_token=") {
+        Some((prefix, rest)) => {
+            let tail = rest.find('&').map(|i| &rest[i..]).unwrap_or("");
+            format!("{prefix}access_token=REDACTED{tail}")
+        }
+        None => adapter.to_owned(),
+    }
+}
+
+// serialized realm info, rebuilt only when the realm or a scene room changes
+#[derive(Default)]
+struct RealmInfoCache {
+    disconnected: Vec<u8>,
+    connected: Option<(String, Vec<u8>)>,
+    // server mode holds N rooms in ServerSceneRooms (empty on clients), keyed by scene hash
+    server: HashMap<String, Vec<u8>>,
+}
+
+/// The realm's base url and name as scenes are told them (`PbRealmInfo`).
+pub fn realm_base_url_and_name(realm: &CurrentRealm) -> (String, String) {
+    let base_url = realm
+        .about_url
+        .strip_suffix("/about")
+        .unwrap_or(&realm.about_url);
+    let realm_name = realm.config.realm_name.clone().unwrap_or_default();
+    // an orchestrated engine has no realm name of its own, and stripping `/` off the end of
+    // the content url is not what this is for
+    let base_url = if realm_name.is_empty() {
+        base_url
+    } else {
+        base_url
+            .strip_suffix(&format!("/{realm_name}"))
+            .unwrap_or(base_url)
+    };
+    (base_url.to_owned(), realm_name)
+}
+
+fn send_scene_updates(
+    mut scenes: Query<(
+        Entity,
+        &mut RendererSceneContext,
+        &GlobalTransform,
+        Has<SuperUserScene>,
+    )>,
+    mut updates: ResMut<SceneUpdates>,
+    time: Res<Time>,
+    engine_info: EngineInfoSource,
+    player: Query<&Transform, With<PrimaryUser>>,
+    camera: Query<&Transform, With<PrimaryCamera>>,
+    config: Res<AppConfig>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    realm: Res<CurrentRealm>,
+    data_channel: Res<SceneRoomConnection>,
+    server_rooms: Res<comms::ServerSceneRooms>,
+    scene_realms: Res<comms::global_crdt::SceneRealms>,
+    screen_areas: ScreenAreas,
+    preview_mode: Res<PreviewMode>,
+    mut buf: Local<Vec<u8>>,
+    mut realm_info_cache: Local<RealmInfoCache>,
+) {
+    let updates = &mut *updates;
+    let buf = &mut *buf;
+    let realm_info_cache = &mut *realm_info_cache;
+
+    // rebuild the cached realm info bytes; this must run before any early return
+    // so a change is never missed
+    if realm.is_changed()
+        || data_channel.is_changed()
+        || server_rooms.is_changed()
+        || scene_realms.is_changed()
+        || preview_mode.is_changed()
+    {
+        let (base_url, realm_name) = realm_base_url_and_name(&realm);
+        let mut realm_info = PbRealmInfo {
+            base_url,
+            realm_name,
+            network_id: realm.config.network_id.unwrap_or_default() as i32,
+            comms_adapter: realm
+                .comms
+                .as_ref()
+                .and_then(|comms| {
+                    comms
+                        .adapter
+                        .clone()
+                        .or_else(|| comms.fixed_adapter.clone())
+                })
+                .unwrap_or("offline".to_owned()),
+            is_preview: preview_mode.is_preview,
+            room: None,
+            is_connected_scene_room: Some(false),
+        };
+        realm_info_cache.disconnected.clear();
+        DclWriter::new(&mut realm_info_cache.disconnected).write(&realm_info);
+        realm_info_cache.connected = data_channel.0.as_ref().map(|(scene, addr, _)| {
+            realm_info.room = Some(addr.clone());
+            realm_info.is_connected_scene_room = Some(true);
+            let mut bytes = Vec::new();
+            DclWriter::new(&mut bytes).write(&realm_info);
+            (scene.scene_id.clone(), bytes)
+        });
+        // Server-mode room adapter is `livekit:...?access_token=<JWT>` minted by the
+        // orchestrator for THIS scene. Redact the token: RealmInfo is exposed to scene
+        // JS via op_realm_information, so passing it verbatim would let a hostile scene
+        // lift the authoritative-server room credential and impersonate the server in
+        // its own room. Scenes only need to know they are in a connected room.
+        realm_info_cache.server = server_rooms
+            .0
+            .iter()
+            .map(|(hash, (addr, _))| {
+                realm_info.room = Some(redact_access_token(addr));
+                realm_info.is_connected_scene_room = Some(true);
+                // the realm this scene is in, which an orchestrated engine is told per scene —
+                // it is in none itself, so its own name is no answer for any of them
+                realm_info.realm_name = scene_realms
+                    .for_scene_hash(hash, realm.config.realm_name.as_deref())
+                    .unwrap_or_default();
+                let mut bytes = Vec::new();
+                DclWriter::new(&mut bytes).write(&realm_info);
+                (hash.clone(), bytes)
+            })
+            .collect();
+    }
+
+    // Peek at the next scene before popping. Priority scenes bypass the thread
+    // limit (but still occupy slots, preventing non-priority scenes from
+    // running). Non-priority scenes respect the limit.
+    let Some(&(ent, _)) = updates.scene_queue.front() else {
+        return;
+    };
+
+    if updates.jobs_in_flight.len() >= config.scene_threads
+        && !updates.priority_scenes.values().any(|&e| e == ent)
+    {
+        return;
+    }
+
+    updates.scene_queue.pop_front();
+
+    let (_, mut context, scene_transform, is_super) = scenes.get_mut(ent).unwrap();
+
+    // only live scenes are queued, so this only fails if the scene broke this frame
+    let Some(sender) = context.sender().cloned() else {
+        return;
+    };
+
+    // collect components
+
+    // generate updates for camera and player
+    for (mut affine, id, is_player) in [
+        (
+            player
+                .single()
+                .map(Transform::compute_affine)
+                .unwrap_or_default(),
+            SceneEntityId::PLAYER,
+            true,
+        ),
+        (
+            camera
+                .single()
+                .map(Transform::compute_affine)
+                .unwrap_or_default(),
+            SceneEntityId::CAMERA,
+            false,
+        ),
+    ] {
+        affine.translation -= scene_transform.affine().translation * Vec3A::new(1.0, 0.0, 1.0);
+        let relative_transform = Transform::from(GlobalTransform::from(affine));
+
+        // delta-check against the last transform we sent
+        let last_sent = if is_player {
+            &mut context.last_sent_player_transform
+        } else {
+            &mut context.last_sent_camera_transform
+        };
+        let update = last_sent
+            .map(|t| {
+                (t.translation - relative_transform.translation).length_squared() > 0.0001
+                    || t.rotation.angle_between(relative_transform.rotation) > 0.0001
+            })
+            .unwrap_or(true);
+
+        if update {
+            *last_sent = Some(relative_transform);
+            buf.clear();
+            DclWriter::new(buf).write(&DclTransformAndParent::from_bevy_transform_and_parent(
+                &relative_transform,
+                SceneEntityId::ROOT,
+            ));
+            context.crdt_store.update_if_different(
+                SceneComponentId::TRANSFORM,
+                CrdtType::LWW_ENT,
+                id,
+                Some(&mut DclReader::new(buf)),
+            );
+        }
+    }
+
+    // add realm info
+    let realm_bytes = match realm_info_cache.connected.as_ref() {
+        Some((hash, bytes)) if **hash == *context.hash => bytes.as_slice(),
+        _ => realm_info_cache
+            .server
+            .get(&*context.hash)
+            .map(Vec::as_slice)
+            .unwrap_or(realm_info_cache.disconnected.as_slice()),
+    };
+    context.crdt_store.update_if_different(
+        SceneComponentId::REALM_INFO,
+        CrdtType::LWW_ANY,
+        SceneEntityId::ROOT,
+        Some(&mut DclReader::new(realm_bytes)),
+    );
+
+    // add canvas info
+    let canvas_info = if let Ok(window) = window.single() {
+        let width = window.resolution.width();
+        let height = window.resolution.height();
+        let interactable = screen_areas.interactable.get_or_default(width, height);
+        let mobile_area = screen_areas
+            .mobile
+            .interactable_area(width)
+            .filter(|_| !is_super);
+
+        if let Some(area) = mobile_area {
+            PbUiCanvasInformation {
+                device_pixel_ratio: window.resolution.scale_factor(),
+                width: width as i32,
+                height: height as i32,
+                interactable_area: Some(BorderRect {
+                    left: area.x,
+                    top: area.y,
+                    right: area.z,
+                    bottom: area.w,
+                }),
+                // no notch or system bars to emulate
+                screen_inset_area: None,
+            }
+        } else if config.constrain_scene_ui && !is_super {
+            // we optionally misreport window size and constrain scene ui directly as nobody uses this info properly
+            PbUiCanvasInformation {
+                device_pixel_ratio: window.resolution.scale_factor(),
+                width: (width - interactable.x - interactable.z) as i32,
+                height: (height - interactable.y - interactable.w) as i32,
+                interactable_area: Some(BorderRect {
+                    top: 0.0,
+                    left: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                }),
+                screen_inset_area: None,
+            }
+        } else {
+            PbUiCanvasInformation {
+                device_pixel_ratio: window.resolution.scale_factor(),
+                width: width as i32,
+                height: height as i32,
+                interactable_area: Some(BorderRect {
+                    left: interactable.x,
+                    top: interactable.y,
+                    right: interactable.z,
+                    bottom: interactable.w,
+                }),
+                // Desktop and web have no platform-reserved screen insets.
+                screen_inset_area: None,
+            }
+        }
+    } else {
+        PbUiCanvasInformation {
+            device_pixel_ratio: 1.0,
+            width: 1280,
+            height: 720,
+            interactable_area: Some(BorderRect::default()),
+            screen_inset_area: None,
+        }
+    };
+
+    buf.clear();
+    DclWriter::new(buf).write(&canvas_info);
+    context.crdt_store.update_if_different(
+        SceneComponentId::CANVAS_INFO,
+        CrdtType::LWW_ROOT,
+        SceneEntityId::ROOT,
+        Some(&mut DclReader::new(buf)),
+    );
+
+    // add engine info, only for the scene actually being sent
+    buf.clear();
+    DclWriter::new(buf).write(&PbEngineInfo {
+        frame_number: engine_info.frame.0,
+        total_runtime: context.total_runtime as f32,
+        tick_number: context.tick_number,
+        scene_hidden: engine_info.scene_hidden(),
+        total_runtime_f64: context.total_runtime,
+    });
+    context.crdt_store.force_update(
+        SceneComponentId::ENGINE_INFO,
+        CrdtType::LWW_ROOT,
+        SceneEntityId::ROOT,
+        Some(&mut DclReader::new(buf)),
+    );
+
+    // Engine-initiated census to push to the scene. Drained here (only when this
+    // scene is actually sent) rather than read from `nascent`/`death_row`, which
+    // the lifecycle pass drains for every scene before we'd get a chance to send.
+    // Holds only engine-originated changes, so it never echoes the scene's census.
+    let census = SceneCensus {
+        born: std::mem::take(&mut context.outbound_born),
+        died: std::mem::take(&mut context.outbound_died),
+    };
+
+    if let Err(e) = sender.send(RendererResponse::Ok(
+        context.crdt_store.take_updates(),
+        census,
+    )) {
+        error!(
+            "failed to send updates to scene {ent:?} [{:?}]: {e:?}",
+            context.base
+        );
+        context.state = SceneState::Broken;
+    } else {
+        context.set_in_flight(true);
+        context.last_sent = time.elapsed_secs_f64();
+        dcl_assert!(!updates.jobs_in_flight.contains(&ent));
+        updates.jobs_in_flight.insert(ent);
+    }
+
+    updates.eligible_jobs -= 1;
+}
+
+// system to run the current active script
+fn receive_scene_updates(
+    mut commands: Commands,
+    mut updates: ResMut<SceneUpdates>,
+    mut scenes: Query<&mut RendererSceneContext>,
+    crdt_interfaces: Res<CrdtExtractors>,
+    frame: Res<FrameCount>,
+    mut rpc_call_events: EventWriter<RpcCallEvent>,
+    mut toaster: Toaster,
+    mut snapshot_events: EventWriter<CrdtSnapshotEvent>,
+    mut entity_allocated_events: EventWriter<EntityAllocatedEvent>,
+) {
+    loop {
+        let maybe_completed_job = match updates.receiver().try_recv() {
+            Ok((scene_id, response)) => match response {
+                SceneResponse::CrdtSnapshot(crdt) => {
+                    // scene ids are the scene root entity
+                    snapshot_events.write(CrdtSnapshotEvent {
+                        scene_entity: scene_id.0,
+                        crdt,
+                    });
+                    None
+                }
+                SceneResponse::EntityAllocated(results) => {
+                    entity_allocated_events.write(EntityAllocatedEvent {
+                        scene_entity: scene_id.0,
+                        results,
+                    });
+                    None
+                }
+                SceneResponse::Stats(counters) => {
+                    if let Ok(mut context) = scenes.get_mut(scene_id.0) {
+                        context.resource_counters = Some(counters);
+                    }
+                    None
+                }
+                SceneResponse::WaitingForInspector => {
+                    toaster.add_toast("inspector", "Scene paused waiting for inspector session");
+                    None
+                }
+                SceneResponse::CompareSnapshot(compare) => {
+                    debug!("[{scene_id:?}] requested snapshot");
+                    if let Ok(context) = scenes.get(scene_id.0) {
+                        rpc_call_events.write(RpcCallEvent {
+                            origin: RpcOrigin::Scene {
+                                entity: scene_id.0,
+                                hash: context.hash.clone(),
+                            },
+                            call: RpcCall::TestSnapshot(compare),
+                        });
+                    }
+                    None
+                }
+                SceneResponse::Error(message) => {
+                    let root = scene_id.0;
+                    if let Ok(mut context) = scenes.get_mut(root) {
+                        context.state = SceneState::Broken;
+                        let timestamp = context.total_runtime + 1.0;
+                        error!("[{scene_id:?} @ {}] error: {message}", context.tick_number);
+                        context.log(SceneLogMessage {
+                            timestamp,
+                            level: SceneLogLevel::SystemError,
+                            message,
+                        });
+                    }
+                    Some(root)
+                }
+                SceneResponse::Ok(census, mut crdt, runtime, messages, rpc_calls) => {
+                    // scene ids are the scene root entity
+                    let root = scene_id.0;
+                    debug!(
+                        "scene {:?} received updates! [+{}, -{}, {} rpc",
+                        root,
+                        census.born.len(),
+                        census.died.len(),
+                        rpc_calls.len(),
+                    );
+                    if let Ok(mut context) = scenes.get_mut(root) {
+                        // this reply is the scene's in-flight tick coming back (a no-op for
+                        // broken scenes, whose state holds no in-flight bit)
+                        context.set_in_flight(false);
+                        if context.broken() {
+                            // drop late replies from a scene already marked broken so they
+                            // can't un-break it; still fall through to free the job slot
+                            debug!("[{scene_id:?}] discarding update for broken scene");
+                        } else {
+                            context.tick_number = context.tick_number.wrapping_add(1);
+                            if context
+                                .refreeze_at_tick
+                                .is_some_and(|t| context.tick_number >= t)
+                            {
+                                context.blocked.insert(renderer_context::FROZEN_BLOCK);
+                                context.refreeze_at_tick = None;
+                            }
+                            context.last_update_dt = runtime.0 - context.total_runtime;
+                            context.total_runtime = runtime.0;
+                            context.last_update_frame = frame.0;
+                            // extend (not assign) so renderer-side births (the inspector's /new_entity
+                            // adds the freshly-allocated ids straight to `nascent`) aren't clobbered by
+                            // the scene's reported births. `nascent` is drained every lifecycle pass, so
+                            // this matches assignment for scene-reported births.
+                            context.nascent.extend(census.born);
+                            // Merge externally-queued deaths (e.g. /delete_entity) with
+                            // scene-reported deaths, draining the old set so entries are
+                            // only processed once.
+                            let mut died = census.died;
+                            died.extend(std::mem::take(&mut context.death_row));
+                            context.death_row = died;
+                            for message in messages.into_iter() {
+                                context.log(message);
+                            }
+                            // Sync scene timestamps into crdt_store so renderer writes (e.g.
+                            // /set_component) use a base timestamp that wins over the scene's current.
+                            // Must happen before updates_to_entity drains `crdt`.
+                            context.crdt_store.sync_lww_timestamps_from(&crdt);
+
+                            let mut commands = commands.entity(root);
+                            for (component_id, interface) in crdt_interfaces.0.iter() {
+                                interface.updates_to_entity(
+                                    *component_id,
+                                    &mut crdt,
+                                    &mut commands,
+                                );
+                            }
+                            // dcl_assert!(
+                            //     updates.jobs_in_flight.contains(root) || context.tick_number <= 2
+                            // );
+
+                            for call in rpc_calls {
+                                rpc_call_events.write(RpcCallEvent {
+                                    origin: RpcOrigin::Scene {
+                                        entity: root,
+                                        hash: context.hash.clone(),
+                                    },
+                                    call,
+                                });
+                            }
+                        }
+                    } else {
+                        debug!(
+                            "no scene entity, probably got dropped before we processed the result"
+                        );
+                    }
+                    Some(root)
+                }
+                SceneResponse::ImmediateRpcCall(call) => {
+                    debug!("[{scene_id:?}] immediate rpc: {call:?}");
+                    if let Ok(context) = scenes.get(scene_id.0) {
+                        rpc_call_events.write(RpcCallEvent {
+                            origin: RpcOrigin::Scene {
+                                entity: scene_id.0,
+                                hash: context.hash.clone(),
+                            },
+                            call,
+                        });
+                    }
+                    None
+                }
+            },
+            Err(TryRecvError::Empty) => return,
+            Err(TryRecvError::Disconnected) => {
+                panic!("render thread receiver exploded");
+            }
+        };
+
+        if let Some(completed_job) = maybe_completed_job {
+            updates.jobs_in_flight.remove(&completed_job);
+        }
+
+        if Instant::now() > updates.loop_end_time {
+            return;
+        }
+    }
+}
+
+// entities deleted this loop
+// note this is only valid within the scene loop, as it is overwritten in each lifecycle update (within the loop)
+#[derive(Component, Default)]
+pub struct DeletedSceneEntities(pub HashSet<SceneEntityId>);
+
+#[derive(Component)]
+pub struct TargetParent(pub Entity);
+
+fn process_scene_entity_lifecycle(
+    mut commands: Commands,
+    mut scenes: Query<(Entity, &mut RendererSceneContext, &mut DeletedSceneEntities)>,
+    children: Query<&Children>,
+    scene_entities: Query<(), With<SceneEntity>>,
+    primaries: PrimaryEntities,
+) {
+    for (root, mut context, mut deleted_entities) in scenes.iter_mut() {
+        if !context.nascent.is_empty() {
+            debug!("{:?}: nascent: {:?}", root, context.nascent);
+        }
+        if !context.death_row.is_empty() {
+            debug!("{:?}: death row: {:?}", root, context.death_row);
+        }
+
+        // update deleted entities list, used by crdt processors to filter results
+        deleted_entities.0 = std::mem::take(&mut context.death_row);
+
+        // drop dead entities from the renderer-side store, otherwise their timestamp /
+        // renderer-written entries are retained for the scene's lifetime
+        context.crdt_store.clean_up(&deleted_entities.0);
+
+        for deleted_scene_entity in &deleted_entities.0 {
+            if let Some(deleted_bevy_entity) = context.bevy_entity(*deleted_scene_entity) {
+                // reparent scene-entity children to the root entity
+                if let Ok(children) = children.get(deleted_bevy_entity) {
+                    let scene_children = children
+                        .iter()
+                        .filter(|child| scene_entities.get(*child).is_ok())
+                        .collect::<Vec<_>>();
+                    commands
+                        .entity(root)
+                        .try_push_children(scene_children.as_slice());
+                }
+
+                debug!(
+                    "despawned {:?} -> {:?}",
+                    deleted_scene_entity, deleted_bevy_entity
+                );
+                commands.entity(deleted_bevy_entity).despawn();
+            }
+            context.set_dead(*deleted_scene_entity);
+        }
+
+        // add any new entities
+        for scene_entity_id in std::mem::take(&mut context.nascent) {
+            if context.bevy_entity(scene_entity_id).is_some() {
+                continue;
+            }
+
+            context.spawn_bevy_entity(&mut commands, root, scene_entity_id, &primaries);
+        }
+    }
+}
+
+fn update_scene_room(
+    mut writer: EventWriter<SetCurrentScene>,
+    mut last: Local<Option<SetCurrentScene>>,
+    realm: Res<CurrentRealm>,
+    containing_scene: ContainingScene,
+    player: Query<Entity, With<PrimaryUser>>,
+    scenes: Query<&RendererSceneContext>,
+) {
+    let (Some(realm), Some(scene)) = (
+        realm.config.realm_name.as_ref(),
+        player
+            .single()
+            .ok()
+            .and_then(|p| containing_scene.get_parcel(p))
+            .and_then(|scene| scenes.get(scene).ok()),
+    ) else {
+        if last.take().is_some() {
+            debug!("clear scene room");
+            writer.write(SetCurrentScene {
+                realm_name: default(),
+                scene_id: default(),
+            });
+        }
+        return;
+    };
+
+    if last
+        .as_ref()
+        .is_some_and(|ev| &ev.realm_name == realm && *ev.scene_id == *scene.hash)
+    {
+        return;
+    }
+
+    let ev = SetCurrentScene {
+        realm_name: realm.to_owned(),
+        scene_id: scene.hash.to_string(),
+    };
+
+    *last = Some(ev.clone());
+    debug!("set scene room {ev:?}");
+    writer.write(ev);
+}
+
+fn log_app_errors(mut toaster: Toaster, mut errors: EventReader<AppError>, frame: Res<FrameCount>) {
+    for (i, error) in errors.read().enumerate() {
+        toaster.add_toast(format!("app-error {}-{i}", frame.0), format!("{error:?}"));
+    }
+}
+
+fn set_ui_constraints(
+    mut events: EventReader<SystemApi>,
+    mut interactable_area: ResMut<InteractableArea>,
+    mut hud_fullscreen: ResMut<HudFullscreen>,
+    mut hud_focus: ResMut<HudFocus>,
+) {
+    for ev in events.read() {
+        match ev {
+            SystemApi::SetInteractableArea(area) => interactable_area.0 = Some(*area),
+            SystemApi::SetUiFocus { ui, covered, .. } => {
+                hud_fullscreen.0 = *covered;
+                hud_focus.0 = *ui;
+            }
+            _ => (),
+        }
+    }
+}
+
+fn push_time_to_crdt(time_of_day: Res<TimeOfDay>, mut contexts: Query<&mut GlobalCrdtState>) {
+    for mut global_crdt_state in contexts.iter_mut() {
+        global_crdt_state.update_time(time_of_day.time);
+    }
+}
+
+/// Push the active camera's vertical FOV to scene workers via GlobalCrdtState.
+/// Sends immediately when the value changes, and at least every two seconds so
+/// that scenes loaded after a change still see the latest value.
+fn push_camera_fov_to_crdt(
+    camera: Query<&Projection, With<PrimaryCamera>>,
+    mut contexts: Query<&mut GlobalCrdtState>,
+    time: Res<Time>,
+    mut last_pushed: Local<Option<(f32, f64)>>,
+) {
+    let Ok(Projection::Perspective(p)) = camera.single() else {
+        return;
+    };
+    let now = time.elapsed_secs_f64();
+    let should_push = match *last_pushed {
+        None => true,
+        Some((last_fov, last_time)) => last_fov != p.fov || now - last_time >= 2.0,
+    };
+    if should_push {
+        for mut global_crdt_state in contexts.iter_mut() {
+            global_crdt_state.update_camera_fov(p.fov);
+        }
+        *last_pushed = Some((p.fov, now));
+    }
+}
+
+fn consume_toasts(mut toasts: ResMut<Toasts>) {
+    for (key, toast) in toasts.0.drain() {
+        info!(target: "toast", "{}: {}", key, toast.message);
+    }
+}

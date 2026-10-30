@@ -1,0 +1,22 @@
+{
+  "description": "GET /api/images/{id}/metadata for an id nobody uploaded. Captured GET https://camera-reel-service.decentraland.org/api/images/00000000-0000-4000-8000-000000000000/metadata -> 404.",
+  "request": {
+    "method": "GET",
+    "path": "/api/images/00000000-0000-4000-8000-000000000000/metadata",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 404,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "message": "image not found"
+    }
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/images/00000000-0000-4000-8000-000000000000/metadata",
+  "captured_at": "2026-09-25T19:25:05Z",
+  "volatile_paths": []
+}

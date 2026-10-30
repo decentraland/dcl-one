@@ -1,0 +1,94 @@
+// Every query param the entry url may carry, in one place, so a link with anything else can be
+// called out instead of silently ignored. Two sources: the engine's web param table (the params a
+// LINK may set — launch, destination and the base domain; a `host` param like `editor` is an
+// embedding page's to set, never a link's) and this page's own switches — the user-facing ones
+// with a line of doc each so the dialog can show what IS accepted, the internal ones just known.
+
+import { WEB_PARAMS } from '../engine/generated'
+import { ANALYTICS_SESSION_PARAM, isAttributionParam } from './analytics'
+import { BENCHMARK_PARAMS } from './bootMode'
+
+export interface AcceptedParam {
+  name: string
+  doc: string
+  /** who consumes it: the engine (via the table) or this page */
+  reader: 'engine' | 'page'
+}
+
+// The page's own user-facing params — read by App / bootMode, never handed to the engine.
+const PAGE_PARAMS: Record<string, string> = {
+  world: 'A world by name: `world=boedo` is `realm=boedo.dcl.eth`.',
+  guest: '`1` skips the sign-in screen with a guest login.',
+  fps: '`1` shows the frame-rate overlay (Ctrl/Cmd+Shift+F toggles it).',
+  pulseCertificateHash:
+    'SHA-256 (hex or base64) of a self-signed Pulse server certificate to trust, for a local or test server named by `pulseServer=` (e.g. `pulseServer=127.0.0.1:7743`).'
+}
+
+const WORLD_NAME = /^[a-z0-9-]+$/
+
+/** On the url the auth site returns to (features/auth/sso): the sign-in just happened. */
+export const AUTH_RETURN_PARAM = 'signedIn'
+
+/** The realm a link names: `realm`, else `world`, a name under `.dcl.eth` given bare or in full.
+ *  Anything else as a world (a url, another ens) is no destination. */
+export function entryRealm(q: URLSearchParams): string | null {
+  const realm = q.get('realm')
+  if (realm != null && realm !== '') return realm
+  const world = q.get('world')?.trim().toLowerCase().replace(/\.dcl\.eth$/, '')
+  return world != null && WORLD_NAME.test(world) ? `${world}.dcl.eth` : null
+}
+
+// Also read by this page, but not a user's to set: forced by the host (native, hud), or debug /
+// test switches (mock, showcase, the gate overrides, the mock-bridge fixtures). Accepted without a
+// warning, not advertised. The benchmark's switches (BENCHMARK_PARAMS: `autopilot`, and `perfStream`
+// with `perfCsv`, see perfStreamPath) are the harness's, honoured on some pages only: App hands
+// them to `unrecognisedEntryParams` as host params where they are, and anywhere else a link
+// carrying them is told they were ignored.
+const INTERNAL_PARAMS = [
+  'native',
+  'hud',
+  'mock',
+  'showcase',
+  'gate',
+  'nogate',
+  'bundled',
+  'simerror',
+  'simhover',
+  'previousLogin',
+  'perm',
+  'worldpw',
+  ANALYTICS_SESSION_PARAM,
+  AUTH_RETURN_PARAM,
+  // dev only (lib/systemScene.ts)
+  ...(import.meta.env.PROD ? [] : ['bridgePort'])
+]
+
+/** Where the entry url asks the page to stream the engine's log (`?perfStream=/path`), for the
+ *  performance harness that serves this page from localhost: a path on this origin and nowhere
+ *  else, so a link can't make the page send anything to another site. Null when absent or not one. */
+export function perfStreamPath(q: URLSearchParams): string | null {
+  const path = q.get('perfStream')
+  // one leading slash (`//host` is another origin), no backslash (browsers read it as a slash), no space, query or fragment
+  if (path == null || !/^\/(?![/\\])[^\s\\?#]*$/.test(path)) return null
+  return path.replace(/\/+$/, '') || null
+}
+
+/** What the dialog advertises: every link-settable engine param, then the page's own. Not the
+ *  benchmark's switches: no link may set them. */
+export function acceptedEntryParams(): AcceptedParam[] {
+  const engine = WEB_PARAMS.filter((p) => p.delivery !== 'host' && !BENCHMARK_PARAMS.includes(p.name)).map((p) => ({
+    name: p.name,
+    doc: p.doc,
+    reader: 'engine' as const
+  }))
+  const page = Object.entries(PAGE_PARAMS).map(([name, doc]) => ({ name, doc, reader: 'page' as const }))
+  return [...engine, ...page]
+}
+
+/** The entry url's params that nothing reads — ignored, and worth telling the user about.
+ *  `hostParams`: params this page is acting on that a link does not advertise (the scene editor's
+ *  `editor`, the benchmark's switches where the page honours them). */
+export function unrecognisedEntryParams(q: URLSearchParams, hostParams: string[] = []): string[] {
+  const accepted = new Set([...acceptedEntryParams().map((p) => p.name), ...INTERNAL_PARAMS, ...hostParams])
+  return [...new Set(q.keys())].filter((name) => !accepted.has(name) && !isAttributionParam(name))
+}

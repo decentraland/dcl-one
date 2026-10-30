@@ -1,0 +1,28 @@
+{
+  "description": "CORS preflight for POST /get-scene-adapter from https://decentraland.org with the auth-chain headers. Captured OPTIONS https://comms-gatekeeper.decentraland.org/get-scene-adapter -> 204.",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/get-scene-adapter",
+    "query": {},
+    "headers": {
+      "origin": "https://decentraland.org",
+      "access-control-request-method": "POST",
+      "access-control-request-headers": "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-timestamp,x-identity-metadata"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 204,
+    "headers": {
+      "access-control-allow-origin": "*",
+      "access-control-allow-methods": "GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS",
+      "access-control-allow-headers": "content-type,x-identity-auth-chain-0,x-identity-auth-chain-1,x-identity-timestamp,x-identity-metadata",
+      "access-control-max-age": "36000",
+      "vary": "Access-Control-Request-Headers"
+    },
+    "body_bytes_b64": ""
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/get-scene-adapter",
+  "captured_at": "2026-09-25T19:24:39Z",
+  "volatile_paths": []
+}

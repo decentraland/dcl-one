@@ -1,0 +1,71 @@
+[package]
+name = "scene_runner"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+[lints]
+workspace = true
+
+[features]
+default = []
+gen-tests = []
+
+[dependencies]
+common = { workspace = true }
+dcl_component = { workspace = true }
+dcl_types = { workspace = true }
+ipfs = { workspace = true }
+comms = { workspace = true }
+ui_core = { workspace = true }
+console = { workspace = true }
+input_manager = { workspace = true }
+wallet = { workspace = true }
+scene_material = { workspace = true }
+boimp = { workspace = true }
+world_ui = { workspace = true }
+platform = { workspace = true }
+
+bevy = { workspace = true }
+prost = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+ttf-parser = { workspace = true }
+cosmic-text = { workspace = true }
+swash = { workspace = true }
+indexmap = { workspace = true }
+anyhow = { workspace = true }
+bevy_console = { workspace = true }
+clap = { workspace = true }
+bimap = { workspace = true }
+nalgebra = { version = "0.34.1", features = ["convert-glam029"] }
+futures-lite = { workspace = true }
+once_cell = { workspace = true }
+rapier3d-f64 = { workspace = true }
+urlencoding = { workspace = true }
+itertools = { workspace = true }
+analytics = { workspace = true }
+bevy_dui = { workspace = true }
+rand = { workspace = true }
+crc = { workspace = true }
+system_bridge = { workspace = true }
+multihash-codetable = { workspace = true }
+base64 = { workspace = true }
+async-std = { workspace = true }
+web-time = { workspace = true }
+
+petgraph = "0.7.1"
+spin_sleep = "1.1.1"
+image = { workspace = true }
+unicode-segmentation = "1"
+emojis = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dcl_deno_ipc = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dcl_wasm = { workspace = true }
+getrandom = { workspace = true, features = ["wasm_js"] }

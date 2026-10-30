@@ -1,0 +1,28 @@
+{
+  "method": "GET",
+  "url": "https://comms-gatekeeper.decentraland.org/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/warnings",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 401,
+  "status_text": "Unauthorized",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c68e7ef66d933-TXL",
+    "connection": "keep-alive",
+    "content-length": "58",
+    "content-type": "application/json",
+    "date": "Fri, 25 Sep 2026 19:24:34 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "traceparent": "0-a17247d0ba9e405a2a3330bfd2ff924d-0000000000000000-0",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:33Z",
+  "elapsed_ms": 154,
+  "body_bytes": 58,
+  "body_file": "user-warnings-401-unauth.raw.body",
+  "redacted": false
+}

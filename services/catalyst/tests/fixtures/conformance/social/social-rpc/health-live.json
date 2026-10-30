@@ -1,0 +1,21 @@
+{
+  "description": "GET /health/live on the rpc host: the plain-text liveness answer. Captured GET https://rpc-social-service-ea.decentraland.org/health/live -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/health/live",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-origin": "*",
+      "content-length": "5"
+    },
+    "body_bytes_b64": "YWxpdmU="
+  },
+  "captured_from": "https://rpc-social-service-ea.decentraland.org/health/live",
+  "captured_at": "2026-10-26T17:36:52Z",
+  "volatile_paths": []
+}

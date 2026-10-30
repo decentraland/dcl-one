@@ -1,0 +1,29 @@
+{
+  "description": "CORS preflight for GET /api/users/{address} from https://decentraland.org. Captured OPTIONS https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e -> 200.",
+  "request": {
+    "method": "OPTIONS",
+    "path": "/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e",
+    "query": {},
+    "headers": {
+      "origin": "https://decentraland.org",
+      "access-control-request-method": "GET",
+      "access-control-request-headers": "content-type"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "access-control-allow-origin": "https://decentraland.org",
+      "access-control-allow-methods": "DELETE, GET, POST, PATCH",
+      "access-control-allow-headers": "content-type",
+      "access-control-max-age": "300",
+      "vary": "Origin, Access-Control-Request-Method, Access-Control-Request-Headers",
+      "content-length": "0"
+    },
+    "body_bytes_b64": ""
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e",
+  "captured_at": "2026-09-25T19:25:09Z",
+  "volatile_paths": []
+}

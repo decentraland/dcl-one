@@ -1,0 +1,31 @@
+{
+  "description": "GET /api/users/{address}/images?limit=3&offset=0 unauthenticated: only the public photos. Captured GET https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/images?limit=3&offset=0 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/images",
+    "query": {
+      "limit": [
+        "3"
+      ],
+      "offset": [
+        "0"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "images": [],
+      "currentImages": 0,
+      "maxImages": 500
+    }
+  },
+  "captured_from": "https://camera-reel-service.decentraland.org/api/users/0x8d6f63e382d73cf53858864f673f39e9ff915a1e/images?limit=3&offset=0",
+  "captured_at": "2026-09-25T19:25:02Z",
+  "volatile_paths": []
+}

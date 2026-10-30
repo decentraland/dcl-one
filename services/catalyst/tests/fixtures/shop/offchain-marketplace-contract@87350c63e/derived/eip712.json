@@ -1,0 +1,260 @@
+{
+  "domainType": "EIP712Domain(string name,string version,address verifyingContract,bytes32 salt)",
+  "domainTypeHash": "0x36c25de3e541d5d970f66e4210d728721220fff5c077cc6cd008b3a0c62adab7",
+  "domainSeparatorFormula": "keccak256(abi.encode(TYPE_HASH, keccak256(name), keccak256(version), address(this), block.chainid)); the chain id sits in the `salt` slot (src/common/EIP712.sol _buildDomainSeparator)",
+  "domains": [
+    {
+      "contract": "CouponManager",
+      "file": "src/coupons/CouponManager.sol",
+      "line": 35,
+      "name": "CouponManager",
+      "version": "1.0.0",
+      "hashedName": "0x6d9defb112f20dd3380143e2466680740f8c8951e5082be1294ca3f8a0b1d68d",
+      "hashedVersion": "0x06c015bd22b4c69690933c1058878ebdfef31f9aaae40bbe86d8a09fe1b2972c"
+    },
+    {
+      "contract": "CreditsManagerPolygon",
+      "file": "src/credits/CreditsManagerPolygon.sol",
+      "line": 232,
+      "name": "Decentraland Credits",
+      "version": "1.0.0",
+      "hashedName": "0xa0946d51a0fb78e7a54a11f358d920909c4036553b0d2a1a1e90d794f1af1766",
+      "hashedVersion": "0x06c015bd22b4c69690933c1058878ebdfef31f9aaae40bbe86d8a09fe1b2972c"
+    },
+    {
+      "contract": "CreditsManagerPolygonWithMANAClaim",
+      "file": "src/credits/CreditsManagerPolygonWithMANAClaim.sol",
+      "line": 231,
+      "name": "Decentraland Credits",
+      "version": "1.0.0",
+      "hashedName": "0xa0946d51a0fb78e7a54a11f358d920909c4036553b0d2a1a1e90d794f1af1766",
+      "hashedVersion": "0x06c015bd22b4c69690933c1058878ebdfef31f9aaae40bbe86d8a09fe1b2972c"
+    },
+    {
+      "contract": "DecentralandMarketplaceEthereum",
+      "file": "src/marketplace/DecentralandMarketplaceEthereum.sol",
+      "line": 68,
+      "name": "DecentralandMarketplaceEthereum",
+      "version": "1.0.0",
+      "hashedName": "0xf74cda92ae378758ee9e26eebaeb20ae9ed53e38585c5230a1a6abcd18266ff0",
+      "hashedVersion": "0x06c015bd22b4c69690933c1058878ebdfef31f9aaae40bbe86d8a09fe1b2972c"
+    },
+    {
+      "contract": "DecentralandMarketplacePolygon",
+      "file": "src/marketplace/DecentralandMarketplacePolygon.sol",
+      "line": 71,
+      "name": "DecentralandMarketplacePolygon",
+      "version": "1.0.0",
+      "hashedName": "0x16290e3cb1b20ac194be94cadb8e28d6f15c17dd9879ff07c93f1ac1eac2890b",
+      "hashedVersion": "0x06c015bd22b4c69690933c1058878ebdfef31f9aaae40bbe86d8a09fe1b2972c"
+    }
+  ],
+  "typeHashes": [
+    {
+      "file": "src/common/CommonTypesHashing.sol",
+      "line": 9,
+      "constant": "EXTERNAL_CHECK_TYPE_HASH",
+      "typeString": "ExternalCheck(address contractAddress,bytes4 selector,bytes value,bool required)",
+      "declared": "0x8d4afe924d276922e1a624d4cc4d5b316cb369a5d290db2fae6417ec282d01f8",
+      "computed": "0x8d4afe924d276922e1a624d4cc4d5b316cb369a5d290db2fae6417ec282d01f8",
+      "match": true
+    },
+    {
+      "file": "src/common/CommonTypesHashing.sol",
+      "line": 12,
+      "constant": "CHECKS_TYPE_HASH",
+      "typeString": "Checks(uint256 uses,uint256 expiration,uint256 effective,bytes32 salt,uint256 contractSignatureIndex,uint256 signerSignatureIndex,bytes32 allowedRoot,ExternalCheck[] externalChecks)ExternalCheck(address contractAddress,bytes4 selector,bytes value,bool required)",
+      "declared": "0xcae85973b802c2104c84d94b18a0a8a13a0576322547fe2fab563e83849ce641",
+      "computed": "0xcae85973b802c2104c84d94b18a0a8a13a0576322547fe2fab563e83849ce641",
+      "match": true
+    },
+    {
+      "file": "src/common/EIP712.sol",
+      "line": 52,
+      "constant": "TYPE_HASH",
+      "typeString": "EIP712Domain(string name,string version,address verifyingContract,bytes32 salt)",
+      "declared": "0x36c25de3e541d5d970f66e4210d728721220fff5c077cc6cd008b3a0c62adab7",
+      "computed": "0x36c25de3e541d5d970f66e4210d728721220fff5c077cc6cd008b3a0c62adab7",
+      "match": true
+    },
+    {
+      "file": "src/common/NativeMetaTransaction.sol",
+      "line": 25,
+      "constant": "META_TRANSACTION_TYPEHASH",
+      "typeString": "MetaTransaction(uint256 nonce,address from,bytes functionData)",
+      "declared": "0x01ecdc01065da9f72bf56a9def24a074b7ef512994beb776867cfbc664b5b959",
+      "computed": "0x01ecdc01065da9f72bf56a9def24a074b7ef512994beb776867cfbc664b5b959",
+      "match": true
+    },
+    {
+      "file": "src/coupons/CouponTypesHashing.sol",
+      "line": 10,
+      "constant": "COUPON_TYPE_HASH",
+      "typeString": "Coupon(Checks checks,address couponAddress,bytes data)Checks(uint256 uses,uint256 expiration,uint256 effective,bytes32 salt,uint256 contractSignatureIndex,uint256 signerSignatureIndex,bytes32 allowedRoot,ExternalCheck[] externalChecks)ExternalCheck(address contractAddress,bytes4 selector,bytes value,bool required)",
+      "declared": "0x550ebdbba619b5765a2af482a21795aa7bd7c99cb3a00921f6d87704d97e7c9e",
+      "computed": "0x550ebdbba619b5765a2af482a21795aa7bd7c99cb3a00921f6d87704d97e7c9e",
+      "match": true
+    },
+    {
+      "file": "src/marketplace/MarketplaceTypesHashing.sol",
+      "line": 10,
+      "constant": "ASSET_WO_BENEFICIARY_TYPE_HASH",
+      "typeString": "AssetWithoutBeneficiary(uint256 assetType,address contractAddress,uint256 value,bytes extra)",
+      "declared": "0x7be57332caf51c5f0f0fa0e7c362534d22d81c0bee1ffac9b573acd336e032bd",
+      "computed": "0x7be57332caf51c5f0f0fa0e7c362534d22d81c0bee1ffac9b573acd336e032bd",
+      "match": true
+    },
+    {
+      "file": "src/marketplace/MarketplaceTypesHashing.sol",
+      "line": 13,
+      "constant": "ASSET_TYPE_HASH",
+      "typeString": "Asset(uint256 assetType,address contractAddress,uint256 value,bytes extra,address beneficiary)",
+      "declared": "0xe5f9e1ebc316d1bde562c77f47da7dc2cccb903eb04f9b82e29212b96f9e57e1",
+      "computed": "0xe5f9e1ebc316d1bde562c77f47da7dc2cccb903eb04f9b82e29212b96f9e57e1",
+      "match": true
+    },
+    {
+      "file": "src/marketplace/MarketplaceTypesHashing.sol",
+      "line": 16,
+      "constant": "TRADE_TYPE_HASH",
+      "typeString": "Trade(Checks checks,AssetWithoutBeneficiary[] sent,Asset[] received)Asset(uint256 assetType,address contractAddress,uint256 value,bytes extra,address beneficiary)AssetWithoutBeneficiary(uint256 assetType,address contractAddress,uint256 value,bytes extra)Checks(uint256 uses,uint256 expiration,uint256 effective,bytes32 salt,uint256 contractSignatureIndex,uint256 signerSignatureIndex,bytes32 allowedRoot,ExternalCheck[] externalChecks)ExternalCheck(address contractAddress,bytes4 selector,bytes value,bool required)",
+      "declared": "0x1bb41340c6ec0467bb14b59212e1189437e71660f2ef919bda2be2f2065dfe6c",
+      "computed": "0x1bb41340c6ec0467bb14b59212e1189437e71660f2ef919bda2be2f2065dfe6c",
+      "match": true
+    }
+  ],
+  "notEip712": {
+    "note": "The credit and custom-external-call digests are NOT EIP-712: keccak256 of abi.encode(sender, chainid, manager, struct), recovered after the EIP-191 personal-message prefix (MessageHashUtils.toEthSignedMessageHash).",
+    "lines": [
+      {
+        "file": "src/credits/CreditsManagerPolygon.sol",
+        "line": 609,
+        "solidity": "bytes32 customExternalCallHash = keccak256(abi.encode(_sender, block.chainid, address(this), _args.externalCall));"
+      },
+      {
+        "file": "src/credits/CreditsManagerPolygon.sol",
+        "line": 620,
+        "solidity": "address recoveredSigner = customExternalCallHash.toEthSignedMessageHash().recover(_args.customExternalCallSignature);"
+      },
+      {
+        "file": "src/credits/CreditsManagerPolygon.sol",
+        "line": 757,
+        "solidity": "bytes32 creditHash = keccak256(abi.encode(_sender, block.chainid, address(this), credit));"
+      },
+      {
+        "file": "src/credits/CreditsManagerPolygon.sol",
+        "line": 770,
+        "solidity": "address recoveredSigner = creditHash.toEthSignedMessageHash().recover(_args.creditsSignatures[i]);"
+      },
+      {
+        "file": "src/credits/CreditsManagerPolygonWithMANAClaim.sol",
+        "line": 597,
+        "solidity": "bytes32 customExternalCallHash = keccak256(abi.encode(_sender, block.chainid, address(this), _args.externalCall));"
+      },
+      {
+        "file": "src/credits/CreditsManagerPolygonWithMANAClaim.sol",
+        "line": 608,
+        "solidity": "address recoveredSigner = customExternalCallHash.toEthSignedMessageHash().recover(_args.customExternalCallSignature);"
+      },
+      {
+        "file": "src/credits/CreditsManagerPolygonWithMANAClaim.sol",
+        "line": 745,
+        "solidity": "bytes32 creditHash = keccak256(abi.encode(_sender, block.chainid, address(this), credit));"
+      },
+      {
+        "file": "src/credits/CreditsManagerPolygonWithMANAClaim.sol",
+        "line": 758,
+        "solidity": "address recoveredSigner = creditHash.toEthSignedMessageHash().recover(_args.creditsSignatures[i]);"
+      }
+    ]
+  },
+  "creditsManagerDomainSeparators": [
+    {
+      "chainId": 137,
+      "address": "0x6a03991dfa9d661ef7ad3c6f88b31f16e5a282cf",
+      "run": "broadcast/DeployCreditsManagerPolygon.s.sol/137/run-1744994478.json",
+      "domainSeparator": "0x32e85c3caebc470b871136210a23cf410f9ff1b2d25cc3f0b7c24c0a2c19548d"
+    },
+    {
+      "chainId": 137,
+      "address": "0xe9f961e6ded4e1476bbee4faab886d63a2493eb9",
+      "run": "broadcast/DeployCreditsManagerPolygon.s.sol/137/run-1746713765.json",
+      "domainSeparator": "0xb5e9fbf386cfc775d7c79a9df5352c90c98250d3ece0e64142b452af46329f1d"
+    },
+    {
+      "chainId": 137,
+      "address": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
+      "run": "broadcast/DeployCreditsManagerPolygon.s.sol/137/run-1760722079932.json",
+      "domainSeparator": "0xb9338568c7e8e7e0dada4827fc382a85580e6bb4b1e1b6f00b0d07bb81238866"
+    },
+    {
+      "chainId": 137,
+      "address": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
+      "run": "broadcast/DeployCreditsManagerPolygon.s.sol/137/run-latest.json",
+      "domainSeparator": "0xb9338568c7e8e7e0dada4827fc382a85580e6bb4b1e1b6f00b0d07bb81238866"
+    },
+    {
+      "chainId": 80002,
+      "address": "0xb40a9a1afde767025626e9b0c17e028b6305d8b0",
+      "run": "broadcast/DeployCreditsManagerPolygon.s.sol/80002/run-1741783442.json",
+      "domainSeparator": "0x401584696241c5d4c808ffc894c7a5fa6d85b5e38205cba942f5ee935a02f68f"
+    },
+    {
+      "chainId": 80002,
+      "address": "0x1985fa82b531cb4e20f103787eba99de67b5c25c",
+      "run": "broadcast/DeployCreditsManagerPolygon.s.sol/80002/run-1741982778.json",
+      "domainSeparator": "0x899a2c38b9e916dc3a7f287e244c440c7599e1e4dbd0a5e728d6c2484327387a"
+    },
+    {
+      "chainId": 80002,
+      "address": "0xa1691afad71b9a92d329f1a95c39d3077d8f2f5f",
+      "run": "broadcast/DeployCreditsManagerPolygon.s.sol/80002/run-1744993682.json",
+      "domainSeparator": "0xb995776aab7d67fec3a7e496db0c6236ef5d9c2148f75f4db2e2368cdc924fcf"
+    },
+    {
+      "chainId": 80002,
+      "address": "0x037566bc90f85e76587e1b07f9184585f09c1420",
+      "run": "broadcast/DeployCreditsManagerPolygon.s.sol/80002/run-1746716365.json",
+      "domainSeparator": "0x1612447d98d9f3d1110196f2c26795a15892856f1cba11ed51c24dfcf1d9ae8a"
+    },
+    {
+      "chainId": 80002,
+      "address": "0x8052a560e6e6ac86eeb7e711a4497f639b322fb3",
+      "run": "broadcast/DeployCreditsManagerPolygon.s.sol/80002/run-1761045980572.json",
+      "domainSeparator": "0x5197739628f526f21be344d8a7017e1ec4094bd2b3c7697f02376fb1d6d94ddc"
+    },
+    {
+      "chainId": 80002,
+      "address": "0x8052a560e6e6ac86eeb7e711a4497f639b322fb3",
+      "run": "broadcast/DeployCreditsManagerPolygon.s.sol/80002/run-latest.json",
+      "domainSeparator": "0x5197739628f526f21be344d8a7017e1ec4094bd2b3c7697f02376fb1d6d94ddc"
+    }
+  ],
+  "openzeppelinImports": [
+    "@openzeppelin/contracts/access/AccessControl.sol",
+    "@openzeppelin/contracts/access/IAccessControl.sol",
+    "@openzeppelin/contracts/access/Ownable.sol",
+    "@openzeppelin/contracts/interfaces/IERC1271.sol",
+    "@openzeppelin/contracts/interfaces/IERC721.sol",
+    "@openzeppelin/contracts/token/ERC20/IERC20.sol",
+    "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol",
+    "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol",
+    "@openzeppelin/contracts/token/ERC721/IERC721.sol",
+    "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol",
+    "@openzeppelin/contracts/utils/Address.sol",
+    "@openzeppelin/contracts/utils/Context.sol",
+    "@openzeppelin/contracts/utils/Pausable.sol",
+    "@openzeppelin/contracts/utils/ReentrancyGuard.sol",
+    "@openzeppelin/contracts/utils/ShortStrings.sol",
+    "@openzeppelin/contracts/utils/StorageSlot.sol",
+    "@openzeppelin/contracts/utils/Strings.sol",
+    "@openzeppelin/contracts/utils/cryptography/ECDSA.sol",
+    "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol",
+    "@openzeppelin/contracts/utils/cryptography/MessageHashUtils.sol",
+    "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol",
+    "@openzeppelin/contracts/utils/introspection/ERC165.sol",
+    "@openzeppelin/contracts/utils/introspection/IERC165.sol",
+    "@openzeppelin/contracts/utils/math/Math.sol",
+    "@openzeppelin/contracts/utils/math/SignedMath.sol"
+  ]
+}

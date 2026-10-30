@@ -1,0 +1,30 @@
+{
+  "description": "GET /notifications with an auth chain signed at timestamp 0: the expired-signature shape (checked before the signature itself). Signed fetch with the run's throwaway key 0x8d6f63e382d73cf53858864f673f39e9ff915a1e (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://notifications.decentraland.org/notifications -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/notifications",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0x8d6f63e382d73cf53858864f673f39e9ff915a1e\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/notifications:0:{}\",\"signature\":\"0x1111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111\"}",
+      "x-identity-timestamp": "0",
+      "x-identity-metadata": "{}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Expired signature: signature timestamp: 0, timestamp expiration: 300000, local timestamp: 1790364282379",
+      "message": "This endpoint requires a signed fetch request. See ADR-44."
+    }
+  },
+  "captured_from": "https://notifications.decentraland.org/notifications",
+  "captured_at": "2026-09-25T19:24:42Z",
+  "volatile_paths": [
+    "error"
+  ]
+}

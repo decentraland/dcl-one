@@ -1,0 +1,233 @@
+import { sendSignedJSON, serviceBase } from "./client";
+import { isRecord } from "./rows";
+import type { PlaceWire, PlaceCategoryWire } from "./schemas/places";
+import { publicImageUrl } from "../publicImage";
+import { hueFor } from "../format";
+
+export const PLACES_LIMIT = 40;
+
+export function normalizePlace(p: PlaceWire) {
+  return {
+    ...p,
+    title: p.title ?? null,
+    description: p.description ?? null,
+    image: p.image ?? null,
+    owner: p.owner ?? null,
+    creator_address: p.creator_address ?? null,
+    contact_name: p.contact_name ?? null,
+    user_count: p.user_count ?? null,
+    like_rate: p.like_rate ?? null,
+    world_name: p.world_name ?? null,
+    updated_at: p.updated_at ?? null,
+  };
+}
+
+export type Place = ReturnType<typeof normalizePlace>;
+
+export function isRenderablePlace(row: unknown): boolean {
+  return (
+    isRecord(row) &&
+    typeof row.id === "string" &&
+    typeof row.base_position === "string" &&
+    Array.isArray(row.positions) &&
+    Array.isArray(row.categories)
+  );
+}
+
+export function normalizePlaceCategory(c: PlaceCategoryWire) {
+  return { ...c, i18n: { en: c.i18n?.en ?? null } };
+}
+
+export type PlaceCategory = ReturnType<typeof normalizePlaceCategory>;
+
+export function isRenderablePlaceCategory(row: unknown): boolean {
+  return isRecord(row) && typeof row.name === "string" && row.name !== "";
+}
+
+const GRID_MIN = -170;
+const GRID_SPAN = 340;
+const GRID_MAX = GRID_MIN + GRID_SPAN;
+
+export function parseCoords(pos?: string | null): [number, number] {
+  const [xs, ys] = String(pos ?? "0,0").split(",");
+  const x = Number.parseInt((xs ?? "0").trim(), 10);
+  const y = Number.parseInt((ys ?? "0").trim(), 10);
+  return [Number.isFinite(x) ? x : 0, Number.isFinite(y) ? y : 0];
+}
+
+export const PARCEL_PCT = 100 / GRID_SPAN;
+
+export function parcelRectPercent(
+  coords?: string | null,
+): { left: number; top: number; size: number } {
+  const [x, y] = parseCoords(coords);
+  return {
+    left: ((x - GRID_MIN) / GRID_SPAN) * 100,
+    top: ((GRID_MAX - y - 1) / GRID_SPAN) * 100,
+    size: PARCEL_PCT,
+  };
+}
+
+export function percentToCoords(u: number, v: number): [number, number] {
+  const clamp = (n: number) => Math.max(0, Math.min(GRID_SPAN - 1, Math.floor(n * GRID_SPAN)));
+  return [GRID_MIN + clamp(u), GRID_MAX - 1 - clamp(v)];
+}
+
+export function coordsToPercent(coords?: string | null): { left: number; top: number } {
+  const cell = parcelRectPercent(coords);
+  return { left: cell.left + cell.size / 2, top: cell.top + cell.size / 2 };
+}
+
+const MAP_IMAGE_PATH = /^\/v2\/map\.png$/;
+
+export function localImageUrl(image?: string | null): string | undefined {
+  image = publicImageUrl(image);
+  if (!image) return undefined;
+  try {
+    const u = new URL(image);
+    if (MAP_IMAGE_PATH.test(u.pathname)) {
+      return `${serviceBase("map")}${u.pathname}${u.search}`;
+    }
+  } catch {
+  }
+  return image;
+}
+
+function creatorOf(p: Place): string {
+  return (p.contact_name || p.owner || p.creator_address || "Unknown creator").trim();
+}
+
+function fmtDate(iso?: string | null): string {
+  if (!iso) return "\u{2014}";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "\u{2014}";
+  return d.toLocaleDateString();
+}
+
+function pinKind(p: Place): string {
+  if (p.user_count != null && p.user_count > 0) return "live";
+  const c = p.categories.map((s) => s.toLowerCase());
+  if (c.includes("poi") || c.includes("featured")) return "poi";
+  if (c.includes("game") || c.includes("parkour") || c.includes("casino")) return "place";
+  if (p.highlighted) return "fav";
+  return "place";
+}
+
+const CAT_COLORS: Record<string, string> = {
+  social: "#5db0ff",
+  music: "#b07bff",
+  art: "#ff8a5c",
+  game: "#5fd38a",
+  fashion: "#ff6fb5",
+  education: "#ffd24d",
+  shop: "#6ee0d2",
+  sports: "#7d8cff",
+  business: "#c0c8d6",
+  crypto: "#f3ba2f",
+  casino: "#ff4d6d",
+  poi: "#ffb019",
+  parkour: "#a14bff",
+  featured: "#ffd700",
+};
+
+function catColor(name: string): string {
+  return CAT_COLORS[name] || `hsl(${hueFor(name)} 70% 62%)`;
+}
+
+export function toPlaceView(p: Place) {
+  const [x, y] = parseCoords(p.base_position);
+  const { left, top } = coordsToPercent(p.base_position);
+  const players = p.user_count;
+  return {
+    id: p.id,
+    title: p.title || "Untitled parcel",
+    description: p.description || "",
+    image: localImageUrl(p.image),
+    coords: p.base_position,
+    x,
+    y,
+    left,
+    top,
+    players,
+    live: players != null && players > 0,
+    featured: p.highlighted,
+    rating: Math.round((p.like_rate ?? 0) * 100),
+    favorites: p.favorites,
+    ...(p.user_favorite === undefined ? {} : { userFavorite: p.user_favorite }),
+    likes: p.likes,
+    visits: p.user_visits,
+    parcels: p.positions.length || 1,
+    categories: p.categories,
+    creator: creatorOf(p),
+    creatorAddress: (p.owner || p.creator_address || "").trim().toLowerCase() || null,
+    world: p.world,
+    worldName: p.world_name,
+    updated: fmtDate(p.updated_at),
+    updatedAt: p.updated_at ?? null,
+    hue: hueFor(p.id),
+    kind: pinKind(p),
+  };
+}
+
+export type PlaceView = ReturnType<typeof toPlaceView>;
+
+export function toPlaceDetail(view: PlaceView | null | undefined) {
+  if (!view) return null;
+  return {
+    id: view.id,
+    title: view.title,
+    coords: view.coords,
+    parcels: view.parcels,
+    favorites: view.favorites,
+    views: view.visits,
+    approval: view.rating,
+    creator: view.creator,
+    creatorAddress: view.creatorAddress,
+    categories: view.categories,
+    updated: view.updated,
+    description: view.description || "No description provided.",
+    hue: view.hue,
+    image: view.image,
+    world: view.world,
+    worldName: view.worldName,
+  };
+}
+
+export type PlaceViewer = { liked: boolean | null; favorite: boolean };
+
+export function placeViewerOf(row: { user_like: boolean; user_dislike: boolean; user_favorite: boolean }): PlaceViewer {
+  return { liked: row.user_like ? true : row.user_dislike ? false : null, favorite: row.user_favorite };
+}
+
+export async function setPlaceFavorite(entityId: string, favorites: boolean): Promise<boolean> {
+  if (!entityId) return false;
+  await sendSignedJSON(`/api/places/${encodeURIComponent(entityId)}/favorites`, {
+    service: "places",
+    method: "PATCH",
+    body: { favorites },
+  });
+  return true;
+}
+
+export async function setPlaceLike(entityId: string, likes: boolean | null): Promise<boolean> {
+  if (!entityId) return false;
+  const res = await sendSignedJSON(`/api/places/${encodeURIComponent(entityId)}/likes`, {
+    service: "places",
+    method: "PATCH",
+    body: { like: likes },
+  });
+  return res != null;
+}
+
+export function toCategoryView(c: PlaceCategory) {
+  const label = (c.i18n.en || c.name || "").trim();
+  return {
+    key: c.name,
+    name: c.name,
+    label: label || c.name,
+    count: c.count,
+    color: catColor(c.name),
+  };
+}
+
+export type CategoryView = ReturnType<typeof toCategoryView>;

@@ -1,0 +1,32 @@
+{
+  "method": "GET",
+  "url": "https://profile-images.decentraland.org/entities/bafkreifkus6iegxyerri7rbfzmxrj5c726prza7lqobufstyc54yuzxwpy/face.png",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 301,
+  "status_text": "Moved Permanently",
+  "response_headers": {
+    "access-control-allow-methods": "GET, HEAD",
+    "access-control-allow-origin": "*",
+    "access-control-expose-headers": "ETag, Access-Control-Allow-Origin, Cache-Control, Content-Length",
+    "access-control-max-age": "604800",
+    "cf-ray": "a40c696f285f6e86-TXL",
+    "connection": "keep-alive",
+    "content-type": "text/html; charset=UTF-8",
+    "date": "Fri, 25 Sep 2026 19:24:55 GMT",
+    "location": "https://profile-images-bucket-43d0c58.s3.us-east-1.amazonaws.com/v1/entities/bafkreifkus6iegxyerri7rbfzmxrj5c726prza7lqobufstyc54yuzxwpy/face.png",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "transfer-encoding": "chunked",
+    "vary": "Origin, Access-Control-Request-Headers, Access-Control-Request-Method",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:55Z",
+  "elapsed_ms": 49,
+  "body_bytes": 167,
+  "body_file": "face-profile-1.raw.body",
+  "redacted": false
+}

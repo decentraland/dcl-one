@@ -1,0 +1,27 @@
+{
+  "method": "GET",
+  "url": "https://notifications.decentraland.org/does-not-exist",
+  "request_headers": {
+    "user-agent": "catalyrst-v2-conformance-capture/1 (social family; reads only)",
+    "accept": "*/*"
+  },
+  "request_body": null,
+  "status": 404,
+  "status_text": "Not Found",
+  "response_headers": {
+    "cf-cache-status": "DYNAMIC",
+    "cf-ray": "a40c6937f9f94ae6-TXL",
+    "connection": "keep-alive",
+    "content-length": "9",
+    "content-type": "text/plain; charset=utf-8",
+    "date": "Fri, 25 Sep 2026 19:24:46 GMT",
+    "server": "cloudflare",
+    "strict-transport-security": "max-age=15552000; includeSubDomains; preload",
+    "x-content-type-options": "nosniff"
+  },
+  "captured_at": "2026-09-25T19:24:46Z",
+  "elapsed_ms": 137,
+  "body_bytes": 9,
+  "body_file": "unknown-path-404.raw.body",
+  "redacted": false
+}

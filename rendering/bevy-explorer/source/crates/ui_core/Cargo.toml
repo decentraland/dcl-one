@@ -1,0 +1,18 @@
+[package]
+name = "ui_core"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+[dependencies]
+common = { workspace = true }
+input_manager = { workspace = true }
+
+bevy = { workspace = true }
+bevy_dui = { workspace = true }
+bevy_ecss = { workspace = true }
+once_cell = { workspace = true }
+anyhow = { workspace = true }
+opener = { workspace = true }
+bevy_simple_text_input = { workspace = true }

@@ -1,0 +1,1017 @@
+use std::{
+    collections::VecDeque,
+    marker::PhantomData,
+    panic::Location,
+    path::{Path, PathBuf},
+};
+
+use alloy_core::primitives::Address;
+use bevy::{
+    app::Update,
+    asset::{AsAssetId, AssetServer, UntypedAssetId},
+    ecs::{
+        component::{Component, Mutable},
+        schedule::IntoScheduleConfigs,
+        system::{
+            Commands, EntityCommand, EntityCommands, Query, ResMut, ScheduleSystem, SystemParam,
+        },
+        world::EntityWorldMut,
+    },
+    log::error,
+    math::Vec3,
+    pbr::{MeshMaterial3d, StandardMaterial},
+    prelude::{Bundle, Command, Entity, GlobalTransform, Plugin, Res, World},
+    render::{
+        mesh::Mesh3d,
+        view::{Layer, RenderLayers},
+    },
+    scene::{InstanceId, SceneSpawner},
+    tasks::{IoTaskPool, Task},
+    transform::components::Transform,
+};
+use smallvec::SmallVec;
+
+pub struct UtilsPlugin;
+
+impl Plugin for UtilsPlugin {
+    fn build(&self, app: &mut bevy::prelude::App) {
+        app.add_systems(Update, despawn_with.in_set(SceneSets::RestrictedActions));
+    }
+}
+
+// get results from a task
+pub trait TaskExt {
+    type Output;
+    fn complete(&mut self) -> Option<Self::Output>;
+}
+
+impl<T> TaskExt for Task<T> {
+    type Output = T;
+
+    #[cfg(target_arch = "wasm32")]
+    fn complete(&mut self) -> Option<Self::Output> {
+        use futures_lite::FutureExt;
+
+        // wasm doesn't have `is_finished``, but polling is cheap as it is just a oneshot receiver
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        if let std::task::Poll::Ready(res) = self.poll(&mut context) {
+            Some(res)
+        } else {
+            None
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn complete(&mut self) -> Option<Self::Output> {
+        match self.is_finished() {
+            true => Some(
+                futures_lite::future::block_on(futures_lite::future::poll_once(self))
+                    .expect("is_finished but !Some?"),
+            ),
+            false => None,
+        }
+    }
+}
+
+// convert string -> Address
+pub trait AsH160 {
+    fn as_h160(&self) -> Option<Address>;
+}
+
+impl AsH160 for &str {
+    fn as_h160(&self) -> Option<Address> {
+        if self.starts_with("0x") {
+            return (&self[2..]).as_h160();
+        }
+
+        let Ok(hex_bytes) = hex::decode(self.as_bytes()) else {
+            return None;
+        };
+        if hex_bytes.len() != Address::len_bytes() {
+            return None;
+        }
+
+        Some(Address::from_slice(hex_bytes.as_slice()))
+    }
+}
+
+impl AsH160 for String {
+    fn as_h160(&self) -> Option<Address> {
+        self.as_str().as_h160()
+    }
+}
+
+pub fn format_address(address: Address, name: Option<&str>) -> String {
+    let str_address = format!("{address:x}");
+    let str_address = str_address
+        .chars()
+        .skip(str_address.len().saturating_sub(4))
+        .collect::<String>();
+    if let Some(name) = name {
+        format!("{name}#{str_address}")
+    } else {
+        format!(
+            "0x{}...{str_address}",
+            str_address.chars().take(4).collect::<String>()
+        )
+    }
+}
+
+/// a struct for buffering a certain amount of history and providing a subscription mechanism for updates
+#[derive(Debug)]
+pub struct RingBuffer<T: Clone + std::fmt::Debug> {
+    log_source: tokio::sync::broadcast::Sender<T>,
+    _log_sink: tokio::sync::broadcast::Receiver<T>,
+    log_back: VecDeque<T>,
+    back_capacity: usize,
+    missed: usize,
+}
+
+impl<T: Clone + std::fmt::Debug> RingBuffer<T> {
+    pub fn new(back_capacity: usize, reader_capacity: usize) -> Self {
+        let (log_source, _log_sink) = tokio::sync::broadcast::channel(reader_capacity);
+
+        Self {
+            log_source,
+            _log_sink,
+            log_back: Default::default(),
+            back_capacity,
+            missed: 0,
+        }
+    }
+
+    pub fn send(&mut self, item: T) {
+        let _ = self.log_source.send(item.clone());
+        if self.log_back.len() == self.back_capacity {
+            self.log_back.pop_front();
+            self.missed += 1;
+        }
+        self.log_back.push_back(item);
+    }
+
+    pub fn read(&self) -> (usize, Vec<T>, RingBufferReceiver<T>) {
+        (
+            self.missed,
+            self.log_back.iter().cloned().collect(),
+            self.log_source.subscribe(),
+        )
+    }
+}
+
+pub type RingBufferReceiver<T> = tokio::sync::broadcast::Receiver<T>;
+
+// TryPushChildren command helper - add children but don't crash if any entities are already deleted
+// if parent is deleted, despawn live children
+// else add all live children to the parent
+pub struct TryPushChildren {
+    parent: Entity,
+    children: SmallVec<[Entity; 8]>,
+}
+
+impl Command for TryPushChildren {
+    fn apply(self, world: &mut World) {
+        let live_children: SmallVec<[Entity; 8]> = self
+            .children
+            .into_iter()
+            .filter(|c| world.entities().contains(*c))
+            .collect();
+
+        if let Ok(mut entity) = world.get_entity_mut(self.parent) {
+            entity.add_children(&live_children);
+        } else {
+            for child in live_children {
+                if let Ok(cmd) = world.get_entity_mut(child) {
+                    cmd.despawn();
+                }
+            }
+        }
+    }
+}
+
+pub struct TryChildBuilder<'a> {
+    commands: Commands<'a, 'a>,
+    push_children: TryPushChildren,
+}
+
+impl TryChildBuilder<'_> {
+    /// Spawns an entity with the given bundle and inserts it into the parent entity's [`Children`].
+    /// Also adds [`Parent`] component to the created entity.
+    pub fn spawn(&mut self, bundle: impl Bundle) -> EntityCommands<'_> {
+        let e = self.commands.spawn(bundle);
+        self.push_children.children.push(e.id());
+        e
+    }
+
+    /// Spawns an [`Entity`] with no components and inserts it into the parent entity's [`Children`].
+    /// Also adds [`Parent`] component to the created entity.
+    pub fn spawn_empty(&mut self) -> EntityCommands<'_> {
+        let e = self.commands.spawn_empty();
+        self.push_children.children.push(e.id());
+        e
+    }
+
+    /// Returns the parent entity of this [`ChildBuilder`].
+    pub fn parent_entity(&self) -> Entity {
+        self.push_children.parent
+    }
+
+    /// Adds a command to be executed, like [`Commands::add`].
+    pub fn add_command<C: Command>(&mut self, command: C) -> &mut Self {
+        self.commands.queue(command);
+        self
+    }
+}
+pub trait TryPushChildrenEx {
+    fn try_with_children(&mut self, spawn_children: impl FnOnce(&mut TryChildBuilder))
+        -> &mut Self;
+    fn try_push_children(&mut self, children: &[Entity]) -> &mut Self;
+}
+
+impl TryPushChildrenEx for EntityCommands<'_> {
+    fn try_push_children(&mut self, children: &[Entity]) -> &mut Self {
+        let parent = self.id();
+        self.commands().queue(TryPushChildren {
+            children: SmallVec::from(children),
+            parent,
+        });
+        self
+    }
+
+    fn try_with_children(
+        &mut self,
+        spawn_children: impl FnOnce(&mut TryChildBuilder),
+    ) -> &mut Self {
+        let parent = self.id();
+        let mut builder = TryChildBuilder {
+            commands: self.commands(),
+            push_children: TryPushChildren {
+                children: SmallVec::default(),
+                parent,
+            },
+        };
+
+        spawn_children(&mut builder);
+        let children = builder.push_children;
+        if children.children.contains(&parent) {
+            panic!("Entity cannot be a child of itself.");
+        }
+        self.commands().queue(children);
+        self
+    }
+}
+
+// add a console command. trait is here as we want to mock it when testing
+pub trait DoAddConsoleCommand {
+    fn add_console_command<T: Command, U>(
+        &mut self,
+        system: impl IntoScheduleConfigs<ScheduleSystem, U>,
+    ) -> &mut Self;
+}
+
+// macro for assertions
+// by default, enabled in debug builds and disabled in release builds
+// can be enabled for release with `cargo run --release --features="dcl-assert"`
+#[cfg(any(debug_assertions, feature = "dcl-assert"))]
+#[macro_export]
+macro_rules! dcl_assert {
+    ($($arg:tt)*) => ( assert!($($arg)*); )
+}
+#[cfg(not(any(debug_assertions, feature = "dcl-assert")))]
+#[macro_export]
+macro_rules! dcl_assert {
+    ($($arg:tt)*) => {};
+}
+
+pub use dcl_assert;
+
+use crate::sets::SceneSets;
+
+// quaternion normalization
+pub trait QuatNormalizeExt {
+    fn normalize_or_identity(&self) -> Self;
+}
+
+impl QuatNormalizeExt for bevy::prelude::Quat {
+    fn normalize_or_identity(&self) -> Self {
+        let norm = self.normalize();
+        if norm.is_finite() {
+            norm
+        } else {
+            bevy::prelude::Quat::IDENTITY
+        }
+    }
+}
+
+#[derive(Component)]
+pub struct DespawnWith(pub Entity);
+
+fn despawn_with(mut commands: Commands, q: Query<(Entity, &DespawnWith)>) {
+    for (ent, with) in q.iter() {
+        if commands.get_entity(with.0).is_err() {
+            commands.entity(ent).try_despawn();
+        }
+    }
+}
+
+// commands to modify components
+
+pub struct ModifyComponent<C: Component, F: FnOnce(&mut C) + Send + Sync + 'static> {
+    func: F,
+    _p: PhantomData<fn() -> C>,
+}
+
+impl<C: Component<Mutability = Mutable>, F: FnOnce(&mut C) + Send + Sync + 'static> EntityCommand
+    for ModifyComponent<C, F>
+{
+    fn apply(self, mut entity: EntityWorldMut) {
+        if let Some(mut c) = entity.get_mut::<C>() {
+            (self.func)(&mut *c)
+        }
+    }
+}
+
+impl<C: Component, F: FnOnce(&mut C) + Send + Sync + 'static> ModifyComponent<C, F> {
+    fn new(func: F) -> Self {
+        Self {
+            func,
+            _p: PhantomData,
+        }
+    }
+}
+
+pub trait ModifyComponentExt {
+    fn modify_component<
+        C: Component<Mutability = Mutable>,
+        F: FnOnce(&mut C) + Send + Sync + 'static,
+    >(
+        &mut self,
+        func: F,
+    ) -> &mut Self;
+}
+
+impl ModifyComponentExt for EntityCommands<'_> {
+    fn modify_component<
+        C: Component<Mutability = Mutable>,
+        F: FnOnce(&mut C) + Send + Sync + 'static,
+    >(
+        &mut self,
+        func: F,
+    ) -> &mut Self {
+        self.queue(ModifyComponent::new(func))
+    }
+}
+
+pub struct ModifyDefaultComponent<
+    C: Component<Mutability = Mutable> + Default,
+    F: FnOnce(&mut C) + Send + Sync + 'static,
+> {
+    func: F,
+    _p: PhantomData<fn() -> C>,
+}
+
+impl<C: Component<Mutability = Mutable> + Default, F: FnOnce(&mut C) + Send + Sync + 'static>
+    EntityCommand for ModifyDefaultComponent<C, F>
+{
+    fn apply(self, mut entity: EntityWorldMut) {
+        if let Some(mut c) = entity.get_mut::<C>() {
+            (self.func)(&mut *c)
+        } else {
+            let mut v = C::default();
+            (self.func)(&mut v);
+            entity.insert(v);
+        }
+    }
+}
+
+impl<C: Component<Mutability = Mutable> + Default, F: FnOnce(&mut C) + Send + Sync + 'static>
+    ModifyDefaultComponent<C, F>
+{
+    fn new(func: F) -> Self {
+        Self {
+            func,
+            _p: PhantomData,
+        }
+    }
+}
+
+pub trait ModifyDefaultComponentExt {
+    fn default_and_modify_component<
+        C: Component<Mutability = Mutable> + Default,
+        F: FnOnce(&mut C) + Send + Sync + 'static,
+    >(
+        &mut self,
+        func: F,
+    ) -> &mut Self;
+}
+
+impl ModifyDefaultComponentExt for EntityCommands<'_> {
+    fn default_and_modify_component<
+        C: Component<Mutability = Mutable> + Default,
+        F: FnOnce(&mut C) + Send + Sync + 'static,
+    >(
+        &mut self,
+        func: F,
+    ) -> &mut Self {
+        self.queue(ModifyDefaultComponent::new(func))
+    }
+}
+
+#[macro_export]
+macro_rules! anim_last_system {
+    () => {
+        bevy::prelude::expire_completed_transitions
+    };
+}
+
+#[derive(Component, Default)]
+pub struct AudioReceiver {
+    pub layers: RenderLayers,
+}
+
+#[derive(SystemParam)]
+pub struct VolumePanning<'w, 's> {
+    receivers: Query<'w, 's, (&'static GlobalTransform, &'static AudioReceiver)>,
+}
+
+impl VolumePanning<'_, '_> {
+    pub fn volume_and_panning(
+        &self,
+        translation: Vec3,
+        layers: Option<&RenderLayers>,
+    ) -> (f32, f32) {
+        let (mut left, mut right): (f32, f32) = (0.0, 0.0);
+
+        for (transform, _) in self
+            .receivers
+            .iter()
+            .filter(|(_, receiver)| layers.unwrap_or_default().intersects(&receiver.layers))
+        {
+            let sound_path = translation - transform.translation();
+            let volume = (1. - sound_path.length() / 75.0).clamp(0., 1.).powi(2);
+            let panning = if sound_path.length() > f32::EPSILON {
+                let right_ear_angle = transform.right().angle_between(sound_path);
+                (right_ear_angle.cos() + 1.) / 2.
+            } else {
+                0.5
+            };
+
+            left += volume * (1.0 - panning);
+            right += volume * panning;
+        }
+
+        let volume = left + right;
+        let panning = right / (left + right).max(f32::EPSILON);
+
+        (volume, panning)
+    }
+}
+
+pub fn camera_to_render_layers<'a>(
+    base: u32,
+    camera_layers: impl Iterator<Item = &'a u32>,
+) -> RenderLayers {
+    camera_layers.fold(RenderLayers::none(), |result, camera_layer| {
+        if *camera_layer == 0 {
+            result.with(0 as Layer)
+        } else {
+            result.with((camera_layer - 1 + base) as Layer)
+        }
+    })
+}
+
+// convenient non-pooled client use for infrequent requests
+#[cfg(not(target_arch = "wasm32"))]
+pub fn reqwest_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .use_native_tls()
+        .user_agent("DCLExplorer/0.1")
+        .build()
+        .unwrap()
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn reqwest_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .user_agent("DCLExplorer/0.1")
+        .build()
+        .unwrap()
+}
+
+/// System param for systems that call page functions: on the web it keeps the system on the
+/// engine worker. Every worker has the relays, but a compute worker never returns to its event
+/// loop, so a call from one would never have its result delivered or its pending entry freed.
+/// The web entry inserts the `()` non-send resource behind it.
+#[cfg(target_arch = "wasm32")]
+pub type JsThread<'w> = bevy::prelude::NonSend<'w, ()>;
+
+#[cfg(not(target_arch = "wasm32"))]
+pub type JsThread<'w> = ();
+
+#[cfg(target_arch = "wasm32")]
+pub trait TaskCompat {
+    fn spawn_compat<T>(&self, future: impl core::future::Future<Output = T> + 'static) -> Task<T>
+    where
+        T: Send + 'static;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub trait TaskCompat {
+    fn spawn_compat<T>(
+        &self,
+        future: impl core::future::Future<Output = T> + Send + 'static,
+    ) -> Task<T>
+    where
+        T: Send + 'static;
+}
+
+impl TaskCompat for IoTaskPool {
+    #[cfg(target_arch = "wasm32")]
+    fn spawn_compat<T>(&self, future: impl core::future::Future<Output = T> + 'static) -> Task<T>
+    where
+        T: Send + 'static,
+    {
+        self.spawn(future)
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn spawn_compat<T>(
+        &self,
+        future: impl core::future::Future<Output = T> + Send + 'static,
+    ) -> Task<T>
+    where
+        T: Send + 'static,
+    {
+        self.spawn(async_compat::Compat::new(future))
+    }
+}
+
+#[allow(clippy::type_complexity)]
+#[derive(SystemParam)]
+pub struct SceneSpawnerPlus<'w, 's> {
+    scene_spawner: ResMut<'w, SceneSpawner>,
+    asset_server: Res<'w, AssetServer>,
+    query: Query<
+        'w,
+        's,
+        (
+            Option<&'static Mesh3d>,
+            Option<&'static MeshMaterial3d<StandardMaterial>>,
+        ),
+    >,
+}
+
+impl std::ops::Deref for SceneSpawnerPlus<'_, '_> {
+    type Target = SceneSpawner;
+
+    fn deref(&self) -> &Self::Target {
+        &self.scene_spawner
+    }
+}
+
+impl std::ops::DerefMut for SceneSpawnerPlus<'_, '_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.scene_spawner
+    }
+}
+
+impl SceneSpawnerPlus<'_, '_> {
+    pub fn instance_is_really_ready(&self, instance: InstanceId) -> bool {
+        if !self.scene_spawner.instance_is_ready(instance) {
+            return false;
+        }
+
+        fn check_handle(asset_server: &AssetServer, id: impl Into<UntypedAssetId>) -> bool {
+            let id = id.into();
+            if asset_server.load_state(id).is_loading() {
+                return false;
+            }
+
+            if asset_server
+                .recursive_dependency_load_state(id)
+                .is_loading()
+            {
+                return false;
+            }
+
+            true
+        }
+
+        for scene_ent in self.scene_spawner.iter_instance_entities(instance) {
+            let (maybe_h_mat, maybe_h_mesh) = self.query.get(scene_ent).unwrap();
+            if maybe_h_mat.is_some_and(|h| !check_handle(&self.asset_server, h.as_asset_id())) {
+                return false;
+            }
+            if maybe_h_mesh.is_some_and(|h| !check_handle(&self.asset_server, h.as_asset_id())) {
+                return false;
+            }
+        }
+
+        true
+    }
+}
+
+pub trait ReportErr {
+    fn report(self)
+    where
+        Self: Sized,
+    {
+    }
+}
+
+impl<T, E: std::fmt::Debug> ReportErr for Result<T, E> {
+    #[track_caller]
+    fn report(self)
+    where
+        Self: Sized,
+    {
+        if let Err(e) = self {
+            let caller = Location::caller();
+            error!("Unexpected application error : {e:?} @ {caller}")
+        }
+    }
+}
+
+pub trait InvertedScaleExt {
+    /// Test wether the scale has 1 or 3 negative axis
+    fn is_inverted(&self) -> bool;
+}
+
+impl InvertedScaleExt for GlobalTransform {
+    fn is_inverted(&self) -> bool {
+        self.scale().is_inverted()
+    }
+}
+
+impl InvertedScaleExt for Transform {
+    fn is_inverted(&self) -> bool {
+        self.scale.is_inverted()
+    }
+}
+
+impl InvertedScaleExt for Vec3 {
+    fn is_inverted(&self) -> bool {
+        (self.x < 0.) ^ (self.y < 0.) ^ (self.z < 0.)
+    }
+}
+
+pub trait UrlLoopbackExt {
+    fn is_loopback(&self) -> bool;
+}
+
+impl UrlLoopbackExt for url::Url {
+    fn is_loopback(&self) -> bool {
+        match self.host() {
+            Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+            Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+            Some(url::Host::Domain(domain)) => domain == "localhost",
+            _ => false,
+        }
+    }
+}
+
+/// [`UrlLoopbackExt::is_loopback`] for a url still held as a string; one that does not parse is
+/// not loopback.
+pub fn is_loopback_url(url: &str) -> bool {
+    url::Url::parse(url).is_ok_and(|url| url.is_loopback())
+}
+
+/// True if an IP must never be reachable from scene-controlled requests (SSRF guard):
+/// loopback, private RFC1918, CGNAT, link-local (incl. cloud metadata 169.254.169.254),
+/// unique-local/link-local v6, unspecified, and v4-mapped v6 forms of the above.
+pub fn is_forbidden_ip(ip: &std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => {
+            let o = v4.octets();
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_unspecified()
+                || v4.is_documentation()
+                || o[0] == 0
+                // carrier-grade NAT 100.64.0.0/10
+                || (o[0] == 100 && (o[1] & 0xc0) == 64)
+        }
+        IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_forbidden_ip(&IpAddr::V4(mapped));
+            }
+            let seg = v6.segments();
+            v6.is_loopback()
+                || v6.is_unspecified()
+                // unique local fc00::/7
+                || (seg[0] & 0xfe00) == 0xfc00
+                // link local fe80::/10
+                || (seg[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// SSRF guard for scene-controlled URLs (fetch / signedFetch / readFile). Enforces an
+/// http(s)/ws(s) scheme and resolves the host, rejecting if ANY resolved address is
+/// non-public (defeats a literal private IP and static-DNS pointers to internal hosts).
+/// `allow_private` widens the allowance to the local network for local preview only (never
+/// to link-local / metadata). Returns Ok for a public destination.
+/// Native-only: it is invoked exclusively from the native request-executing ops; the
+/// wasm/web client relies on the browser's own network sandbox.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn assert_public_url(url_str: &str, allow_private: bool) -> Result<(), anyhow::Error> {
+    let url = url::Url::parse(url_str)?;
+    match url.scheme() {
+        "https" | "http" | "wss" | "ws" => {}
+        other => anyhow::bail!("scheme `{other}` is not allowed"),
+    }
+    if allow_private && url.is_loopback() {
+        return Ok(());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("request URL has no host"))?
+        .to_owned();
+    let port = url.port_or_known_default().unwrap_or(443);
+    resolve_public_addrs(&host, port, allow_private).await?;
+    Ok(())
+}
+
+/// True for addresses on this machine or its local network: loopback and RFC1918 / IPv6
+/// unique-local. Deliberately EXCLUDES link-local (`169.254/16`, `fe80::/10`) so cloud
+/// metadata (`169.254.169.254`) stays unreachable even where local network is permitted
+/// (i.e. preview). This is the set that `allow_private` opens up.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_private_lan(ip: &std::net::IpAddr) -> bool {
+    use std::net::IpAddr;
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private(),
+        IpAddr::V6(v6) => {
+            if let Some(mapped) = v6.to_ipv4_mapped() {
+                return is_private_lan(&IpAddr::V4(mapped));
+            }
+            // unique local fc00::/7
+            v6.is_loopback() || (v6.segments()[0] & 0xfe00) == 0xfc00
+        }
+    }
+}
+
+/// Reject the set unless EVERY address is public (or, under `allow_private`, on the local
+/// network). Whole-set rejection is deliberate — see [`resolve_public_addrs`]. This is the
+/// pure validation step, shared by the fetch resolver (which resolves first) and the
+/// WebSocket `check_resolved` hook (which is handed addresses already resolved by deno).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn validate_public_addrs(
+    addrs: &[std::net::SocketAddr],
+    allow_private: bool,
+) -> Result<(), anyhow::Error> {
+    for addr in addrs {
+        if allow_private && is_private_lan(&addr.ip()) {
+            continue;
+        }
+        if is_forbidden_ip(&addr.ip()) {
+            anyhow::bail!("request to a non-public address is not allowed");
+        }
+    }
+    Ok(())
+}
+
+/// Resolve `host:port` and reject the answer unless EVERY address is public.
+///
+/// Rejecting the whole answer rather than filtering out the bad records is deliberate: a
+/// host that replies with a mix of public and private addresses is doing so on purpose,
+/// and silently dropping the private ones would let the request proceed looking legitimate.
+///
+/// This is the shared primitive behind [`assert_public_url`] (pre-flight, by URL) and the
+/// connect-time resolver used by every scene http client, so both reach the same verdict
+/// from the same code. `allow_private` (preview only) permits [`is_private_lan`] addresses
+/// but never link-local, so metadata stays blocked in every mode.
+#[cfg(not(target_arch = "wasm32"))]
+pub async fn resolve_public_addrs(
+    host: &str,
+    port: u16,
+    allow_private: bool,
+) -> Result<Vec<std::net::SocketAddr>, anyhow::Error> {
+    use std::net::ToSocketAddrs;
+    // std resolver on the blocking pool (avoids pulling tokio's `net` feature into the
+    // wasm-shared workspace dependency)
+    let hostport = format!("{host}:{port}");
+    let addrs = tokio::task::spawn_blocking(move || {
+        hostport.to_socket_addrs().map(|it| it.collect::<Vec<_>>())
+    })
+    .await?
+    .map_err(|e| anyhow::anyhow!("could not resolve host `{host}`: {e}"))?;
+    if addrs.is_empty() {
+        anyhow::bail!("host `{host}` did not resolve to any address");
+    }
+    validate_public_addrs(&addrs, allow_private)?;
+    Ok(addrs)
+}
+
+/// A colour ramp keyed by a normalized parameter in `[0, 1)` (e.g. time of day).
+/// Stops are sorted ascending; sampling wraps across the ends (last -> first).
+pub struct Gradient(pub &'static [(f32, Vec3)]);
+
+impl Gradient {
+    pub fn sample(&self, t: f32) -> Vec3 {
+        let stops = self.0;
+        let t = t.rem_euclid(1.0);
+        let first = stops.first().unwrap();
+        let last = stops.last().unwrap();
+        if t <= first.0 {
+            // wrap: blend from last stop to first
+            let span = first.0 + (1.0 - last.0);
+            let f = if span > 0.0 {
+                (t + (1.0 - last.0)) / span
+            } else {
+                0.0
+            };
+            return last.1.lerp(first.1, f);
+        }
+        if t >= last.0 {
+            let span = first.0 + (1.0 - last.0);
+            let f = if span > 0.0 { (t - last.0) / span } else { 0.0 };
+            return last.1.lerp(first.1, f);
+        }
+        for pair in stops.windows(2) {
+            let (t0, c0) = pair[0];
+            let (t1, c1) = pair[1];
+            if t >= t0 && t <= t1 {
+                return c0.lerp(c1, (t - t0) / (t1 - t0));
+            }
+        }
+        last.1
+    }
+}
+
+/// A scalar ramp, sampled the same way as [`Gradient`] (wraps across the ends).
+pub struct Curve(pub &'static [(f32, f32)]);
+
+impl Curve {
+    pub fn sample(&self, t: f32) -> f32 {
+        let stops = self.0;
+        let t = t.rem_euclid(1.0);
+        let first = stops.first().unwrap();
+        let last = stops.last().unwrap();
+        if t <= first.0 {
+            let span = first.0 + (1.0 - last.0);
+            let f = if span > 0.0 {
+                (t + (1.0 - last.0)) / span
+            } else {
+                0.0
+            };
+            return last.1 + (first.1 - last.1) * f;
+        }
+        if t >= last.0 {
+            let span = first.0 + (1.0 - last.0);
+            let f = if span > 0.0 { (t - last.0) / span } else { 0.0 };
+            return last.1 + (first.1 - last.1) * f;
+        }
+        for pair in stops.windows(2) {
+            let (t0, c0) = pair[0];
+            let (t1, c1) = pair[1];
+            if t >= t0 && t <= t1 {
+                return c0 + (c1 - c0) * (t - t0) / (t1 - t0);
+            }
+        }
+        last.1
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The egress policy hinges on this split: `allow_private` (preview) opens loopback and
+    /// the local network, but link-local — including cloud metadata `169.254.169.254` — is
+    /// NOT `is_private_lan`, so it stays `is_forbidden_ip` and is refused in every mode.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[test]
+    fn private_lan_excludes_link_local_metadata() {
+        use std::net::IpAddr;
+        let lan: &[&str] = &["127.0.0.1", "10.0.0.1", "192.168.1.1", "172.16.5.4", "::1"];
+        for s in lan {
+            let ip: IpAddr = s.parse().unwrap();
+            assert!(is_private_lan(&ip), "{s} should count as local network");
+        }
+        // fc00::/7 unique-local is local network; fe80::/10 link-local is not
+        assert!(is_private_lan(&"fc00::1".parse().unwrap()));
+        assert!(!is_private_lan(&"fe80::1".parse().unwrap()));
+
+        // the metadata endpoint: never local network, always forbidden — so a preview
+        // `allow_private` skip never reaches it.
+        let meta: IpAddr = "169.254.169.254".parse().unwrap();
+        assert!(!is_private_lan(&meta), "metadata must not be local network");
+        assert!(is_forbidden_ip(&meta), "metadata must stay forbidden");
+
+        // ordinary public address is neither
+        let pubip: IpAddr = "8.8.8.8".parse().unwrap();
+        assert!(!is_private_lan(&pubip));
+        assert!(!is_forbidden_ip(&pubip));
+    }
+
+    /// End-to-end on the shared primitive both the fetch resolver and the WebSocket
+    /// `resolve_checked` hook depend on: literal private/loopback is refused normally and
+    /// allowed only under `allow_private` (preview), while cloud metadata stays refused even
+    /// under preview. Uses literal IPs so no network lookup happens.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn resolve_public_addrs_enforces_egress_policy() {
+        assert!(resolve_public_addrs("127.0.0.1", 80, false).await.is_err());
+        assert!(resolve_public_addrs("127.0.0.1", 80, true).await.is_ok());
+        assert!(resolve_public_addrs("192.168.1.1", 80, false)
+            .await
+            .is_err());
+        assert!(resolve_public_addrs("192.168.1.1", 80, true).await.is_ok());
+        // link-local / metadata: refused in every mode, preview included
+        assert!(resolve_public_addrs("169.254.169.254", 80, true)
+            .await
+            .is_err());
+    }
+
+    #[test]
+    fn inverted_scale() {
+        macro_rules! make_test {
+            ($vec:expr, true) => {
+                assert!($vec.is_inverted());
+            };
+            ($vec:expr, false) => {
+                assert!(!$vec.is_inverted());
+            };
+        }
+
+        make_test!(Vec3::ZERO, false);
+        make_test!(Vec3::new(1., 0., 0.), false);
+        make_test!(Vec3::new(0., 1., 0.), false);
+        make_test!(Vec3::new(0., 0., 1.), false);
+        make_test!(Vec3::new(1., 1., 0.), false);
+        make_test!(Vec3::new(1., 0., 1.), false);
+        make_test!(Vec3::new(0., 1., 1.), false);
+        make_test!(Vec3::new(1., 1., 1.), false);
+        make_test!(Vec3::new(-1., 1., 1.), true);
+        make_test!(Vec3::new(1., -1., 1.), true);
+        make_test!(Vec3::new(1., 1., -1.), true);
+        make_test!(Vec3::new(-1., -1., 1.), false);
+        make_test!(Vec3::new(-1., 1., -1.), false);
+        make_test!(Vec3::new(1., -1., -1.), false);
+        make_test!(Vec3::new(-1., -1., -1.), true);
+    }
+}
+
+/// Join a path fragment that came from outside, keeping the result under the base.
+pub trait JoinRelativeExt {
+    /// `self.join(rhs)`, or `None` if `rhs` would escape `self`.
+    ///
+    /// [`Path::join`] and [`PathBuf::push`] discard the base entirely when the right side is
+    /// absolute, so any fragment whose contents we do not control has to be checked first.
+    ///
+    /// Tests the components rather than [`Path::is_absolute`], which on windows demands both a
+    /// prefix and a root and so answers `false` for `C:x` and `\\windows\\x` - both of which still
+    /// replace all or part of the base. Ordinary separators are fine; only escapes are rejected.
+    fn join_relative(&self, rhs: impl AsRef<Path>) -> Option<PathBuf>;
+}
+
+impl JoinRelativeExt for Path {
+    fn join_relative(&self, rhs: impl AsRef<Path>) -> Option<PathBuf> {
+        let rhs = rhs.as_ref();
+        use std::path::Component;
+        let escapes = rhs.components().any(|c| {
+            matches!(
+                c,
+                Component::Prefix(_) | Component::RootDir | Component::ParentDir
+            )
+        });
+        (!escapes).then(|| self.join(rhs))
+    }
+}
+
+#[cfg(test)]
+mod join_relative_tests {
+    use super::*;
+
+    #[test]
+    fn only_escapes_are_rejected() {
+        let base = Path::new("/cache");
+        for ok in ["abc", "b64-aGVsbG8/d29ybGQ", "a/b", "./a"] {
+            assert!(base.join_relative(ok).is_some(), "{ok} should be allowed");
+        }
+        // a `b64-` id is standard base64, so `/` is expected and must stay allowed
+        assert_eq!(
+            base.join_relative("b64-aGVsbG8/d29ybGQ"),
+            Some(PathBuf::from("/cache/b64-aGVsbG8/d29ybGQ"))
+        );
+        for bad in ["/etc/x", "../x", "a/../../x"] {
+            assert!(
+                base.join_relative(bad).is_none(),
+                "{bad} should be rejected"
+            );
+        }
+        // these are only prefix/root components on windows; elsewhere they are ordinary names,
+        // which is the correct platform answer - `Component` decides, not a hand-rolled rule
+        #[cfg(windows)]
+        for bad in [r"\\host\share", r"C:\x", "C:x", r"\windows\x"] {
+            assert!(
+                base.join_relative(bad).is_none(),
+                "{bad} should be rejected"
+            );
+        }
+    }
+}

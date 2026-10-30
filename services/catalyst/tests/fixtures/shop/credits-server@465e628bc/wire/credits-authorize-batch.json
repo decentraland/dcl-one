@@ -1,0 +1,382 @@
+{
+  "about": "POST /credits/authorize/batch: ONE credit (one salt) for a whole settlement group of up to 30 lines, sized from the quoted total; each line is debited in whole credits. Same conventions as credits-authorize.json.",
+  "route": {
+    "method": "POST",
+    "path": "/credits/authorize/batch",
+    "pipeline": "signedFetchMiddleware, authorizeRateLimit, authorizeUsdCreditBatchHandler",
+    "source": "src/controllers/routes.ts:263"
+  },
+  "testSetup": {
+    "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:10-18",
+    "buyer": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+    "managerOverride": "0x1111111111111111111111111111111111111111",
+    "chainId": 80002,
+    "contract": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+    "oracle": {
+      "manaWei": "1234567890000000000",
+      "oracleRate": "30000000"
+    },
+    "signedCapWei": "1851851835000000000",
+    "ttlSeconds": 900,
+    "balanceCents": 100000,
+    "signerMock": {
+      "signature": "0xsignature"
+    }
+  },
+  "responseLineShape": {
+    "fields": [
+      "usdCents",
+      "tradeId",
+      "contractAddress",
+      "itemId",
+      "name"
+    ],
+    "rule": "echoed from the validated request lines in request order; usdCents is the charged (whole-credit) amount",
+    "source": "src/controllers/handlers/authorize-usd-credit-batch.ts:160"
+  },
+  "cases": [
+    {
+      "name": "no signed-fetch auth",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:99-108",
+      "auth": null,
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 200
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Invalid or missing signed-fetch authentication"
+        }
+      }
+    },
+    {
+      "name": "flag off",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:121-132",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 200
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "body": {
+          "error": "USD credits are not enabled"
+        }
+      }
+    },
+    {
+      "name": "items missing or empty: {}",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:150-160",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {}
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A non-empty \"items\" array is required"
+        }
+      }
+    },
+    {
+      "name": "items missing or empty: {\"items\":[]}",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:150-160",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "items": []
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A non-empty \"items\" array is required"
+        }
+      }
+    },
+    {
+      "name": "items missing or empty: {\"items\":\"nope\"}",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:150-160",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "items": "nope"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A non-empty \"items\" array is required"
+        }
+      }
+    },
+    {
+      "name": "31 lines",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:162-171",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "items": {
+            "$repeat": 31,
+            "of": {
+              "usdPriceCents": 10
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "A checkout may hold at most 30 items"
+        }
+      }
+    },
+    {
+      "name": "one malformed line names its index",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:173-189",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 100
+            },
+            {
+              "usdPriceCents": 100,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "not-a-number"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "items[1]: \"itemId\" must be a numeric id when an item is given"
+        }
+      }
+    },
+    {
+      "name": "balance short of the group total",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:191-206",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "balanceCents": 150
+      },
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 100
+            },
+            {
+              "usdPriceCents": 100
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 402,
+        "body": {
+          "error": "Insufficient credits",
+          "balanceCents": 150,
+          "requiredCents": 200
+        }
+      }
+    },
+    {
+      "name": "too many live credits",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:208-226",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "state": {
+        "reserve": {
+          "intents": null,
+          "balanceCents": 5000,
+          "liveIntentLimitReached": true
+        }
+      },
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 200
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "body": {
+          "error": "Too many purchases in progress. Complete or cancel them before starting another one.",
+          "balanceCents": 5000
+        }
+      }
+    },
+    {
+      "name": "valid three-line checkout",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:228-315",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 110,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "2"
+            },
+            {
+              "usdPriceCents": 65,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "3"
+            },
+            {
+              "usdPriceCents": 90,
+              "tradeId": "trade-9"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "bodyMatches": {
+          "credit": {
+            "amount": "1851851835000000000",
+            "availableAmount": "1851851835000000000",
+            "signature": "0xsignature",
+            "contract": "0x1111111111111111111111111111111111111111",
+            "id": {
+              "$any": "string",
+              "rule": "the group salt",
+              "source": "src/controllers/handlers/authorize-usd-credit-batch.ts:212"
+            },
+            "expiresAt": {
+              "$any": "number",
+              "rule": "unix SECONDS",
+              "source": "src/controllers/handlers/authorize-usd-credit-batch.ts:141"
+            }
+          },
+          "maxCreditedValue": "1851851835000000000",
+          "oracleRate": "30000000",
+          "usdCents": 270,
+          "lines": {
+            "$length": 3
+          }
+        }
+      },
+      "effects": {
+        "signCalls": 1,
+        "reserveCalls": 1,
+        "oracleCalledWithCents": 265,
+        "reservedLineCents": [
+          110,
+          70,
+          90
+        ],
+        "saltPattern": "^0x[0-9a-f]{64}$",
+        "manaCapWei": "1851851835000000000"
+      }
+    },
+    {
+      "name": "source recorded on every line",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:302-307",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 110,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "2"
+            },
+            {
+              "usdPriceCents": 65,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "3"
+            },
+            {
+              "usdPriceCents": 90,
+              "tradeId": "trade-9"
+            }
+          ],
+          "source": "website"
+        }
+      },
+      "response": {
+        "status": 200,
+        "body": {
+          "$notAsserted": true
+        }
+      },
+      "effects": {
+        "marketplaceSource": "website"
+      }
+    },
+    {
+      "name": "unknown source",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:309-314",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 110,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "2"
+            },
+            {
+              "usdPriceCents": 65,
+              "contractAddress": "0x2cf05cd6b8c7a6eb9fc98eb0499dbc8837c1d58e",
+              "itemId": "3"
+            },
+            {
+              "usdPriceCents": 90,
+              "tradeId": "trade-9"
+            }
+          ],
+          "source": "wherever"
+        }
+      },
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "\"source\" must be \"website\" or \"client\" when provided"
+        }
+      }
+    },
+    {
+      "name": "single line behaves like /credits/authorize",
+      "source": "test/unit/controllers/handlers/authorize-usd-credit-batch.spec.ts:317-328",
+      "auth": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+      "request": {
+        "body": {
+          "items": [
+            {
+              "usdPriceCents": 200
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "bodyMatches": {
+          "maxCreditedValue": "1851851835000000000",
+          "usdCents": 200
+        }
+      },
+      "effects": {
+        "oracleCalledWithCents": 200
+      }
+    }
+  ]
+}

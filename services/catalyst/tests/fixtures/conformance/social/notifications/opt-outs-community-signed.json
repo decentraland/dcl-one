@@ -1,0 +1,29 @@
+{
+  "description": "GET /subscription/opt-outs/community/{communityId} signed by a wallet that opted out of nothing. Signed fetch with the run's throwaway key 0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f (no data behind it): the baseline answer is the authenticated shape for an unknown wallet; the recorded auth chain is timestamp-bound, so a replay must re-sign the same path and metadata. Captured GET https://notifications.decentraland.org/subscription/opt-outs/community/e99471aa-31c4-4952-abf6-99905445f43b -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/subscription/opt-outs/community/e99471aa-31c4-4952-abf6-99905445f43b",
+    "query": {},
+    "headers": {
+      "x-identity-auth-chain-0": "{\"type\":\"SIGNER\",\"payload\":\"0xe45c088898a7381f5ea1bfd8cdc8144a952c7d6f\",\"signature\":\"\"}",
+      "x-identity-auth-chain-1": "{\"type\":\"ECDSA_SIGNED_ENTITY\",\"payload\":\"get:/subscription/opt-outs/community/e99471aa-31c4-4952-abf6-99905445f43b:1790364284112:{\\\"signer\\\":\\\"dcl:explorer\\\"}\",\"signature\":\"0x1be4fb5196522f40e62b28396f445dfd0ebbbc68e6e017d934d0fd72500019e00213d67a5c13f1f5c57e5e3b56dc12739e76ed769f61747c2f9e1b4e5accc9571b\"}",
+      "x-identity-timestamp": "1790364284112",
+      "x-identity-metadata": "{\"signer\":\"dcl:explorer\"}"
+    },
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "scope": "community",
+      "scopeId": "e99471aa-31c4-4952-abf6-99905445f43b",
+      "optedOut": false
+    }
+  },
+  "captured_from": "https://notifications.decentraland.org/subscription/opt-outs/community/e99471aa-31c4-4952-abf6-99905445f43b",
+  "captured_at": "2026-09-25T19:24:44Z",
+  "volatile_paths": []
+}

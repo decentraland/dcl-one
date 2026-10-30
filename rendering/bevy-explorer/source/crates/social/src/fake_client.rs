@@ -1,0 +1,229 @@
+use alloy_core::primitives::Address;
+use bevy::platform::collections::{HashMap, HashSet};
+
+use crate::{DirectChatMessage, DmPrivacy, DmPrivacyOf};
+
+/// `(addresses I blocked, addresses that blocked me)` — mirrors the real
+/// client's `BlockingStatus` so signatures match across feature flags.
+pub type BlockingStatus = (Vec<String>, Vec<String>);
+
+/// Result carried back over a oneshot reply for `GetBlockingStatus`.
+pub type BlockingStatusResult = Result<BlockingStatus, String>;
+
+/// Stub types mirroring the proto FriendProfile / FriendshipRequestResponse
+/// used when the `social` feature is disabled.
+#[derive(Clone, Debug, Default)]
+pub struct FriendProfile {
+    pub address: String,
+    pub name: String,
+    pub has_claimed_name: bool,
+    pub profile_picture_url: String,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct FriendshipRequestResponse {
+    pub friend: Option<FriendProfile>,
+    pub created_at: i64,
+    pub message: Option<String>,
+    pub id: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ConnectivityStatus {
+    Online = 0,
+    #[default]
+    Offline = 1,
+    Away = 2,
+}
+
+#[derive(Default)]
+pub struct SocialClientHandler {
+    pub is_initialized: bool,
+    pub sent_requests: HashMap<Address, FriendshipRequestResponse>,
+    pub received_requests: HashMap<Address, FriendshipRequestResponse>,
+    pub friends: HashMap<Address, FriendProfile>,
+    pub friend_status: HashMap<Address, ConnectivityStatus>,
+    pub blocked: HashSet<Address>,
+    pub blocked_by: HashSet<Address>,
+    pub dm_privacy: DmPrivacy,
+
+    pub unread_messages: HashMap<Address, usize>,
+}
+
+impl SocialClientHandler {
+    pub fn connect(
+        _wallet: wallet::Wallet,
+        _friend_callback: impl Fn(&FriendshipEventBody) + Send + Sync + 'static,
+        _connectivity_callback: impl Fn(Address, ConnectivityStatus) + Send + Sync + 'static,
+        _block_update_callback: impl Fn(&str, bool) + Send + Sync + 'static,
+        _chat_callback: impl Fn(DirectChatMessage) + Send + Sync + 'static,
+    ) -> Option<Self> {
+        Some(Self::default())
+    }
+
+    pub fn update(&self) -> bool {
+        false
+    }
+
+    pub fn live(&self) -> bool {
+        false
+    }
+
+    fn stub_reply() -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, anyhow::Error> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(Ok(()));
+        Ok(rx)
+    }
+
+    pub fn friend_request(
+        &mut self,
+        _address: Address,
+        _message: Option<String>,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, anyhow::Error> {
+        Self::stub_reply()
+    }
+
+    pub fn cancel_request(
+        &mut self,
+        _address: Address,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, anyhow::Error> {
+        Self::stub_reply()
+    }
+
+    pub fn accept_request(
+        &mut self,
+        _address: Address,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, anyhow::Error> {
+        Self::stub_reply()
+    }
+
+    pub fn reject_request(
+        &mut self,
+        _address: Address,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, anyhow::Error> {
+        Self::stub_reply()
+    }
+
+    pub fn delete_friend(
+        &mut self,
+        _address: Address,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, anyhow::Error> {
+        Self::stub_reply()
+    }
+
+    pub fn get_mutual_friends(
+        &self,
+        _address: String,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<Vec<FriendProfile>, String>>, anyhow::Error>
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(Ok(Vec::new()));
+        Ok(rx)
+    }
+
+    pub fn block_user(
+        &self,
+        _address: String,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, anyhow::Error> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(Ok(()));
+        Ok(rx)
+    }
+
+    pub fn unblock_user(
+        &self,
+        _address: String,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<(), String>>, anyhow::Error> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(Ok(()));
+        Ok(rx)
+    }
+
+    pub fn get_blocked_users(
+        &self,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<Vec<FriendProfile>, String>>, anyhow::Error>
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(Ok(Vec::new()));
+        Ok(rx)
+    }
+
+    pub fn get_blocking_status(
+        &self,
+    ) -> Result<tokio::sync::oneshot::Receiver<BlockingStatusResult>, anyhow::Error> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(Ok((Vec::new(), Vec::new())));
+        Ok(rx)
+    }
+
+    pub fn get_social_settings(
+        &self,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<DmPrivacy, String>>, anyhow::Error> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(Ok(DmPrivacy::All));
+        Ok(rx)
+    }
+
+    pub fn upsert_social_settings(
+        &self,
+        privacy: DmPrivacy,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<DmPrivacy, String>>, anyhow::Error> {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(Ok(privacy));
+        Ok(rx)
+    }
+
+    pub fn get_private_messages_settings(
+        &self,
+        _addresses: Vec<String>,
+    ) -> Result<tokio::sync::oneshot::Receiver<Result<Vec<DmPrivacyOf>, String>>, anyhow::Error>
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let _ = tx.send(Ok(Vec::new()));
+        Ok(rx)
+    }
+
+    pub fn chat(&self, _address: Address, _message: String) -> Result<(), anyhow::Error> {
+        Ok(())
+    }
+
+    pub fn get_chat_history(
+        &self,
+        _address: Address,
+    ) -> Result<tokio::sync::mpsc::Receiver<DirectChatMessage>, anyhow::Error> {
+        Err(anyhow::anyhow!("not implemented"))
+    }
+
+    pub fn mark_as_read(&mut self, address: Address) {
+        self.unread_messages.remove(&address);
+    }
+
+    pub fn unread_messages(&self) -> &HashMap<Address, usize> {
+        &self.unread_messages
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum FriendshipEventBody {
+    Request(RequestBodyData),
+    Accept(BodyData),
+    Reject(BodyData),
+    Delete(BodyData),
+    Cancel(BodyData),
+    Block(BodyData),
+}
+
+#[derive(Clone, Debug)]
+pub struct RequestBodyData {
+    pub friend: Option<BodyDataInner>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BodyData {
+    pub user: Option<BodyDataInner>,
+}
+
+#[derive(Clone, Debug)]
+pub struct BodyDataInner {
+    pub address: String,
+}

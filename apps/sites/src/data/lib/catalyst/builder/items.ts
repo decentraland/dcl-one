@@ -1,0 +1,71 @@
+import { z } from "zod";
+import { warnInvalid } from "../warn";
+
+const ITEM_TYPES = ["wearable", "emote"] as const;
+
+const RARITIES = [
+  "unique",
+  "mythic",
+  "exotic",
+  "legendary",
+  "epic",
+  "rare",
+  "uncommon",
+  "common",
+] as const;
+
+const BODY_SHAPES = ["male", "female", "both"] as const;
+
+const WearableMetricsSchema = z.object({
+  triangles: z.number(),
+  materials: z.number(),
+  textures: z.number(),
+});
+
+const EmoteMetricsSchema = z.object({
+  sequences: z.number(),
+  duration: z.number(),
+  frames: z.number(),
+  fps: z.number(),
+});
+
+const RepresentationSchema = z.object({
+  mainFile: z.string(),
+  bodyShape: z.enum(BODY_SHAPES),
+});
+
+const nullableStr = z.string().nullish().transform((v) => v ?? null);
+
+const BuilderItemSchema = z.object({
+  id: z.string(),
+  type: z.enum(ITEM_TYPES),
+  name: z.string(),
+  description: z.string(),
+  utility: z.string(),
+  rarity: z.enum(RARITIES),
+  category: z.string(),
+  bodyShape: z.enum(BODY_SHAPES),
+  smart: z.boolean(),
+  isPublished: z.boolean(),
+  tokenId: nullableStr,
+  totalSupply: z.number(),
+  maxSupply: z.number(),
+  collection: z.string(),
+  urn: z.string(),
+  price: z.string(),
+  beneficiary: z.string(),
+  hue: z.number(),
+  tags: z.array(z.string()),
+  metrics: z.union([WearableMetricsSchema, EmoteMetricsSchema]),
+  representations: z.array(RepresentationSchema),
+  requiredPermissions: z.array(z.string()),
+});
+export type BuilderItem = z.infer<typeof BuilderItemSchema>;
+
+export function parseItem(raw: unknown): BuilderItem | null {
+  const r = BuilderItemSchema.safeParse(raw);
+  if (r.success) return r.data;
+  warnInvalid("BuilderItem", r.error.issues);
+  return null;
+}
+

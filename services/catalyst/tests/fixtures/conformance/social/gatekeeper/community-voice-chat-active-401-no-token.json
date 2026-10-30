@@ -1,0 +1,22 @@
+{
+  "description": "GET /community-voice-chat/active without the service bearer token. Captured GET https://comms-gatekeeper.decentraland.org/community-voice-chat/active -> 401.",
+  "request": {
+    "method": "GET",
+    "path": "/community-voice-chat/active",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 401,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "error": "Authorization header is missing"
+    }
+  },
+  "captured_from": "https://comms-gatekeeper.decentraland.org/community-voice-chat/active",
+  "captured_at": "2026-09-25T19:24:36Z",
+  "volatile_paths": []
+}

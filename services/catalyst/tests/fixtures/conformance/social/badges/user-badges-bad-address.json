@@ -1,0 +1,25 @@
+{
+  "description": "GET /users/{address}/badges with a malformed address. Captured GET https://badges.decentraland.org/users/not-an-address/badges -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/users/not-an-address/badges",
+    "query": {},
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "achieved": [],
+        "notAchieved": []
+      }
+    }
+  },
+  "captured_from": "https://badges.decentraland.org/users/not-an-address/badges",
+  "captured_at": "2026-09-25T19:24:49Z",
+  "volatile_paths": []
+}

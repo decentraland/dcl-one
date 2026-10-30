@@ -1,0 +1,75 @@
+{
+  "description": "GET /v2/communities/{id}/posts, unauthenticated. Captured GET https://social-api.decentraland.org/v2/communities/e99471aa-31c4-4952-abf6-99905445f43b/posts?limit=5&offset=0 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v2/communities/e99471aa-31c4-4952-abf6-99905445f43b/posts",
+    "query": {
+      "limit": [
+        "5"
+      ],
+      "offset": [
+        "0"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "posts": [
+          {
+            "id": "84a27dd6-7d4c-4352-8f82-710ac2b58739",
+            "communityId": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "authorAddress": "0x6e63d9e00273670767b42750094450b0c08e664f",
+            "content": "New DJ coming in today for Takeover Tuesday and an all new series kicks off tomorrow for Watch Party Wednesday! See you in the Theatre for both!",
+            "createdAt": "2026-07-21T19:05:30.279Z",
+            "likesCount": 1
+          },
+          {
+            "id": "5e3f8232-5b8f-47e6-8c7f-d5c8305507e2",
+            "communityId": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "authorAddress": "0x6e63d9e00273670767b42750094450b0c08e664f",
+            "content": "It was TIME for an update. See you all in the new Plaza. Enjoy!",
+            "createdAt": "2026-04-16T20:44:17.073Z",
+            "likesCount": 9
+          },
+          {
+            "id": "62fa85f1-80d5-479a-bdd9-a7a75f789241",
+            "communityId": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "authorAddress": "0x6e63d9e00273670767b42750094450b0c08e664f",
+            "content": "EPIC Launch Party happening now in the theatre!",
+            "createdAt": "2026-04-02T19:09:26.846Z",
+            "likesCount": 3
+          },
+          {
+            "id": "16eb7e8c-e463-4c37-ab6f-f658f627ccc8",
+            "communityId": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "authorAddress": "0x6e63d9e00273670767b42750094450b0c08e664f",
+            "content": "Hey everyone! Happy Epic and Mobile Launch Day!!!\n\nPlease help us spread the word and get ready to celebrate together on April 2nd! It will be EPIC.",
+            "createdAt": "2026-03-31T15:15:26.160Z",
+            "likesCount": 0
+          },
+          {
+            "id": "c4e826a3-e002-4537-aaee-501424476c24",
+            "communityId": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "authorAddress": "0x6e63d9e00273670767b42750094450b0c08e664f",
+            "content": "Happy 6th birthday Decentraland! \n\nThe birthday party will kick off in the theatre in 10 minutes. \n\nSee you there with your dance Emotes ready! 🎶",
+            "createdAt": "2026-02-20T19:50:13.000Z",
+            "likesCount": 6
+          }
+        ],
+        "total": 7
+      }
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v2/communities/e99471aa-31c4-4952-abf6-99905445f43b/posts?limit=5&offset=0",
+  "captured_at": "2026-09-25T19:24:07Z",
+  "volatile_paths": [
+    "data.total"
+  ]
+}

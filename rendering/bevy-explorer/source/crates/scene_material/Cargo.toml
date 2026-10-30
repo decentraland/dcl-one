@@ -1,0 +1,11 @@
+[package]
+name = "scene_material"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+
+[dependencies]
+bevy = { workspace = true }
+common = { workspace = true }
+boimp = { workspace = true }

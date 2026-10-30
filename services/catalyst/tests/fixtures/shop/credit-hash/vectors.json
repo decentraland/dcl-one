@@ -1,0 +1,301 @@
+{
+  "about": "Credit-hash vectors. upstream = credits-server computeCreditHash (keccak256 of abi.encode(address user, uint256 chainId, address manager, (uint256 value, uint256 expiresAt, bytes32 salt)), expiresAt in unix SECONDS) signed with ethers Wallet.signMessage over the 32 hash bytes (EIP-191), which is what CreditsManagerPolygon recovers (creditHash.toEthSignedMessageHash().recover). v2 = authorize_digest (keccak256 of the UTF-8 concatenation id|contract|signer|amountWei|expiresAtMs) signed the same way. contractRecoversFromV2Signature is the address the contract would recover from the v2 signature over the real credit hash: not the signer, so useCredits reverts InvalidSignature.",
+  "generatedBy": "tests/shop/credit_hash/vectors.mjs",
+  "upstream": {
+    "credits-server": "465e628bce38b43d6d34d7168717b6cfa4852643",
+    "offchain-marketplace-contract": "87350c63efdc93bb2c6e5010ef07a59650c67522",
+    "references": [
+      "credits-server:src/logic/credit-hash.ts:34-43",
+      "credits-server:src/logic/signer.ts:55-70",
+      "credits-server:src/controllers/handlers/authorize-usd-credit.ts:139-151",
+      "offchain-marketplace-contract:src/credits/CreditsManagerPolygon.sol:757-770"
+    ]
+  },
+  "v2": {
+    "file": "src/credits/handlers/authorize.rs",
+    "blob": "40e40a144a8a395e692fff63288cd5ee7bcd1542",
+    "lines": "90-98, 160-161, 193-196"
+  },
+  "signer": {
+    "privateKey": "0x057b5accbdf706b07a6515dd14de77dd7ab1972ac90c897d7c24ae68848a05e2",
+    "address": "0xb22ca4d631b3Cf48Efe0d49a9eF1d5075A100C58",
+    "source": "credits-server:test/unit/logic/signer.spec.ts:9"
+  },
+  "vectors": [
+    {
+      "name": "upstream-credit-hash-spec-base",
+      "about": "The base case of the upstream credit-hash unit test.",
+      "source": "credits-server:test/unit/logic/credit-hash.spec.ts:15-21",
+      "input": {
+        "userAddress": "0xabababababababababababababababababababab",
+        "chainId": 137,
+        "creditsManager": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+        "credit": {
+          "value": "1500000000000000000",
+          "expiresAt": 1800000000,
+          "salt": "0x1111111111111111111111111111111111111111111111111111111111111111"
+        }
+      },
+      "upstream": {
+        "abiEncoded": "0x000000000000000000000000abababababababababababababababababababab0000000000000000000000000000000000000000000000000000000000000089000000000000000000000000cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd00000000000000000000000000000000000000000000000014d1120d7b160000000000000000000000000000000000000000000000000000000000006b49d2001111111111111111111111111111111111111111111111111111111111111111",
+        "creditHash": "0xeed13de3ec2160f89e831acd7d6464039df02371521ad0550d491d13f7e81f62",
+        "ethSignedMessageHash": "0xd16ca751d94ece6f31a331d10702daf8ce67531d4e6dbd60bf8e6fb675d14f8f",
+        "signature": "0xf38548d5562da7ebef7203548c01f94e60d758e82ec369a99972d1ba454b6a040639b8d482b045d89b92286c9b11d68e89ee1d244191ed8eb706f68153738e671b",
+        "recovers": "0xb22ca4d631b3Cf48Efe0d49a9eF1d5075A100C58",
+        "valueEther": "1.5",
+        "authorizeResponseCredit": {
+          "id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "amount": "1500000000000000000",
+          "availableAmount": "1500000000000000000",
+          "expiresAt": 1800000000,
+          "signature": "0xf38548d5562da7ebef7203548c01f94e60d758e82ec369a99972d1ba454b6a040639b8d482b045d89b92286c9b11d68e89ee1d244191ed8eb706f68153738e671b",
+          "contract": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+        }
+      },
+      "v2": {
+        "authorizeDigestArgs": {
+          "id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "contract": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+          "signerAddress": "0xabababababababababababababababababababab",
+          "amountWei": "1500000000000000000",
+          "expiresAtMs": 1800000000000
+        },
+        "preimageText": "0x11111111111111111111111111111111111111111111111111111111111111110xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd0xabababababababababababababababababababab15000000000000000001800000000000",
+        "digest": "0xf153d9a4a4c7d3fde97fe7017a4ee0fcf31986e654bfee33b7c9104439864b3b",
+        "signature": "0xa7b597c73853c5c80d4e79250be1704ba6312db912548d31477fae04c9006c9c7a0a4ea516ff7d47ee2a11fc9cf97f4f9d416067d6830d182d62d29c2006b1c81c",
+        "authorizeResponseCredit": {
+          "id": "0x1111111111111111111111111111111111111111111111111111111111111111",
+          "amount": "1500000000000000000",
+          "availableAmount": "1500000000000000000",
+          "expiresAt": 1800000000000,
+          "signature": "0xa7b597c73853c5c80d4e79250be1704ba6312db912548d31477fae04c9006c9c7a0a4ea516ff7d47ee2a11fc9cf97f4f9d416067d6830d182d62d29c2006b1c81c",
+          "contract": "0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+        },
+        "contractRecoversFromV2Signature": "0x8eFA5F9ce0b790d89e51A83A1207851fD6a5fFA7",
+        "contractAccepts": false,
+        "creditHashIfTheClientSubmitsV2ExpiresAt": "0x952ad896b5285d557be9d97ab2eb50dff7a6bc5676f461fdb2d939971fe2118b",
+        "v2ExpiresAtReadAsSeconds": "+059009-09-24T08:00:00.000Z"
+      }
+    },
+    {
+      "name": "authorize-spec-amoy-override",
+      "about": "The single-authorize unit test inputs: its buyer, Amoy, the CREDITS_MANAGER_ADDRESS_OVERRIDE manager, the signed cap MANA_WEI*150/100, its 900 s TTL after 1790000000.",
+      "source": "credits-server:test/unit/controllers/handlers/authorize-usd-credit.spec.ts:11-18",
+      "input": {
+        "userAddress": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+        "chainId": 80002,
+        "creditsManager": "0x1111111111111111111111111111111111111111",
+        "credit": {
+          "value": "1851851835000000000",
+          "expiresAt": 1790000900,
+          "salt": "0xcdb303b7ac4f9577526928d67ce9811a9657649d3c4cc5c2ca17565efe4e05d8"
+        }
+      },
+      "upstream": {
+        "abiEncoded": "0x0000000000000000000000008cb8e16ea85793c0da573615248b6c91c88df2dd0000000000000000000000000000000000000000000000000000000000013882000000000000000000000000111111111111111111111111111111111111111100000000000000000000000000000000000000000000000019b3196eb1d48e00000000000000000000000000000000000000000000000000000000006ab13f04cdb303b7ac4f9577526928d67ce9811a9657649d3c4cc5c2ca17565efe4e05d8",
+        "creditHash": "0x0988b936ffdbb1c86145aff4032ecd448e0fcfab00773ba804b8c3050baf3a1b",
+        "ethSignedMessageHash": "0x45bf8238cf2e5314f244e8d467aeba3675c1f42626816c2b2c7f17f80ab4876d",
+        "signature": "0x303716d76d3170e987466d8b8ad6245f531aa6bb79343b23993a6d73c4f9928f7e0176606b549666cc113f96c2d1be5fc00f514b1c5daa92cde7c7ef624b9ff71c",
+        "recovers": "0xb22ca4d631b3Cf48Efe0d49a9eF1d5075A100C58",
+        "valueEther": "1.851851835",
+        "authorizeResponseCredit": {
+          "id": "0xcdb303b7ac4f9577526928d67ce9811a9657649d3c4cc5c2ca17565efe4e05d8",
+          "amount": "1851851835000000000",
+          "availableAmount": "1851851835000000000",
+          "expiresAt": 1790000900,
+          "signature": "0x303716d76d3170e987466d8b8ad6245f531aa6bb79343b23993a6d73c4f9928f7e0176606b549666cc113f96c2d1be5fc00f514b1c5daa92cde7c7ef624b9ff71c",
+          "contract": "0x1111111111111111111111111111111111111111"
+        }
+      },
+      "v2": {
+        "authorizeDigestArgs": {
+          "id": "0xcdb303b7ac4f9577526928d67ce9811a9657649d3c4cc5c2ca17565efe4e05d8",
+          "contract": "0x1111111111111111111111111111111111111111",
+          "signerAddress": "0x8cb8e16ea85793c0da573615248b6c91c88df2dd",
+          "amountWei": "1851851835000000000",
+          "expiresAtMs": 1790000900000
+        },
+        "preimageText": "0xcdb303b7ac4f9577526928d67ce9811a9657649d3c4cc5c2ca17565efe4e05d80x11111111111111111111111111111111111111110x8cb8e16ea85793c0da573615248b6c91c88df2dd18518518350000000001790000900000",
+        "digest": "0x4ec14b0331b7e3df3050dcfdce51ad4ed0a8c8ad79066d87b7a592ee7a5fa7a9",
+        "signature": "0x9764460d38265f1be4613cdff285a9371c7bb4bf94050eadf6a1fa73c02f3d896d5e3953b178d8a67c419679e96623e92e5d0beaf686b577e61ac1e4a482d4a71c",
+        "authorizeResponseCredit": {
+          "id": "0xcdb303b7ac4f9577526928d67ce9811a9657649d3c4cc5c2ca17565efe4e05d8",
+          "amount": "1851851835000000000",
+          "availableAmount": "1851851835000000000",
+          "expiresAt": 1790000900000,
+          "signature": "0x9764460d38265f1be4613cdff285a9371c7bb4bf94050eadf6a1fa73c02f3d896d5e3953b178d8a67c419679e96623e92e5d0beaf686b577e61ac1e4a482d4a71c",
+          "contract": "0x1111111111111111111111111111111111111111"
+        },
+        "contractRecoversFromV2Signature": "0xf83009Fc743Bdb26A5D23EbAa39798C4f2aFC09C",
+        "contractAccepts": false,
+        "creditHashIfTheClientSubmitsV2ExpiresAt": "0xa1fbbc6f9244be55b2978e1ba19c157fc618fbdc1a2fbe745e7cd08bfbeed6f4",
+        "v2ExpiresAtReadAsSeconds": "+058692-11-14T00:13:20.000Z"
+      }
+    },
+    {
+      "name": "polygon-live-manager-default-ttl",
+      "about": "A mixed-case buyer (the signer spec address) against the live Polygon manager, expiring DEFAULT_USD_CREDIT_TTL_SECONDS = 300 s after 1790000000.",
+      "source": "credits-server:src/logic/usd-credit-ttl.ts:27",
+      "input": {
+        "userAddress": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "chainId": 137,
+        "creditsManager": "0x8B3A40CA1b6F5CaFC99d112a4d02E897d1FD8Cc5",
+        "credit": {
+          "value": "7500000000000000000",
+          "expiresAt": 1790000300,
+          "salt": "0x77db1969cf179e7680705f4e71f395b3564924c02fc0abadc93d15bdf83bcd64"
+        }
+      },
+      "upstream": {
+        "abiEncoded": "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000000890000000000000000000000008b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc500000000000000000000000000000000000000000000000068155a43676e0000000000000000000000000000000000000000000000000000000000006ab13cac77db1969cf179e7680705f4e71f395b3564924c02fc0abadc93d15bdf83bcd64",
+        "creditHash": "0x58e5da3e934777f3f2592ddbf47487bc695d45ddcfea621690af527df0361405",
+        "ethSignedMessageHash": "0xa320dc67755e542cb2977e18c023bc86d90277ddce12880dda86703e925d2308",
+        "signature": "0xcb3419d71a0a5d38da84538b1126643375d8e6ad1cd3bf7df334ac3be698aeba6ddc6fc08244e61b02acb5615b07f960cc57660b913be5da346783a61bf3a3e21b",
+        "recovers": "0xb22ca4d631b3Cf48Efe0d49a9eF1d5075A100C58",
+        "valueEther": "7.5",
+        "authorizeResponseCredit": {
+          "id": "0x77db1969cf179e7680705f4e71f395b3564924c02fc0abadc93d15bdf83bcd64",
+          "amount": "7500000000000000000",
+          "availableAmount": "7500000000000000000",
+          "expiresAt": 1790000300,
+          "signature": "0xcb3419d71a0a5d38da84538b1126643375d8e6ad1cd3bf7df334ac3be698aeba6ddc6fc08244e61b02acb5615b07f960cc57660b913be5da346783a61bf3a3e21b",
+          "contract": "0x8B3A40CA1b6F5CaFC99d112a4d02E897d1FD8Cc5"
+        }
+      },
+      "v2": {
+        "authorizeDigestArgs": {
+          "id": "0x77db1969cf179e7680705f4e71f395b3564924c02fc0abadc93d15bdf83bcd64",
+          "contract": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
+          "signerAddress": "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+          "amountWei": "7500000000000000000",
+          "expiresAtMs": 1790000300000
+        },
+        "preimageText": "0x77db1969cf179e7680705f4e71f395b3564924c02fc0abadc93d15bdf83bcd640x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc50xf39fd6e51aad88f6f4ce6ab8827279cfffb9226675000000000000000001790000300000",
+        "digest": "0xa2eefdd69dcc9739deedbe3ce32611f5d4de13e2566ab3818c9e85129bb69f33",
+        "signature": "0x4831be4c0e9c3576378ccf4235da581d405c2e4ec3ebc5357cfab715b950674f20cbb4c24fe0047c172ef7dbc14754b1ef69dd85160ad5b4fdbed0c59faa8c381b",
+        "authorizeResponseCredit": {
+          "id": "0x77db1969cf179e7680705f4e71f395b3564924c02fc0abadc93d15bdf83bcd64",
+          "amount": "7500000000000000000",
+          "availableAmount": "7500000000000000000",
+          "expiresAt": 1790000300000,
+          "signature": "0x4831be4c0e9c3576378ccf4235da581d405c2e4ec3ebc5357cfab715b950674f20cbb4c24fe0047c172ef7dbc14754b1ef69dd85160ad5b4fdbed0c59faa8c381b",
+          "contract": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5"
+        },
+        "contractRecoversFromV2Signature": "0x89A55dF3993A4d52E7Eb5f3C4231A6c11E974C39",
+        "contractAccepts": false,
+        "creditHashIfTheClientSubmitsV2ExpiresAt": "0x683227d14cd2e0801b5a22c21352d3ddeaf95699259cbc55292a50c475b7b006",
+        "v2ExpiresAtReadAsSeconds": "+058692-11-07T01:33:20.000Z"
+      }
+    },
+    {
+      "name": "polygon-one-wei-long-lived",
+      "about": "Edge values: a 1 wei credit expiring 2099-01-01 (4070908800, the expiry of the long-lived credits seen in observed/polygon-credit-used.json).",
+      "source": "offchain-marketplace-contract:observed/polygon-credit-used.json",
+      "input": {
+        "userAddress": "0x000000000000000000000000000000000000dEaD",
+        "chainId": 137,
+        "creditsManager": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
+        "credit": {
+          "value": "1",
+          "expiresAt": 4070908800,
+          "salt": "0x0000000000000000000000000000000000000000000000000000000000000001"
+        }
+      },
+      "upstream": {
+        "abiEncoded": "0x000000000000000000000000000000000000000000000000000000000000dead00000000000000000000000000000000000000000000000000000000000000890000000000000000000000008b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5000000000000000000000000000000000000000000000000000000000000000100000000000000000000000000000000000000000000000000000000f2a523800000000000000000000000000000000000000000000000000000000000000001",
+        "creditHash": "0x2d47edf624c45d3e795788a38580ebee4ef47f9632cd2e7e9127f8a9c262825e",
+        "ethSignedMessageHash": "0x5494dbe2a5ba7444f98962a27fae74ce00955e4e992ffcbe20e118c3b7b54403",
+        "signature": "0x68f60155924c5e65a807a19f3a8988304574b5e4ea313e3591a0d5b5f26281b83d65ac66db7fba28ffb078c09afdb8060a4079b621c75d48bd33618762c715db1b",
+        "recovers": "0xb22ca4d631b3Cf48Efe0d49a9eF1d5075A100C58",
+        "valueEther": "0.000000000000000001",
+        "authorizeResponseCredit": {
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "amount": "1",
+          "availableAmount": "1",
+          "expiresAt": 4070908800,
+          "signature": "0x68f60155924c5e65a807a19f3a8988304574b5e4ea313e3591a0d5b5f26281b83d65ac66db7fba28ffb078c09afdb8060a4079b621c75d48bd33618762c715db1b",
+          "contract": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5"
+        }
+      },
+      "v2": {
+        "authorizeDigestArgs": {
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "contract": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
+          "signerAddress": "0x000000000000000000000000000000000000dead",
+          "amountWei": "1",
+          "expiresAtMs": 4070908800000
+        },
+        "preimageText": "0x00000000000000000000000000000000000000000000000000000000000000010x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc50x000000000000000000000000000000000000dead14070908800000",
+        "digest": "0x6c7c9625b616b76b287b5dbea4fe428be84c9ed9e041dab0903d5b4a3e7053ac",
+        "signature": "0xbc3e63b10b68d399b9476866e273fe917ea251b28f851d37833e0c545dde55d416d62464e7c0c159714c3c697760cb296833e66de3a41fd01f79f2e4907169cd1c",
+        "authorizeResponseCredit": {
+          "id": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "amount": "1",
+          "availableAmount": "1",
+          "expiresAt": 4070908800000,
+          "signature": "0xbc3e63b10b68d399b9476866e273fe917ea251b28f851d37833e0c545dde55d416d62464e7c0c159714c3c697760cb296833e66de3a41fd01f79f2e4907169cd1c",
+          "contract": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5"
+        },
+        "contractRecoversFromV2Signature": "0xef5dC5F02232CE8C1c0a1E6F3a76226f20323005",
+        "contractAccepts": false,
+        "creditHashIfTheClientSubmitsV2ExpiresAt": "0x4931d9aa4a1609d28b985ad24d1cf4979ac80186e341099daf7fbd2f837b47bc",
+        "v2ExpiresAtReadAsSeconds": "+130971-12-19T00:00:00.000Z"
+      }
+    },
+    {
+      "name": "polygon-observed-consumption",
+      "about": "A real credit consumed on Polygon (tx 0x89a0cfdbc20b296be1b8cf6c5b395f2b57e0d64ee0f6b2faa41501a7678104ad, block 94174156): the computed hash must equal its indexed _creditId. Re-signed here with the test key; the original signature recovers to 0x015DE33Acd5E8F1a3Dbd814615F1743024cf00F6.",
+      "source": "offchain-marketplace-contract:observed/polygon-credit-used.json",
+      "input": {
+        "userAddress": "0x5985EB4a8e0e1f7BCa9Cc0D7AE81C2943fb205bd",
+        "chainId": 137,
+        "creditsManager": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
+        "credit": {
+          "value": "38400257082497927295",
+          "expiresAt": 1789966565,
+          "salt": "0xfa676126127d315d0e5dbd41de1a2150ee69865bac81cbb8f920ed767b08a942"
+        }
+      },
+      "upstream": {
+        "abiEncoded": "0x0000000000000000000000005985eb4a8e0e1f7bca9cc0d7ae81c2943fb205bd00000000000000000000000000000000000000000000000000000000000000890000000000000000000000008b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc500000000000000000000000000000000000000000000000214e91e5cfdf7887f000000000000000000000000000000000000000000000000000000006ab0b8e5fa676126127d315d0e5dbd41de1a2150ee69865bac81cbb8f920ed767b08a942",
+        "creditHash": "0x7c150569685cab27d32fc3c6954ee66f36bf427e6bef400361750aba5e1adb16",
+        "ethSignedMessageHash": "0x6f428668cdd6aa93facbc86fe3a0b48befe323338947a8d7e623ee688d6c2b50",
+        "signature": "0x043f8bcfe546d732d41342918c34ca9b114809842183fd67e2974cc623b1ed2300902f930f9579b574710092fce870af1e4d242881cd36f63381b652221c02371c",
+        "recovers": "0xb22ca4d631b3Cf48Efe0d49a9eF1d5075A100C58",
+        "valueEther": "38.400257082497927295",
+        "authorizeResponseCredit": {
+          "id": "0xfa676126127d315d0e5dbd41de1a2150ee69865bac81cbb8f920ed767b08a942",
+          "amount": "38400257082497927295",
+          "availableAmount": "38400257082497927295",
+          "expiresAt": 1789966565,
+          "signature": "0x043f8bcfe546d732d41342918c34ca9b114809842183fd67e2974cc623b1ed2300902f930f9579b574710092fce870af1e4d242881cd36f63381b652221c02371c",
+          "contract": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5"
+        }
+      },
+      "v2": {
+        "authorizeDigestArgs": {
+          "id": "0xfa676126127d315d0e5dbd41de1a2150ee69865bac81cbb8f920ed767b08a942",
+          "contract": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5",
+          "signerAddress": "0x5985eb4a8e0e1f7bca9cc0d7ae81c2943fb205bd",
+          "amountWei": "38400257082497927295",
+          "expiresAtMs": 1789966565000
+        },
+        "preimageText": "0xfa676126127d315d0e5dbd41de1a2150ee69865bac81cbb8f920ed767b08a9420x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc50x5985eb4a8e0e1f7bca9cc0d7ae81c2943fb205bd384002570824979272951789966565000",
+        "digest": "0x2cd6ba2de4c97f18fc54be03c34e63ab177683af9c2fbb2f2701d235fac6ccb0",
+        "signature": "0x976ebd486eb3c62dec97a10ff7d8ae5c6330671f50ecce665a313615d457ec9b09b2b20a0efd5a4b618b093a46c1885d4cc29e4dc82efd82b02efc743fcfe4271c",
+        "authorizeResponseCredit": {
+          "id": "0xfa676126127d315d0e5dbd41de1a2150ee69865bac81cbb8f920ed767b08a942",
+          "amount": "38400257082497927295",
+          "availableAmount": "38400257082497927295",
+          "expiresAt": 1789966565000,
+          "signature": "0x976ebd486eb3c62dec97a10ff7d8ae5c6330671f50ecce665a313615d457ec9b09b2b20a0efd5a4b618b093a46c1885d4cc29e4dc82efd82b02efc743fcfe4271c",
+          "contract": "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5"
+        },
+        "contractRecoversFromV2Signature": "0x1BF133898F25A4401b2507Fa9Ad51bE7eb25Ce10",
+        "contractAccepts": false,
+        "creditHashIfTheClientSubmitsV2ExpiresAt": "0x04856251edf71c471b1a4a8800da76d86e543a039c299430c45c1a4941018170",
+        "v2ExpiresAtReadAsSeconds": "+058691-10-13T14:43:20.000Z"
+      }
+    }
+  ]
+}

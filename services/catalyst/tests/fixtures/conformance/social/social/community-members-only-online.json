@@ -1,0 +1,119 @@
+{
+  "description": "GET /v1/communities/{id}/members filter variant: onlyOnline=true. Captured GET https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/members?onlyOnline=true&limit=5 -> 200.",
+  "request": {
+    "method": "GET",
+    "path": "/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/members",
+    "query": {
+      "onlyOnline": [
+        "true"
+      ],
+      "limit": [
+        "5"
+      ]
+    },
+    "headers": {},
+    "body": null
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "content-type": "application/json"
+    },
+    "body_json": {
+      "data": {
+        "results": [
+          {
+            "communityId": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "memberAddress": "0x785aaba4a4efb0fa59b6e26c884c885ec7b2669a",
+            "role": "member",
+            "joinedAt": "2025-09-10T21:00:21.370Z",
+            "profilePictureUrl": "https://profile-images.decentraland.org/entities/bafkreigo2q5mlmornt4cgzl3mtdbqul57zfssfsco42nifjfj2xhxdmsey/face.png",
+            "hasClaimedName": true,
+            "name": "BITALIK",
+            "nameColor": {
+              "r": 1,
+              "g": 0.5966443,
+              "b": 0.25,
+              "a": 1
+            },
+            "friendshipStatus": 7
+          },
+          {
+            "communityId": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "memberAddress": "0xa23aa5fce659a828ab52d62a708e29e3347b9eb7",
+            "role": "member",
+            "joinedAt": "2025-09-10T21:53:19.234Z",
+            "profilePictureUrl": "https://profile-images.decentraland.org/entities/bafkreiewdzbyft4lqoawrbvh2ahbqnefmhvnmlt5qtzwdq7kpucyzqs2nu/face.png",
+            "hasClaimedName": true,
+            "name": "InvaderZemm",
+            "nameColor": {
+              "a": 1,
+              "b": 0.25,
+              "g": 1,
+              "r": 0.293630779
+            },
+            "friendshipStatus": 7
+          },
+          {
+            "communityId": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "memberAddress": "0x56d947fa1ae6d6293b307b489540c156af628f0f",
+            "role": "member",
+            "joinedAt": "2025-09-10T22:14:55.001Z",
+            "profilePictureUrl": "https://profile-images.decentraland.org/entities/bafkreih4flp3fb5p64ma5dgylyoshe5didijizryetlka5rvvrbiirkzom/face.png",
+            "hasClaimedName": true,
+            "name": "Streetwear",
+            "nameColor": {
+              "a": 1,
+              "b": 0,
+              "g": 1,
+              "r": 0.7526543
+            },
+            "friendshipStatus": 7
+          },
+          {
+            "communityId": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "memberAddress": "0xe339ebc7ec708bf42eed1b54a4df852312db2c5b",
+            "role": "member",
+            "joinedAt": "2025-09-11T08:44:51.004Z",
+            "profilePictureUrl": "https://profile-images.decentraland.org/entities/bafkreifdq3gbk4htbonsvitnercmdhm25tpvx63bmujyangu22nnen5bl4/face.png",
+            "hasClaimedName": true,
+            "name": "MeryElf",
+            "nameColor": {
+              "r": 0.25,
+              "g": 1,
+              "b": 0.773692,
+              "a": 1
+            },
+            "friendshipStatus": 7
+          },
+          {
+            "communityId": "e99471aa-31c4-4952-abf6-99905445f43b",
+            "memberAddress": "0x29fb0d1b0836f9963f963b0bb07c49d2d61370b4",
+            "role": "member",
+            "joinedAt": "2025-09-11T09:38:39.980Z",
+            "profilePictureUrl": "https://profile-images.decentraland.org/entities/bafkreiatq3fbaqxtcnxgdmop3csdgwj3cbf3famw2y4keh3ckcrwqkmf3u/face.png",
+            "hasClaimedName": true,
+            "name": "RishiGirl",
+            "nameColor": {
+              "a": 1,
+              "b": 1,
+              "g": 0.9111851,
+              "r": 0.25
+            },
+            "friendshipStatus": 7
+          }
+        ],
+        "total": 24,
+        "page": 1,
+        "pages": 5,
+        "limit": 5
+      }
+    }
+  },
+  "captured_from": "https://social-api.decentraland.org/v1/communities/e99471aa-31c4-4952-abf6-99905445f43b/members?onlyOnline=true&limit=5",
+  "captured_at": "2026-09-25T19:24:05Z",
+  "volatile_paths": [
+    "data.pages",
+    "data.total"
+  ]
+}
