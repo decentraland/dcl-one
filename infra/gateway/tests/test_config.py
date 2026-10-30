@@ -71,3 +71,16 @@ class ConfigurationTest(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(re.search(deploy, path))
         self.assertIsNone(re.search(deploy, "/worlds-content-server/entities/active"))
+
+    def test_social_cards_keep_exact_backend_routes_without_shadowing_discovery_pages(self):
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": ["places.tsx", "places_.place.$position.tsx", "places_.world.$name.tsx"],
+                 "internal": [], "deploy": ["/entities"], "aliases": [],
+                 "node": [{"path": "/places/api"}, {"path": "/places/place", "exact": True},
+                          {"path": "/places/world", "exact": True}]}
+        config = gateway.render(table, cfg, "/mime.types")
+        for path in ["/places/place", "/places/world"]:
+            self.assertIn(f"location = {path} {{\nproxy_pass http://apis;", config)
+            self.assertNotIn(f"location ^~ {path}/", config)
+        self.assertIn("location ^~ /places/api/ {\nproxy_pass http://apis;", config)
+        self.assertIn("location /places/ {\nproxy_pass http://sites;", config)

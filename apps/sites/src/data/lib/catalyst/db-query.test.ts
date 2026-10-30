@@ -93,7 +93,7 @@ describe("db places query builders (faithful to catalyrst-places SQL)", () => {
 });
 
 describe("placeFromDbRow + mapPlace on a Postgres-style row", () => {
-  it("normalizes a row (nulls + extra cols) into a card; null user_count -> players 0 / not live, null title -> empty", () => {
+  it("preserves an unknown player count in the card, keeps it not live, and normalizes a null title", () => {
     const row = {
       id: "abc",
       title: "Genesis Plaza",
@@ -143,7 +143,8 @@ describe("placeFromDbRow + mapPlace on a Postgres-style row", () => {
         like_rate: null,
       }),
     );
-    expect(card.players).toBe(0);
+    // Missing occupancy is unknown; PlaceCard displays an em dash rather than claiming an empty scene.
+    expect(card.players).toBeNull();
     expect(card.live).toBe(false);
     expect(card.title).toBe("");
     expect(card.rating).toBe(0);

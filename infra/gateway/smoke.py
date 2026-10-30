@@ -136,17 +136,22 @@ def client(args):
         return data
 
     for path in ["/", "/play", "/play/engine/pkg/webgpu_build_bg.wasm", "/shop",
-                 "/places", "/places.data", "/_root.data", "/internal/auth-config",
+                 "/places", "/places.data", "/places/place/1,2", "/places/place/1,2.data",
+                 "/places/world/sample.dcl.eth", "/places/world/sample.dcl.eth.data", "/_root.data", "/internal/auth-config",
                  "/internal/thirdweb-sign", "/api/screens/v1/play", "/api/creator-hub/drafts",
                  "/profile/alice", "/assets/example.js", "/docs/index.md"]:
         hit(path, "sites")
     for path in ["/about", "/content/contents/blob", "/lambdas/profiles", "/api/status",
-                 "/places/api/status", "/places/api/status.data", "/events/api/status",
+                 "/places/api/status", "/places/api/status.data", "/places/place?position=1,2",
+                 "/places/world?name=sample.dcl.eth", "/events/api/status",
                  "/profile-images/alice", "/worlds-content-server/status", "/shop-api/v1/catalog"]:
         hit(path, "apis")
     for alias in table["aliases"]:
         method, path, target = alias["probe"]
         hit(path, "apis", method=method, target=target)
+    hit("/place/1,2", "sites", vhost="places.example.test", target="/places/place/1,2")
+    hit("/world/sample.dcl.eth", "sites", vhost="places.example.test", target="/places/world/sample.dcl.eth")
+    hit("/place?position=1,2", "apis", vhost="places.example.test", target="/places/place?position=1,2")
     print("All root aliases and Sites/API route boundaries passed.", flush=True)
 
     for path in ["/metrics", "/metrics/", "/metrics/x.data", "/metrics.data",
