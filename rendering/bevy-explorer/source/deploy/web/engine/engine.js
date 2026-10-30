@@ -394,10 +394,31 @@ export function start(options = {}) {
   console.log(`[Main JS] launching with ${JSON.stringify(options)}`);
   hideHeader();
 
+  // Page commands: the HUD's test commands (react-web lib/hudAutomation.ts) register in
+  // window.__dclPageCommands, and the console RPC runs them in this page instead of in the engine,
+  // which cannot reach the HUD's DOM.
+  const pageCommand = (line) => {
+    const trimmed = String(line).trim();
+    const name = trimmed.split(/\s+/, 1)[0] || "";
+    const command = window.__dclPageCommands?.[name.startsWith("/") ? name : `/${name}`];
+    return command ? { command, rest: trimmed.slice(name.length) } : null;
+  };
+  const runConsoleCommand = (line) => {
+    const page = pageCommand(line);
+    if (!page) return engine_console_command(line);
+    // a command that throws rejects, as an engine command that fails does
+    return new Promise((resolve) => resolve(page.command.run(page.rest)));
+  };
+
   // Callback invoked by Rust once console command metadata is available.
   window._buildEngineApi = (json) => {
     try {
-      const api = JSON.parse(json);
+      const pageApi = Object.entries(window.__dclPageCommands || {}).map(([cmd, command]) => ({
+        cmd,
+        args: command.args,
+        help: command.help,
+      }));
+      const api = JSON.parse(json).concat(pageApi);
       window.engine = {};
       for (const cmd of api) {
         const jsName = cmd.cmd
@@ -471,7 +492,7 @@ export function start(options = {}) {
   // The console RPC is the host's "engine is up" signal (engineRpc.ts ready()); the engine
   // worker is ready once engine_run has returned, having wired the command channel.
   workerReady(engineWorker).then(() => {
-    window.engine_console_command = engine_console_command;
+    window.engine_console_command = runConsoleCommand;
   });
 
   let viewportActive = true;

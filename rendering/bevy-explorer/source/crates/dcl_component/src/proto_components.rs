@@ -105,6 +105,7 @@ impl DclProtoComponent for sdk::components::PbAvatarBase {}
 impl DclProtoComponent for sdk::components::PbAvatarEmoteCommand {}
 impl DclProtoComponent for sdk::components::PbAvatarEquippedData {}
 impl DclProtoComponent for sdk::components::PbPlayerIdentityData {}
+impl DclProtoComponent for sdk::components::PbExplorerConfiguration {}
 impl DclProtoComponent for kernel::comms::rfc4::Packet {}
 impl DclProtoComponent for sdk::components::PbUiCanvasInformation {}
 impl DclProtoComponent for sdk::components::PbUiTransform {}
@@ -164,6 +165,7 @@ impl DclProtoComponent for sdk::components::PbExplorerItemPurchaseResult {}
 // PositionFree markers for types used with GlobalCrdtState::update_crdt
 // (these contain no embedded position data requiring localization)
 impl PositionFree for sdk::components::PbPlayerIdentityData {}
+impl PositionFree for sdk::components::PbExplorerConfiguration {}
 impl PositionFree for sdk::components::PbAvatarBase {}
 impl PositionFree for sdk::components::PbAvatarEquippedData {}
 

@@ -140,6 +140,15 @@ pub struct RendererSceneContext {
 /// Block reason used by /freeze_scene and /tick_scene.
 pub const FROZEN_BLOCK: &str = "frozen";
 
+/// `tick_number` milestones of scene startup (every `SceneResponse::Ok` the engine receives
+/// advances the tick). Initialization ends at this tick, which is when the JS thread is spawned.
+pub const SCENE_JS_SPAWN_TICK: u32 = 1;
+/// The thread's initial send is the next reply; the engine's first dispatch follows it (the
+/// thread is spawned in flight). Before this dispatch `last_sent` is the initialization stamp.
+pub const SCENE_FIRST_DISPATCH_TICK: u32 = 2;
+/// The reply to the scene's first `onUpdate`.
+pub const SCENE_FIRST_UPDATE_TICK: u32 = 3;
+
 pub const SCENE_LOG_BUFFER_SIZE: usize = 100;
 
 // A scene tick that has been in-flight (sent to the scene, no response yet) for longer than this

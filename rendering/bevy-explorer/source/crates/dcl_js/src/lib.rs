@@ -91,6 +91,39 @@ pub struct CrdtSendsThisTick(pub u32);
 // how far below the cap the scene sits.
 pub struct CrdtStoreNextCheck(pub u64);
 
+// Engine time covered by the dispatches that answered this tick, summed as the scene receives
+// each `RendererResponse::Ok` (a tick may make several renderer round trips). It arrives inside
+// `onUpdate`, after that tick's dt was passed, so it becomes the next tick's dt.
+pub struct EngineTickDt(pub f64);
+
+// Scenes aren't driven on a fixed timestep, so a slow frame (asset load, GC, a stalled renderer
+// round-trip) yields a huge dt. Cap it so dt-scaled scene logic (timers, animations) is never
+// handed a multi-second step.
+pub const MAX_SCENE_DT: f64 = 1.0;
+
+/// Tick boundary for the scene loop: takes the stashed engine dt (0 when no response arrived
+/// last tick, e.g. the first tick), caps it, advances `SceneElapsedTime` by it so the scene's
+/// elapsed time is exactly the sum of its dts, resets the per-tick send allowance, and returns
+/// the dt to hand to `onUpdate`.
+pub fn begin_tick(state: &mut impl State) -> f64 {
+    let dt = state
+        .try_take::<EngineTickDt>()
+        .map_or(0.0, |dt| dt.0.clamp(0.0, MAX_SCENE_DT));
+    state.borrow_mut::<SceneElapsedTime>().0 += dt;
+    state.try_take::<CrdtSendsThisTick>();
+    dt
+}
+
+/// Called once `onStart` returns. A runtime that makes renderer round trips in `onStart` (the
+/// sdk6 adaption layer makes four) would otherwise hand their engine time to the first
+/// `onUpdate`; it is startup handshake, not scene frames, so it is dropped and the first
+/// `onUpdate` gets a dt of 0. (sdk7's `onStart` only receives the first dispatch, which is
+/// already 0.) Time `onStart` spends after its last receive falls in the next dispatch interval,
+/// like any slow frame.
+pub fn end_start(state: &mut impl State) {
+    state.try_take::<EngineTickDt>();
+}
+
 pub trait State {
     fn borrow<T: 'static>(&self) -> &T;
     fn try_borrow<T: 'static>(&self) -> Option<&T>;
@@ -344,6 +377,46 @@ pub(crate) mod test_state {
 }
 
 #[cfg(test)]
+mod begin_tick_tests {
+    use super::{test_state::TestState, *};
+
+    // Each tick consumes the stashed engine dt once (0 when nothing arrived), caps it, and
+    // elapsed time is exactly the sum of the dts handed out.
+    #[test]
+    fn begin_tick_consumes_caps_and_accumulates_engine_dt() {
+        let mut s = TestState::default();
+        s.put(SceneElapsedTime(0.0));
+        s.put(CrdtSendsThisTick(3));
+
+        assert_eq!(begin_tick(&mut s), 0.0);
+        assert!(!s.has::<CrdtSendsThisTick>());
+
+        s.put(EngineTickDt(0.016));
+        assert_eq!(begin_tick(&mut s), 0.016);
+        assert_eq!(begin_tick(&mut s), 0.0, "a stashed dt is used once");
+
+        s.put(EngineTickDt(5.0));
+        assert_eq!(begin_tick(&mut s), MAX_SCENE_DT);
+
+        assert_eq!(s.borrow::<SceneElapsedTime>().0, 0.016 + MAX_SCENE_DT);
+    }
+
+    // Round trips made in onStart (as the sdk6 adaption layer does) never reach the first
+    // onUpdate's dt or the elapsed time.
+    #[test]
+    fn end_start_drops_handshake_dt() {
+        let mut s = TestState::default();
+        s.put(SceneElapsedTime(0.0));
+        s.put(EngineTickDt(0.7));
+
+        end_start(&mut s);
+
+        assert_eq!(begin_tick(&mut s), 0.0);
+        assert_eq!(s.borrow::<SceneElapsedTime>().0, 0.0);
+    }
+}
+
+#[cfg(test)]
 mod scene_log_budget_tests {
     use super::{test_state::TestState, *};
     use dcl_types::scene_response_channel;
@@ -553,6 +626,36 @@ mod scene_log_budget_tests {
             rx.try_recv().is_err(),
             "a shutting-down scene must not emit further frames"
         );
+    }
+
+    // A tick may make several renderer round trips; each one's engine time adds to the next
+    // tick's dt rather than replacing it.
+    #[test]
+    fn recv_sums_engine_dt_over_a_tick() {
+        let (renderer_sx, renderer_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_global_sx, global_rx) = tokio::sync::broadcast::channel::<GlobalCrdtStateUpdate>(1);
+        let mut s = crdt_state();
+        s.put(Arc::new(Mutex::new(renderer_rx)));
+        s.put(global_rx);
+        let state = std::rc::Rc::new(std::cell::RefCell::new(s));
+
+        for dt in [0.016, 0.017] {
+            renderer_sx
+                .send(RendererResponse::Ok(
+                    Default::default(),
+                    dcl_types::SceneCensus {
+                        born: Default::default(),
+                        died: Default::default(),
+                    },
+                    dt,
+                ))
+                .unwrap();
+            futures_lite::future::block_on(super::engine::op_crdt_recv_from_renderer(
+                state.clone(),
+            ));
+        }
+
+        assert_eq!(begin_tick(&mut *state.borrow_mut()), 0.016 + 0.017);
     }
 
     // Engine-initiated deletes reach the stores only via the census (the scene never sends a

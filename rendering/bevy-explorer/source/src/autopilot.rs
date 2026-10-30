@@ -27,7 +27,10 @@ use common::{
 use console::DoAddConsoleCommand;
 use wallet::Wallet;
 
-/// Added only when [`Autopilot`] exists.
+use crate::world_state::{Arrivals, WorldState};
+
+/// Added only when [`Autopilot`] exists. It reads the player's [`Arrivals`], so the app needs
+/// `WorldStatePlugin`, which the client adds in every run.
 pub struct AutopilotPlugin;
 
 impl Plugin for AutopilotPlugin {
@@ -51,29 +54,12 @@ impl Plugin for RunControlPlugin {
 
 #[derive(Resource, Default)]
 struct Run {
-    /// The player has been seen out of world, as it spawns: arriving is leaving that state, never
-    /// the lack of it.
-    saw_out_of_world: bool,
     /// `Time<Real>` seconds at which `Measuring` began.
     measuring_since: Option<f64>,
     /// The frame in which `Ending` was first seen here, so the exit comes in a later one.
     ending_frame: Option<u32>,
     identity_logged: bool,
     exit_requested: bool,
-}
-
-fn in_world(
-    signed_in: bool,
-    world_held: bool,
-    realm_connected: bool,
-    player_out_of_world: Option<bool>,
-    saw_out_of_world: bool,
-) -> bool {
-    signed_in
-        && !world_held
-        && realm_connected
-        && saw_out_of_world
-        && player_out_of_world == Some(false)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -87,27 +73,22 @@ fn drive_phase(
     world_hold: Option<Res<WorldHold>>,
     realm: Res<CurrentRealm>,
     csv_failed: Option<Res<CsvFailed>>,
+    arrivals: Res<Arrivals>,
     player: Query<Has<OutOfWorld>, With<PrimaryUser>>,
-    mut released: RemovedComponents<OutOfWorld>,
 ) {
     let now = time.elapsed_secs_f64();
     let player_out_of_world = player.single().ok();
-    // a period out of world that began and ended between two samples leaves no trace in the
-    // query, only the removal
-    let player_released = released
-        .read()
-        .filter(|entity| player.contains(*entity))
-        .count()
-        > 0;
-    run.saw_out_of_world |= player_released || player_out_of_world == Some(true);
     let signed_in = wallet.address().is_some();
-    let in_world_now = in_world(
-        signed_in,
-        world_hold.is_some(),
-        realm.connected,
-        player_out_of_world,
-        run.saw_out_of_world,
-    );
+    // the player has to have arrived: it spawns out of world, and arriving is leaving that state,
+    // never the lack of it
+    let in_world_now = arrivals.0 > 0
+        && WorldState {
+            signed_in,
+            world_held: world_hold.is_some(),
+            realm_connected: realm.connected,
+            out_of_world: player_out_of_world,
+        }
+        .in_world();
     let next = match *phase {
         AutopilotPhase::Ending { .. } => None,
         // the local guest is a guest account; scenes fetch without a prompt, so a person's
@@ -271,16 +252,22 @@ mod tests {
     };
 
     use super::*;
+    use crate::world_state::ArrivalsPlugin;
 
     /// A minimal app on a manual clock: every `update` advances `Time<Real>` by `step`.
     fn app(measure: bool, step: Duration) -> App {
         let mut app = App::new();
-        app.add_plugins((TimePlugin, FrameCountPlugin, RunControlPlugin))
-            .insert_resource(TimeUpdateStrategy::ManualDuration(step))
-            .insert_resource(Autopilot { measure })
-            .init_resource::<AutopilotPhase>()
-            .init_resource::<Wallet>()
-            .init_resource::<CurrentRealm>();
+        app.add_plugins((
+            TimePlugin,
+            FrameCountPlugin,
+            ArrivalsPlugin,
+            RunControlPlugin,
+        ))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(step))
+        .insert_resource(Autopilot { measure })
+        .init_resource::<AutopilotPhase>()
+        .init_resource::<Wallet>()
+        .init_resource::<CurrentRealm>();
         app
     }
 
