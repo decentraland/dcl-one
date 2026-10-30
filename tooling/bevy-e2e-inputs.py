@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
 """The inputs of Bevy Explorer / E2E: which web app the suite runs against, and from which commit.
 
+    python3 tooling/bevy-e2e-inputs.py                 # resolve the run's inputs
+    python3 tooling/bevy-e2e-inputs.py suite-changed   # does the pull request change the suite?
+
 Outputs (stdout as JSON, and GITHUB_OUTPUT when set): `run` (true or false), `reason`, `sha` (the
 commit whose suite runs, checked out by the job), `web_artifact` and `web_run_id` (the web app to
 download, from tooling/benchmark-inputs.py's artifact search), and `pr` (the pull request number,
-or empty).
+or empty). `suite-changed` writes `changed` (true or false) instead.
 
-- `workflow_run` of Bevy Explorer / CI: a successful run of this repository, a push to main or a
-  pull request from this repository that carries the RUN_LABEL label (a maintainer's decision to
-  run that pull request's code on the GPU runner with the accounts; without it the run is
-  skipped). Its own web app when it built one; a pull request run that built none (the PR changes
-  no web input) takes main's newest when the PR changes the suite, its workflow or its tooling, so
-  the PR's specs still run; a PR that changes neither is skipped.
+- `pull_request`: a pull request of this repository, not a draft, that carries the RUN_LABEL label:
+  a maintainer's decision to run that pull request's code on the GPU runner with the accounts (a
+  `labeled` event for any other label is skipped, so it cancels nothing). The job waits for the
+  commit's Bevy Explorer / CI run (BEVY_E2E_CI_WAIT_SECONDS, polled every BEVY_E2E_CI_POLL_SECONDS)
+  and takes the web app it built; a pull request whose CI built none, or that started no CI run,
+  takes main's newest when it changes the suite, its workflow or its tooling, so its specs still
+  run; one that changes neither is skipped.
+- `workflow_run` of Bevy Explorer / CI: a successful push to main, with the web app that run
+  built. A pull request's CI run is skipped here: its scenarios run from its own event.
 - `schedule`: main's newest web app and the commit that built it.
 - `workflow_dispatch`: `inputs.sha`'s CI run and web app, else main's newest.
 """
@@ -19,26 +25,33 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
+import time
 from pathlib import Path
 
 _spec = importlib.util.spec_from_file_location('benchmark_inputs', Path(__file__).resolve().parent / 'benchmark-inputs.py')
 bench = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(bench)
 
-
-# What the workflow's `pull_request` trigger lists: the suite, the workflow and its tooling.
+# What the workflow's `pull_request` trigger lists for the suite's own checks: the suite, the
+# workflow and its tooling.
 SUITE_PATHS = ('apps/bevy-explorer/e2e/', '.github/workflows/bevy-explorer-e2e.yml', 'tooling/bevy-e2e-', 'tooling/tests/test_bevy_e2e_')
-# The label a maintainer puts on a pull request whose code may run the scenarios.
-RUN_LABEL = 'run-e2e'
+# The label a maintainer puts on a pull request whose code may run the scenarios. The workflow's
+# concurrency group names it too.
+RUN_LABEL = 'ci:e2e'
+# How long a pull request's job waits for the commit's Bevy Explorer / CI run, and how often it asks.
+DEFAULT_WAIT_SECONDS = 5400
+DEFAULT_POLL_SECONDS = 30
+# How long a CI run may take to appear after the push: past it, the commit started none.
+START_SECONDS = 180
 
 
 def skip(reason):
     return {'run': False, 'reason': reason, 'sha': '', 'web_artifact': '', 'web_run_id': '', 'pr': ''}
 
 
-def labelled(repo, pr):
-    """Whether the pull request carries RUN_LABEL now (the CI run's event payload is older)."""
-    return any(row['name'] == RUN_LABEL for row in bench.api(f'repos/{repo}/issues/{pr}/labels?per_page=100'))
+def chosen(sha, artifact, run_id, pr, reason):
+    return {'run': True, 'reason': reason, 'sha': sha, 'web_artifact': artifact, 'web_run_id': str(run_id), 'pr': pr}
 
 
 def changes_suite(repo, pr):
@@ -51,10 +64,6 @@ def changes_suite(repo, pr):
         if len(files) < 100:
             return False
         page += 1
-
-
-def chosen(sha, artifact, run_id, pr, reason):
-    return {'run': True, 'reason': reason, 'sha': sha, 'web_artifact': artifact, 'web_run_id': str(run_id), 'pr': pr}
 
 
 def newest_main(repo):
@@ -73,38 +82,90 @@ def run_of(repo, sha):
     return runs[0] if runs else None
 
 
-def resolve(event_name, event, repo):
+def ci_runs_of(repo, sha, events):
+    """The commit's Bevy Explorer / CI runs from this repository, newest first, whatever their state."""
+    runs = bench.api(f'repos/{repo}/{bench.RUNS_PATH}?head_sha={sha}&per_page=100')['workflow_runs']
+    return [run for run in runs if run['path'] == bench.WORKFLOW and run['event'] in events and run['head_sha'] == sha
+            and (run.get('head_repository') or {}).get('full_name') == repo]
+
+
+class StillRunning(Exception):
+    """The commit's CI run had not completed when the wait ran out; `args[0]` is its id."""
+
+
+def wait_for_ci(repo, sha, wait_seconds, poll_seconds=DEFAULT_POLL_SECONDS, sleep=time.sleep, clock=time.monotonic):
+    """The commit's newest Bevy Explorer / CI pull request run once it has completed (any conclusion).
+    None when the commit started no run within START_SECONDS; StillRunning past `wait_seconds`."""
+    started = clock()
+    while True:
+        runs = ci_runs_of(repo, sha, ('pull_request',))
+        if runs and runs[0]['status'] == 'completed':
+            return runs[0]
+        now = clock()
+        if not runs and now - started >= START_SECONDS:
+            return None
+        if now - started >= wait_seconds:
+            raise StillRunning(runs[0]['id'] if runs else None)
+        sleep(poll_seconds)
+
+
+def against_main(repo, sha, pr, why):
+    """The pull request's suite against main's newest web app, when the pull request changes the suite."""
+    if not changes_suite(repo, pr):
+        return skip(f"#{pr} changes neither the explorer's web app nor the suite")
+    main = newest_main(repo)
+    if not main:
+        return skip(f"#{pr} {why} and no main run still has a web app")
+    name, run = main
+    return chosen(sha, name, run['id'], pr, f"#{pr} at {sha} ({why}) against main's web app from {run['head_sha']}")
+
+
+def resolve_pull_request(event, repo, wait):
+    pull = event['pull_request']
+    pr = str(pull['number'])
+    if event.get('action') == 'labeled' and (event.get('label') or {}).get('name') != RUN_LABEL:
+        return skip(f"#{pr}: the label `{(event.get('label') or {}).get('name')}` is not `{RUN_LABEL}`")
+    if RUN_LABEL not in [label['name'] for label in pull.get('labels') or []]:
+        return skip(f"#{pr} has no `{RUN_LABEL}` label: a maintainer applies it to run the scenarios on the pull request's code")
+    if ((pull.get('head') or {}).get('repo') or {}).get('full_name') != repo:
+        return skip(f'#{pr} is not from this repository')
+    if pull.get('draft'):
+        return skip(f'#{pr} is a draft')
+    sha = pull['head']['sha']
+    try:
+        run = wait(repo, sha)
+    except StillRunning as exc:
+        return skip(f"#{pr} at {sha}: CI run {exc.args[0]} has not completed in time")
+    if run is None:
+        return against_main(repo, sha, pr, 'started no CI run')
+    if run['conclusion'] != 'success':
+        return skip(f"#{pr} at {sha}: CI run {run['id']} ended {run['conclusion']}")
+    web = bench.named(bench.artifacts(repo, run['id']), bench.WEB)
+    if web:
+        return chosen(sha, web, run['id'], pr, f"#{pr} at {sha}: the web app CI run {run['id']} built")
+    return against_main(repo, sha, pr, 'no web input changed')
+
+
+def resolve(event_name, event, repo, wait=None):
+    if event_name == 'pull_request':
+        return resolve_pull_request(event, repo, wait or (lambda repo_, sha: wait_for_ci(repo_, sha, DEFAULT_WAIT_SECONDS)))
     if event_name == 'workflow_run':
         trigger = event['workflow_run']
         if (trigger.get('head_repository') or {}).get('full_name') != repo:
             return skip('the CI run is not from this repository')
+        if trigger['event'] == 'pull_request':
+            return skip(f"CI run {trigger['id']} is a pull request's: its scenarios run from its own event once it is labelled `{RUN_LABEL}`")
         if trigger['conclusion'] != 'success':
             return skip(f"CI run {trigger['id']} did not succeed")
-        if trigger['event'] not in ('push', 'pull_request'):
-            return skip(f"CI run {trigger['id']} was started by {trigger['event']}, not a push or a pull request")
-        if trigger['event'] == 'push' and trigger.get('head_branch') != 'main':
+        if trigger['event'] != 'push':
+            return skip(f"CI run {trigger['id']} was started by {trigger['event']}, not a push")
+        if trigger.get('head_branch') != 'main':
             return skip(f"CI run {trigger['id']} is a push to {trigger.get('head_branch')}, not main")
         sha = trigger['head_sha']
-        numbers = [row['number'] for row in trigger.get('pull_requests') or []]
-        pr = str(numbers[0]) if numbers else ''
-        if trigger['event'] == 'pull_request' and not pr:
-            return skip(f"CI run {trigger['id']} belongs to no open pull request")
-        if pr and not labelled(repo, pr):
-            return skip(f"#{pr} has no `{RUN_LABEL}` label: a maintainer applies it to run the scenarios on the pull request's code")
         web = bench.named(bench.artifacts(repo, trigger['id']), bench.WEB)
-        if web:
-            where = f'#{pr}' if pr else 'main'
-            return chosen(sha, web, trigger['id'], pr, f"{where} at {sha}: the web app CI run {trigger['id']} built")
-        if trigger['event'] == 'push':
+        if not web:
             return skip(f"main's CI run {trigger['id']} built no web app")
-        if not changes_suite(repo, pr):
-            return skip(f"#{pr} changes neither the explorer's web app nor the suite")
-        main = newest_main(repo)
-        if not main:
-            return skip(f"#{pr} changes no web input and no main run still has a web app")
-        name, run = main
-        return chosen(sha, name, run['id'], pr,
-                      f"#{pr} at {sha} (no web input changed) against main's web app from {run['head_sha']}")
+        return chosen(sha, web, trigger['id'], '', f"main at {sha}: the web app CI run {trigger['id']} built")
     if event_name in ('schedule', 'workflow_dispatch'):
         sha = ((event.get('inputs') or {}).get('sha') or '').strip()
         if sha:
@@ -140,10 +201,29 @@ def write_outputs(values):
                 summary.write(f"Code under test: {where}commit {values['sha']}.\n")
 
 
-def main():
+def suite_changed(event, repo):
+    """`suite-changed`: whether the pull request of the event changes the suite, as `changed`."""
+    changed = changes_suite(repo, event['pull_request']['number'])
+    print(json.dumps({'changed': changed}))
+    if os.environ.get('GITHUB_OUTPUT'):
+        with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+            output.write(f'changed={json.dumps(changed)}\n')
+    return 0
+
+
+def main(argv):
     event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text(encoding='utf-8'))
+    repo = os.environ['GH_REPO']
+    if argv[1:] == ['suite-changed']:
+        return suite_changed(event, repo)
+    if argv[1:]:
+        print(__doc__, file=sys.stderr)
+        return 2
+    wait_seconds = int(os.environ.get('BEVY_E2E_CI_WAIT_SECONDS') or DEFAULT_WAIT_SECONDS)
+    poll_seconds = int(os.environ.get('BEVY_E2E_CI_POLL_SECONDS') or DEFAULT_POLL_SECONDS)
     try:
-        values = resolve(os.environ['GITHUB_EVENT_NAME'], event, os.environ['GH_REPO'])
+        values = resolve(os.environ['GITHUB_EVENT_NAME'], event, repo,
+                         wait=lambda repo_, sha: wait_for_ci(repo_, sha, wait_seconds, poll_seconds))
     except (ValueError, subprocess.CalledProcessError) as exc:
         print(f'::error::{exc}')
         return 1
@@ -152,4 +232,4 @@ def main():
 
 
 if __name__ == '__main__':
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv))

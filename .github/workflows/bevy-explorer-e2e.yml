@@ -1,33 +1,44 @@
 # The Explorer end-to-end suite (apps/bevy-explorer/e2e): explorer-automation's scenarios restated
 # against the Bevy Explorer and driven through its console (docs/adr/2026-10-29-explorer-tests-
 # through-the-console.md). The suite's own checks (typecheck, the driver's tests against the
-# runner's Chrome, the tooling tests) run on pull requests that touch it. The scenarios run against
-# the web app a Bevy Explorer / CI run built, which tooling/bevy-e2e-inputs.py picks: after each
-# such run (a push to main, or a pull request of this repository that changes the explorer's web
-# app or the suite), nightly against main's newest, and by hand. They need a Windows runner with a
-# GPU, named by the BEVY_E2E_WINDOWS_RUNNER repository variable (explorer-automation's
-# `win-gpu-t4-explorer`; an org admin enables it for this repository), and the zone accounts in
-# the `e2e` environment (DCL_E2E_ACCOUNT_KEYS, comma-separated private keys, one per worker).
-# Until the variable is set the scenarios job is skipped; the Inputs job's summary says what would
-# have run.
+# runner's Chrome, the tooling tests) run on pull requests that change it. The scenarios run
+# against the web app a Bevy Explorer / CI run built, which tooling/bevy-e2e-inputs.py picks:
 #
-# A `workflow_run` runs in main's context, so a pull request's run checks out and runs that pull
-# request's code (the suite, the scenes' build, dcl-scene-cli's build scripts) with main's
-# permissions, the accounts and the shared GPU runner. So a pull request's scenarios run only once
-# a maintainer has put the `run-e2e` label on it (tooling/bevy-e2e-inputs.py checks the label when
-# the CI run completes; the Inputs summary names the pull request and the commit under test). The
-# job holds no write permission, the accounts secret reaches only the two steps that run
-# scenarios, a pull request's run saves no cache, and the status comment is written by a separate
-# job that holds no secret and runs only this file's commit's tooling and action. Required
-# reviewers on the `e2e` environment, a repository setting, add an approval step on top.
+# - on a pull request of this repository, once a maintainer labels it `ci:e2e` (the label starts
+#   the run, and a later push to the labelled pull request runs again), from the pull request's own
+#   event, so the result is one of its checks and an approval of the `e2e` deployment names its
+#   commit. The Inputs job waits for the commit's Bevy Explorer / CI run and takes the web app it
+#   built, or main's newest when the pull request changed no web input but changed the suite;
+# - after each Bevy Explorer / CI run of a push to main;
+# - nightly, against main's newest web app;
+# - by hand, against a commit's web app or main's newest.
+#
+# The label is what admits a pull request's code (the suite, the scenes' build, dcl-scene-cli's
+# build scripts) to the GPU runner and the accounts: a pull request of this repository runs with
+# this repository's secrets. The accounts secret still reaches only the two steps that run the
+# scenarios, a pull request's run saves no cache, and the status comment is written by a job that
+# holds no secret. Required reviewers on the `e2e` environment, a repository setting, add an
+# approval step on top of the label.
+#
+# They need a Windows runner with a GPU, named by the BEVY_E2E_WINDOWS_RUNNER repository variable
+# (explorer-automation's `win-gpu-t4-explorer`; an org admin enables it for this repository), and
+# the zone accounts in the `e2e` environment (DCL_E2E_ACCOUNT_KEYS, comma-separated private keys,
+# one per worker). Until the variable is set the scenarios job is skipped; the Inputs job's summary
+# says what would have run.
 #
 # GitHub starts `workflow_run`, `schedule` and `workflow_dispatch` only from the workflow file on
-# the default branch: until this file is on main, only the pull request checks run.
+# the default branch: until this file is on main, only the pull request jobs run.
 name: Bevy Explorer / E2E
 'on':
+  # The explorer's inputs (what Bevy Explorer / CI builds the web app from) and the suite's own.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
     paths:
-      - 'apps/bevy-explorer/e2e/**'
+      - 'apps/bevy-explorer/**'
+      - 'rendering/bevy-explorer/**'
+      - 'library/protocol/**'
+      - '.cargo/**'
+      - 'rust-toolchain*'
       - '.github/workflows/bevy-explorer-e2e.yml'
       - 'tooling/bevy-e2e-*.py'
       - 'tooling/tests/test_bevy_e2e_*.py'
@@ -52,13 +63,17 @@ name: Bevy Explorer / E2E
         type: boolean
         default: false
 permissions: {}
-# One run per branch of one repository and CI trigger: a fork's branch named like ours never
-# cancels a run, and neither does the CI run of a pull request that has just closed (its
-# `pull_requests` is empty, and Inputs skips it): only a newer run of an open pull request, or of
-# main, supersedes the one in progress.
+# One run per pull request (a newer push, or the `ci:e2e` label, supersedes the run in progress;
+# any other label's event is its own group and cancels nothing), per branch of one repository and
+# CI trigger for a `workflow_run`, and per ref otherwise.
 concurrency:
-  group: bevy-explorer-e2e-${{ github.event_name == 'workflow_run' && format('{0}-{1}-{2}', github.event.workflow_run.event, github.event.workflow_run.head_repository.full_name, github.event.workflow_run.head_branch) || format('{0}-{1}', github.event_name, github.ref) }}
-  cancel-in-progress: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push' || toJSON(github.event.workflow_run.pull_requests) != '[]' }}
+  group: >-
+    bevy-explorer-e2e-${{
+      github.event_name == 'pull_request' && (github.event.action != 'labeled' || github.event.label.name == 'ci:e2e') && format('pr-{0}', github.event.pull_request.number)
+      || github.event_name == 'pull_request' && format('run-{0}', github.run_id)
+      || github.event_name == 'workflow_run' && format('{0}-{1}-{2}', github.event.workflow_run.event, github.event.workflow_run.head_repository.full_name, github.event.workflow_run.head_branch)
+      || format('{0}-{1}', github.event_name, github.ref) }}
+  cancel-in-progress: true
 jobs:
   checks:
     name: Suite checks
@@ -67,6 +82,7 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: read
+      pull-requests: read
     defaults:
       run:
         working-directory: apps/bevy-explorer/e2e
@@ -74,28 +90,42 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The trigger also fires for the explorer's paths, for the label: the checks run only when
+      # the pull request changes the suite, and pass without them otherwise.
+      - name: Does the pull request change the suite
+        id: gate
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: python3 tooling/bevy-e2e-inputs.py suite-changed
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.gate.outputs.changed == 'true'
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: apps/bevy-explorer/e2e/package-lock.json
       - name: Install the suite
+        if: steps.gate.outputs.changed == 'true'
         run: npm ci
       - name: Typecheck
+        if: steps.gate.outputs.changed == 'true'
         run: npm run typecheck
       # The driver's tests, with the web transport against a stub page in the runner's Chrome.
       - name: Test the driver
+        if: steps.gate.outputs.changed == 'true'
         env:
           DCL_E2E_REQUIRE_CHROME: '1'
         run: npm test
       - name: Test the tooling
+        if: steps.gate.outputs.changed == 'true'
         working-directory: ${{ github.workspace }}
         run: python3 -m unittest discover -s tooling/tests -p 'test_bevy_*.py'
   inputs:
     name: Inputs
-    if: github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    # A pull request's job waits for the commit's Bevy Explorer / CI run, which builds the web app.
+    timeout-minutes: 100
     permissions:
       contents: read
       actions: read
@@ -108,9 +138,10 @@ jobs:
       pr: ${{ steps.inputs.outputs.pr }}
       reason: ${{ steps.inputs.outputs.reason }}
     steps:
+      # A pull request runs its own tooling; every other event runs this file's commit's.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ github.event_name != 'pull_request' && github.workflow_sha || '' }}
           persist-credentials: false
           sparse-checkout: tooling
       - name: Pick the web app and the commit
@@ -118,6 +149,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          BEVY_E2E_CI_WAIT_SECONDS: '5400'
         run: python3 tooling/bevy-e2e-inputs.py
       - name: Say when the scenarios cannot run
         if: steps.inputs.outputs.run == 'true' && vars.BEVY_E2E_WINDOWS_RUNNER == ''
@@ -227,8 +259,7 @@ jobs:
           echo "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}"
           exit 1
   # The pull request's status comment, from the report the scenarios uploaded. This job holds no
-  # secret and runs only this file's commit's tooling and action, never the pull request's: the
-  # report is data to it (the JUnit files `node --test` wrote).
+  # secret; the report is data to it (the JUnit files `node --test` wrote).
   comment:
     name: Status comment
     needs: [inputs, scenarios]
@@ -245,7 +276,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.workflow_sha }}
+          ref: ${{ github.event_name != 'pull_request' && github.workflow_sha || '' }}
           persist-credentials: false
           sparse-checkout: |
             tooling

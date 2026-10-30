@@ -134,25 +134,30 @@ A reference counts as approved once a reviewer has checked it against the scene'
 
 `.github/workflows/bevy-explorer-e2e.yml`:
 
-- **Suite checks**, on every pull request that touches this folder: `tsc`, the driver's tests
-  (the web transport against a stub page in the runner's Chrome) and the tooling tests.
-- **Scenarios**, after each Bevy Explorer / CI run (a push to main, or a pull request of this
-  repository that a maintainer labelled `run-e2e` and that changed the explorer's web app or this
-  folder), nightly against main's newest web app, and by hand (a commit, a group, record):
-  `tooling/bevy-e2e-inputs.py` picks the web app (the run's own, or main's newest for a PR that
-  changed no web input), the job downloads it, runs the InWorld scenarios, then builds the scenes
-  and runs the Visual ones, and uploads `report/`. It runs on the Windows runner with a GPU that
-  the `BEVY_E2E_WINDOWS_RUNNER` repository variable names (explorer-automation's
+- **Suite checks**, on every pull request that changes this folder, the workflow or its tooling:
+  `tsc`, the driver's tests (the web transport against a stub page in the runner's Chrome) and
+  the tooling tests. The workflow also listens to the explorer's paths, for the label below, and
+  the job then passes without running them.
+- **Scenarios**, as unity-explorer runs explorer-automation: on a pull request of this repository
+  once a maintainer labels it `ci:e2e` (the label starts the run; a later push to the labelled
+  pull request runs again; a draft or a fork does not run), after each Bevy Explorer / CI run of a
+  push to main, nightly against main's newest web app, and by hand (a commit, a group, record).
+  A pull request's run comes from its own event, so it is one of the pull request's checks and an
+  approval of the `e2e` deployment names its commit. `tooling/bevy-e2e-inputs.py` picks the web
+  app: a pull request's job waits for the commit's Bevy Explorer / CI run and takes the web app it
+  built, or main's newest when the pull request changed no web input but changed the suite. The
+  job downloads it, runs the InWorld scenarios, then builds the scenes and runs the Visual ones,
+  and uploads `report/`. It runs on the Windows runner with a GPU that the
+  `BEVY_E2E_WINDOWS_RUNNER` repository variable names (explorer-automation's
   `win-gpu-t4-explorer`, which an org admin enables for this repository), in the `e2e`
-  environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. A pull
-  request's run is that pull request's code under main's permissions, with the accounts and the
-  shared runner: hence the label, which a maintainer applies on purpose, and the Inputs summary
-  naming the pull request and the commit under test. The job holds no write permission and saves
+  environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. The label
+  is what admits a pull request's code to that runner and those accounts; the Inputs summary
+  names the pull request and the commit under test; the job holds no write permission and saves
   no cache; required reviewers on the environment (a repository setting) add an approval on top.
   Until the variable is set the job is skipped.
-- **Status comment**, after a pull request's scenarios: a job without secrets, running only
-  main's `tooling/bevy-e2e-report.py` and status action, writes the *InWorld* and *Automation*
-  sections of the PR's CI status comment from the uploaded report.
+- **Status comment**, after a pull request's scenarios: a job without secrets writes the
+  *InWorld* and *Automation* sections of the PR's CI status comment from the uploaded report
+  (`tooling/bevy-e2e-report.py`).
 
 `tooling/bevy-ci.py` selects no engine lane for a change under this folder.
 
