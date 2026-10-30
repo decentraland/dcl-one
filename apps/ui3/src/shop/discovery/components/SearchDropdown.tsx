@@ -196,7 +196,7 @@ export default function SearchDropdown({ debounceMs = DEBOUNCE_MS }: { debounceM
           submit(value);
         }}
       >
-        <Icon name="search" size={18} className="shop-search__icon" />
+        <Icon name="search" size={20} className="shop-search__icon" />
         <input
           ref={inputRef}
           type="search"

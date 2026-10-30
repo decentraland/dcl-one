@@ -56,7 +56,7 @@ function Hero() {
     preload(heroMobile, { as: "image", fetchPriority: "high", media: "(max-width: 768px)" });
   }
   return (
-    <section className="shop-overview__hero" data-testid="overview-hero" style={campaign?.desktopImage ? { backgroundImage: `url("${campaign.desktopImage}")` } : undefined}>
+    <section className="shop-overview__hero" style={campaign?.desktopImage ? { backgroundImage: `url("${campaign.desktopImage}")` } : undefined}>
       <div className="shop-overview__hero-inner">
         <h1 data-testid="hero-title">{campaign?.title || t("overview.heroTitle")}</h1>
         {iap ? null : campaign ? (

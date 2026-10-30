@@ -1,7 +1,8 @@
 /* from: shop@2d3bf62:app/src/styles/index.css (the page field, the drifting DCL symbols, the Inter face),
          app/src/styles/theme.ts (colors, gradients, radii), app/index.html (the Inter weights);
-         shop@2d3bf62:app/src/pages/Overview.styles.ts (Hero, HeroBg, HeroInner, HeroTitle, HeroCta; the live
-         site draws the hero at 1920/340, capped at 340px, and the live site wins over the source's 300) */
+         shop@3a322cf9:app/src/pages/Overview.styles.ts (Hero at 1920/300 capped at 300px, HeroCta),
+         app/src/styles/cta.styles.ts (creditsCtaCss), app/src/components/TopNav/TopNav.styles.ts (the site nav's
+         wash and outlined SIGN IN), app/src/styles/index.css (--nav-h) */
 
 @font-face { font-family: "Inter"; src: url("/fonts/Inter-Regular.woff2") format("woff2"); font-style: normal; font-weight: 400; font-display: swap; unicode-range: U+0100-04FF, U+052F, U+0E3F, U+146B, U+1D43-1D65, U+1D9C-1DA0, U+1DBB-1FFE, U+2070-20BF, U+20DB-213B, U+214D-21BB, U+21D0-21EA, U+2202-222B, U+2248, U+2260-2265, U+2303-2305, U+2318-232B, U+2380-238B, U+23CE-23CF, U+2423, U+2460-2468, U+24B6-24CF, U+24EA, U+25A0-25CF, U+25E6-25EF, U+2600-2606, U+263C, U+2661-2665, U+26A0, U+2713-2717, U+2756-2764, U+2780-2788, U+27EF-27FA, U+2B06-2B1C, U+2B4E-2B5F, U+2C7C-2C7F, U+2DFF, U+2E18, U+A69F, U+A7FF, U+A92E, U+E000-E080, U+E093-E164, U+EE01-EE05, U+F6C3, U+FE20-FE2D, U+1F12F-1F149, U+1F16A-1F16B, U+1F850-1F852; }
 @font-face { font-family: "Inter"; src: url("/fonts/Inter-Medium.woff2") format("woff2"); font-style: normal; font-weight: 500; font-display: swap; unicode-range: U+0100-04FF, U+052F, U+0E3F, U+146B, U+1D43-1D65, U+1D9C-1DA0, U+1DBB-1FFE, U+2070-20BF, U+20DB-213B, U+214D-21BB, U+21D0-21EA, U+2202-222B, U+2248, U+2260-2265, U+2303-2305, U+2318-232B, U+2380-238B, U+23CE-23CF, U+2423, U+2460-2468, U+24B6-24CF, U+24EA, U+25A0-25CF, U+25E6-25EF, U+2600-2606, U+263C, U+2661-2665, U+26A0, U+2713-2717, U+2756-2764, U+2780-2788, U+27EF-27FA, U+2B06-2B1C, U+2B4E-2B5F, U+2C7C-2C7F, U+2DFF, U+2E18, U+A69F, U+A7FF, U+A92E, U+E000-E080, U+E093-E164, U+EE01-EE05, U+F6C3, U+FE20-FE2D, U+1F12F-1F149, U+1F16A-1F16B, U+1F850-1F852; }
@@ -41,7 +42,7 @@
   --shop-radius-pill: 50px;
   --shop-field: radial-gradient(61.64% 109.58% at 50% 54.49%, #952dc6 0%, #7c27a8 25%, #642089 50%, #4b1a6b 75%, #32134c 100%);
   --shop-gutter: 54px;
-  --shop-nav-h: 72px;
+  --shop-nav-h: 92px;
   --shop-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
   --ui-canvas: #32134c;
@@ -113,11 +114,48 @@
   .site-layout:has(.shop-chrome)::before { animation: none; }
 }
 
+/* The site nav is a dark wash over the page field that deepens once the page scrolls, painted on ::before as
+   upstream's is, with ui2's outlined SIGN IN. */
 .site-layout:has(.shop-chrome) .site-layout__navigation {
-  --site-nav-bg: #101014;
-  --site-nav-line: rgba(255, 255, 255, 0.1);
+  --site-nav-bg: rgba(22, 21, 24, 0.4);
+  --site-nav-line: transparent;
+  --site-nav-pad: 54px;
   --font-sans: Inter, system-ui, sans-serif;
   font-family: var(--font-sans);
+}
+body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation { --site-nav-bg: rgba(22, 21, 24, 0.8); }
+.site-layout:has(.shop-chrome) .dtb {
+  background: transparent;
+  border-bottom: 0;
+}
+.site-layout:has(.shop-chrome) .dtb::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--site-nav-bg);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  transition: background 0.25s ease;
+  pointer-events: none;
+}
+.site-layout:has(.shop-chrome) .dtb__menu.is-open { background: rgb(22, 21, 24); }
+.site-layout:has(.shop-chrome) .dtb__signin {
+  padding: 8px 22px;
+  border-color: #fcfcfc;
+  color: #fcfcfc;
+  line-height: 24px;
+  letter-spacing: 0.46px;
+  text-transform: uppercase;
+}
+.site-layout:has(.shop-chrome) .dtb__signin:hover { background: rgba(255, 255, 255, 0.12); border-color: #fcfcfc; }
+@media (max-width: 991px) {
+  .site-layout:has(.shop-chrome) .dtb { gap: 24px; padding: 12px 16px; }
+  .site-layout:has(.shop-chrome) .dtb__brand img { width: 40px; height: 40px; }
+  .site-layout:has(.shop-chrome) .dtb__burger { background: rgba(255, 255, 255, 0.1); border-radius: 8px; color: #fcfcfc; }
+}
+@media (max-width: 768px) {
+  .site-layout:has(.shop-chrome) .site-layout__navigation { --site-nav-bg: rgba(22, 21, 24, 0.75); }
 }
 
 .shop-chrome *,
@@ -158,7 +196,7 @@
   box-sizing: border-box;
   width: 100cqw;
   min-height: 0;
-  height: min(340px, calc(100vw * 340 / 1920));
+  height: min(300px, calc(100vw * 300 / 1920));
   margin: 0 0 50px calc(50% - 50cqw);
   padding: 0 calc(50cqw - 50%);
   border-radius: 0;
@@ -195,11 +233,11 @@
   width: 246px;
   height: 52px;
   padding: 0 16px;
-  border-radius: var(--shop-radius-btn);
+  border-radius: 12px;
   background: var(--shop-buy-btn);
-  color: var(--shop-soft-white);
+  color: #fff;
   font-size: 15px;
-  font-weight: 700;
+  font-weight: 600;
   letter-spacing: 0.46px;
   text-transform: uppercase;
   text-decoration: none;
@@ -218,14 +256,9 @@
 .shop-chrome .shop-buy-ring::after {
   content: "";
   position: absolute;
-  inset: -6px;
-  border-radius: calc(var(--shop-radius-btn) + 6px);
-  padding: 2px;
-  background: var(--shop-buy-btn);
-  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
-  mask-composite: exclude;
+  inset: -3px;
+  border: 2px solid var(--shop-orange);
+  border-radius: 14px;
   opacity: 0;
   transition: opacity 0.15s ease;
   pointer-events: none;
@@ -242,6 +275,7 @@
     height: auto;
     aspect-ratio: 1 / 1;
     max-height: none;
+    margin-top: -16px;
     align-items: flex-end;
     justify-content: center;
     padding-bottom: 43px;
