@@ -62,6 +62,11 @@ and skip when unset. The web packages run `pnpm test` (`apps/ui3`, `apps/sites`,
 after `scripts/gen-ts-bindings.sh`; the protocol runs `make -C library/protocol
 test`; the workflow guards run with `python3 -m unittest discover -s tooling/tests`.
 
+## Standards
+
+Web UI code follows [UI standards](docs/ui-standards.md); component styles use
+CSS Modules.
+
 ## Clone the repository
 
 ```sh

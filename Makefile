@@ -4,6 +4,7 @@ NODE_CRATES = --workspace --exclude dcl-scene-cli --exclude dcl-scene-authoring 
 
 check:
 	bash services/catalyst/scripts/check-module-dag.sh
+	python3 tooling/ui_standards.py
 
 owners:
 	python3 tooling/owners.py
