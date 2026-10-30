@@ -1,6 +1,6 @@
 # ADR: Shared UI library
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-10-30
 
 ## Context
@@ -13,8 +13,22 @@ supports consistent use across deliverables.
 
 Place shared UI foundations, components and their Figma tooling in `library/ui`.
 Place UI used by a single app in `library/ui/apps/<app>/`; the app keeps its
-pages, routes and data wiring. The shared component styling
-standard is CSS Modules. The Figma tooling is separate from browser imports.
+pages, routes and data wiring. The shared component styling standard is CSS
+Modules. The Figma tooling is separate from browser imports.
+
+### Layout
+
+`library/ui` is used by several deliverables (the web apps and the Explorer
+HUD), as the [layout ADR](2026-10-19-organizing-library-services-folders.md)
+requires of `library/`. It is a TypeScript source library, not a Rust crate, so
+the crate rules there (`dcl-*` name, `[workspace.dependencies]`) do not apply.
+
+`library/ui/apps/<app>/` is an exception to that ADR's rule that `library/`
+holds only code several deliverables use: by owner decision, UI used by a
+single app lives there, beside the shared foundations and components it is
+built from. The exception covers only `library/ui/apps/`; when a second
+deliverable needs something from it, it moves to the shared `components/` or
+`foundations/`.
 
 ## Consequences
 

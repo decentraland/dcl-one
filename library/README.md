@@ -1,6 +1,8 @@
 # `library/`
 
 Shared code ([rules](../docs/adr/2026-10-19-organizing-library-services-folders.md)).
+The one exception is `ui/apps/<app>/`, which holds UI used by a single app
+([shared UI library ADR](../docs/adr/2026-10-30-shared-ui-library.md)).
 
 | Path | What | Used by |
 | --- | --- | --- |
