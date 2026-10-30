@@ -40,7 +40,8 @@ document defines the new standards for One.
 - Applies to every current and future web app under `apps/` and to
   `rendering/bevy-explorer/source/react-web`. The Explorer HUD, in both
   `react-web` and its Sites adaptation `apps/ui3/src/play`, keeps its own
-  design primitives and tokens until the shared library is integrated; see
+  design primitives and tokens until the shared library is integrated, and the
+  Sites adaptation is not migrated until Sites is; see
   [Explorer HUD transition](#explorer-hud-transition).
 - Required for all new component styles and for existing styles when they are
   migrated. Existing global stylesheets do not have to be migrated all at once.
@@ -69,7 +70,8 @@ Component.figma.ts     Figma-to-component mapping for the tooling
 
 Define component-owned props and types in the component file by default. Use a
 separate types file for a substantial contract shared across components.
-Export the component and its public prop types from `library/ui/index.ts`.
+Export the component and its public prop types from `library/ui/index.ts`
+(created with the first shared component).
 The mapping is used by the Figma tooling and is not imported by browser code.
 The template is not a production component. Replace the Figma mapping
 placeholder with the actual component's node and properties when its tooling
@@ -136,8 +138,9 @@ values to pass arbitrary colours or palette values from props.
   components before creating a new one, and put components shared by multiple
   apps or the Bevy HUD there. Until then, reuse the surface's existing
   components.
-- Put components and styles used by one app only in `library/ui/apps/<app>/`;
-  see [App-specific UI](#app-specific-ui).
+- Once `library/ui` is implemented, put components and styles used by one app
+  only in `library/ui/apps/<app>/`; until then they stay in the app. See
+  [App-specific UI](#app-specific-ui).
 
 ### Responsive, themes and portals
 
@@ -178,9 +181,11 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 - Compare visual behavior before and after a change; unit tests alone do not
   prove visual parity.
 - `make check` and CI run `tooling/ui_standards.py` on changed files. It flags
-  new CSS-in-JS imports, and a new plain `.css` file with the same name as a
-  component next to it (entry stylesheets such as `App.css` and moved existing
-  stylesheets are not flagged). It skips the scene SDK toolchain's
+  new CSS-in-JS imports (including an Emotion `@jsxImportSource` pragma), and a
+  new plain `.css` file with the same name as a component next to it. An app's
+  entry stylesheet (`App.css`, `index.css` or `main.css` directly in its
+  `src/`) and moved existing stylesheets are not flagged. It skips the scene
+  SDK toolchain's
   `apps/dcl-scene-cli/scripts/`, `src/templates/` and `testdata/`. It is a
   best-effort check: a pass does not prove the change follows this standard.
 - Report checks that could not run or failed. Documentation-only changes need

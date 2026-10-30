@@ -14,5 +14,5 @@ The one exception is `ui/apps/<app>/`, which holds UI used by a single app
 | `dcl-preview-tunnel{,-protocol}/` | Preview relay and wire types | scene CLI |
 | `catalyst-api/` | TypeScript DTOs, OpenAPI documents | sites, ui3, catalyst |
 | `protocol/` | The `.proto` contract, the npm package `@dcl/protocol` | Explorer (`dcl_component`), comms; SDK, social and the scene crates to follow |
-| `ui/` | Shared UI foundations, components, app-specific UI (`apps/<app>/`) and Figma tooling ([standard](../docs/ui-standards.md#shared-ui-libraryui)); only the component template exists today | Web apps under `apps/`, the Explorer React HUD |
+| `ui/` | Shared UI foundations, components, app-specific UI (`apps/<app>/`) and Figma tooling ([standard](../docs/ui-standards.md#shared-ui-libraryui)); only the component template exists today | None yet; planned: web apps under `apps/`, the Explorer React HUD |
 | `vendor/rusty_enet/` | Pinned ENet-CSharp transport source, MIT license and reviewed local patches | Catalyst Pulse, native Bevy Pulse client |
