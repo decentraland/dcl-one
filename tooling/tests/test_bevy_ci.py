@@ -112,6 +112,15 @@ class SelectionTest(unittest.TestCase):
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web', 'test'})
 
+    def test_the_end_to_end_suite_selects_no_engine_lane(self):
+        for name in ('driver/explorer.ts', 'specs/chat.test.ts', 'scenes/core/scene.json', 'README.md'):
+            with self.subTest(path=name):
+                before = self.git('rev-parse', 'HEAD')
+                self.write('apps/bevy-explorer/e2e/' + name, 'changed')
+                selected = ci.select(before, self.commit())
+                self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
+                                  if selected[lane]}, set())
+
     def test_web_change_cannot_hide_a_native_or_shared_input_change(self):
         self.write('rendering/bevy-explorer/source/react-web/src/App.tsx', 'web edit')
         self.write('rendering/bevy-explorer/source/crates/system_api_types/src/lib.rs', 'protocol edit')

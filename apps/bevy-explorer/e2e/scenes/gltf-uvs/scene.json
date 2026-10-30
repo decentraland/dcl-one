@@ -1,0 +1,47 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "gltf-uvs",
+    "description": "Visual regression scene gltf-uvs (from explorer-automation 955b338)"
+  },
+  "owner": "",
+  "contact": {
+    "name": "explorer-automation",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": [
+      "108,0",
+      "109,0"
+    ],
+    "base": "108,0"
+  },
+  "skyboxConfig": {
+    "fixedTime": 43200
+  },
+  "spawnPoints": [
+    {
+      "name": "default",
+      "default": true,
+      "position": {
+        "x": [
+          8
+        ],
+        "y": [
+          0
+        ],
+        "z": [
+          8
+        ]
+      },
+      "cameraTarget": {
+        "x": 8,
+        "y": 1,
+        "z": 8
+      }
+    }
+  ]
+}

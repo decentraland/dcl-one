@@ -1,0 +1,9 @@
+{
+  "name": "bevy-explorer-e2e-scene-ui",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Visual-regression scene: ui",
+  "scripts": {
+    "build": "dcl-scene-cli build --skip-install"
+  }
+}
