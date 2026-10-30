@@ -191,10 +191,10 @@ App-specific UI is used by one app only: its pages, layouts, app chrome and
 feature components. It lives in that app, next to the feature that uses it,
 and not in `library/ui`.
 
-Until `library/ui` exists, Sites already imports `apps/ui3` source through
-the `@ui/*` alias (`apps/sites/tsconfig.json`), so an `apps/ui3` component
-that Sites imports is used by more than one app. Verify a change to it in every
-app that imports it.
+Until `library/ui` is implemented, Sites already imports `apps/ui3` source
+through the `@ui/*` alias (`apps/sites/tsconfig.json`), so an `apps/ui3`
+component that Sites imports is used by more than one app. Verify a change to
+it in every app that imports it.
 
 - Follow the same CSS Modules, accessibility, migration and verification rules
   as shared UI.
