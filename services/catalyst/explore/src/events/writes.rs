@@ -470,7 +470,14 @@ pub async fn create_event(
     {
         *image = super::posters::normalize_image_input(image, &state.settings)?;
     }
-    let id = moderation::create_as(&state.pool, &body, &signer, &signer).await?;
+    let id = moderation::create_as_with_places(
+        &state.pool,
+        &body,
+        &signer,
+        &signer,
+        Some(&state.places),
+    )
+    .await?;
     answer(&state, &id, Some(&signer)).await
 }
 
@@ -613,7 +620,7 @@ pub async fn patch_event(
         );
         raw.insert("world".into(), json!(world));
     }
-    super::metadata::enrich(&mut tx, &mut raw).await?;
+    super::metadata::enrich(&mut tx, &mut raw, Some(&state.places)).await?;
     // Another reviewer's rejection is a moderation hold: self-approval cannot remove it.
     let held = moderation::flag(&before, "rejected")
         && !before
