@@ -1,8 +1,14 @@
+// the loopback console server and the native input commands; the headless binary takes the same
+// launch options
+#[cfg(not(target_arch = "wasm32"))]
+pub mod automation;
 mod autopilot;
 mod commands;
+mod deep_link;
 mod ext;
 #[cfg(target_arch = "wasm32")]
 mod web;
+pub mod world_state;
 // POC: react-web HUD via CEF offscreen rendering into an in-engine texture (`react-hud-cef`).
 #[cfg(all(not(target_arch = "wasm32"), feature = "react-hud-cef"))]
 mod react_hud_cef;
@@ -15,8 +21,6 @@ use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
 use av::AVPlayerPlugin;
 use avatar::AvatarPlugin;
-#[cfg(all(feature = "remote", not(target_arch = "wasm32")))]
-use bevy::remote::{http::RemoteHttpPlugin, RemotePlugin};
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};
 use bevy::{
@@ -270,6 +274,10 @@ pub struct DecentralandArguments {
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub log_file: Option<std::path::PathBuf>,
+    // `--automation-token` and `--automation-port`: the loopback console server
+    #[cfg(not(target_arch = "wasm32"))]
+    #[command(flatten)]
+    pub automation: automation::AutomationOptions,
     /// Web: the same-origin path the page streams the benchmark log to (the `perfStream` page
     /// param, through `engine_set_perf_stream`); never a native flag
     #[arg(skip)]
@@ -630,6 +638,8 @@ impl DecentralandApp {
             .add_plugins(TextureCameraPlugin)
             .add_plugins(ImageProcessingPlugin)
             .add_plugins(SystemBridgePlugin { bare: false })
+            .add_plugins(world_state::WorldStatePlugin)
+            .add_plugins(deep_link::DeepLinkPlugin)
             .add_plugins(SceneInspectorPlugin)
             .add_plugins(EmbedAssetsPlugin)
             .add_plugins(ParticleSystemPlugin)
@@ -652,8 +662,17 @@ impl DecentralandApp {
             }
         }
 
-        #[cfg(all(feature = "remote", not(target_arch = "wasm32")))]
-        app.add_plugins((RemotePlugin::default(), RemoteHttpPlugin::default()));
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            app.add_plugins(automation::AutomationPlugin);
+            // only when a token is given, and then only the token-checked methods that run
+            // console commands: Bevy's own remote methods (`bevy/query`, `bevy/insert`, ...)
+            // check no token, so they are never served
+            #[cfg(feature = "remote")]
+            if let Some(server) = decentraland_app_config.arguments.automation.server() {
+                app.add_plugins(server);
+            }
+        }
         #[cfg(feature = "bevy_mesh_picking_backend")]
         app.add_plugins(MeshPickingPlugin);
 

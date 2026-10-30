@@ -23,7 +23,7 @@ required-features = ["headless"]
 # - wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social" (then serve via react-web; see react-web/README.md)
 
 [features]
-default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef"]
+default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote"]
 # default = ["wasm"]
 console = []
 dcl-assert = ["common/dcl-assert"]
@@ -34,13 +34,15 @@ hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
 livekit = ["comms/livekit", "system_ui/livekit"]
 ffmpeg = ["av/ffmpeg"]
 social = ["social/social"]
+# The loopback console server (`--automation-token`, src/automation.rs `remote`): native only, in
+# every native build (`default` and `headless`), never in the wasm build.
 remote = ["bevy/bevy_remote"]
 bevy_mesh_picking_backend = ["bevy/bevy_mesh_picking_backend"]
 # Gates the experimental headless scene-server binary out of default/release builds.
 # configurable_error_handler lets the headless bin install a warn-and-continue error
 # handler (bevy's default panics). Pulled in only by this feature, so prod builds
 # (which never enable `headless`) are unaffected.
-headless = ["bevy/configurable_error_handler"]
+headless = ["bevy/configurable_error_handler", "remote"]
 # POC: render the react-web HUD via CEF offscreen rendering into an in-engine texture (desktop).
 # The CEF framework loads bundle-relative (Contents/Frameworks) with a dev fallback at
 # ~/.local/share/cef; the render-process helper builds as the sibling binary `decentra-bevy-cef`

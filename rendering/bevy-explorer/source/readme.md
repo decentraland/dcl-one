@@ -152,6 +152,56 @@ npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, n
 
 `react-web/review.md` is the pre-merge checklist for anything under `react-web/`.
 
+## Agents and tests
+
+The console (`/help` lists it; `window.engine_console_command` in the app frame on the web) is the
+client's agent surface, the same in every build: end-to-end tests and people's own agents drive the
+deployed clients through it, the HUD included, so nothing outside the client rebuilds the plumbing.
+Replies are JSON where the command says so; a failed command rejects (web) or answers `ok: false`
+(loopback), with no marker in the text. Arguments split on whitespace.
+
+- State: `/world_state` (`inWorld`, `arrivals`, which grows on every return to the world, so a wait
+  after a teleport reads it first), `/avatar_state [all|<address>]`, `/chat_history [count]`,
+  `/voice_state`, `/entity_screen_position <entity> [--bounds]`, plus the older `/player_position`,
+  `/get_user_data`, `/connected_players`, `/time` and the scene commands.
+- The HUD, by role and accessible name (`react-web/src/lib/hudAutomation.ts`): `/hud_list [role]`,
+  `/hud_read`, `/hud_click`, `/hud_fill` (`{"name", "text"}`), `/hud_wait` (`"state"`: `visible`,
+  `hidden`, `enabled`, `actionable`; `"timeout"` ms). A selector is the name or JSON
+  `{"name", "role", "index", "exact"}`; several matches need an `index`.
+- Input: `/press_key <code> [--state down|up]` (`KeyboardEvent.code` names) and
+  `/click_at <x> <y> [--button left|right|middle]`. Natively these and the HUD commands go through
+  CEF and the window's own input, always real. On the web the page needs a DevTools client to make
+  them real (below); without one they fall back to DOM events and say `"input": "synthetic"`.
+- The preview-only commands (`/jump`, `/speed`, `/move_player_to`, the debug dumps) stay preview-only.
+
+**The loopback console.** Every native build, the headless client mode included, carries a JSON-RPC
+server on `127.0.0.1` that runs console commands from outside the process, off unless started with
+`--automation-token <token>` (`--automation-port <port>`, 15702 by default; `DCL_AUTOMATION_TOKEN`
+and `DCL_AUTOMATION_PORT` stand in for the flags). Two methods, none of Bevy's own: `dcl/console`
+(`{"command": "/teleport 10 20", "token"}` answers `{"id"}`) and `dcl/console_result` (`{"id",
+"token"}` answers `{"done": false}` until the command has answered, then `done`, `ok`, `output`).
+Both need the token. The headless client registers `/world_state`, `/chat_history` and
+`/voice_state`; the HUD, input and screen-position commands do not apply there.
+
+**Trusted input on the web: a stable contract.** A DevTools client that drives the page (the runner
+in `local-harness/web-driver`, or a Playwright or Puppeteer script through `exposeBinding` and its
+own mouse and keyboard) installs `window.__dclTrustedInput(json)` in every frame of the page's
+origin. The page keeps the finding and calls the hook with one JSON string, `{"id", "op", ...}`:
+
+| `op` | fields |
+| --- | --- |
+| `click` | `x`, `y` (CSS pixels in the calling frame's viewport), `button`: `left`, `right` or `middle` |
+| `key` | `code`, `key`, `keyCode` (Windows virtual key code), `text` (optional), `location` (0, 1 left, 2 right), `state` (optional, `down` or `up`; absent presses and releases) |
+| `insertText` | `text` |
+
+The client performs the input on the top-level page, offsetting `x` and `y` by where the calling
+frame sits (the app frame is out of process), then evaluates `window.__dclTrustedInputDone(id,
+error)` in the frame that asked, `error` a string or `null`. A key with `state` `down` stays held,
+its modifier on every event until its `up`. The page waits 10 s for the answer, then fails the
+command. Nothing else about the runner is part of the contract; `local-harness/web-driver/README.md`
+documents that runner (Node 24 and Chrome, no dependency), and the end-to-end suite in
+`apps/bevy-explorer/e2e` builds on it.
+
 ## CI and release channels
 
 [`.github/workflows/ci.yml`](.github/workflows/ci.yml) is the most accurate source of build information — it covers fmt, clippy, the test matrix, a headless smoke test, and the web build/deploy.

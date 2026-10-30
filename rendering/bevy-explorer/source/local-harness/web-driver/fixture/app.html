@@ -1,0 +1,143 @@
+<!doctype html>
+<!--
+  The fixture's app frame, standing in for the web client's app.html (HUD + engine): a canvas for
+  the world, a HUD with a button and a text field, the console the driver runs commands through,
+  and a record of every event with its isTrusted.
+
+  ?mode=hud (default)  installs the real HUD commands (hudAutomation.js, which the test serves
+                       from react-web/src/lib/hudAutomation.ts) and so /hud_click, /hud_fill,
+                       /press_key and /click_at.
+  ?mode=protocol       installs only /fixture_input, a bare client of the wire protocol written
+                       here, so the driver is tested without hudAutomation.ts.
+  ?mode=probe          calls the binding once and posts what happened to the parent: for a frame
+                       of another origin, which the driver must not serve.
+
+  Fixture commands, in every mode:
+    /fixture_events   the recorded events, as JSON
+    /fixture_reset    clear them, reset the field ({"value": "..."}, default "old") and the focus
+    /fixture_state    {crossOriginIsolated, hasFocus, active, value}
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>web-driver fixture: app</title>
+  <style>
+    html, body { margin: 0; font: 14px sans-serif; }
+    #canvas { position: absolute; left: 61px; top: 47px; width: 400px; height: 300px; background: #234; }
+    #hud { position: absolute; left: 500px; top: 47px; width: 240px; display: flex; flex-direction: column; gap: 12px; }
+    #hud > * { height: 32px; box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="400" height="300"></canvas>
+  <div id="hud">
+    <button id="save">Save</button>
+    <input id="search" type="text" aria-label="Search" value="old">
+  </div>
+  <script>
+    const mode = new URLSearchParams(location.search).get('mode') || 'hud'
+    const search = document.getElementById('search')
+
+    // --- what happened, and whether a user could have caused it ---
+    window.__events = []
+    const FIELDS = ['button', 'buttons', 'clientX', 'clientY', 'offsetX', 'offsetY', 'key', 'code', 'ctrlKey', 'shiftKey', 'altKey', 'metaKey', 'inputType', 'data']
+    const record = (event) => {
+      const entry = { type: event.type, trusted: event.isTrusted, target: event.target.id || event.target.tagName.toLowerCase() }
+      for (const field of FIELDS) if (field in event) entry[field] = event[field]
+      if (event.target === search) entry.value = search.value
+      window.__events.push(entry)
+    }
+    for (const type of ['pointerdown', 'mousedown', 'mouseup', 'click', 'auxclick', 'contextmenu', 'keydown', 'keypress', 'keyup', 'beforeinput', 'input', 'change']) {
+      document.addEventListener(type, record, true)
+    }
+
+    // --- the console, as engine.js builds it: page commands run here, the rest go to the engine ---
+    window.__dclPageCommands = {
+      '/fixture_events': { args: [], help: 'the recorded events', run: () => JSON.stringify(window.__events) },
+      '/fixture_reset': {
+        args: [{ name: 'json', kind: 'json', optional: true }],
+        help: 'clear the events and the field',
+        run: (rest) => {
+          // the blur first: it sends a change event for what was typed
+          document.activeElement?.blur?.()
+          window.__events.length = 0
+          search.value = rest.trim() ? JSON.parse(rest).value : 'old'
+          return 'reset'
+        }
+      },
+      '/fixture_state': {
+        args: [],
+        help: 'what the frame is like',
+        run: () => JSON.stringify({
+          crossOriginIsolated: window.crossOriginIsolated,
+          hasFocus: document.hasFocus(),
+          active: document.activeElement?.id || document.activeElement?.tagName.toLowerCase(),
+          value: search.value
+        })
+      }
+    }
+    const pageCommand = (line) => {
+      const trimmed = String(line).trim()
+      const name = trimmed.split(/\s+/, 1)[0] || ''
+      const command = window.__dclPageCommands?.[name.startsWith('/') ? name : `/${name}`]
+      return command ? { command, rest: trimmed.slice(name.length) } : null
+    }
+    const runConsoleCommand = (line) => {
+      const page = pageCommand(line)
+      if (!page) {
+        const why = window.__hudError ? ` (hudAutomation.js did not load: ${window.__hudError})` : ''
+        return Promise.reject(new Error(`unknown command ${String(line).trim().split(/\s+/, 1)[0]}${why}`))
+      }
+      return new Promise((resolve) => resolve(page.command.run(page.rest)))
+    }
+
+    let ready = Promise.resolve()
+    if (mode === 'hud') {
+      ready = import('./hudAutomation.js').then(
+        (hud) => hud.installHudAutomation(),
+        (error) => { window.__hudError = String(error?.message ?? error) }
+      )
+    } else if (mode === 'protocol') {
+      // A bare client of the wire protocol: one string to window.__dclTrustedInput, the answer
+      // through window.__dclTrustedInputDone.
+      const pending = new Map()
+      let nextId = 1
+      window.__dclTrustedInputDone = (id, error) => {
+        const call = pending.get(id)
+        pending.delete(id)
+        if (!call) return
+        if (error === null) call.resolve()
+        else call.reject(new Error(error))
+      }
+      const trustedInput = (request) => new Promise((resolve, reject) => {
+        const id = nextId++
+        pending.set(id, { resolve, reject })
+        window.__dclTrustedInput(JSON.stringify({ id, ...request }))
+        setTimeout(() => reject(new Error('no answer')), 10_000)
+      })
+      window.__dclPageCommands['/fixture_input'] = {
+        args: [{ name: 'json', kind: 'json', optional: false }],
+        help: 'send a request; "at" (a selector) turns into the x and y of that element\'s centre',
+        run: async (rest) => {
+          const { at, ...request } = JSON.parse(rest)
+          let point = {}
+          if (at) {
+            const box = document.querySelector(at).getBoundingClientRect()
+            point = { x: box.left + box.width / 2, y: box.top + box.height / 2 }
+          }
+          await trustedInput({ ...request, ...point })
+          return JSON.stringify(point)
+        }
+      }
+    } else if (mode === 'probe') {
+      let answered = false
+      window.__dclTrustedInputDone = () => { answered = true }
+      const bound = typeof window.__dclTrustedInput === 'function'
+      if (bound) window.__dclTrustedInput(JSON.stringify({ id: 1, op: 'click', x: 60, y: 60, button: 'left' }))
+      setTimeout(() => parent.postMessage({ bound, answered, events: window.__events }, '*'), 1500)
+    }
+    // the engine is up once the console answers, as for engineRpc.ts
+    ready.then(() => { window.engine_console_command = runConsoleCommand })
+  </script>
+</body>
+</html>
