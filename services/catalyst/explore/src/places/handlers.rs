@@ -7,7 +7,9 @@ use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, Method};
 use serde::Serialize;
 
-use super::{CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow};
+use super::{
+    CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow, live,
+};
 use crate::SharedState;
 use crate::shared::errors::{ApiData, ApiDataTotal, ApiDataTotalMap, ApiError};
 
@@ -44,6 +46,10 @@ pub async fn get_place(
         .await?
     {
         Some(mut p) => {
+            live::fill_user_counts(
+                std::slice::from_mut(&mut p),
+                &state.live.live_user_counts().await,
+            );
             p.apply_realms_detail(realms_detail_for(&state, &pairs));
             Ok(Json(ApiData::ok(p)))
         }
@@ -80,9 +86,13 @@ pub async fn get_place_list(
     }
     if let Some(owner) = pairs.iter().find(|(k, _)| k == "owner").map(|(_, v)| v) {
         filters.owner_filtered = true;
+        filters.owner = Some(owner.to_lowercase());
         filters.operated_positions = state.places.operated_positions(owner).await?;
     }
+    let counts = state.live.live_user_counts().await;
+    live::apply_count_order(&mut filters, &counts);
     let (mut data, total) = state.places.list_page(&filters).await?;
+    live::fill_user_counts(&mut data, &counts);
     let realms = realms_detail_for(&state, &pairs);
     for row in &mut data {
         row.apply_realms_detail(realms);
@@ -119,7 +129,8 @@ pub async fn post_place_list_by_id(
     let ids = ids_body(ids)?;
     let user = state.viewer(&headers, method.as_str(), uri.path()).await;
     // No LIMIT on an id lookup, so the page is the whole match set.
-    let data = state.places.find_by_ids_for(&ids, user.as_deref()).await?;
+    let mut data = state.places.find_by_ids_for(&ids, user.as_deref()).await?;
+    live::fill_user_counts(&mut data, &state.live.live_user_counts().await);
     let total = data.len() as i64;
     Ok(Json(ApiDataTotal::ok(data, total)))
 }
@@ -175,6 +186,7 @@ fn parse_filters(pairs: &[(String, String)]) -> PlaceListFilters {
         categories: get_all("categories"),
         only_highlighted: bool_q("only_highlighted"),
         only_excluded_from_ranking: bool_q("only_excluded_from_ranking"),
+        include_opted_out: bool_q("include_opted_out"),
         search: get("search"),
         creator_address: get("creator_address").map(|s| s.to_lowercase()),
         sdk: get("sdk"),
@@ -266,15 +278,25 @@ fn map_filters(pairs: &[(String, String)]) -> (PlaceListFilters, bool) {
 
 pub async fn get_map_places(
     State(state): State<SharedState>,
+    method: Method,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<ApiDataTotalMap<MapEntry>>, ApiError> {
     let (mut filters, only_favorites) = map_filters(&pairs);
-    if only_favorites {
+    let user = state.viewer(&headers, method.as_str(), uri.path()).await;
+    if !state
+        .places
+        .scope_to_viewer(&mut filters, user.as_deref(), only_favorites)
+    {
         return Ok(Json(ApiDataTotalMap::ok(BTreeMap::new(), 0)));
     }
     filters.only_places = !filters.only_highlighted;
     filters.only_categorized = true;
+    let counts = state.live.live_user_counts().await;
+    live::apply_count_order(&mut filters, &counts);
     let (mut data, total) = state.places.list_page(&filters).await?;
+    live::fill_user_counts(&mut data, &counts);
     let realms = realms_detail_for(&state, &pairs);
     let mut map: BTreeMap<String, MapEntry> = BTreeMap::new();
     for place in &mut data {
@@ -286,13 +308,23 @@ pub async fn get_map_places(
 
 pub async fn get_all_places_list(
     State(state): State<SharedState>,
+    method: Method,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<ApiDataTotal<PlaceRow>>, ApiError> {
-    let (filters, only_favorites) = map_filters(&pairs);
-    if only_favorites {
+    let (mut filters, only_favorites) = map_filters(&pairs);
+    let user = state.viewer(&headers, method.as_str(), uri.path()).await;
+    if !state
+        .places
+        .scope_to_viewer(&mut filters, user.as_deref(), only_favorites)
+    {
         return Ok(Json(ApiDataTotal::ok(vec![], 0)));
     }
+    let counts = state.live.live_user_counts().await;
+    live::apply_count_order(&mut filters, &counts);
     let (mut data, total) = state.places.list_page(&filters).await?;
+    live::fill_user_counts(&mut data, &counts);
     let realms = realms_detail_for(&state, &pairs);
     for place in &mut data {
         place.apply_realms_detail(realms);
@@ -313,7 +345,13 @@ pub async fn get_world(
         .find_world_by_id_for(&world_id, user.as_deref())
         .await?
     {
-        Some(w) => Ok(Json(ApiData::ok(WorldRow::from(w)))),
+        Some(mut w) => {
+            live::fill_user_counts(
+                std::slice::from_mut(&mut w),
+                &state.live.live_user_counts().await,
+            );
+            Ok(Json(ApiData::ok(WorldRow::from(w))))
+        }
         None => Err(ApiError::not_found(format!(
             "Not found world \"{world_id}\""
         ))),
@@ -360,15 +398,15 @@ pub async fn get_world_list(
     let mut filters = PlaceListFilters {
         limit,
         offset,
-        names: get_all("names"),
+        partial_names: get_all("names"),
         categories: get_all("categories"),
         search: get("search"),
-        order_by: PlaceOrderBy::parse(get("order_by").as_deref()),
+        order_by: PlaceOrderBy::parse(Some(get("order_by").as_deref().unwrap_or("most_active"))),
         order_desc: !matches!(get("order").as_deref(), Some("asc")),
         only_highlighted: bool_q("only_highlighted"),
         only_excluded_from_ranking: bool_q("only_excluded_from_ranking"),
         only_worlds: true,
-        creator_address: get("owner").map(|s| s.to_lowercase()),
+        owner: get("owner").map(|s| s.to_lowercase()),
         ..Default::default()
     };
     if !state
@@ -377,7 +415,10 @@ pub async fn get_world_list(
     {
         return Ok(Json(ApiDataTotal::ok(vec![], 0)));
     }
-    let (data, total) = state.places.list_page(&filters).await?;
+    let counts = state.live.live_user_counts().await;
+    live::apply_count_order(&mut filters, &counts);
+    let (mut data, total) = state.places.list_page(&filters).await?;
+    live::fill_user_counts(&mut data, &counts);
     let worlds: Vec<WorldRow> = data.into_iter().map(WorldRow::from).collect();
     Ok(Json(ApiDataTotal::ok(worlds, total)))
 }
@@ -469,6 +510,83 @@ pub async fn get_place_categories(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::{Body, to_bytes};
+    use axum::http::Request;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    async fn response(state: SharedState, uri: &str) -> Value {
+        let response = crate::router(state)
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn owner_pointer_opt_out_and_world_names_keep_their_independent_meanings() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let owner = format!("0x{token}00000000");
+        let owned = uuid::Uuid::new_v4().to_string();
+        let opted_out = uuid::Uuid::new_v4().to_string();
+        let world = format!("{token}.dcl.eth");
+        for (id, pointer, disabled, raw) in [
+            (
+                &owned,
+                "1,2",
+                false,
+                json!({"owner": owner, "positions": ["1,2"]}),
+            ),
+            (
+                &opted_out,
+                "3,4",
+                true,
+                json!({"owner": owner, "positions": ["3,4"], "disabled_reason": "opt_out"}),
+            ),
+            (
+                &world,
+                "0,0",
+                false,
+                json!({"world": true, "world_name": world, "owner": owner, "user_count": 99}),
+            ),
+        ] {
+            sqlx::query("INSERT INTO explore.place (id, base_position, title, disabled, raw) VALUES ($1, $2, $3, $4, $5)")
+                .bind(id).bind(pointer).bind(&token).bind(disabled).bind(raw).execute(&pool).await.unwrap();
+        }
+        let state = Arc::new(crate::ExploreState::new(
+            pool,
+            crate::Settings::for_tests(),
+            None,
+        ));
+        let body = response(state.clone(), &format!("/api/places?owner={owner}")).await;
+        assert_eq!(body["data"].as_array().unwrap().len(), 1);
+        assert_eq!(body["data"][0]["id"], owned);
+        let body = response(
+            state.clone(),
+            &format!("/api/places?owner={owner}&positions=3,4"),
+        )
+        .await;
+        assert_eq!(body["total"], 0);
+        let body = response(
+            state.clone(),
+            &format!("/api/places?owner={owner}&positions=3,4&include_opted_out=true"),
+        )
+        .await;
+        assert_eq!(body["data"][0]["id"], opted_out);
+        let body = response(state.clone(), &format!("/api/destinations?owner={owner}")).await;
+        assert_eq!(body["data"].as_array().unwrap().len(), 2);
+        let body = response(state.clone(), &format!("/api/worlds?names={token}")).await;
+        assert_eq!(body["data"][0]["id"], world);
+        let body = response(state.clone(), &format!("/api/destinations?names={token}")).await;
+        assert_eq!(body["data"][0]["id"], world);
+        let body = response(state, &format!("/api/destinations?world_names={token}")).await;
+        assert_eq!(body["total"], 0);
+    }
 
     fn pairs(kvs: &[(&str, &str)]) -> Vec<(String, String)> {
         kvs.iter()

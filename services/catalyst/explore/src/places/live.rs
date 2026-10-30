@@ -160,9 +160,17 @@ pub async fn inject_live_user_counts(
         return None;
     }
     let counts = live.live_user_counts().await;
+    apply_count_order(filters, &counts);
+    Some(counts)
+}
+
+/// Apply the same live ordering to legacy lists, maps and destinations.
+pub fn apply_count_order(filters: &mut PlaceListFilters, counts: &LiveUserCounts) {
+    if !matches!(filters.order_by, super::rows::PlaceOrderBy::MostActive) {
+        return;
+    }
     filters.place_user_counts = counts.places.clone();
     filters.world_user_counts = counts.worlds.clone();
-    Some(counts)
 }
 
 /// Every row's `user_count` from the headcounts (a world by its lowercase
