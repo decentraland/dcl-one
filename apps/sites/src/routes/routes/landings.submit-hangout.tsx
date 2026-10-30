@@ -1,7 +1,13 @@
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router";
 import LdSubmitHangoutView from "@ui/landings/pages/LdSubmitHangoutView";
 
 import { fetchEventCategories, type EventCategory } from "@/data/lib/catalyst/places/events";
-import { emptyDraft, type HangoutDraft } from "@/data/lib/catalyst/landings/submit-hangout";
+import { buildHangoutSubmit, emptyDraft, eventToDraft, loadEditableHangout, uploadHangoutPoster, type EditableHangout } from "@/data/lib/catalyst/landings/submit-hangout";
+import { useAuth } from "@/data/lib/auth/context";
+import { getIdentity } from "@/data/lib/auth/session";
+import { postJSON } from "@/data/lib/catalyst/client";
+import { openSignIn } from "@/features/components/auth/signin-store";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
 
@@ -16,29 +22,6 @@ const STORY: StoryId = "landings/submit-hangout";
 
 function toOption(c: EventCategory): CategoryOption {
   return { name: c.name, label: c.i18n?.en ?? c.name };
-}
-
-function sampleEditDraft(): HangoutDraft {
-  return {
-    ...emptyDraft(),
-    name: "Neon Nights \u{2014} Synthwave Live Set",
-    description:
-      "Join us for a two-hour synthwave & retrowave DJ set in our rooftop club. Grab a drink, dance, and meet other music lovers. Doors open at the start time \u{2014} come early for the best spot on the floor.",
-    startDate: "2026-07-18",
-    startTime: "20:00",
-    durationHours: 2,
-    allDay: false,
-    location: "land",
-    coordX: -45,
-    coordY: 120,
-    worldName: "",
-    recurrent: true,
-    recurrence: "every_week",
-    recurrentUntil: "2026-09-26",
-    category: "music",
-    communityId: "music",
-    contact: "host@example.org",
-  };
 }
 
 const FALLBACK: PageDefaults = {
@@ -70,7 +53,8 @@ export async function loader({ request }: Route.LoaderArgs) {
     mode,
     categories,
     categoriesError,
-    draft: mode === "edit" ? sampleEditDraft() : null,
+    eventId: mode === "edit" ? url.searchParams.get("id")?.trim() || null : null,
+    communityId: mode === "create" ? url.searchParams.get("community_id")?.trim() || "" : "",
     assignment,
   };
 
@@ -82,16 +66,53 @@ type LoaderData = {
   mode: "create" | "edit";
   categories: CategoryOption[];
   categoriesError: boolean;
-  draft: HangoutDraft | null;
+  eventId: string | null;
+  communityId: string;
   assignment: PageDefaults;
 };
 
 export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps) {
   const d = loaderData as LoaderData;
+  const auth = useAuth();
+  const navigate = useNavigate();
+  const [loaded, setLoaded] = useState<{ account: string; id: string; event?: EditableHangout; error?: string } | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  useEffect(() => {
+    if (d.mode !== "edit" || !d.eventId || !auth.identity) return;
+    const controller = new AbortController();
+    const account = auth.identity.signer;
+    const id = d.eventId;
+    loadEditableHangout(auth.identity, id, controller.signal).then(
+      (event) => { if (!controller.signal.aborted) setLoaded({ account, id, event }); },
+      (error: unknown) => { if (!controller.signal.aborted) setLoaded({ account, id, error: error instanceof Error ? error.message : "Could not load this hangout." }); },
+    );
+    return () => controller.abort();
+  }, [d.mode, d.eventId, auth.identity]);
+  const current = loaded?.account === auth.address && loaded?.id === d.eventId ? loaded : null;
+  const original = current?.event;
+  const waiting = d.mode === "edit" && Boolean(d.eventId) && auth.isConnected && !current;
+  const error = d.mode === "edit" && !d.eventId ? "Choose a hangout to edit using its event link." : current?.error;
+
+  async function removeHangout() {
+    const identity = getIdentity();
+    if (!identity || !original || !window.confirm(`Delete ${original.name}?`)) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await postJSON(`/events/api/events/${encodeURIComponent(original.id)}`, undefined, { identity, method: "DELETE" });
+      navigate("/whats-on");
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : "Could not delete this hangout.");
+    } finally {
+      setDeleting(false);
+    }
+  }
 
   return (
     <LdSubmitHangoutView>
-      <SubmitHangout
+      {waiting ? <p role="status">Loading your hangout…</p> : error ? <p role="alert">{error}</p> : <SubmitHangout
+        key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}
         trackCtx={{
           sid: d.sid,
           story: STORY,
@@ -100,8 +121,18 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
         categories={d.categories}
         categoriesError={d.categoriesError}
         mode={d.mode}
-        draft={d.draft ?? undefined}
-      />
+        draft={original ? eventToDraft(original) : { ...emptyDraft(), communityId: d.communityId }}
+        submit={buildHangoutSubmit(getIdentity, original)}
+        signedIn={auth.isConnected}
+        onSignIn={openSignIn}
+        upload={(file, vertical) => {
+          const identity = getIdentity();
+          if (!identity) return Promise.reject(new Error("Sign in to upload an image."));
+          return uploadHangoutPoster(identity, file, vertical);
+        }}
+      />}
+      {original && <button type="button" disabled={deleting} onClick={() => { void removeHangout(); }}>{deleting ? "Deleting…" : "Delete hangout"}</button>}
+      {deleteError && <p role="alert">{deleteError}</p>}
     </LdSubmitHangoutView>
   );
 }

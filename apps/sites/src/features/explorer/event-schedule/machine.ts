@@ -9,15 +9,12 @@ import {
   simulateSubmitSchedule,
   type ScheduleDraft,
   type SubmitResult,
+  type SubmitFn,
 } from "@/data/lib/catalyst/landings/schedules";
 
 export type { TrackFn };
 
-export type SubmitFn = (args: {
-  draft: ScheduleDraft;
-  scheduleId?: string;
-  signal?: AbortSignal;
-}) => Promise<SubmitResult>;
+export type { SubmitFn } from "@/data/lib/catalyst/landings/schedules";
 
 type ScheduleInput = {
   trackCtx: TrackContext;
@@ -137,7 +134,7 @@ export const scheduleMachine = setup({
           schedule_id: context.result?.id,
           active: context.result?.active,
           editing: Boolean(context.scheduleId),
-          stub: true,
+          stub: context.submit === simulateSubmit,
         },
         context.trackCtx,
       ),
