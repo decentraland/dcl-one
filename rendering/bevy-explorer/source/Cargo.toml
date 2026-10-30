@@ -228,7 +228,7 @@ reqwest = { version = "0.12", default-features = false, features = [
   "stream",
 ] }
 kira = "0.9.6"
-zip = { version = "2", default-features = false }
+zip = { version = "9", default-features = false }
 # the browser leg reads deflated zips; zip 2 would pull zopfli for that and the lock holds
 # none, while this release is in the lock with flate2
 zip06 = { package = "zip", version = "0.6", default-features = false, features = [

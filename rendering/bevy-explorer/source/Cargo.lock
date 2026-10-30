@@ -2998,7 +2998,7 @@ dependencies = [
  "image",
  "serde",
  "wgpu",
- "zip 2.4.2",
+ "zip 2.6.1",
 ]
 
 [[package]]
@@ -4237,7 +4237,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ab67060fc6b8ef687992d439ca0fa36e7ed17e9a0b16b25b601e8757df720de"
 dependencies = [
  "data-encoding",
- "syn 2.0.117",
+ "syn 1.0.109",
 ]
 
 [[package]]
@@ -4530,7 +4530,7 @@ dependencies = [
  "wgpu",
  "winit",
  "world_ui",
- "zip 2.4.2",
+ "zip 9.1.0",
 ]
 
 [[package]]
@@ -7096,7 +7096,7 @@ dependencies = [
  "tween",
  "urlencoding",
  "web-fs",
- "zip 2.4.2",
+ "zip 9.1.0",
 ]
 
 [[package]]
@@ -15087,17 +15087,15 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "2.4.2"
+version = "2.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fabe6324e908f85a1c52063ce7aa26b68dcb7eb6dbc83a2d148403c9bc3eba50"
+checksum = "1dcb24d0152526ae49b9b96c1dcf71850ca1e0b882e4e28ed898a93c41334744"
 dependencies = [
  "arbitrary",
  "crc32fast",
  "crossbeam-utils",
- "displaydoc",
  "indexmap 2.13.0",
  "memchr",
- "thiserror 2.0.18",
 ]
 
 [[package]]
