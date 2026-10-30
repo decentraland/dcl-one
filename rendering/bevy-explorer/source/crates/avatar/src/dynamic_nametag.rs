@@ -3,6 +3,11 @@ use std::collections::VecDeque;
 use bevy::{math::FloatOrd, prelude::*, render::primitives::Aabb};
 use common::{sets::PostUpdateSets, structs::AttachPoints};
 
+use crate::ghost::AvatarGhost;
+
+/// where the nametag sits while a player's ghost stands in for their avatar
+const GHOST_NAMETAG_HEIGHT: f32 = 2.0;
+
 pub struct DynamicNametagPlugin;
 
 impl Plugin for DynamicNametagPlugin {
@@ -63,10 +68,17 @@ impl NametagHeightHistory {
     fn max(&self) -> f32 {
         self.heights.get(self.max).copied().unwrap_or(0.)
     }
+
+    fn clear(&mut self) {
+        self.heights.clear();
+        self.timestamps.clear();
+        self.max = 0;
+    }
 }
 
 fn dynamic_nametag_position(
-    attach_points_query: Query<&AttachPoints>,
+    attach_points_query: Query<(Entity, &AttachPoints)>,
+    ghosts: Query<&AvatarGhost>,
     mut nametags: Query<(&mut Transform, &mut NametagHeightHistory)>,
     global_transforms: Query<&GlobalTransform>,
     aabbs: Query<&Aabb>,
@@ -75,7 +87,7 @@ fn dynamic_nametag_position(
     let new_timestamp = time.elapsed_secs_wrapped();
     let threshold = new_timestamp - 0.25;
 
-    for attach_points in attach_points_query {
+    for (player, attach_points) in attach_points_query {
         let Ok((mut nametag_transform, mut nametag_height_history)) =
             nametags.get_mut(attach_points.nametag)
         else {
@@ -94,20 +106,27 @@ fn dynamic_nametag_position(
         let head_position = head_position_gt.compute_transform();
         let head_aabb = aabbs.get(attach_points.head).ok();
 
-        let Some(highest_y) = [
-            FloatOrd(nametag_offset(
-                head_position_gt,
-                &position.translation,
-                head_aabb,
-            )),
-            // TODO extend with the heights of headgear
-        ]
-        .into_iter()
-        .max() else {
-            unreachable!("List is never empty.");
-        };
+        // the head attach point only reaches the head once the avatar is built; the ghost stands
+        // in for it at a fixed height until then
+        if ghosts.get(player).is_ok_and(AvatarGhost::showing) {
+            nametag_height_history.clear();
+            nametag_height_history.insert(GHOST_NAMETAG_HEIGHT, new_timestamp);
+        } else {
+            let Some(highest_y) = [
+                FloatOrd(nametag_offset(
+                    head_position_gt,
+                    &position.translation,
+                    head_aabb,
+                )),
+                // TODO extend with the heights of headgear
+            ]
+            .into_iter()
+            .max() else {
+                unreachable!("List is never empty.");
+            };
 
-        nametag_height_history.insert(highest_y.0, new_timestamp);
+            nametag_height_history.insert(highest_y.0, new_timestamp);
+        }
 
         let position_rotation = {
             let (axis, angle) = position.rotation.to_axis_angle();
