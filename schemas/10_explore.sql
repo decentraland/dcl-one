@@ -273,6 +273,31 @@ CREATE TABLE explore.place_interaction_counts (
     CONSTRAINT place_interaction_counts_nonnegative CHECK (favorites >= 0 AND likes >= 0 AND dislikes >= 0)
 );
 
+-- Qualified local voter counts are a rebuildable projection of user_likes
+-- (activity >=100), updated under the interaction counter lock in the same
+-- transaction. One row/entity; PK serves vote updates and world-scene reads.
+-- No FK to catalogue rows: user facts outlive undeploy/redeploy of a stable
+-- local place identity. REBUILD_VOTE_SCORES reproduces the projection.
+-- Mirrored aggregate scores retain upstream authority: their active-voter
+-- totals cannot be recovered from an already-computed Wilson bound.
+CREATE TABLE explore.place_vote_scores (
+    entity_id text PRIMARY KEY,
+    active_likes bigint NOT NULL CHECK (active_likes >= 0),
+    active_dislikes bigint NOT NULL CHECK (active_dislikes >= 0),
+    like_rate double precision GENERATED ALWAYS AS (
+        CASE WHEN active_likes + active_dislikes > 0
+             THEN active_likes::double precision / (active_likes + active_dislikes) END
+    ) STORED,
+    like_score double precision GENERATED ALWAYS AS (
+        CASE WHEN active_likes + active_dislikes > 0 THEN
+            ((active_likes::double precision + 1.9208) / (active_likes + active_dislikes)
+              - 1.96 * sqrt(active_likes::double precision * active_dislikes / (active_likes + active_dislikes) + 0.9604)
+                / (active_likes + active_dislikes))
+            / (1 + 3.8416 / (active_likes + active_dislikes)::double precision) END
+    ) STORED,
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
+);
+
 -- ── events ─────────────────────────────────────────────────────────────────
 
 -- The mirrored leg of /api/events (src/explore/events/mirror.rs).
@@ -408,6 +433,29 @@ CREATE TABLE explore.event_attendance_local (
 -- (no event_id bound); the PK serves the per-event probes.
 CREATE INDEX event_attendance_local_signer_action_idx
     ON explore.event_attendance_local (signer, action);
+
+-- Durable event notice intents, captured with their authoring/moderation
+-- transaction, or by social's bounded occurrence scanner. No FK: the event
+-- mirror may remove a catalogue row while an already-committed host notice
+-- still needs delivery. Payload snapshots keep that dispatch recoverable.
+CREATE TABLE explore.event_notification_intents (
+    id uuid PRIMARY KEY,
+    event_id text NOT NULL,
+    kind text NOT NULL,
+    event jsonb NOT NULL,
+    local_event boolean NOT NULL,
+    occurrence_start timestamp without time zone,
+    occurred_at timestamp without time zone NOT NULL,
+    dispatch_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    recipient_after text NOT NULL DEFAULT '',
+    processed_at timestamp without time zone,
+    CONSTRAINT event_notification_intents_kind_check CHECK (kind IN ('event_approved', 'event_rejected', 'event_deleted', 'event_created', 'events_starts_soon', 'events_started')),
+    CONSTRAINT event_notification_intents_occurrence_check CHECK ((kind IN ('events_starts_soon', 'events_started')) = (occurrence_start IS NOT NULL))
+);
+-- The social worker claims unfinished dispatches in bounded pages; locked
+-- rows are skipped, and its recipient cursor advances with delivery inserts.
+CREATE INDEX event_notification_intents_pending_idx
+    ON explore.event_notification_intents (dispatch_at, id) WHERE processed_at IS NULL;
 
 CREATE TABLE explore.schedules_local (
     id            text PRIMARY KEY,

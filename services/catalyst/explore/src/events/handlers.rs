@@ -332,7 +332,10 @@ pub(crate) async fn viewer_is_admin(
         return Ok(true);
     }
     match viewer {
-        Some(v) => state.events.viewer_is_moderator(v).await,
+        Some(v) => {
+            let permissions = super::profiles::event_permissions(&state.pool, v).await?;
+            Ok(permissions.edit_any || permissions.approve_any)
+        }
         None => Ok(false),
     }
 }
@@ -357,8 +360,8 @@ async fn list_with(
             "owner filter requires authentication",
         ));
     }
-    let admin = is_admin_request(headers, state);
-    let include_unapproved = viewer_is_admin(state, headers, user.as_deref()).await?;
+    let admin = viewer_is_admin(state, headers, user.as_deref()).await?;
+    let include_unapproved = admin;
     let Some(filters) = parse_filters(
         q,
         body_place_ids,
