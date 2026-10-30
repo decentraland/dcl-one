@@ -88,6 +88,7 @@ fn page_query(query: &str) -> sp::PageQuery {
             .map(str::to_string)
     };
     sp::PageQuery {
+        offset: get("offset").map(|n| n.parse().unwrap()),
         tab: get("tab"),
         player: get("player"),
     }
@@ -759,6 +760,9 @@ async fn the_page_draws_the_switch_the_tabs_and_the_rows() {
     );
     assert!(html.contains(r#"href="/storage/export" download="server-storage.json""#));
     assert!(html.contains(r#"data-act="clear" data-what="every scene value""#));
+    assert!(html.contains(r#"name="merge" checked"#));
+    assert!(html.contains("replacement asks for confirmation"));
+    assert!(html.contains("numbers keep their JSON types"));
 
     let env = page(&st, "tab=env").await;
     assert!(
@@ -1054,11 +1058,14 @@ async fn a_service_listing_fills_the_page() {
     .await;
     assert!(html.contains(r#"data-key="remote""#), "{html}");
     assert!(html.contains("Showing 1 of 40 keys"), "{html}");
+    assert!(html.contains(
+        "/storage?tab=player&amp;player=0xabcdefabcdefabcdefabcdefabcdefabcdefabcd&amp;offset=1"
+    ));
     assert!(html.contains("nothing here can sign them"), "{html}");
     let seen = seen.lock().unwrap();
     assert_eq!(
         seen[0].1,
-        "/players/0xabcdefabcdefabcdefabcdefabcdefabcdefabcd/values?limit=100"
+        "/players/0xabcdefabcdefabcdefabcdefabcdefabcdefabcd/values?limit=100&offset=0"
     );
     assert!(
         !seen[0].2.contains_key("x-identity-auth-chain-0"),
@@ -1171,4 +1178,96 @@ fn the_start_line_names_the_target_the_signer_and_the_switch() {
         line.ends_with("(DCL_PRIVATE_KEY); switch at http://127.0.0.1:8000/storage"),
         "{line}"
     );
+}
+
+#[tokio::test]
+async fn upstream_html_reads_keep_the_route_capability_gate() {
+    let tmp = Tmp::new("sto-page-gate");
+    let st = st(&tmp);
+    let (base, seen) =
+        mock_service(StatusCode::OK, r#"{"data":[],"pagination":{"total":0}}"#).await;
+    storage::open(&root(&st))
+        .unwrap()
+        .set_target(&Target::Custom(base))
+        .unwrap();
+    let mut browser = headers("test");
+    browser.insert("sec-fetch-site", HeaderValue::from_static("same-origin"));
+    let mut foreign = browser.clone();
+    foreign.insert(
+        header::ORIGIN,
+        HeaderValue::from_static("https://example.com"),
+    );
+    foreign.insert(
+        header::AUTHORIZATION,
+        HeaderValue::from_str(&format!("Bearer {}", st.token)).unwrap(),
+    );
+    for (peer, h, expected) in [
+        (REMOTE, headers("test"), StatusCode::FORBIDDEN),
+        (LOCAL, browser.clone(), StatusCode::UNAUTHORIZED),
+        (LOCAL, foreign, StatusCode::FORBIDDEN),
+    ] {
+        let response = sp::page(
+            State(st.clone()),
+            ConnectInfo(peer),
+            h,
+            Query(sp::PageQuery::default()),
+        )
+        .await;
+        assert_eq!(response.status(), expected);
+    }
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "refused HTML must not forward signed requests"
+    );
+    browser.insert("sec-fetch-mode", HeaderValue::from_static("navigate"));
+    browser.insert("sec-fetch-dest", HeaderValue::from_static("document"));
+    assert_eq!(
+        sp::page(
+            State(st),
+            ConnectInfo(LOCAL),
+            browser,
+            Query(sp::PageQuery::default())
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        1,
+        "top-level local authoring navigation still works"
+    );
+}
+
+#[test]
+fn storage_browser_keeps_import_and_edit_drafts_safe() {
+    let output = std::process::Command::new("node")
+        .arg("scripts/storage-ui.test.mjs")
+        .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .output()
+        .expect("node is required for the browser contract tests");
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn storage_pages_preserve_the_scope_and_player() {
+    let tmp = Tmp::new("sto-paging");
+    let st = st(&tmp);
+    let db = storage::open(&root(&st)).unwrap();
+    for n in 0..101 {
+        db.set(Scope::Scene, &format!("key{n:03}"), &json!(n), "test")
+            .unwrap();
+    }
+    let first = page(&st, "").await;
+    assert!(first.contains("/storage?tab=scene&amp;offset=100"));
+    assert!(!first.contains(r#"data-key="key100""#));
+    let second = page(&st, "offset=100").await;
+    assert!(second.contains(r#"data-key="key100""#));
+    assert!(!second.contains(r#"data-key="key000""#));
+    assert!(second.contains("/storage?tab=scene&amp;offset=0"));
 }

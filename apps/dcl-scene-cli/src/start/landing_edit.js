@@ -28,10 +28,28 @@
   let layTab = null;
   let laySel = null;
   let layDraft = null;
+  let layOriginal = '';
   let layArmed = false;
   let layPitch = 22;
   let layDrag = null;
   let layEd = null;
+  let laySaving = false;
+  let spawnSaving = false;
+  const focusSpawn = (idx) => ((idx != null &&
+    document.querySelector('.lay__srow[data-spawn="' + idx + '"]')) || document.getElementById('lay-sadd'))?.focus();
+  const invalidSpawn = (input) => { input.disabled = false; input.focus(); };
+  const discardDraft = () => !layDraft || JSON.stringify(layDraft) === layOriginal ||
+    confirm('Discard unsaved spawn changes?');
+  const selectDraft = (draft) => {
+    layDraft = draft;
+    layOriginal = JSON.stringify(draft);
+  };
+  window.addEventListener('beforeunload', event => {
+    if (layDraft && JSON.stringify(layDraft) !== layOriginal) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
 
   const layGrid = () => document.getElementById('lay-grid');
   const baseXY = () => (data.base || '0,0').split(',').map(Number);
@@ -63,10 +81,10 @@
       return 'Click the title, description, tags or cover to edit — changes save to scene.json';
     }
     if (layTab === 'parcels') {
-      return 'Enter a base coordinate to move the whole scene. Drag on the grid to change its shape.';
+      return 'Move the base or change shape on the grid. Use arrow keys to choose a parcel and Space or Enter to toggle it; dragging works too.';
     }
     if (layTab === 'spawns') {
-      if (layArmed) return 'Drag anywhere on the grid to draw the new spawn area';
+      if (layArmed) return 'Enter the new spawn coordinates, or drag on the grid to draw its area. Save or Cancel when ready.';
       return layDraft
         ? 'Drag to redraw this area — it snaps to world metres, not to parcels'
         : 'Drag on the grid to draw an area, or click one to edit it';
@@ -162,11 +180,13 @@
     if (!d) return;
     if (!String(d.name || '').trim()) {
       toast('A spawn area needs a name', true);
+      invalidSpawn(layEd.name);
       return;
     }
-    for (const k of ['x0', 'x1', 'z0', 'z1']) {
+    for (const k of ['x0', 'x1', 'z0', 'z1', 'y']) {
       if (d[k] === '' || !Number.isFinite(Number(d[k]))) {
-        toast('The area needs both ends of its X and Z ranges', true);
+        toast('Enter valid X and Z range endpoints and a ground height', true);
+        invalidSpawn(layEd[k]);
         return;
       }
     }
@@ -174,6 +194,7 @@
     const looking = looks.some((v) => v !== '' && v != null);
     if (looking && looks.some((v) => v === '' || !Number.isFinite(Number(v)))) {
       toast('Looks-at needs all three coordinates, or none', true);
+      invalidSpawn(document.getElementById('spawn-lx'));
       return;
     }
     const span = (a, b) => {
@@ -196,23 +217,31 @@
       layDraft = null;
       layArmed = false;
       toast('Saved to scene.json');
-      refresh();
+      await refresh();
+      focusSpawn(laySel);
     }
   };
   const laySpawnRemove = async () => {
     const d = layDraft;
-    laySel = null;
-    layDraft = null;
-    layArmed = false;
+    if (d && d.idx != null && !confirm('Remove this spawn area from scene.json?')) return;
     if (!d || d.idx == null) {
+      laySel = null;
+      layDraft = null;
+      layArmed = false;
       layApply();
+      focusSpawn(null);
       return;
     }
     const next = (data.spawnPoints || []).map((s) => JSON.parse(JSON.stringify(s)));
     next.splice(d.idx, 1);
     if (next.length && !next.some((s) => s.default)) next[0].default = true;
-    if (await save({ spawnPoints: next })) refresh();
-    else layApply();
+    if (await save({ spawnPoints: next })) {
+      laySel = null;
+      layDraft = null;
+      layArmed = false;
+      await refresh();
+      focusSpawn(null);
+    }
   };
 
   const layEditor = () => {
@@ -243,6 +272,13 @@
     };
     const field = (key, numeric) => {
       const input = document.createElement('input');
+      input.id = 'spawn-' + key;
+      input.disabled = spawnSaving;
+      input.setAttribute('aria-label', {
+        name: 'Spawn area name', x0: 'Area X start in metres', x1: 'Area X end in metres',
+        z0: 'Area Z start in metres', z1: 'Area Z end in metres', y: 'Ground height in metres',
+        lx: 'Look at X in metres', ly: 'Look at Y in metres', lz: 'Look at Z in metres',
+      }[key]);
       input.type = numeric ? 'number' : 'text';
       if (numeric) input.step = 'any';
       input.value = d[key] == null ? '' : d[key];
@@ -301,6 +337,7 @@
     def.className = 'sw';
     def.type = 'checkbox';
     def.checked = Boolean(d.def);
+    def.disabled = spawnSaving;
     def.addEventListener('change', () => {
       d.def = def.checked;
     });
@@ -314,16 +351,30 @@
       b.type = 'button';
       b.className = cls;
       b.textContent = label;
-      b.addEventListener('click', act);
+      b.disabled = spawnSaving;
+      b.addEventListener('click', async () => {
+        if (spawnSaving) return;
+        spawnSaving = true;
+        box.setAttribute('aria-busy', 'true');
+        for (const control of box.querySelectorAll('input, button')) control.disabled = true;
+        try { await act(); }
+        finally {
+          spawnSaving = false;
+          for (const control of document.querySelectorAll('#lay-sed input, #lay-sed button')) control.disabled = false;
+          box.removeAttribute('aria-busy');
+        }
+      });
       btns.append(b);
     };
     button('Save', 'knob__go', laySpawnSave);
     if (d.idx != null) button('Remove', 'knob__go lay__ed-danger', laySpawnRemove);
     button('Cancel', 'knob__go', () => {
+      const idx = laySel;
       laySel = null;
       layDraft = null;
       layArmed = false;
       layApply();
+      focusSpawn(idx);
     });
     box.append(btns);
     mount.replaceChildren(box);
@@ -364,12 +415,17 @@
       laySel = null;
       layDraft = null;
     }
-    if (laySel != null && !layDraft) layDraft = layFromSpawn(laySel);
+    if (laySel != null && !layDraft) selectDraft(layFromSpawn(laySel));
     for (const tab of card.querySelectorAll('.lay__tab')) {
       tab.setAttribute('aria-selected', String(tab.dataset.laytab === layTab));
+      tab.tabIndex = tab.dataset.laytab === layTab ? 0 : -1;
     }
     for (const pane of card.querySelectorAll('.lay__pane')) {
       pane.hidden = pane.dataset.pane !== layTab;
+    }
+    for (const cell of card.querySelectorAll('.lay__cell[data-cell]')) {
+      cell.tabIndex = layTab === 'parcels' && cell.dataset.cell === data.base ? 0 : -1;
+      cell.setAttribute('aria-disabled', String(layTab !== 'parcels' || cell.dataset.cell === data.base));
     }
     card.classList.toggle('lay--info', layTab === 'info');
     card.classList.toggle('lay--parcels', layTab === 'parcels');
@@ -378,7 +434,7 @@
     card.classList.toggle('lay--server', layTab === 'server');
     const add = document.getElementById('lay-sadd');
     if (add) {
-      add.textContent = layArmed ? 'Drawing — drag on the grid' : '+ Add spawn area';
+      add.textContent = layArmed ? 'Editing new spawn area' : '+ Add spawn area';
       add.setAttribute('aria-pressed', String(layArmed));
     }
     for (const row of card.querySelectorAll('.lay__srow')) {
@@ -418,6 +474,16 @@
       cell.classList.add('lay__cell--add');
       layDrag.keys.add(cell.dataset.cell);
     }
+  };
+  const saveParcels = async (parcels) => {
+    if (laySaving) return false;
+    laySaving = true;
+    try {
+      const ok = await save({ parcels });
+      if (ok) data.parcels = parcels;
+      await refresh();
+      return ok;
+    } finally { laySaving = false; }
   };
 
   document.addEventListener('submit', async (event) => {
@@ -589,6 +655,8 @@
     }
     const srow = hit('.lay__srow');
     if (srow && !srow.disabled) {
+      if (spawnSaving) return;
+      if (!discardDraft()) return;
       laySel = Number(srow.dataset.spawn);
       layDraft = null;
       layArmed = false;
@@ -597,10 +665,15 @@
     }
     const sadd = hit('#lay-sadd');
     if (sadd && !sadd.disabled) {
-      layArmed = !layArmed;
+      if (spawnSaving) return;
+      if (!discardDraft()) return;
+      layArmed = true;
       laySel = null;
-      layDraft = null;
+      selectDraft({ idx: null, name: 'SpawnArea' + ((data.spawnPoints || []).length + 1),
+        x0: 0, x1: 16, z0: 0, z1: 16, y: 0, lx: '', ly: '', lz: '',
+        def: !(data.spawnPoints || []).length });
       layApply();
+      layEd.name.focus();
       return;
     }
     const tags = hit('#edit-tags');
@@ -615,6 +688,7 @@
   });
 
   document.addEventListener('pointerdown', (event) => {
+    if (laySaving || spawnSaving) return;
     if (!document.body.classList.contains('editing')) return;
     if (!(event.target.closest && event.target.closest('#lay-grid'))) return;
     if (layTab === 'parcels') {
@@ -693,8 +767,7 @@
       } else {
         parcels = parcels.filter((p) => !d.keys.has(p));
       }
-      await save({ parcels });
-      refresh();
+      await saveParcels(parcels);
       return;
     }
     if (!d.moved) {
@@ -709,6 +782,7 @@
           found = i;
         }
       });
+      if (!discardDraft()) return;
       laySel = found;
       layDraft = null;
       layArmed = false;
@@ -726,13 +800,35 @@
   function mediaHosts() {
     return (document.getElementById('media-hosts')?.value || '').split(/[\s,]+/).filter(Boolean);
   }
+  let permissionQueue = Promise.resolve();
+  let permissionPending = 0;
+  const savePermission = (patch, control) => {
+    permissionPending++;
+    control.disabled = true;
+    const result = permissionQueue.then(async () => {
+      const next = patch();
+      if (!(await save(next))) return false;
+      data.permissions = next.requiredPermissions;
+      return true;
+    }).catch(error => {
+      toast(error.message || PAGE_OFFLINE, true);
+      return false;
+    });
+    permissionQueue = result.finally(() => {
+      control.disabled = false;
+      if (--permissionPending === 0) refresh();
+    });
+    return result;
+  };
   document.addEventListener('submit', async (event) => {
     if (event.target.id !== 'media-hosts-form') return;
     event.preventDefault();
     const hosts = mediaHosts();
-    const permissions = (data.permissions || []).filter(p => p !== 'ALLOW_MEDIA_HOSTNAMES');
-    if (hosts.length) permissions.push('ALLOW_MEDIA_HOSTNAMES');
-    if (await save({ requiredPermissions: permissions, allowedMediaHostnames: hosts })) refresh();
+    if (await savePermission(() => ({
+      requiredPermissions: (data.permissions || []).filter(p => p !== 'ALLOW_MEDIA_HOSTNAMES')
+        .concat(hosts.length ? ['ALLOW_MEDIA_HOSTNAMES'] : []),
+      allowedMediaHostnames: hosts,
+    }), event.target.querySelector('button'))) toast('Saved media hostnames');
   });
 
   document.addEventListener('change', async (event) => {
@@ -777,22 +873,22 @@
     if (t.classList && t.classList.contains('sw') && t.dataset.perm) {
       const key = t.dataset.perm;
       const granting = t.checked;
-      const list = (data.permissions || []).filter((p) => p !== key);
-      if (granting) list.push(key);
-      const patch = { requiredPermissions: list };
       if (key === 'ALLOW_MEDIA_HOSTNAMES' && granting && !mediaHosts().length) {
+        t.checked = false;
         document.getElementById('media-hosts').focus();
         toast('Add a media hostname and save to enable external media.');
         return;
       }
-      if (key === 'ALLOW_MEDIA_HOSTNAMES') {
-        patch.allowedMediaHostnames = granting ? mediaHosts() : [];
-      }
-      if (!(await save(patch))) {
-        t.checked = !granting;
+      const hosts = mediaHosts();
+      if (!(await savePermission(() => {
+        const patch = { requiredPermissions: (data.permissions || []).filter(p => p !== key)
+          .concat(granting ? [key] : []) };
+        if (key === 'ALLOW_MEDIA_HOSTNAMES') patch.allowedMediaHostnames = granting ? hosts : [];
+        return patch;
+      }, t))) {
+        t.checked = (data.permissions || []).includes(key);
         return;
       }
-      data.permissions = list;
       if (granting && !permWarned()) {
         toast(
           'Saved. Players may be asked to approve this permission when they enter the scene.',
@@ -802,7 +898,6 @@
       } else {
         toast('Saved to scene.json');
       }
-      refresh();
       return;
     }
     const knobs = t.closest && t.closest('form.side');
@@ -821,8 +916,42 @@
     }
   });
 
-  document.addEventListener('keydown', (event) => {
+  document.addEventListener('keydown', async (event) => {
     const t = event.target;
+    if (t.matches?.('.lay__tab') && ['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault();
+      const tabs = [...document.querySelectorAll('.lay__tab')];
+      const i = tabs.indexOf(t);
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 :
+        (i + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+      tabs[next].click();
+      tabs[next].focus();
+      return;
+    }
+    if (layTab === 'parcels' && t.dataset.cell) {
+      const [x, y] = t.dataset.cell.split(',').map(Number);
+      const delta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[event.key];
+      if (delta) {
+        event.preventDefault();
+        const next = document.querySelector('.lay__cell[data-cell="' + (x + delta[0]) + ',' + (y + delta[1]) + '"]');
+        if (next) { t.tabIndex = -1; next.tabIndex = 0; next.focus(); }
+      } else if (event.key === ' ' || event.key === 'Enter') {
+        event.preventDefault();
+        if (t.dataset.cell === data.base || laySaving) return;
+        t.setAttribute('aria-busy', 'true');
+        const parcels = data.parcels.includes(t.dataset.cell) ?
+          data.parcels.filter(p => p !== t.dataset.cell) : [...data.parcels, t.dataset.cell];
+        if (await saveParcels(parcels)) {
+          const next = document.querySelector('.lay__cell[data-cell="' + t.dataset.cell + '"]');
+          if (next) {
+            for (const cell of document.querySelectorAll('.lay__cell[data-cell]')) cell.tabIndex = -1;
+            next.tabIndex = 0;
+            next.focus();
+          }
+        } else t.removeAttribute('aria-busy');
+      }
+      return;
+    }
     if (t.id === 'edit-title' || t.id === 'edit-desc') {
       if (event.key === 'Escape') {
         t.textContent = editBase.get(t.id) ?? t.textContent;
@@ -862,7 +991,7 @@
     if (t.classList && t.classList.contains('tags-input')) {
       const wrap = t.closest('#edit-tags');
       const list = t.value.split(',').map((s) => s.trim()).filter(Boolean);
-      const changed = list.join(' ') !== (data.tags || []).join(' ');
+      const changed = JSON.stringify(list) !== JSON.stringify(data.tags || []);
       if (!t.dataset.esc && changed && (await save({ tags: list }))) {
         data.tags = list;
         toast('Saved to scene.json');

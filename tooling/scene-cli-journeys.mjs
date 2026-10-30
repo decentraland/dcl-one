@@ -105,7 +105,14 @@ try {
   });
   await stage('scene', 'scene-saved', 'Title saved', null, async () => { await evaluate("document.querySelector('#edit-title').blur()"); await has('Saved to scene.json'); });
   for (const [key,title] of [['parcels','Shape'],['spawns','Spawn points'],['perms','Permissions'],['server','Multiplayer']]) await stage('scene', `scene-${key}`, title, '/scene', () => tab(key));
+  await stage('scene', 'scene-keyboard', 'Choose a parcel with the keyboard', '/scene', async () => {
+    await tab('parcels');
+    await evaluate("document.querySelector('.lay__cell[data-cell]').focus()");
+    await browser.send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowRight' });
+    await browser.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'ArrowRight' });
+  });
   await stage('scene', 'spawn-editor', 'Spawn coordinates and camera', '/scene', async () => { await tab('spawns'); await click('[data-spawn="0"]'); });
+  await stage('scene', 'spawn-new', 'Create a spawn area', '/scene', async () => { await tab('spawns'); await click('#lay-sadd'); });
   await stage('scene', 'media-toggle', 'Enable external media without hosts', '/scene', async () => { await tab('perms'); await click('[data-perm="ALLOW_MEDIA_HOSTNAMES"]'); });
   await stage('scene', 'media-reloaded', 'Reload media permission', '/scene', () => tab('perms'));
   await stage('storage', 'storage-empty', 'Empty scene storage', '/storage');
@@ -127,6 +134,11 @@ try {
     await evaluate(`const dt=new DataTransfer();dt.items.add(new File(['{"env":{},"world":{},"players":{}}'],'fixture.json',{type:'application/json'}));document.querySelector('[data-import] input[type=file]').files=dt.files`);
   });
   await stage('storage-transfer', 'storage-imported', 'Import snapshot', null, async () => { await evaluate("document.querySelector('[data-import]').requestSubmit()"); await until(() => evaluate("return document.querySelector('.toast')?.textContent.includes('snapshot')"), 'snapshot imported'); });
+  await stage('storage-transfer', 'storage-replaced', 'Replace local storage with confirmation', null, async () => {
+    await drawer();
+    await evaluate(`const f=document.querySelector('[data-import]');const dt=new DataTransfer();dt.items.add(new File(['{"env":{},"world":{},"players":{}}'],'fixture.json',{type:'application/json'}));f.elements.file.files=dt.files;f.elements.merge.checked=false;f.requestSubmit()`);
+    await has('Replaced storage with the snapshot');
+  });
   await stage('storage-transfer', 'storage-invalid', 'Invalid snapshot recovery', null, async () => {
     await drawer();
     await evaluate("const dt=new DataTransfer();dt.items.add(new File(['invalid json'],'invalid.json',{type:'application/json'}));document.querySelector('[data-import] input[type=file]').files=dt.files;document.querySelector('[data-import]').requestSubmit()");
