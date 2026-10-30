@@ -3,2289 +3,3685 @@
  * Do not make direct changes to the file.
  */
 
-
 export interface paths {
-  "/about": {
-    /**
-     * `GET /about` on the server itself, catalyst-shaped: the one thing a client
-     * that knows only catalysts asks first. A stock worlds-content-server answers
-     * 404 here, which left `dcl-scene-cli deploy --target-server https://worlds....`
-     * with nowhere to go (a bare host resolves through `/about` ->
-     * `content.publicUrl`). Unlike `/world/{name}/about`, whose `content` block
-     * names the catalyst that serves profiles and wearables, this `content` block
-     * names this server: `/entities`, `/contents/` and `/available-content` live
-     * here. There is no world to enter at the root, so `comms` is offline and
-     * `scenesUrn` is empty.
-     */
-    get: operations["get_server_about"];
-  };
-  "/admin/access-log": {
-    get: operations["access_log"];
-  };
-  "/admin/blocked": {
-    get: operations["list_blocked"];
-  };
-  "/admin/blocked/{wallet}": {
-    post: operations["block_wallet"];
-    delete: operations["unblock_wallet"];
-  };
-  "/admin/federation/worlds/{peer_id}/{world_name}/hidden": {
-    /**
-     * `PUT /admin/federation/worlds/{peer_id}/{world_name}/hidden` -- **admin**.
-     * @description A **local** veto over our own publication. It sends nothing to the peer, makes no
-     * claim about the peer, and is not reversible by a subsequent poll: the poller's
-     * `DELETE` spares vetoed rows and its `UPDATE` arm does not name `hidden_since`, so a
-     * peer cannot un-hide itself by re-listing.
-     *
-     * Answers 403 to any caller without admin credentials **before** the request body is
-     * looked at, so the shape of the body is never a signal to an anonymous caller.
-     */
-    put: operations["set_mirror_world_hidden"];
-  };
-  "/admin/federation/worlds/refresh": {
-    /**
-     * `POST /admin/federation/worlds/refresh` -- **admin**.
-     * @description This handler can make this server contact every admitted peer, so it authenticates
-     * its own caller *as its first statement*, before reading config and before touching
-     * any peer. A route that holds privileged outbound reach and does not authenticate its
-     * caller is a confused deputy; the federated version of that mistake crosses a trust
-     * boundary and is worse.
-     */
-    post: operations["refresh_federation_mirror"];
-  };
-  "/admin/forwarding": {
-    /**
-     * `GET /admin/forwarding` -- **admin**: the upstream forwarding records, newest first.
-     * @description One record per local publish queued for `WORLDS_FORWARD_UPSTREAM_URL`; terminal records are kept 30 days. `next` is the `before` of the following page, null on the last.
-     */
-    get: operations["list_forwarding"];
-  };
-  "/admin/forwarding/{entity_id}": {
-    /** `GET /admin/forwarding/{entity_id}` -- **admin**: one publish's forwarding record. */
-    get: operations["get_forwarding"];
-  };
-  "/admin/forwarding/{entity_id}/retry": {
-    /**
-     * `POST /admin/forwarding/{entity_id}/retry` -- **admin**: queue a record again for the current upstream.
-     * @description Moves a `queued`, `rejected` or `failed` record back to `queued` for the configured upstream, due now, its attempts reset. 409 for a record in another state or an entity signed longer ago than the upstream accepts (five minutes); 503 while `WORLDS_FORWARD_UPSTREAM_URL` is unset.
-     */
-    post: operations["retry_forwarding"];
-  };
-  "/admin/gc": {
-    post: operations["garbage_collect"];
-  };
-  "/admin/worlds": {
-    get: operations["list_worlds"];
-  };
-  "/admin/worlds/{world_name}": {
-    get: operations["world_detail"];
-  };
-  "/admin/worlds/{world_name}/ban-status": {
-    get: operations["world_ban_status"];
-  };
-  "/admin/worlds/{world_name}/disable": {
-    post: operations["disable_world"];
-  };
-  "/admin/worlds/{world_name}/enable": {
-    post: operations["enable_world"];
-  };
-  "/available-content": {
-    get: operations["available_content"];
-  };
-  "/contents/{hash}": {
-    get: operations["get_content"];
-    head: operations["head_content"];
-  };
-  "/entities": {
-    post: operations["deploy_entity"];
-  };
-  "/entities/{world_name}": {
-    delete: operations["undeploy_world"];
-  };
-  "/entities/active": {
-    post: operations["active_entities"];
-  };
-  "/federation/worlds/mirror": {
-    /**
-     * `GET /federation/worlds/mirror` -- public.
-     * @description Serves what peers already publish on their own public `/worlds`, qualified by the
-     * peer that said it. Vetoed rows (`hidden_since IS NOT NULL`) are excluded.
-     */
-    get: operations["get_federation_mirror"];
-  };
-  "/federation/worlds/peers": {
-    /**
-     * `GET /federation/worlds/peers` -- public.
-     * @description The allowlist is public by construction: every entry cites a DAO proposal.
-     */
-    get: operations["get_federation_peers"];
-  };
-  "/gc": {
-    post: operations["garbage_collect_root"];
-  };
-  "/get-comms-adapter/{room_id}": {
-    post: operations["get_comms_adapter"];
-  };
-  "/index": {
-    get: operations["get_index"];
-  };
-  "/ipfs/{hash}": {
-    get: operations["get_ipfs"];
-    head: operations["head_ipfs"];
-  };
-  "/live-data": {
-    get: operations["live_data"];
-  };
-  "/livekit-webhook": {
-    post: operations["livekit_webhook"];
-  };
-  "/status": {
-    get: operations["status"];
-  };
-  "/wallet/{wallet}/connected-world": {
-    get: operations["connected_world"];
-  };
-  "/world/{world_name}/about": {
-    get: operations["get_about"];
-  };
-  "/world/{world_name}/manifest": {
-    get: operations["get_world_manifest"];
-  };
-  "/world/{world_name}/permissions": {
-    get: operations["get_permissions"];
-  };
-  "/world/{world_name}/permissions/{permission_name}": {
-    post: operations["post_permissions"];
-  };
-  "/world/{world_name}/permissions/{permission_name}/{address}": {
-    put: operations["put_permissions_address"];
-    delete: operations["delete_permissions_address"];
-  };
-  "/world/{world_name}/permissions/{permission_name}/address/{address}/parcels": {
-    get: operations["get_allowed_parcels_for_permission"];
-    post: operations["post_permission_parcels"];
-    delete: operations["delete_permission_parcels"];
-  };
-  "/world/{world_name}/permissions/{permission_name}/parcels": {
-    post: operations["get_addresses_for_parcel_permission"];
-  };
-  "/world/{world_name}/permissions/access/communities/{communityId}": {
-    put: operations["put_permissions_access_community"];
-    delete: operations["delete_permissions_access_community"];
-  };
-  "/world/{world_name}/preview-wearables": {
-    /**
-     * `GET /world/{world_name}/preview-wearables` -- the smart wearables this realm
-     * is previewing.
-     * @description The stock client fetches this on entry, takes `data[0]`, resolves the
-     * `scene.json` inside its first representation and runs it as a live scene
-     * (`LoadSmartWearablePreviewSceneSystem`). That makes the answer executable, so
-     * it is never inferred: it is exactly the URNs an operator selected for this
-     * world, or node-wide via `PREVIEW_WEARABLE_URNS`. A normally deployed world
-     * selects none and correctly answers with an empty list -- the client treats
-     * that as "not previewing anything" and moves on.
-     */
-    get: operations["get_preview_wearables"];
-  };
-  "/world/{world_name}/scenes": {
-    get: operations["list_scenes"];
-  };
-  "/world/{world_name}/scenes/{scene_coord}": {
-    delete: operations["delete_scene"];
-  };
-  "/world/{world_name}/settings": {
-    get: operations["get_world_settings"];
-    put: operations["update_world_settings"];
-  };
-  "/worlds": {
-    get: operations["get_worlds"];
-  };
-  "/worlds/{world_name}/comms": {
-    post: operations["world_comms"];
-  };
-  "/worlds/{world_name}/scenes/{scene_id}/comms": {
-    post: operations["world_scene_comms"];
-  };
+    "/about": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /about` on the server itself, catalyst-shaped: the one thing a client
+         *     that knows only catalysts asks first. A stock worlds-content-server answers
+         *     404 here, which left `dcl-scene-cli deploy --target-server https://worlds....`
+         *     with nowhere to go (a bare host resolves through `/about` ->
+         *     `content.publicUrl`). Unlike `/world/{name}/about`, whose `content` block
+         *     names the catalyst that serves profiles and wearables, this `content` block
+         *     names this server: `/entities`, `/contents/` and `/available-content` live
+         *     here. There is no world to enter at the root, so `comms` is offline and
+         *     `scenesUrn` is empty.
+         */
+        get: operations["get_server_about"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/access-log": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["access_log"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/blocked": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_blocked"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/blocked/{wallet}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["block_wallet"];
+        delete: operations["unblock_wallet"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/federation/worlds/{peer_id}/{world_name}/hidden": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * `PUT /admin/federation/worlds/{peer_id}/{world_name}/hidden` -- **admin**.
+         * @description A **local** veto over our own publication. It sends nothing to the peer, makes no
+         *     claim about the peer, and is not reversible by a subsequent poll: the poller's
+         *     `DELETE` spares vetoed rows and its `UPDATE` arm does not name `hidden_since`, so a
+         *     peer cannot un-hide itself by re-listing.
+         *
+         *     Answers 403 to any caller without admin credentials **before** the request body is
+         *     looked at, so the shape of the body is never a signal to an anonymous caller.
+         */
+        put: operations["set_mirror_world_hidden"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/federation/worlds/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /admin/federation/worlds/refresh` -- **admin**.
+         * @description This handler can make this server contact every admitted peer, so it authenticates
+         *     its own caller *as its first statement*, before reading config and before touching
+         *     any peer. A route that holds privileged outbound reach and does not authenticate its
+         *     caller is a confused deputy; the federated version of that mistake crosses a trust
+         *     boundary and is worse.
+         */
+        post: operations["refresh_federation_mirror"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/forwarding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /admin/forwarding` -- **admin**: the upstream forwarding records, newest first.
+         * @description One record per local publish queued for `WORLDS_FORWARD_UPSTREAM_URL`; terminal records are kept 30 days. `next` is the `before` of the following page, null on the last.
+         */
+        get: operations["list_forwarding"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/forwarding/{entity_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** `GET /admin/forwarding/{entity_id}` -- **admin**: one publish's forwarding record. */
+        get: operations["get_forwarding"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/forwarding/{entity_id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * `POST /admin/forwarding/{entity_id}/retry` -- **admin**: queue a record again for the current upstream.
+         * @description Moves a `queued`, `rejected` or `failed` record back to `queued` for the configured upstream, due now, its attempts reset. 409 for a record in another state or an entity signed longer ago than the upstream accepts (five minutes); 503 while `WORLDS_FORWARD_UPSTREAM_URL` is unset.
+         */
+        post: operations["retry_forwarding"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/gc": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["garbage_collect"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/worlds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_worlds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/worlds/{world_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["world_detail"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/worlds/{world_name}/ban-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["world_ban_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/worlds/{world_name}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["disable_world"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/worlds/{world_name}/enable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["enable_world"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/available-content": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["available_content"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/contents/{hash}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_content"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head: operations["head_content"];
+        patch?: never;
+        trace?: never;
+    };
+    "/entities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["deploy_entity"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entities/{world_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["undeploy_world"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/entities/active": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["active_entities"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/federation/worlds/mirror": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /federation/worlds/mirror` -- public.
+         * @description Serves what peers already publish on their own public `/worlds`, qualified by the
+         *     peer that said it. Vetoed rows (`hidden_since IS NOT NULL`) are excluded.
+         */
+        get: operations["get_federation_mirror"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/federation/worlds/peers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /federation/worlds/peers` -- public.
+         * @description The allowlist is public by construction: every entry cites a DAO proposal.
+         */
+        get: operations["get_federation_peers"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/gc": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["garbage_collect_root"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/get-comms-adapter/{room_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["get_comms_adapter"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_index"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/ipfs/{hash}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_ipfs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head: operations["head_ipfs"];
+        patch?: never;
+        trace?: never;
+    };
+    "/live-data": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["live_data"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/livekit-webhook": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["livekit_webhook"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/wallet/{wallet}/connected-world": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["connected_world"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/about": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_about"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_world_manifest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_permissions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/permissions/{permission_name}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["post_permissions"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/permissions/{permission_name}/{address}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_permissions_address"];
+        post?: never;
+        delete: operations["delete_permissions_address"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/permissions/{permission_name}/address/{address}/parcels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_allowed_parcels_for_permission"];
+        put?: never;
+        post: operations["post_permission_parcels"];
+        delete: operations["delete_permission_parcels"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/permissions/{permission_name}/parcels": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["get_addresses_for_parcel_permission"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/permissions/access/communities/{communityId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_permissions_access_community"];
+        post?: never;
+        delete: operations["delete_permissions_access_community"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/preview-wearables": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * `GET /world/{world_name}/preview-wearables` -- the smart wearables this realm
+         *     is previewing.
+         * @description The stock client fetches this on entry, takes `data[0]`, resolves the
+         *     `scene.json` inside its first representation and runs it as a live scene
+         *     (`LoadSmartWearablePreviewSceneSystem`). That makes the answer executable, so
+         *     it is never inferred: it is exactly the URNs an operator selected for this
+         *     world, or node-wide via `PREVIEW_WEARABLE_URNS`. A normally deployed world
+         *     selects none and correctly answers with an empty list -- the client treats
+         *     that as "not previewing anything" and moves on.
+         */
+        get: operations["get_preview_wearables"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/scenes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["list_scenes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/scenes/{scene_coord}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["delete_scene"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/world/{world_name}/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_world_settings"];
+        put: operations["update_world_settings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/worlds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_worlds"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/worlds/{world_name}/comms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["world_comms"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/worlds/{world_name}/scenes/{scene_id}/comms": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["world_scene_comms"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
-
 export type webhooks = Record<string, never>;
-
 export interface components {
-  schemas: {
-    AboutComms: {
-      adapter: string;
-      healthy: boolean;
-      protocol: string;
+    schemas: {
+        AboutComms: {
+            adapter: string;
+            healthy: boolean;
+            protocol: string;
+        };
+        AboutConfigurations: {
+            globalScenesUrn: string[];
+            map: components["schemas"]["AboutMap"];
+            minimap: components["schemas"]["MinimapConfig"];
+            /** Format: int64 */
+            networkId: number;
+            realmName: string;
+            scenesUrn: string[];
+            skybox: components["schemas"]["SkyboxConfig"];
+        };
+        AboutContentStatus: {
+            healthy: boolean;
+            publicUrl: string;
+            synchronizationStatus: string;
+        };
+        AboutMap: {
+            minimapEnabled: boolean;
+            sizes: unknown[];
+        };
+        AboutResponse: {
+            acceptingUsers: boolean;
+            catalyrst: unknown;
+            comms: components["schemas"]["AboutComms"];
+            configurations: components["schemas"]["AboutConfigurations"];
+            content: components["schemas"]["AboutContentStatus"];
+            healthy: boolean;
+            lambdas: components["schemas"]["AboutServiceStatus"];
+            spawnCoordinates?: string | null;
+        };
+        AboutServiceStatus: {
+            healthy: boolean;
+            publicUrl: string;
+        };
+        AllowListPermission: {
+            type: string;
+            wallets: string[];
+        };
+        ApiErrorBody: {
+            error: string;
+            federation_adr?: string | null;
+            message: string;
+            ok: boolean;
+        };
+        AvailableContentEntry: {
+            available: boolean;
+            cid: string;
+        };
+        CommsAdapterResponse: {
+            fixedAdapter: string;
+        };
+        CommsStatus: {
+            adapterType: string;
+            /** Format: int64 */
+            rooms: number;
+            statusUrl: string;
+            /** Format: int64 */
+            timestamp: number;
+            /** Format: int64 */
+            users: number;
+        };
+        ContentStatus: {
+            commitHash: string;
+            worldsCount: components["schemas"]["WorldsCount"];
+        };
+        DeployErrors: {
+            errors: string[];
+        };
+        DeployRejection: {
+            error: string;
+            message: string;
+        };
+        DeploySuccess: {
+            /** Format: int64 */
+            creationTimestamp: number;
+            message: string;
+        };
+        FederationMirrorResponse: {
+            /**
+             * @description Health of every admitted peer, returned **with the listing**, so a consumer
+             *     cannot read `worlds: []` without also being told whether anybody answered. An
+             *     empty list next to `hasEverSucceeded: false` is an absence of knowledge; an
+             *     empty list next to a fresh `lastSuccessAt` is knowledge of an absence.
+             */
+            peers: components["schemas"]["FederationPeerStatusLine"][];
+            /** Format: int64 */
+            total: number;
+            worlds: components["schemas"]["RemoteWorldView"][];
+        };
+        /** @description A peer in the file that is not a worlds peer. */
+        FederationPeerOmissionView: {
+            detail: string;
+            peerId: string;
+            reason: string;
+        };
+        FederationPeersResponse: {
+            /**
+             * @description Always `true` on a 200. The unconfigured case is a 503, not `configured: false`
+             *     with an empty list, so a client cannot fall through into treating "federation is
+             *     off" as "federation is on and nobody is there".
+             */
+            configured: boolean;
+            omitted: components["schemas"]["FederationPeerOmissionView"][];
+            peers: components["schemas"]["FederationPeerView"][];
+            /** @description Absolute path of the peer file that was adjudicated. */
+            peersFile: string;
+        };
+        FederationPeerStatusLine: {
+            peerId: string;
+            status: components["schemas"]["FederationPeerStatusView"];
+        };
+        /**
+         * @description Health of one peer's mirror.
+         *
+         *     `lastSuccessAt` is the field that keeps an unreachable peer honest. A peer whose
+         *     `lastAttemptAt` is recent and whose `lastSuccessAt` is old (or null) is a peer whose
+         *     mirrored rows are **stale or absent for lack of contact** -- which is a different
+         *     statement from "this peer holds no worlds", and the two must never render the same.
+         */
+        FederationPeerStatusView: {
+            /** Format: int64 */
+            entriesSkipped: number;
+            /**
+             * @description `false` until the peer has answered successfully at least once. A consumer that
+             *     sees `hasEverSucceeded: false` is looking at no knowledge, not at an empty peer.
+             */
+            hasEverSucceeded: boolean;
+            lastAttemptAt?: string | null;
+            /**
+             * @description The last failure, or `null` after a clean success.
+             *
+             *     This route is public, so the text is verbatim for anything the **peer** did -- an
+             *     HTTP status, a content type, a message about their body -- and a bounded constant
+             *     for a fault in **our** database, whose reason is in this server's logs. Either
+             *     way the failure itself is reported; only its wording is withheld.
+             *
+             *     It can be non-null *beside* a fresh `lastSuccessAt`, and that pairing is
+             *     deliberate: a poll whose fetch and write succeeded but whose local-name collision
+             *     probe could not run records
+             *     [`crate::fed::poll::COLLISION_PROBE_UNAVAILABLE_PREFIX`] here. "Current rows, one
+             *     unchecked thing about them" is a state the two fields express together and
+             *     neither expresses alone.
+             */
+            lastError?: string | null;
+            lastSuccessAt?: string | null;
+            truncated: boolean;
+            /** Format: int64 */
+            worldsObserved: number;
+        };
+        /**
+         * @description One admitted peer.
+         *
+         *     Deliberately not fields of this type: `mtlsRootPem` and `gossipPubkey`. They are not
+         *     omitted at serialisation time -- they do not exist here, so no future edit to a
+         *     serialiser can start printing them.
+         */
+        FederationPeerView: {
+            addedAt: string;
+            daoProposal: string;
+            /**
+             * @description True when this peer was admitted through `WORLDS_FED_ALLOW_INSECURE_LOOPBACK_PEERS`
+             *     and is therefore spoken to in **cleartext, authenticated by nothing**. Surfaced so
+             *     a two-node test rig is never mistaken for a federation deployment.
+             */
+            insecureLoopback: boolean;
+            peerId: string;
+            status: components["schemas"]["FederationPeerStatusView"];
+            worldsUrl: string;
+        };
+        FederationRefreshPeerResult: {
+            /** Format: int64 */
+            entriesSkipped: number;
+            error?: string | null;
+            /**
+             * @description Local world names this peer also publishes. The local record wins everywhere;
+             *     this is the report, not a resolution.
+             *
+             *     `null` -- never `[]` -- when the probe did not run, either because this poll
+             *     failed before there was anything to probe with or because the probe itself
+             *     errored. `[]` means we asked and nothing collided. The two are different facts
+             *     and a consumer that reads `.length` off the second must not silently get `0` for
+             *     the first.
+             */
+            localNameCollisions?: string[] | null;
+            /**
+             * @description Why `localNameCollisions` is `null`. Non-null exactly when it is -- the same
+             *     pairing `lastError` has with a missing `lastSuccessAt`.
+             */
+            localNameCollisionsError?: string | null;
+            ok: boolean;
+            peerId: string;
+            truncated: boolean;
+            /** Format: int64 */
+            worldsObserved: number;
+        };
+        FederationRefreshResponse: {
+            polled: components["schemas"]["FederationRefreshPeerResult"][];
+        };
+        ForwardPage: {
+            forwards: components["schemas"]["ForwardRecord"][];
+            /**
+             * Format: int64
+             * @description The `before` of the following page; null on the last
+             */
+            next: number | null;
+        };
+        /** @description One local publish's forwarding to the upstream worlds server. */
+        ForwardRecord: {
+            /** Format: int32 */
+            attempts: number;
+            /** Format: date-time */
+            createdAt: string;
+            entityId: string;
+            /** @description The upstream's answer to a refused or failed send, or why it was not sent */
+            lastError: string | null;
+            /**
+             * Format: date-time
+             * @description When the record is due; null once terminal
+             */
+            nextAttemptAt: string | null;
+            /** @enum {string} */
+            status: "queued" | "sending" | "accepted" | "rejected" | "failed" | "superseded";
+            /** @description The upstream's origin */
+            target: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /**
+             * Format: int32
+             * @description The upstream's last HTTP status
+             */
+            upstreamStatus: number | null;
+            worldName: string;
+        };
+        GcResponse: {
+            activeKeys: number;
+            candidates: number;
+            dryRun: boolean;
+            failed: number;
+            message: string;
+            /** Format: int64 */
+            minAgeSeconds: number;
+            removed: number;
+            scanned: number;
+        };
+        IndexResponse: {
+            data: components["schemas"]["WorldIndexEntry"][];
+            lastUpdated: string;
+        };
+        IndexSceneSummary: {
+            description?: string | null;
+            id: string;
+            pointers: string[];
+            runtimeVersion?: unknown;
+            thumbnail?: string | null;
+            /** Format: int64 */
+            timestamp?: number | null;
+            title?: string | null;
+        };
+        /**
+         * @description The payload of `/live-data`.
+         *
+         *     Both fields are required and neither is defaulted. A consumer that cannot
+         *     obtain this must see the request fail rather than receive a zero: a
+         *     fabricated `totalUsers: 0` is indistinguishable from an empty world, which
+         *     is the defect `sites/scripts/check-schema-honesty.mts` gates against on the
+         *     TypeScript side. Keeping the Rust type non-optional is what lets the
+         *     generated schema stay honest.
+         */
+        LiveDataPayload: {
+            perWorld: components["schemas"]["WorldOccupancy"][];
+            /** Format: int64 */
+            totalUsers: number;
+        };
+        /** @description `GET /live-data`. */
+        LiveDataResponse: {
+            data: components["schemas"]["LiveDataPayload"];
+            /** @description RFC3339 with millisecond precision, matching the upstream server. */
+            lastUpdated: string;
+        };
+        MinimapConfig: {
+            dataImage?: string | null;
+            enabled: boolean;
+            estateImage?: string | null;
+        };
+        PermissionsResponse: {
+            owner?: string | null;
+            permissions: components["schemas"]["WorldPermissionsBlock"];
+            summary: {
+                [key: string]: components["schemas"]["PermissionSummaryEntry"][];
+            };
+        };
+        PermissionSummaryEntry: {
+            /** Format: int64 */
+            parcel_count?: number | null;
+            permission: string;
+            world_wide: boolean;
+        };
+        PersonalWorldsStatus: {
+            /** Format: int64 */
+            maxSizeBytes: number;
+            /** Format: int64 */
+            maxWorlds: number;
+        };
+        /**
+         * @description One mirrored world, as published.
+         *
+         *     **There is no `owner` key, and no field it could be renamed from.** There is no
+         *     `access`, no `permissions`, no `blockedSince`, no `deployer`. `peerId` is
+         *     mandatory: a mirrored world without the peer that reported it would be a claim
+         *     about a world, which is exactly what this slice refuses to make.
+         */
+        RemoteWorldView: {
+            categories: string[];
+            contentRating?: string | null;
+            /** Format: int64 */
+            deployedScenes: number;
+            description?: string | null;
+            /** @description As reported by the peer. Read by no branch here. */
+            lastDeployedAt?: string | null;
+            /**
+             * @description The name **as the peer reported it**, after shape admission. Not a name we have
+             *     resolved, and not a name this server answers for.
+             */
+            name: string;
+            /**
+             * @description **Our** clock, at the poll that produced this row. This is the staleness signal
+             *     on a per-row basis.
+             */
+            observedAt: string;
+            peerId: string;
+            /**
+             * @description A label the peer printed. We hold no bytes for it; `/contents/{hash}` on this
+             *     server will not serve it.
+             */
+            thumbnailHash?: string | null;
+            title?: string | null;
+        };
+        SceneListResponse: {
+            scenes: components["schemas"]["WorldSceneEntry"][];
+            /** Format: int64 */
+            total: number;
+        };
+        ServerAboutConfigurations: {
+            globalScenesUrn: string[];
+            /** Format: int64 */
+            networkId: number;
+            realmName: string;
+            scenesUrn: string[];
+        };
+        /** @description The server's own `/about`, catalyst-shaped. */
+        ServerAboutResponse: {
+            acceptingUsers: boolean;
+            catalyrst: unknown;
+            comms: components["schemas"]["AboutComms"];
+            configurations: components["schemas"]["ServerAboutConfigurations"];
+            content: components["schemas"]["AboutContentStatus"];
+            healthy: boolean;
+            lambdas: components["schemas"]["AboutServiceStatus"];
+        };
+        SetMirrorHiddenRequest: {
+            hidden: boolean;
+        };
+        SetMirrorHiddenResponse: {
+            hidden: boolean;
+            peerId: string;
+            worldName: string;
+        };
+        SkyboxConfig: {
+            /** Format: double */
+            fixedHour?: number | null;
+            textures: string[];
+        };
+        StatusResponse: {
+            comms: components["schemas"]["CommsStatus"];
+            content: components["schemas"]["ContentStatus"];
+            personalWorlds?: null | components["schemas"]["PersonalWorldsStatus"];
+        };
+        WorldIndexEntry: {
+            name: string;
+            scenes: components["schemas"]["IndexSceneSummary"][];
+        };
+        /**
+         * @description One world's instantaneous occupancy.
+         *
+         *     `worldName` is camelCase on the wire because this endpoint is
+         *     wire-compatible with Decentraland's worlds-content-server `/live-data`, and
+         *     a client written against that shape must keep working when pointed here.
+         */
+        WorldOccupancy: {
+            /**
+             * Format: int64
+             * @description `i64` on the wire, `number` in TS. The value is a room population, so
+             *     the range TS cannot represent is unreachable here.
+             */
+            users: number;
+            worldName: string;
+        };
+        WorldPermissionsBlock: {
+            access: unknown;
+            deployment: components["schemas"]["AllowListPermission"];
+            streaming: components["schemas"]["AllowListPermission"];
+        };
+        WorldSceneEntry: {
+            createdAt: string;
+            deployer: string;
+            deploymentAuthChain: unknown;
+            entity: unknown;
+            entityId: string;
+            parcels: string[];
+            size: string;
+            status: string;
+            updatedAt: string;
+            worldName: string;
+        };
+        WorldsCount: {
+            /** Format: int64 */
+            dcl: number;
+            /** Format: int64 */
+            ens: number;
+        };
     };
-    AboutConfigurations: {
-      globalScenesUrn: string[];
-      map: components["schemas"]["AboutMap"];
-      minimap: components["schemas"]["MinimapConfig"];
-      /** Format: int64 */
-      networkId: number;
-      realmName: string;
-      scenesUrn: string[];
-      skybox: components["schemas"]["SkyboxConfig"];
-    };
-    AboutContentStatus: {
-      healthy: boolean;
-      publicUrl: string;
-      synchronizationStatus: string;
-    };
-    AboutMap: {
-      minimapEnabled: boolean;
-      sizes: unknown[];
-    };
-    AboutResponse: {
-      acceptingUsers: boolean;
-      catalyrst: unknown;
-      comms: components["schemas"]["AboutComms"];
-      configurations: components["schemas"]["AboutConfigurations"];
-      content: components["schemas"]["AboutContentStatus"];
-      healthy: boolean;
-      lambdas: components["schemas"]["AboutServiceStatus"];
-      spawnCoordinates?: string | null;
-    };
-    AboutServiceStatus: {
-      healthy: boolean;
-      publicUrl: string;
-    };
-    AllowListPermission: {
-      type: string;
-      wallets: string[];
-    };
-    ApiErrorBody: {
-      error: string;
-      federation_adr?: string | null;
-      message: string;
-      ok: boolean;
-    };
-    AvailableContentEntry: {
-      available: boolean;
-      cid: string;
-    };
-    CommsAdapterResponse: {
-      fixedAdapter: string;
-    };
-    CommsStatus: {
-      adapterType: string;
-      /** Format: int64 */
-      rooms: number;
-      statusUrl: string;
-      /** Format: int64 */
-      timestamp: number;
-      /** Format: int64 */
-      users: number;
-    };
-    ContentStatus: {
-      commitHash: string;
-      worldsCount: components["schemas"]["WorldsCount"];
-    };
-    DeployErrors: {
-      errors: string[];
-    };
-    DeployRejection: {
-      error: string;
-      message: string;
-    };
-    DeploySuccess: {
-      /** Format: int64 */
-      creationTimestamp: number;
-      message: string;
-    };
-    FederationMirrorResponse: {
-      /**
-       * @description Health of every admitted peer, returned **with the listing**, so a consumer
-       * cannot read `worlds: []` without also being told whether anybody answered. An
-       * empty list next to `hasEverSucceeded: false` is an absence of knowledge; an
-       * empty list next to a fresh `lastSuccessAt` is knowledge of an absence.
-       */
-      peers: components["schemas"]["FederationPeerStatusLine"][];
-      /** Format: int64 */
-      total: number;
-      worlds: components["schemas"]["RemoteWorldView"][];
-    };
-    /** @description A peer in the file that is not a worlds peer. */
-    FederationPeerOmissionView: {
-      detail: string;
-      peerId: string;
-      reason: string;
-    };
-    FederationPeersResponse: {
-      /**
-       * @description Always `true` on a 200. The unconfigured case is a 503, not `configured: false`
-       * with an empty list, so a client cannot fall through into treating "federation is
-       * off" as "federation is on and nobody is there".
-       */
-      configured: boolean;
-      omitted: components["schemas"]["FederationPeerOmissionView"][];
-      peers: components["schemas"]["FederationPeerView"][];
-      /** @description Absolute path of the peer file that was adjudicated. */
-      peersFile: string;
-    };
-    FederationPeerStatusLine: {
-      peerId: string;
-      status: components["schemas"]["FederationPeerStatusView"];
-    };
-    /**
-     * @description Health of one peer's mirror.
-     *
-     * `lastSuccessAt` is the field that keeps an unreachable peer honest. A peer whose
-     * `lastAttemptAt` is recent and whose `lastSuccessAt` is old (or null) is a peer whose
-     * mirrored rows are **stale or absent for lack of contact** -- which is a different
-     * statement from "this peer holds no worlds", and the two must never render the same.
-     */
-    FederationPeerStatusView: {
-      /** Format: int64 */
-      entriesSkipped: number;
-      /**
-       * @description `false` until the peer has answered successfully at least once. A consumer that
-       * sees `hasEverSucceeded: false` is looking at no knowledge, not at an empty peer.
-       */
-      hasEverSucceeded: boolean;
-      lastAttemptAt?: string | null;
-      /**
-       * @description The last failure, or `null` after a clean success.
-       *
-       * This route is public, so the text is verbatim for anything the **peer** did -- an
-       * HTTP status, a content type, a message about their body -- and a bounded constant
-       * for a fault in **our** database, whose reason is in this server's logs. Either
-       * way the failure itself is reported; only its wording is withheld.
-       *
-       * It can be non-null *beside* a fresh `lastSuccessAt`, and that pairing is
-       * deliberate: a poll whose fetch and write succeeded but whose local-name collision
-       * probe could not run records
-       * [`crate::fed::poll::COLLISION_PROBE_UNAVAILABLE_PREFIX`] here. "Current rows, one
-       * unchecked thing about them" is a state the two fields express together and
-       * neither expresses alone.
-       */
-      lastError?: string | null;
-      lastSuccessAt?: string | null;
-      truncated: boolean;
-      /** Format: int64 */
-      worldsObserved: number;
-    };
-    /**
-     * @description One admitted peer.
-     *
-     * Deliberately not fields of this type: `mtlsRootPem` and `gossipPubkey`. They are not
-     * omitted at serialisation time -- they do not exist here, so no future edit to a
-     * serialiser can start printing them.
-     */
-    FederationPeerView: {
-      addedAt: string;
-      daoProposal: string;
-      /**
-       * @description True when this peer was admitted through `WORLDS_FED_ALLOW_INSECURE_LOOPBACK_PEERS`
-       * and is therefore spoken to in **cleartext, authenticated by nothing**. Surfaced so
-       * a two-node test rig is never mistaken for a federation deployment.
-       */
-      insecureLoopback: boolean;
-      peerId: string;
-      status: components["schemas"]["FederationPeerStatusView"];
-      worldsUrl: string;
-    };
-    FederationRefreshPeerResult: {
-      /** Format: int64 */
-      entriesSkipped: number;
-      error?: string | null;
-      /**
-       * @description Local world names this peer also publishes. The local record wins everywhere;
-       * this is the report, not a resolution.
-       *
-       * `null` -- never `[]` -- when the probe did not run, either because this poll
-       * failed before there was anything to probe with or because the probe itself
-       * errored. `[]` means we asked and nothing collided. The two are different facts
-       * and a consumer that reads `.length` off the second must not silently get `0` for
-       * the first.
-       */
-      localNameCollisions?: string[] | null;
-      /**
-       * @description Why `localNameCollisions` is `null`. Non-null exactly when it is -- the same
-       * pairing `lastError` has with a missing `lastSuccessAt`.
-       */
-      localNameCollisionsError?: string | null;
-      ok: boolean;
-      peerId: string;
-      truncated: boolean;
-      /** Format: int64 */
-      worldsObserved: number;
-    };
-    FederationRefreshResponse: {
-      polled: components["schemas"]["FederationRefreshPeerResult"][];
-    };
-    ForwardPage: {
-      forwards: components["schemas"]["ForwardRecord"][];
-      /**
-       * Format: int64
-       * @description The `before` of the following page; null on the last
-       */
-      next: number | null;
-    };
-    /** @description One local publish's forwarding to the upstream worlds server. */
-    ForwardRecord: {
-      /** Format: int32 */
-      attempts: number;
-      /** Format: date-time */
-      createdAt: string;
-      entityId: string;
-      /** @description The upstream's answer to a refused or failed send, or why it was not sent */
-      lastError: string | null;
-      /**
-       * Format: date-time
-       * @description When the record is due; null once terminal
-       */
-      nextAttemptAt: string | null;
-      /** @enum {string} */
-      status: "queued" | "sending" | "accepted" | "rejected" | "failed" | "superseded";
-      /** @description The upstream's origin */
-      target: string;
-      /** Format: date-time */
-      updatedAt: string;
-      /**
-       * Format: int32
-       * @description The upstream's last HTTP status
-       */
-      upstreamStatus: number | null;
-      worldName: string;
-    };
-    GcResponse: {
-      activeKeys: number;
-      candidates: number;
-      dryRun: boolean;
-      failed: number;
-      message: string;
-      /** Format: int64 */
-      minAgeSeconds: number;
-      removed: number;
-      scanned: number;
-    };
-    IndexResponse: {
-      data: components["schemas"]["WorldIndexEntry"][];
-      lastUpdated: string;
-    };
-    IndexSceneSummary: {
-      description?: string | null;
-      id: string;
-      pointers: string[];
-      runtimeVersion?: unknown;
-      thumbnail?: string | null;
-      /** Format: int64 */
-      timestamp?: number | null;
-      title?: string | null;
-    };
-    /**
-     * @description The payload of `/live-data`.
-     *
-     * Both fields are required and neither is defaulted. A consumer that cannot
-     * obtain this must see the request fail rather than receive a zero: a
-     * fabricated `totalUsers: 0` is indistinguishable from an empty world, which
-     * is the defect `sites/scripts/check-schema-honesty.mts` gates against on the
-     * TypeScript side. Keeping the Rust type non-optional is what lets the
-     * generated schema stay honest.
-     */
-    LiveDataPayload: {
-      perWorld: components["schemas"]["WorldOccupancy"][];
-      /** Format: int64 */
-      totalUsers: number;
-    };
-    /** @description `GET /live-data`. */
-    LiveDataResponse: {
-      data: components["schemas"]["LiveDataPayload"];
-      /** @description RFC3339 with millisecond precision, matching the upstream server. */
-      lastUpdated: string;
-    };
-    MinimapConfig: {
-      dataImage?: string | null;
-      enabled: boolean;
-      estateImage?: string | null;
-    };
-    PermissionsResponse: {
-      owner?: string | null;
-      permissions: components["schemas"]["WorldPermissionsBlock"];
-      summary: {
-        [key: string]: components["schemas"]["PermissionSummaryEntry"][];
-      };
-    };
-    PermissionSummaryEntry: {
-      /** Format: int64 */
-      parcel_count?: number | null;
-      permission: string;
-      world_wide: boolean;
-    };
-    PersonalWorldsStatus: {
-      /** Format: int64 */
-      maxSizeBytes: number;
-      /** Format: int64 */
-      maxWorlds: number;
-    };
-    /**
-     * @description One mirrored world, as published.
-     *
-     * **There is no `owner` key, and no field it could be renamed from.** There is no
-     * `access`, no `permissions`, no `blockedSince`, no `deployer`. `peerId` is
-     * mandatory: a mirrored world without the peer that reported it would be a claim
-     * about a world, which is exactly what this slice refuses to make.
-     */
-    RemoteWorldView: {
-      categories: string[];
-      contentRating?: string | null;
-      /** Format: int64 */
-      deployedScenes: number;
-      description?: string | null;
-      /** @description As reported by the peer. Read by no branch here. */
-      lastDeployedAt?: string | null;
-      /**
-       * @description The name **as the peer reported it**, after shape admission. Not a name we have
-       * resolved, and not a name this server answers for.
-       */
-      name: string;
-      /**
-       * @description **Our** clock, at the poll that produced this row. This is the staleness signal
-       * on a per-row basis.
-       */
-      observedAt: string;
-      peerId: string;
-      /**
-       * @description A label the peer printed. We hold no bytes for it; `/contents/{hash}` on this
-       * server will not serve it.
-       */
-      thumbnailHash?: string | null;
-      title?: string | null;
-    };
-    SceneListResponse: {
-      scenes: components["schemas"]["WorldSceneEntry"][];
-      /** Format: int64 */
-      total: number;
-    };
-    ServerAboutConfigurations: {
-      globalScenesUrn: string[];
-      /** Format: int64 */
-      networkId: number;
-      realmName: string;
-      scenesUrn: string[];
-    };
-    /** @description The server's own `/about`, catalyst-shaped. */
-    ServerAboutResponse: {
-      acceptingUsers: boolean;
-      catalyrst: unknown;
-      comms: components["schemas"]["AboutComms"];
-      configurations: components["schemas"]["ServerAboutConfigurations"];
-      content: components["schemas"]["AboutContentStatus"];
-      healthy: boolean;
-      lambdas: components["schemas"]["AboutServiceStatus"];
-    };
-    SetMirrorHiddenRequest: {
-      hidden: boolean;
-    };
-    SetMirrorHiddenResponse: {
-      hidden: boolean;
-      peerId: string;
-      worldName: string;
-    };
-    SkyboxConfig: {
-      /** Format: double */
-      fixedHour?: number | null;
-      textures: string[];
-    };
-    StatusResponse: {
-      comms: components["schemas"]["CommsStatus"];
-      content: components["schemas"]["ContentStatus"];
-      personalWorlds?: null | components["schemas"]["PersonalWorldsStatus"];
-    };
-    WorldIndexEntry: {
-      name: string;
-      scenes: components["schemas"]["IndexSceneSummary"][];
-    };
-    /**
-     * @description One world's instantaneous occupancy.
-     *
-     * `worldName` is camelCase on the wire because this endpoint is
-     * wire-compatible with Decentraland's worlds-content-server `/live-data`, and
-     * a client written against that shape must keep working when pointed here.
-     */
-    WorldOccupancy: {
-      /**
-       * Format: int64
-       * @description `i64` on the wire, `number` in TS. The value is a room population, so
-       * the range TS cannot represent is unreachable here.
-       */
-      users: number;
-      worldName: string;
-    };
-    WorldPermissionsBlock: {
-      access: unknown;
-      deployment: components["schemas"]["AllowListPermission"];
-      streaming: components["schemas"]["AllowListPermission"];
-    };
-    WorldSceneEntry: {
-      createdAt: string;
-      deployer: string;
-      deploymentAuthChain: unknown;
-      entity: unknown;
-      entityId: string;
-      parcels: string[];
-      size: string;
-      status: string;
-      updatedAt: string;
-      worldName: string;
-    };
-    WorldsCount: {
-      /** Format: int64 */
-      dcl: number;
-      /** Format: int64 */
-      ens: number;
-    };
-  };
-  responses: never;
-  parameters: never;
-  requestBodies: never;
-  headers: never;
-  pathItems: never;
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
 }
-
 export type $defs = Record<string, never>;
-
-export type external = Record<string, never>;
-
 export interface operations {
-
-  /**
-   * `GET /about` on the server itself, catalyst-shaped: the one thing a client
-   * that knows only catalysts asks first. A stock worlds-content-server answers
-   * 404 here, which left `dcl-scene-cli deploy --target-server https://worlds....`
-   * with nowhere to go (a bare host resolves through `/about` ->
-   * `content.publicUrl`). Unlike `/world/{name}/about`, whose `content` block
-   * names the catalyst that serves profiles and wearables, this `content` block
-   * names this server: `/entities`, `/contents/` and `/available-content` live
-   * here. There is no world to enter at the root, so `comms` is offline and
-   * `scenesUrn` is empty.
-   */
-  get_server_about: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ServerAboutResponse"];
-        };
-      };
-    };
-  };
-  access_log: {
-    parameters: {
-      query?: {
-        limit?: number;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  list_blocked: {
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  block_wallet: {
-    parameters: {
-      path: {
-        wallet: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  unblock_wallet: {
-    parameters: {
-      path: {
-        wallet: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  /**
-   * `PUT /admin/federation/worlds/{peer_id}/{world_name}/hidden` -- **admin**.
-   * @description A **local** veto over our own publication. It sends nothing to the peer, makes no
-   * claim about the peer, and is not reversible by a subsequent poll: the poller's
-   * `DELETE` spares vetoed rows and its `UPDATE` arm does not name `hidden_since`, so a
-   * peer cannot un-hide itself by re-listing.
-   *
-   * Answers 403 to any caller without admin credentials **before** the request body is
-   * looked at, so the shape of the body is never a signal to an anonymous caller.
-   */
-  set_mirror_world_hidden: {
-    parameters: {
-      path: {
-        peer_id: string;
-        world_name: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": components["schemas"]["SetMirrorHiddenRequest"];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["SetMirrorHiddenResponse"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  /**
-   * `POST /admin/federation/worlds/refresh` -- **admin**.
-   * @description This handler can make this server contact every admitted peer, so it authenticates
-   * its own caller *as its first statement*, before reading config and before touching
-   * any peer. A route that holds privileged outbound reach and does not authenticate its
-   * caller is a confused deputy; the federated version of that mistake crosses a trust
-   * boundary and is worse.
-   */
-  refresh_federation_mirror: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["FederationRefreshResponse"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  /**
-   * `GET /admin/forwarding` -- **admin**: the upstream forwarding records, newest first.
-   * @description One record per local publish queued for `WORLDS_FORWARD_UPSTREAM_URL`; terminal records are kept 30 days. `next` is the `before` of the following page, null on the last.
-   */
-  list_forwarding: {
-    parameters: {
-      query?: {
-        /** @description Only the records in this state */
-        status?: "queued" | "sending" | "accepted" | "rejected" | "failed" | "superseded";
-        /** @description The previous page's `next` */
-        before?: number;
-        /** @description Records per page (default 100, at most 1000) */
-        limit?: number;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ForwardPage"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  /** `GET /admin/forwarding/{entity_id}` -- **admin**: one publish's forwarding record. */
-  get_forwarding: {
-    parameters: {
-      path: {
-        entity_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ForwardRecord"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  /**
-   * `POST /admin/forwarding/{entity_id}/retry` -- **admin**: queue a record again for the current upstream.
-   * @description Moves a `queued`, `rejected` or `failed` record back to `queued` for the configured upstream, due now, its attempts reset. 409 for a record in another state or an entity signed longer ago than the upstream accepts (five minutes); 503 while `WORLDS_FORWARD_UPSTREAM_URL` is unset.
-   */
-  retry_forwarding: {
-    parameters: {
-      path: {
-        entity_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ForwardRecord"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      409: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  garbage_collect: {
-    parameters: {
-      query?: {
-        /** @description Report what would be collected without deleting anything */
-        dry_run?: boolean;
-        /** @description Raise the minimum age an unreferenced file must reach; values below the server floor are ignored */
-        min_age_secs?: number;
-        /** @description Collect even when the database names no active content at all */
-        allow_empty_active_set?: boolean;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["GcResponse"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  list_worlds: {
-    parameters: {
-      query?: {
-        limit?: number;
-        offset?: number;
-        search?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  world_detail: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  world_ban_status: {
-    parameters: {
-      query: {
-        address: string;
-      };
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  disable_world: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  enable_world: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  available_content: {
-    parameters: {
-      query?: {
-        cid?: string[];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["AvailableContentEntry"][];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_content: {
-    parameters: {
-      path: {
-        hash: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/octet-stream": unknown;
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  head_content: {
-    parameters: {
-      path: {
-        hash: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  deploy_entity: {
-    requestBody: {
-      content: {
-        "application/octet-stream": number[];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["DeploySuccess"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["DeployErrors"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["DeployErrors"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["DeployErrors"];
-        };
-      };
-      408: {
-        content: {
-          "application/json": components["schemas"]["DeployRejection"];
-        };
-      };
-      413: {
-        content: {
-          "application/json": components["schemas"]["DeployErrors"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["DeployErrors"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["DeployRejection"];
-        };
-      };
-    };
-  };
-  undeploy_world: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  active_entities: {
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown[];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  /**
-   * `GET /federation/worlds/mirror` -- public.
-   * @description Serves what peers already publish on their own public `/worlds`, qualified by the
-   * peer that said it. Vetoed rows (`hidden_since IS NOT NULL`) are excluded.
-   */
-  get_federation_mirror: {
-    parameters: {
-      path: {
-        peer: string | null;
-        limit: number | null;
-        offset: number | null;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["FederationMirrorResponse"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  /**
-   * `GET /federation/worlds/peers` -- public.
-   * @description The allowlist is public by construction: every entry cites a DAO proposal.
-   */
-  get_federation_peers: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["FederationPeersResponse"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  garbage_collect_root: {
-    parameters: {
-      query?: {
-        /** @description Report what would be collected without deleting anything */
-        dry_run?: boolean;
-        /** @description Raise the minimum age an unreferenced file must reach; values below the server floor are ignored */
-        min_age_secs?: number;
-        /** @description Collect even when the database names no active content at all */
-        allow_empty_active_set?: boolean;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["GcResponse"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_comms_adapter: {
-    parameters: {
-      path: {
-        room_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["CommsAdapterResponse"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      429: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_index: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["IndexResponse"];
-        };
-      };
-      304: {
-        content: never;
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_ipfs: {
-    parameters: {
-      path: {
-        hash: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/octet-stream": unknown;
-        };
-      };
-      400: {
-        content: never;
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  head_ipfs: {
-    parameters: {
-      path: {
-        hash: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
-      };
-      400: {
-        content: never;
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  live_data: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["LiveDataResponse"];
-        };
-      };
-    };
-  };
-  livekit_webhook: {
-    requestBody: {
-      content: {
-        "text/plain": string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  status: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["StatusResponse"];
-        };
-      };
-    };
-  };
-  connected_world: {
-    parameters: {
-      path: {
-        wallet: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_about: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["AboutResponse"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_world_manifest: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_permissions: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["PermissionsResponse"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  post_permissions: {
-    parameters: {
-      path: {
-        world_name: string;
-        permission_name: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      204: {
-        content: never;
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_permissions_address: {
-    parameters: {
-      path: {
-        world_name: string;
-        permission_name: string;
-        address: string;
-      };
-    };
-    responses: {
-      204: {
-        content: never;
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_permissions_address: {
-    parameters: {
-      path: {
-        world_name: string;
-        permission_name: string;
-        address: string;
-      };
-    };
-    responses: {
-      204: {
-        content: never;
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_allowed_parcels_for_permission: {
-    parameters: {
-      query?: {
-        limit?: number;
-        offset?: number;
-      };
-      path: {
-        world_name: string;
-        permission_name: string;
-        address: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  post_permission_parcels: {
-    parameters: {
-      path: {
-        world_name: string;
-        permission_name: string;
-        address: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      204: {
-        content: never;
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_permission_parcels: {
-    parameters: {
-      path: {
-        world_name: string;
-        permission_name: string;
-        address: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      204: {
-        content: never;
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_addresses_for_parcel_permission: {
-    parameters: {
-      path: {
-        world_name: string;
-        permission_name: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_permissions_access_community: {
-    parameters: {
-      path: {
-        world_name: string;
-        communityId: string;
-      };
-    };
-    responses: {
-      204: {
-        content: never;
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_permissions_access_community: {
-    parameters: {
-      path: {
-        world_name: string;
-        communityId: string;
-      };
-    };
-    responses: {
-      204: {
-        content: never;
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  /**
-   * `GET /world/{world_name}/preview-wearables` -- the smart wearables this realm
-   * is previewing.
-   * @description The stock client fetches this on entry, takes `data[0]`, resolves the
-   * `scene.json` inside its first representation and runs it as a live scene
-   * (`LoadSmartWearablePreviewSceneSystem`). That makes the answer executable, so
-   * it is never inferred: it is exactly the URNs an operator selected for this
-   * world, or node-wide via `PREVIEW_WEARABLE_URNS`. A normally deployed world
-   * selects none and correctly answers with an empty list -- the client treats
-   * that as "not previewing anything" and moves on.
-   */
-  get_preview_wearables: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  list_scenes: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["SceneListResponse"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_scene: {
-    parameters: {
-      path: {
-        world_name: string;
-        scene_coord: string;
-      };
-    };
-    responses: {
-      200: {
-        content: never;
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_world_settings: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  update_world_settings: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      408: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-    };
-  };
-  get_worlds: {
-    parameters: {
-      query?: {
-        limit?: number;
-        offset?: number;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  world_comms: {
-    parameters: {
-      path: {
-        world_name: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["CommsAdapterResponse"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      429: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  world_scene_comms: {
-    parameters: {
-      path: {
-        world_name: string;
-        scene_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["CommsAdapterResponse"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      429: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
+    get_server_about: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerAboutResponse"];
+                };
+            };
+        };
+    };
+    access_log: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_blocked: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    block_wallet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wallet: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    unblock_wallet: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wallet: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    set_mirror_world_hidden: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                peer_id: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SetMirrorHiddenRequest"];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SetMirrorHiddenResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    refresh_federation_mirror: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FederationRefreshResponse"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_forwarding: {
+        parameters: {
+            query?: {
+                /** @description The previous page's `next` */
+                before?: number;
+                /** @description Records per page (default 100, at most 1000) */
+                limit?: number;
+                /** @description Only the records in this state */
+                status?: "queued" | "sending" | "accepted" | "rejected" | "failed" | "superseded";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForwardPage"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_forwarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForwardRecord"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    retry_forwarding: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForwardRecord"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    garbage_collect: {
+        parameters: {
+            query?: {
+                /** @description Collect even when the database names no active content at all */
+                allow_empty_active_set?: boolean;
+                /** @description Report what would be collected without deleting anything */
+                dry_run?: boolean;
+                /** @description Raise the minimum age an unreferenced file must reach; values below the server floor are ignored */
+                min_age_secs?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GcResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_worlds: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                search?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    world_detail: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    world_ban_status: {
+        parameters: {
+            query: {
+                address: string;
+            };
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    disable_world: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    enable_world: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    available_content: {
+        parameters: {
+            query?: {
+                cid?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AvailableContentEntry"][];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_content: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    head_content: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    deploy_entity: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeploySuccess"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployErrors"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployErrors"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployErrors"];
+                };
+            };
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployRejection"];
+                };
+            };
+            413: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployErrors"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployErrors"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeployRejection"];
+                };
+            };
+        };
+    };
+    undeploy_world: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    active_entities: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown[];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_federation_mirror: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                limit: number | null;
+                offset: number | null;
+                peer: string | null;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FederationMirrorResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_federation_peers: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FederationPeersResponse"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    garbage_collect_root: {
+        parameters: {
+            query?: {
+                /** @description Collect even when the database names no active content at all */
+                allow_empty_active_set?: boolean;
+                /** @description Report what would be collected without deleting anything */
+                dry_run?: boolean;
+                /** @description Raise the minimum age an unreferenced file must reach; values below the server floor are ignored */
+                min_age_secs?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GcResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_comms_adapter: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                room_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommsAdapterResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_index: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexResponse"];
+                };
+            };
+            304: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_ipfs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/octet-stream": unknown;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    head_ipfs: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                hash: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    live_data: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LiveDataResponse"];
+                };
+            };
+        };
+    };
+    livekit_webhook: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "text/plain": string;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StatusResponse"];
+                };
+            };
+        };
+    };
+    connected_world: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                wallet: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_about: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AboutResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_world_manifest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_permissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionsResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    post_permissions: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                permission_name: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_permissions_address: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                address: string;
+                permission_name: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_permissions_address: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                address: string;
+                permission_name: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_allowed_parcels_for_permission: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path: {
+                address: string;
+                permission_name: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    post_permission_parcels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                address: string;
+                permission_name: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_permission_parcels: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                address: string;
+                permission_name: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_addresses_for_parcel_permission: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                permission_name: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_permissions_access_community: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                communityId: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_permissions_access_community: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                communityId: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_preview_wearables: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    list_scenes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SceneListResponse"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_scene: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scene_coord: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_world_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    update_world_settings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            408: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_worlds: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    world_comms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommsAdapterResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    world_scene_comms: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scene_id: string;
+                world_name: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CommsAdapterResponse"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
 }
