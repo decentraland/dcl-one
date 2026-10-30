@@ -66,6 +66,15 @@ class JourneyReportTests(unittest.TestCase):
         redirected = report.Redirect().redirect_request(request, None, 302, '', {}, 'https://example.org/image')
         self.assertIsNone(redirected.get_header('Authorization'))
 
+    def test_same_run_report_requires_a_finished_producer(self):
+        run = {**RUN, 'status': 'in_progress', 'conclusion': None}
+        with patch.object(report, 'api', return_value=PR):
+            for result in ('success', 'failure'):
+                self.assertEqual(report.current_pr('org/repo', run, result), PR)
+            for result in ('', 'skipped', 'cancelled'):
+                with self.assertRaises(ValueError):
+                    report.current_pr('org/repo', run, result)
+
     def test_missing_capture_is_visible_and_html_escapes_fixture_text(self):
         with tempfile.TemporaryDirectory() as temporary:
             directory = Path(temporary)

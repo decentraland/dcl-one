@@ -1,6 +1,11 @@
 name: Scene CLI journeys
 on:
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: Existing PR journey run to publish; leave empty to capture journeys
+        type: string
+        default: ''
   pull_request:
     paths: &scene-cli-inputs
       - 'apps/dcl-scene-cli/**'
@@ -11,17 +16,18 @@ on:
       - 'flake.*'
       - 'tooling/scene-cli-*'
       - 'tooling/tests/test_scene_cli_journeys.py'
-      - '.github/workflows/scene-cli-journey*.yml'
+      - '.github/workflows/scene-cli-journeys.yml'
   push:
     branches: [main]
     paths: *scene-cli-inputs
 permissions:
   contents: read
 concurrency:
-  group: scene-cli-journeys-${{ github.ref }}
+  group: scene-cli-journeys-${{ inputs.run_id || github.ref }}
   cancel-in-progress: true
 jobs:
   journeys:
+    if: inputs.run_id == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     env:
@@ -96,3 +102,36 @@ jobs:
         with:
           path: *scene-cli-cache
           key: ${{ steps.cache.outputs.cache-primary-key }}
+  report:
+    needs: journeys
+    if: >-
+      always() && !cancelled() &&
+      ((github.event_name == 'pull_request' && github.actor != 'dependabot[bot]' &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        needs.journeys.result != 'skipped') ||
+       (github.event_name == 'workflow_dispatch' && inputs.run_id != ''))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: tooling/scene-cli-journey-report.py
+          sparse-checkout-cone-mode: false
+      - name: Publish changed journeys
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ inputs.run_id || github.run_id }}
+          PRODUCER_RESULT: ${{ github.event_name == 'pull_request' && needs.journeys.result || '' }}
+        run: |
+          if [ ! -f tooling/scene-cli-journey-report.py ]; then
+            echo '::notice::The publisher becomes available after this workflow is merged.'
+            exit 0
+          fi
+          python3 tooling/scene-cli-journey-report.py publish --repo "$REPO" --run-id "$RUN_ID" --producer-result "$PRODUCER_RESULT"

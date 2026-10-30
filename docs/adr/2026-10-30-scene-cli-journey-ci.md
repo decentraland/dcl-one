@@ -9,11 +9,13 @@ SDK7 scenes and local HTTP fixtures. Screenshots, manifests, logs and a standalo
 before/after HTML report are workflow artifacts. Existing visual defects are
 recorded, not asserted as required behavior; functional errors fail the check.
 
-A separate `workflow_run` publisher checks out only its trusted default-branch
-script. It validates the workflow, current PR association, revisions, archive
-limits and PNG paths before publishing images. It never executes downloaded
-artifact code. Fork PRs receive the same reports without write credentials in
-the build job.
+One workflow YAML has separate capture and report jobs. Only the report job gets
+PR-write permission; it checks out its script from the default branch and never
+executes artifact code. It validates workflow/PR identity, revisions, archive
+limits and PNG paths. The report job can publish a completed capture job while
+their shared workflow run is still active. Fork and Dependabot PRs retain
+artifacts; maintainers can dispatch publication by run ID with a write-capable
+token. No privileged PR trigger is needed.
 
 Only changed journeys appear in one updated PR comment, grouped in collapsed
 `<details>` sections. Images use GitHub's direct user-attachment storage, the same

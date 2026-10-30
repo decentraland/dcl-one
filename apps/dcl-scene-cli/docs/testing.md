@@ -72,8 +72,11 @@ an existing comment is updated to clear stale results. Comparisons mask carets,
 clock labels, request counts and minted entity IDs; uploaded screenshots are
 unmodified. Live wallets, remote deployment,
 World mutations, voice and external clients/editors remain unverified boundaries.
-The publisher workflow must exist on the default branch before `workflow_run`
-comments start; a maintainer can bootstrap the first PR with:
+Capture and publishing are separate jobs in `.github/workflows/scene-cli-journeys.yml`.
+Automatic comments apply to same-repository PRs after the publisher script is on
+the default branch. Fork and Dependabot PRs retain artifacts; a maintainer can
+dispatch the same workflow with its `run_id` input to publish a completed run.
+The first PR can bootstrap publication locally with:
 
 ```sh
 python3 tooling/scene-cli-journey-report.py publish --repo OWNER/REPO --run-id RUN_ID

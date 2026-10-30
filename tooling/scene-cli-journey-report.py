@@ -133,9 +133,10 @@ def pages(endpoint):
     raise ValueError('GitHub pagination exceeds limit')
 
 
-def current_pr(repo, run):
-    if run['event'] != 'pull_request' or run['status'] != 'completed' or run['path'] != WORKFLOW:
-        raise ValueError('Expected a completed pull-request journey workflow')
+def current_pr(repo, run, producer_result=''):
+    ready = run['status'] == 'completed' or (run['status'] == 'in_progress' and producer_result in ('success', 'failure'))
+    if run['event'] != 'pull_request' or not ready or run['path'] != WORKFLOW:
+        raise ValueError('Expected a pull-request journey workflow with a finished producer')
     candidates = run.get('pull_requests') or api(f'repos/{repo}/commits/{run["head_sha"]}/pulls')
     matches = []
     for candidate in candidates:
@@ -191,15 +192,17 @@ def comment(repo, run, pr, results, urls, artifact):
     return text
 
 
-def publish(repo, run_id):
+def publish(repo, run_id, producer_result=''):
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
         raise ValueError('Invalid repository')
     prefix = f'repos/{repo}'
     run = api(f'{prefix}/actions/runs/{run_id}')
-    pr = current_pr(repo, run)
+    pr = current_pr(repo, run, producer_result)
     if not pr:
         print('No current open pull request; skipping stale results')
         return
+    if run['status'] == 'in_progress':
+        run['conclusion'] = producer_result
     artifacts = api(f'{prefix}/actions/runs/{run_id}/artifacts?per_page=100')['artifacts']
     matching = [a for a in artifacts if a['name'] == ARTIFACT and not a['expired']]
     if len(matching) != 1 or matching[0]['size_in_bytes'] > 100_000_000:
@@ -252,8 +255,9 @@ if __name__ == '__main__':
     publication = commands.add_parser('publish')
     publication.add_argument('--repo', required=True)
     publication.add_argument('--run-id', required=True, type=int)
+    publication.add_argument('--producer-result', default='', choices=('', 'success', 'failure'))
     args = parser.parse_args()
     if args.command == 'render':
         render(args.directory, args.directory / 'report.html')
     else:
-        publish(args.repo, args.run_id)
+        publish(args.repo, args.run_id, args.producer_result)
