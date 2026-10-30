@@ -102,8 +102,9 @@ class SelectionTest(unittest.TestCase):
                 self.assertEqual({lane for lane in (*ci.LANES, 'native-matrix', 'scenes')
                                   if selected[lane]}, {'web'})
 
-    def test_web_files_the_browser_leg_tests_read_also_select_the_test_suite(self):
-        for name in ('deploy/web/engine/perf_stream.js', 'react-web/src/features/auth/sso.ts'):
+    def test_web_files_the_harness_tests_read_also_select_the_test_suite(self):
+        for name in ('deploy/web/engine/perf_stream.js', 'react-web/src/features/auth/sso.ts',
+                     'react-web/src/lib/hudAutomation.ts'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write('rendering/bevy-explorer/source/' + name, 'changed')

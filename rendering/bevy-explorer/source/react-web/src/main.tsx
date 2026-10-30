@@ -4,6 +4,7 @@ import '@fontsource-variable/inter/index.css' // self-hosted Inter (matches the 
 import { App } from './App'
 import { registerCoiServiceWorker } from './lib/coiServiceWorker'
 import { installCefNativeBridge } from './lib/cefNativeBridge'
+import { installHudAutomation } from './lib/hudAutomation'
 import { installLocalNetworkFetch } from './lib/localNetworkFetch'
 import { installHudScale } from './lib/hudScale'
 import { countLaunch } from './lib/launchCount'
@@ -20,6 +21,10 @@ installLocalNetworkFetch()
 
 // Keep --ui-scale in sync with the viewport (DPI-correct, like Unity's CanvasScaler).
 installHudScale()
+
+// The HUD's test commands: on the web engine.js runs them in this page (natively the engine asks
+// over window.cef, see cefNativeBridge).
+if (!isNativeHud()) installHudAutomation()
 
 let redirecting = false
 // NATIVE (?native=1): bevy renders the 3D world *behind* this transparent webview, so the page must

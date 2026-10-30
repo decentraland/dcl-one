@@ -6,6 +6,7 @@
 // No-op when window.cef is absent (web).
 
 import { bridgeChannelName } from '../engine/protocol'
+import { answerHudRequest, answerHudWait, type HudRequest } from './hudAutomation'
 
 interface CefApi {
   emit: (payload: unknown) => void
@@ -74,6 +75,23 @@ export function installCefNativeBridge(): void {
       pending.set(id, { resolve, reject })
       cef.emit({ to: 'engine', kind: 'consoleCommand', id, line })
     })
+
+  // The engine's /hud_* test commands (src/react_hud_cef/automation.rs): it asks which control a
+  // selector names and whether a user could click it, then clicks and types through CEF itself.
+  // A wait is answered when its state holds, or with an error when its time is up.
+  cef.listen('hudAutomation', (payload) => {
+    let request: HudRequest
+    try {
+      request = JSON.parse(String(payload)) as HudRequest
+    } catch {
+      return /* malformed request; the engine times it out */
+    }
+    // JSON.parse('null') and JSON.parse('7') succeed: not a request either
+    if (!request || typeof request !== 'object' || Array.isArray(request)) return
+    const reply = (fields: object): void => cef.emit({ to: 'engine', kind: 'hudAutomationReply', id: request.id, ...fields })
+    if (request.op === 'wait') void answerHudWait(request).then(reply)
+    else reply({ result: answerHudRequest(request) })
+  })
 }
 
 // The HUD's stored values (lib/prefs). Natively the engine keeps them: CEF's profile is per client
