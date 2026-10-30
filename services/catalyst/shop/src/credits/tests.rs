@@ -2529,7 +2529,7 @@ async fn a_five_dollar_pack_signs_the_mana_of_five_hundred_cents_on_the_authoriz
     );
     assert!(
         signed < ManaWei::from_mana(11).get(),
-        "$5 at 0.5 USD/MANA is 10 MANA, 10.2 with the buffer, not the 153 the 100-cent peg signed: {signed}"
+        "$4.95 at 0.5 USD/MANA is 9.9 MANA, ~10.1 with the buffer, not the 153 the 100-cent peg signed: {signed}"
     );
     let lines: i64 = sqlx::query_scalar("SELECT count(*) FROM credits.authorization_lines l JOIN credits.authorizations a ON a.id = l.authorization_id WHERE a.address = $1 AND l.sale_kind = 'primary_mint' AND l.asset_kind = 'wearable'").bind(&wallet.address).fetch_one(&pool).await.unwrap();
     assert_eq!(
