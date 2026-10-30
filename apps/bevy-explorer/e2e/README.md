@@ -80,7 +80,7 @@ literals. A scenario that changes account state restores it.
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each
-test is in the spec file's header. Port 37, Partial 32, Gap 18, Drop 2.
+test is in the spec file's header. Port 40, Partial 32, Gap 15, Drop 2.
 
 | Unity fixture (tests) | Spec | Port | Partial | Gap | Drop | What changed |
 | --- | --- | --- | --- | --- | --- | --- |
