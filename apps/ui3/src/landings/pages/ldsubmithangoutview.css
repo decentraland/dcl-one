@@ -42,6 +42,16 @@
   display: flex;
   gap: 12px;
 }
+.submit-hangout__associations { display: flex; flex-direction: column; gap: 12px; }
+.submit-hangout__associations .submit-hangout__fieldlabel { flex: initial; }
+.submit-hangout__assetpicker { border: 1px solid rgba(255,255,255,.2); border-radius: 8px; padding: 12px; min-width: 0; }
+.submit-hangout__assets { list-style: none; padding: 0; margin: 12px 0 0; }
+.submit-hangout__asset { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px; color: inherit; background: transparent; border: 1px solid rgba(255,255,255,.2); border-radius: 6px; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.submit-hangout__asset span { min-width: 0; }
+.submit-hangout__asset small { display: block; opacity: .7; }
+.submit-hangout__asset img, .submit-hangout figure img { object-fit: cover; }
+.submit-hangout__controls figure { margin: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.submit-hangout__controls :focus-visible { outline: 2px solid #ff2d55; outline-offset: 3px; }
 
 .submit-hangout__fieldlabel {
   display: flex;

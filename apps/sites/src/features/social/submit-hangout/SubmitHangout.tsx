@@ -6,6 +6,8 @@ import { SitesChromeMaybe } from "@ui/web/frames/SitesChrome";
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
 import { isStepValid, type HangoutDraft } from "@/data/lib/catalyst/landings/submit-hangout";
+import type { HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
+import HangoutAssociations from "./HangoutAssociations";
 import {
   hangoutMachine,
   emitStepCompleted,
@@ -33,6 +35,10 @@ type SubmitHangoutProps = {
   signedIn?: boolean;
   onSignIn?: () => void;
   upload?: UploadFn;
+  options?: HangoutOptions | null;
+  canEditAny?: boolean;
+  privateFieldsEditable?: boolean;
+  canChangeCommunity?: boolean;
 };
 
 export default function SubmitHangout({
@@ -47,6 +53,10 @@ export default function SubmitHangout({
   signedIn = false,
   onSignIn,
   upload,
+  options = null,
+  canEditAny = false,
+  privateFieldsEditable = mode === "create",
+  canChangeCommunity = mode === "create",
 }: SubmitHangoutProps) {
   const [searchParams] = useSearchParams();
 
@@ -66,6 +76,10 @@ export default function SubmitHangout({
       signedIn={signedIn}
       onSignIn={onSignIn}
       upload={upload}
+      options={options}
+      canEditAny={canEditAny}
+      privateFieldsEditable={privateFieldsEditable}
+      canChangeCommunity={canChangeCommunity}
     />
   );
 }
@@ -82,6 +96,10 @@ type InnerProps = {
   signedIn: boolean;
   onSignIn?: () => void;
   upload?: UploadFn;
+  options: HangoutOptions | null;
+  canEditAny: boolean;
+  privateFieldsEditable: boolean;
+  canChangeCommunity: boolean;
 };
 
 function uiStateFor(value: HangoutStateId): "signin" | "success" | "form" {
@@ -102,6 +120,10 @@ function SubmitHangoutInner({
   signedIn,
   onSignIn,
   upload,
+  options,
+  canEditAny,
+  privateFieldsEditable,
+  canChangeCommunity,
 }: InnerProps) {
   const [, setSearchParams] = useSearchParams();
 
@@ -155,7 +177,8 @@ function SubmitHangoutInner({
 
   const isForm = !needsSignIn && uiStateFor(value) === "form";
   const formStepIndex = FORM_ORDER.indexOf(value);
-  const canAdvanceForm = !uploading && (value === "cover" || isStepValid(value, d));
+  const communityAllowed = !d.communityId || (mode === "edit" && d.communityId === draft?.communityId) || Boolean(options?.communities.some((community) => community.id === d.communityId));
+  const canAdvanceForm = !uploading && (value === "cover" || (isStepValid(value, d) && (value !== "details" || communityAllowed)));
 
   return (
     <SitesChromeMaybe active="whatson">
@@ -186,8 +209,11 @@ function SubmitHangoutInner({
               onEdit={(patch) => send({ type: "EDIT", patch })}
               onUpload={upload ? (file, vertical) => { void uploadImage(file, vertical); } : undefined}
               uploading={uploading}
-              editing={mode === "edit"}
+              privateFieldsEditable={privateFieldsEditable}
+              options={options}
             />
+            {value === "details" && <HangoutAssociations draft={d} options={options} canEditAny={canEditAny} canChangeCommunity={canChangeCommunity} onEdit={(patch) => send({ type: "EDIT", patch })} />}
+            {value === "details" && !communityAllowed && <p role="alert">Choose a community you manage, or select None.</p>}
             {uploadError && <p role="alert">{uploadError}</p>}
             {uploading && <p role="status">Uploading image…</p>}
             <div className="submit-hangout__nav">
@@ -300,7 +326,8 @@ function StepFields({
   onEdit,
   onUpload,
   uploading,
-  editing,
+  privateFieldsEditable,
+  options,
 }: {
   step: HangoutStateId;
   draft: HangoutDraft;
@@ -309,7 +336,8 @@ function StepFields({
   onEdit: (patch: Partial<HangoutDraft>) => void;
   onUpload?: (file: File, vertical: boolean) => void;
   uploading: boolean;
-  editing: boolean;
+  privateFieldsEditable: boolean;
+  options: HangoutOptions | null;
 }) {
   if (step === "cover") {
     return (
@@ -319,8 +347,8 @@ function StepFields({
           <label className="submit-hangout__fieldlabel">Upload cover image<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file, false); }} /></label>
           <label className="submit-hangout__fieldlabel">Upload vertical cover<input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) onUpload(file, true); }} /></label>
         </>}
-        <label className="submit-hangout__fieldlabel">Cover image URL<input className="submit-hangout__field" type="url" value={draft.imagePreviewUrl ?? ""} onChange={(event) => onEdit({ imagePreviewUrl: event.target.value || null })} /></label>
-        <label className="submit-hangout__fieldlabel">Vertical cover image URL<input className="submit-hangout__field" type="url" value={draft.verticalImagePreviewUrl ?? ""} onChange={(event) => onEdit({ verticalImagePreviewUrl: event.target.value || null })} /></label>
+        {draft.imagePreviewUrl && <figure><img src={draft.imagePreviewUrl} alt="Hangout cover" width={240} height={120} /><button type="button" className="submit-hangout__btn" onClick={() => onEdit({ imagePreviewUrl: null })}>Remove cover image</button></figure>}
+        {draft.verticalImagePreviewUrl && <figure><img src={draft.verticalImagePreviewUrl} alt="Vertical hangout cover" width={120} height={180} /><button type="button" className="submit-hangout__btn" onClick={() => onEdit({ verticalImagePreviewUrl: null })}>Remove vertical cover</button></figure>}
       </div>
     );
   }
@@ -372,9 +400,9 @@ function StepFields({
               : "No categories are available right now \u{2014} you can continue without one."}
           </p>
         )}
-        {!editing && <>
+        {privateFieldsEditable && <>
           <label className="submit-hangout__fieldlabel">Contact email<input className="submit-hangout__field" type="email" value={draft.contact} onChange={(event) => onEdit({ contact: event.target.value })} /></label>
-          <label className="submit-hangout__fieldlabel">Details for moderators<textarea className="submit-hangout__field" value={draft.details} maxLength={5000} onChange={(event) => onEdit({ details: event.target.value })} /></label>
+          <label className="submit-hangout__fieldlabel">Details for moderators<textarea aria-label="Details for moderators" className="submit-hangout__field" value={draft.details} maxLength={5000} onChange={(event) => onEdit({ details: event.target.value })} /></label>
         </>}
       </div>
     );
@@ -403,10 +431,13 @@ function StepFields({
             <input
               className="submit-hangout__field"
               type="text"
+              list="hangout-worlds"
               value={draft.worldName}
               placeholder="my-world.dcl.eth"
               onChange={(e) => onEdit({ worldName: e.target.value })}
             />
+            <datalist id="hangout-worlds">{options?.worlds.map((world) => <option value={world} key={world} />)}</datalist>
+            {options?.worldsError && <span className="submit-hangout__hint">World suggestions could not load. You can enter the world name.</span>}
           </label>
         ) : (
           <div className="submit-hangout__coords">
