@@ -572,6 +572,7 @@ CREATE TABLE social.notifications (
     read boolean NOT NULL DEFAULT false,
     read_at timestamp(3) without time zone,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    in_app boolean NOT NULL DEFAULT true,
     CONSTRAINT notifications_pkey PRIMARY KEY (id),
     CONSTRAINT notifications_read_check CHECK ((read AND read_at IS NOT NULL) OR (NOT read AND read_at IS NULL))
 );
@@ -592,6 +593,15 @@ CREATE UNIQUE INDEX notifications_broadcast_uidx
 -- Explicit delivery state for the out-of-process channels; the worker claims
 -- a bounded due set (`state = 'pending' AND next_attempt_at <= $now`) with
 -- FOR UPDATE SKIP LOCKED, sends outside the transaction, records the outcome.
+-- One bounded occurrence scan cursor per notice kind. Initial installation
+-- starts at wall-clock now, so catalogue history is never replayed as notices.
+CREATE TABLE social.event_notification_cursor (
+    kind text PRIMARY KEY,
+    due_at timestamp without time zone NOT NULL,
+    event_id text NOT NULL DEFAULT '',
+    CONSTRAINT event_notification_cursor_kind_check CHECK (kind IN ('events_starts_soon', 'events_started'))
+);
+
 CREATE TABLE social.notification_deliveries (
     notification_id uuid NOT NULL REFERENCES social.notifications (id) ON DELETE CASCADE,
     channel text NOT NULL,
