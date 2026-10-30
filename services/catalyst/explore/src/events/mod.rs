@@ -9,6 +9,7 @@ pub mod categories;
 pub mod handlers;
 pub mod mirror;
 pub mod moderation;
+pub mod notifications;
 pub mod posters;
 pub mod profiles;
 mod recurrence;

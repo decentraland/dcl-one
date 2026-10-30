@@ -77,6 +77,7 @@ fn list_sql(with_from: bool, only_unread: bool, touch: bool) -> String {
                    metadata
             FROM social.notifications
             WHERE address = $1{from_cond}{unread_cond}
+              AND in_app IS TRUE
             ORDER BY occurred_at DESC, id DESC
             LIMIT {limit}"
     )
@@ -148,8 +149,12 @@ where
     let sql = format!(
         r#"
         WITH ins AS (
-            INSERT INTO social.notifications (id, address, type, metadata, occurred_at)
-            SELECT * FROM UNNEST($1::uuid[], $2::text[], $3::text[], $4::jsonb[], $5::timestamp[])
+            INSERT INTO social.notifications (id, address, type, metadata, occurred_at, in_app)
+            SELECT n.*, NOT COALESCE((s.details->>'ignore_all_in_app')::boolean, false)
+                        AND COALESCE((s.details->'message_type'->n.type->>'in_app')::boolean, true)
+            FROM UNNEST($1::uuid[], $2::text[], $3::text[], $4::jsonb[], $5::timestamp[])
+                AS n(id,address,type,metadata,occurred_at)
+            LEFT JOIN social.subscriptions s ON s.address = n.address
             ON CONFLICT (id) DO NOTHING
             RETURNING id, address, type
         )
