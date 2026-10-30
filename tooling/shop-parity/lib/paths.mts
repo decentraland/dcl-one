@@ -5,8 +5,10 @@ import { fileURLToPath } from "node:url";
 export const TOOL = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const ROOT = resolve(TOOL, "../..");
 export const STATE = join(ROOT, "state", "shop-parity");
-export const RECORDINGS = join(TOOL, "recordings");
-export const GATE_FILE = join(TOOL, "gate.json");
+/** Recordings hold real answers from the production services: they stay in state/, out of git. */
+export const RECORDINGS = join(STATE, "recordings");
+/** The pages found identical on this machine's recording. */
+export const GATE_FILE = join(STATE, "gate.json");
 export const UI3 = join(ROOT, "apps", "ui3");
 export const SITES = join(ROOT, "apps", "sites");
 

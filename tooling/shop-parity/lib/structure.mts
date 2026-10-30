@@ -161,7 +161,7 @@ export function compareStructure(ref: Collected, one: Collected, opts: { toleran
   const diffs = [...structural, ...texts];
   if (ref.height !== one.height) diffs.unshift({ id: "page", kind: "element", status: "changed", changes: [`height ${ref.height}→${one.height}`] });
   for (const d of diffs) {
-    const hit = (opts.expected ?? []).find((e) => e.match.test(d.id) && (!e.status || e.status === d.status) && (!e.only || (d.changes.length > 0 && d.changes.every((c) => e.only!.some((w) => c.startsWith(w))))));
+    const hit = (opts.expected ?? []).find((e) => e.match.test(d.id) && (!e.status || e.status === d.status) && (!e.only || (d.changes.length > 0 && d.changes.every((c) => e.only!.some((w) => c === w || c.startsWith(`${w} `))))));
     if (hit) d.expected = hit.why;
   }
   return diffs.sort((a, b) => (a.ref?.y ?? a.one?.y ?? -1) - (b.ref?.y ?? b.one?.y ?? -1) || (a.ref?.x ?? a.one?.x ?? 0) - (b.ref?.x ?? b.one?.x ?? 0));

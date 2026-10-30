@@ -4,9 +4,14 @@ Compares `apps/ui3/src/shop` with the Shop UI at the `decentraland/shop` revisio
 [`reference.json`](reference.json), page by page, on the same recorded data. The pin is the revision
 production serves on the date it names; moving it means recording a new set against it.
 
+The tool is committed; the data it compares is not. Recordings, the gate and every run stay under
+`state/shop-parity/` (gitignored) on the machine that made them, so numbers quoted elsewhere name the
+recording they were measured on.
+
 ```sh
 pnpm install                           # playwright-core; then `pnpm exec playwright-core install chromium`
 node reference.mts                     # check out and build the pinned Shop UI under state/
+node record.mts --set <date>           # record the answers both sides read (see Recording)
 node capture.mts --build               # build apps/sites, compare every page and viewport, print the summary
 node gate.mts                          # fail if a page marked identical is not
 node gate.mts --promote                # mark the pages that are identical now
@@ -14,9 +19,11 @@ node inspect.mts item desktop dcl-one 'document.title'   # evaluate in one side'
 pnpm test && pnpm typecheck
 ```
 
-Node 24+, with `apps/ui3` and `apps/sites` installed (`pnpm install` in each). Without `--build` the
-existing `apps/sites/build` is compared (the report names the commit, `+uncommitted` when
-`apps/ui3/src` or `apps/sites/src` differ from it). `--pages overview,items` and `--viewports desktop`
+Node 24+, with `apps/ui3` and `apps/sites` installed (`pnpm install` in each). `--build` stamps
+`apps/sites/build` with the sources it was built from (the commit, `+uncommitted` when `apps/ui3/src`
+or `apps/sites/src` differ from it); without `--build`, a run refuses a build whose stamp is not the
+current sources. The gate also refuses uncommitted sources it did not just build, and promotes only
+from a commit. `--pages overview,items` and `--viewports desktop`
 narrow a run. `CHROMIUM_BIN` picks the browser; both sides always use the same one. The three
 loopback servers listen on 5176–5178 (`SHOP_PARITY_PORT_BASE` moves them) and answer from the
 recording only through the harness's own browser routing; a page opened on them in another browser
@@ -24,7 +31,7 @@ calls the real services and is not what is compared.
 
 ## What a run does
 
-- **Same data on both sides.** `recordings/<set>/` holds the API answers both UIs read, keyed by
+- **Same data on both sides.** `state/shop-parity/recordings/<set>/` holds the API answers both UIs read, keyed by
   service, path, canonical query and request body. The reference shop is served from its build and
   every request it makes off its origin is answered from the recording; dcl-one runs as the built
   `apps/sites` tree (`sites-preview.mts`) whose node is a replay of the same recording, so SSR and
@@ -51,27 +58,21 @@ calls the real services and is not what is compared.
 
 A page×viewport is identical when no pixel differs outside its masks and regions, every
 structural difference is a declared expectation, and every request the recording could not answer
-or that went to a host the harness does not know is declared by the page (`unrecorded`). `gate.json` lists the identical ones; the gate
+or that went to a host the harness does not know is declared by the page (`unrecorded`).
+`state/shop-parity/gate.json` lists the identical ones and the recording they were found on; the gate
 fails when one of them stops being identical. An expectation records a difference, it does not
 approve one: each names the rule or code behind it.
 
 ## Recording
 
 ```sh
-node record.mts --set <date>           # read the answers once from production, anonymize them
-node record.mts --set <date> --fill    # replay, read what was missing once, re-anonymize
-node record.mts --set <date> --assets  # fetch the recording's web fonts (kept out of git)
+node record.mts --set <date>           # read the answers once from production
+node record.mts --set <date> --fill    # replay, read what the replay could not answer, once
 ```
 
-Recording drives both UIs against the production services (public reads only). The raw answers
-and the real-to-fake map stay in `state/shop-parity/raw/<set>/`. What is committed is anonymized:
-addresses become `0xfa4e…` sequence numbers (ABI-aware in JSON-RPC, so numbers stay numbers),
-signatures and salts same-length filler, content ids same-length stand-ins, people's names, bios,
-NAMEs and ENS names same-shape ASCII pseudo-text in whatever script they were written, emails and
-off-site links `example.org`, the account, community or world a first-party link points at a
-stand-in, and birth dates zero; constants either app ships in its own code are kept. The write is
-refused if any replaced value survives anywhere in the output, if a person's text comes out
-unchanged, if JSON-RPC data is not in whole ABI words, or if any address, content id, NAME, email,
-token or birth date is left that is not a stand-in or a bundled constant. dcl-one's
+Recording drives both UIs against the production services (public reads only) and keeps their
+answers in `state/shop-parity/recordings/<set>/`. They are real public data (profiles, listings,
+wallets), which is why they are never committed. An answer recorded as an error is listed when the
+recording ends: it would replay as the same error on both sides and hide the page it feeds. dcl-one's
 `POST /shop-api/v1/purchase-offers` has no upstream; while recording it is answered from the recorded
 listing the way `services/catalyst/shop/src/mana/quote.rs` answers a signed-out primary trade.

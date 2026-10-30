@@ -68,7 +68,8 @@ app.use((_incoming: unknown, _outgoing: unknown, next: () => void) => {
 });
 app.use((incoming: any, outgoing: any, next: () => void) => {
   if (!MOUNTS.some((m) => incoming.path === `/${m}` || incoming.path.startsWith(`/${m}/`))) return next();
-  const target = new URL(incoming.url, upstream);
+  // From the path only: an absolute-form request line must not make the preview relay to another host.
+  const target = new URL(incoming.originalUrl.startsWith("/") ? incoming.originalUrl : "/", upstream);
   const req = request(target, { method: incoming.method, headers: { ...incoming.headers, host: target.host, "accept-encoding": "identity" } }, (res) => {
     outgoing.status(res.statusCode ?? 502);
     for (const [key, value] of Object.entries(res.headers)) if (value && !["transfer-encoding", "connection"].includes(key)) outgoing.setHeader(key, value);

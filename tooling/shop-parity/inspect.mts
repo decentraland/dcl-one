@@ -19,7 +19,6 @@ if (!target || !vpName || (side !== "reference" && side !== "dcl-one") || !expr)
   process.exit(2);
 }
 const recording = new Recording(join(RECORDINGS, process.env.SHOP_PARITY_SET ?? defaultSet()));
-await recording.fetchAssets();
 const spec = PAGES.find((p) => p.id === target);
 const targets = recording.manifest?.targets ?? {};
 const now = Date.parse(recording.manifest!.recordedAt);

@@ -17,7 +17,7 @@ export async function routeSide(context: BrowserContext, recording: Recording, s
   // `route` does not see WebSockets: close every one before it connects, and list it as blocked.
   await context.routeWebSocket(/.*/, (ws) => {
     log.blocked.push(`ws:${new URL(ws.url()).host}`);
-    void ws.close();
+    ws.close().catch(() => {});
   });
   await context.route("**/*", async (route: Route) => {
     const request = route.request();

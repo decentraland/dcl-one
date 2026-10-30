@@ -1,10 +1,9 @@
 // A recording: upstream answers keyed by (method, service, path, canonical query, request body),
 // stored once and served to both sides. Replay never reaches the network; record mode reads the
-// production service on a miss and keeps the raw answer (gitignored) for anonymize.mts.
+// production service on a miss and keeps its answer. Recordings live under state/ and are not committed.
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { STATE } from "./paths.mts";
 import { imageSize, placeholderPng } from "./png.mts";
 import { canonicalQuery, ORIGINS, type Service } from "./services.mts";
 
@@ -19,9 +18,7 @@ export type Entry = {
   status: number;
   contentType: string;
   /** File under bodies/, named by content hash. */
-  body?: string;
-  /** A third-party binary (a web font) kept out of git: fetched from url once, checked by sha256. */
-  external?: { url: string; sha256: string };
+  body: string;
 };
 
 export type Manifest = {
@@ -30,9 +27,8 @@ export type Manifest = {
   source: string;
   reference: string;
   dclOne: string;
-  /** Page targets discovered while recording (item URLs and the like), already anonymized. */
+  /** Page targets discovered while recording (item URLs and the like). */
   targets: Record<string, string>;
-  anonymization: string;
   entries: number;
 };
 
@@ -51,7 +47,6 @@ export function canonicalJson(v: unknown): string {
 }
 
 /** Google Fonts serves files by user agent; refetching uses the headless shell's own. */
-const FONT_UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/153.0.0.0 Safari/537.36";
 
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
 
@@ -72,8 +67,8 @@ function parseBody(body: Buffer | undefined): unknown {
 }
 
 /**
- * Lookups the apps batch by id (and batch differently once the ids are anonymized, since they
- * sort them first): answered row by row from every recorded batch of the same route.
+ * Lookups the apps batch by id, each app its own way: answered row by row from every recorded batch
+ * of the same route.
  */
 type Batched = {
   service: Service;
@@ -163,39 +158,11 @@ export class Recording {
   }
 
   body(e: Entry): Buffer {
-    if (e.external) {
-      const file = join(STATE, "assets", e.external.sha256);
-      if (!existsSync(file)) throw new Error(`asset ${e.external.url} is not fetched: run record.mts --assets`);
-      return readFileSync(file);
-    }
-    return readFileSync(join(this.dir, "bodies", e.body!));
+    return readFileSync(join(this.dir, "bodies", e.body));
   }
 
-  /** Fetch every external asset that is missing, refusing bytes that do not match the recording. */
-  async fetchAssets(): Promise<number> {
-    let fetched = 0;
-    for (const e of this.entries.values()) {
-      if (!e.external) continue;
-      const file = join(STATE, "assets", e.external.sha256);
-      if (existsSync(file)) continue;
-      const res = await fetch(e.external.url, { headers: { "user-agent": FONT_UA }, signal: AbortSignal.timeout(30_000) });
-      const bytes = Buffer.from(await res.arrayBuffer());
-      const got = sha(bytes);
-      if (got !== e.external.sha256) throw new Error(`${e.external.url}: sha256 ${got}, recorded ${e.external.sha256}`);
-      mkdirSync(join(STATE, "assets"), { recursive: true });
-      writeFileSync(file, bytes);
-      fetched++;
-    }
-    return fetched;
-  }
-
-  putBody(e: Omit<Entry, "body" | "external">, body: Buffer): Entry {
+  putBody(e: Omit<Entry, "body">, body: Buffer): Entry {
     return this.store(e, body);
-  }
-
-  putExternal(e: Entry): Entry {
-    this.entries.set(e.key, e);
-    return e;
   }
 
   private note(key: string, side: string) {

@@ -139,6 +139,7 @@ export async function startSites(port: number, upstream: string, env: Record<str
     }
     try {
       const r = await fetch(`http://127.0.0.1:${port}/robots.txt`, { signal: AbortSignal.timeout(2000) });
+      await r.body?.cancel();
       if (r.status < 500) {
         // A later exit would otherwise surface only as refused connections on every page after it.
         child.once("exit", (code, signal) => {

@@ -10,6 +10,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 import { childEnv } from "./lib/env.mts";
 import { referenceDir, referenceDist, referencePin } from "./lib/paths.mts";
 
@@ -81,7 +82,7 @@ export function prepareReference(force = false): { dist: string; stamp: Record<s
   return { dist, stamp };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (import.meta.url === pathToFileURL(process.argv[1]!).href) {
   const { dist, stamp } = prepareReference(process.argv.includes("--force"));
   console.log(`reference ${stamp.revision} built at ${dist}`);
 }
