@@ -61,6 +61,10 @@ beforeEach(() => {
 });
 
 describe("/places/:id likes and favorites", () => {
+  it("wires the visible travel control to the current parcel", () => {
+    expect(renderRoute().jumpHref).toBe("/play/?position=34%2C17");
+  });
+
   it("hands PlaceDetail the place id and saves signed PATCHes to the node's places API", async () => {
     auth.identity = IDENTITY;
     auth.isConnected = true;
