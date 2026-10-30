@@ -22,7 +22,7 @@ Native dev loop: in the source directory, `just setup-cef`, then `just native-re
 
 CI caches WASM outputs in `.cache/bevy-engine`; a restore that fails its identity, inventory or
 checksum check fails the build. Native CI uses Rust 1.99.1 and `protoc` 26.1; see
-the current measurement evidence in Notion before claiming time savings.
+the current measurement evidence in the task report before claiming time savings.
 
 Analytics: every environment reports to one Segment source, keyed by `BEVY_SEGMENT_WRITE_KEY` (a
 repository variable; unset, the engine keeps the key it shared with the mobile client). Every event
@@ -103,7 +103,7 @@ For timing queries, image jobs now appear under `Bevy Explorer / CI` as `APIs + 
 non-Linux package jobs use `Headless packages / build (...)`. Linux package compilation is the
 `Headless Smoke` job; count it once rather than adding a second compilation series.
 Graphical tests do not run automatically on PRs or block builds; check their verdict and
-readiness (current evidence in Notion) before claiming graphical acceptance. Manual dispatch accepts a
+readiness (evidence supplied for the task) before claiming graphical acceptance. Manual dispatch accepts a
 chosen ref; use `--ref main` for main validation. The default `full` suite runs all 14 scenes;
 `snapshots` selects three diagnostic scenes and cannot establish acceptance.
 
@@ -117,7 +117,7 @@ unused sky cubemap. Native UI is hidden and the background clock is frozen; scen
 scene-authored time overrides remain active. Captures wait for completed render frames without
 pending shader pipelines. Native video textures are held until GPU readback, then queued updates
 resume. References keep their CPU pixels; invalid images fail comparison. References, thresholds
-and allowed failures are unchanged; see measurements (current evidence in Notion).
+and allowed failures are unchanged; see measurements (evidence supplied for the task).
 
 ## Naming and publication
 
@@ -184,7 +184,7 @@ update CPU buckets provide additional context.
 
 Changes to `SceneResourceCounters` require publishing the headless engine and
 `dcl_deno_ipc` sidecar from the same build, then updating the server's exact
-`@dcl-regenesislabs/bevy-headless-server` dependency. Coordinate the server and telemetry schema rollout before updating that pin; resolve deployment-specific revisions and acceptance evidence from the current Notion records. Review alerts on `scene_stats_reporting_scenes`: stalled
+`@dcl-regenesislabs/bevy-headless-server` dependency. Coordinate the server and telemetry schema rollout before updating that pin; resolve deployment-specific revisions and acceptance evidence from the current records supplied for the task. Review alerts on `scene_stats_reporting_scenes`: stalled
 scenes stop producing samples and leave that count after 60 seconds. The server preserves source
 windows through OTLP; receive-timed legacy observations cannot establish CPU
 utilization. Metrics serialization, execution baselines and CPU bucket tests run with:

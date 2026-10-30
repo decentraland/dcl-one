@@ -98,7 +98,7 @@ conditions. Per-process RSS can double-count shared pages, and a sample without
 clients is not comparable to one with clients. Choose a currently supported
 profiler for the platform and record its invocation.
 
-Save run results, benchmark values and remaining acceptance work in Notion.
+Save run results, benchmark values and remaining acceptance work in the task report.
 Do not carry old measurements forward as evidence for a new revision.
 
 ## Packaging

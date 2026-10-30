@@ -4,9 +4,9 @@
 
 ## Agent work and commits
 
-- Keep accepted architecture in `docs/adr/` and reusable instructions in this tree. Decisions, findings, measurements, readiness evidence and open-work ledgers live in Notion; follow `services/catalyst/docs/comms/README.md` for ledger work.
+- Keep accepted architecture in `docs/adr/` and reusable instructions in this tree. Keep working reports and review evidence in ignored `.agent-work/`; follow `services/catalyst/docs/comms/README.md` for specialist reporting.
 - Keep plans, briefs, handoffs and per-task reports in the ignored `.agent-work/`; `services/catalyst/docs/comms/plans/` and `.superpowers/` stay local too.
-- Before committing, save durable ledger outcomes to Notion and check the staged paths for working documents and sensitive data.
+- Before committing, capture accepted public architectural choices in ADRs and check the staged paths for working documents and sensitive data.
 - Never commit working documents unless the user asks.
 - Tracked documentation must stand alone without local plans or private ledger exports.
 - Make focused edits; preserve other agents' work.
@@ -35,11 +35,11 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 - Docs state current behavior, verified capabilities and next work; no transition histories or internal generation labels.
 - Compare compatibility only against pinned `github.com/decentraland` repositories or dated Decentraland server captures.
-- A recorded difference is not approval; preserve unresolved gaps and evidence in the Notion compatibility ledger.
-- Check the current Notion readiness evidence before claiming deployment or compatibility; missing access or evidence means the claim remains unverified.
+- A recorded difference is not approval; identify unresolved gaps and their evidence in the review report.
+- Check the current readiness evidence before claiming deployment or compatibility; missing evidence means the claim remains unverified.
 - Write PR descriptions per `.github/PULL_REQUEST_TEMPLATE.md`.
 - For schema, SQL, ingestion, mirrors or caches, apply `DATABASE.md`; state workload and invariants before choosing tables or indexes.
-- Record measured performance changes in Notion; follow-ups are candidates until measured.
+- Record measured performance changes in the task report; follow-ups are candidates until measured.
 - Preserve wire, authorization and crash/resume contracts.
 - Never reset an existing database to fit a changed schema.
 

@@ -58,7 +58,7 @@ not the shell page: pick the app frame in the DevTools context selector first.
 > `src/react_hud_cef/automation.rs`. The HUD/input commands and token-gated native
 > loopback console below are design requirements, not runnable capabilities of
 > this checkout. Verify command registration and the exact target revision before
-> claiming availability; record implementation and runtime evidence in Notion.
+> claiming availability; record implementation and runtime evidence in the task report.
 
 End-to-end tests drive the client through the console, the HUD included, so one spec runs on the
 web and on the standalone, with no Playwright

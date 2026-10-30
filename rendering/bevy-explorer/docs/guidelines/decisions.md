@@ -60,7 +60,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   compute passes bracket the frame as the first and last nodes of the render graph, so both
   timestamps reach the GPU in the frame's own submission. A bracket submitted on its own ahead of
   the frame also counts the render world's CPU time up to the submission, which on a CPU-bound
-  frame is most of the sample (measurements (current evidence in Notion)).
+  frame is most of the sample (measurements (evidence supplied for the task)).
   See [GPU time](benchmark.md#gpu-time).
 - **Bevy stays on the 0.16 fork for now.** Security-relevant dependencies (V8 and deno,
   libwebrtc, ffmpeg, wgpu) get bumped inside it. Whether to ever move the bevy version is an

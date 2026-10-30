@@ -1,6 +1,6 @@
-# Ci records: schema
+# CI records: schema
 
-These fields describe the Notion ci records and proposed updates. The main session saves and verifies them per [the record workflow](../../README.md). They are not repository files. Validate the field and status requirements before saving.
+These fields describe CI reports and proposed record updates. The main session reconciles them per [the reporting workflow](../../README.md). Working reports stay in `.agent-work/`. Validate the field and status requirements before returning the report.
 
 **General rules**
 - Dates are `YYYY-MM-DD`. Text fields may carry `` `code` `` spans.
@@ -30,4 +30,4 @@ These fields describe the Notion ci records and proposed updates. The main sessi
 
 ## Run history: one line per run
 
-Append to the Notion run history: `- <date> | <mode> | <target> | <target pin> | <result: checks added or changed, gate verdict, flakes, requests>`
+Append to the run history: `- <date> | <mode> | <target> | <target pin> | <result: checks added or changed, gate verdict, flakes, requests>`

@@ -1,6 +1,6 @@
 # Crate distribution review: method
 
-Review what each crate owns, whether the split is adequate and what to change. Read the target revision and current Notion architecture records before judging it. Return proposed per-area records using the fields below; the main session saves and reads them back under the [record workflow](../../comms/README.md). Working reports stay in root `.agent-work/`.
+Review what each crate owns, whether the split is adequate and what to change. Read the target revision and current architecture records before judging it. Return proposed per-area records using the fields below; the main session reconciles them under the [reporting workflow](../../comms/README.md). Working reports stay in root `.agent-work/`.
 
 - **Pin:** resolve the target revision before reading; never reuse a historical review's verdict without checking it.
 - **Paths:** relative to `services/catalyst/` unless explicitly repository-root paths.
@@ -26,16 +26,16 @@ From the root `AGENTS.md`, `README.md`, `DATABASE.md` and the comms decisions:
 - Layers follow `docs/module-layers.toml`.
 - Dependencies never point upward; peers on one layer do not use each other.
 - A back-edge is designed away with a trait the lower layer owns; it is never added to `[allow]`.
-- A new crate needs an independent consumer or a concrete build requirement (e.g. dev-loop compile time in the Notion measurement record); size alone is not a reason.
+- A new crate needs an independent consumer or a concrete build requirement (e.g. dev-loop compile time in the measurement record); size alone is not a reason.
 - One PostgreSQL database, one fresh-schema bootstrap; existing databases are never reset to fit a schema; atomic workflows use direct SQL joins and a passed transaction.
 - No internal HTTP hops and no per-service pools.
 - HTTP paths, room names, authorization and crash/resume contracts are preserved when code moves.
 - A change lands with everything it touches; internal contracts get no compatibility shims, only client-facing contracts stay compatible.
-- Comms placement follows root `AGENTS.md`, `docs/module-layers.toml` and `docs/comms/comms-crate.md`. Read the current Notion decisions before proposing changes; older review snapshots are not a separate ownership authority.
+- Comms placement follows root `AGENTS.md`, `docs/module-layers.toml` and `docs/comms/comms-crate.md`. Read the current decisions before proposing changes; older review snapshots are not a separate ownership authority.
 
 ## What to judge
 
-Per module (roughly each directory or large file under `src/`): **job** (one line); **upstream** Decentraland service it replaces (from the current Notion compatibility/readiness records and crate docs); **fit**; **proposed home** (`stays` or crate::module).
+Per module (roughly each directory or large file under `src/`): **job** (one line); **upstream** Decentraland service it replaces (from the current compatibility/readiness records and crate docs); **fit**; **proposed home** (`stays` or crate::module).
 
 Fit is one of: `Fits`; `Misplaced` (belongs to another area or crate); `Duplicated` (same job elsewhere); `Oversized` (several jobs to split inside the crate); `Retiring` (replaced by catalyst-comms or going away); `Thin` (too small for its own crate or module: merge); `Unclear` (overlapping or undocumented job).
 
@@ -49,7 +49,7 @@ Each must be decidable in one sitting: the concrete change (modules from/to, app
 
 Record "keep as is" outcomes with the reason, so the review is not reopened. Prefer few strong proposals. A proposal moving code into another area names that area; that area's page picks it up at reconciliation.
 
-## Per-area Notion record schema
+## Per-area report schema
 
 ```json
 {

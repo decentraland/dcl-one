@@ -55,7 +55,7 @@ the data and its operations.
    `schemas/migrations/` (`catalyst schema migrate` applies each once and
    records it in `meta.schema_steps`; `services/catalyst/tests/`). A step
    that drops, renames, retypes or deletes is refused: that change is its own
-   reviewed release (record the data-safe release procedure and evidence in Notion).
+   reviewed release (record the data-safe release procedure and evidence in the task report).
 
 ## Worlds, persistent storage and scene hosting
 
@@ -86,7 +86,7 @@ Superseded Genesis rows leave the index. One statement counts and pages the
 matches by `deployed_at DESC, scene_id` with `LIMIT/OFFSET`.
 The function reads raw JSON text so even a stored JSON `\u0000` cannot fail an
 insert through an index. Expected traffic is low; measured dataset sizes,
-query timings and index write costs are in Storage collaborators (current evidence in Notion).
+query timings and index write costs must be recorded in the task report.
 
 Genesis collaborator grants also require the configured LAND index to be
 complete and fresh. One shared SQL predicate checks the entire scene footprint
@@ -116,8 +116,7 @@ does not disable batching until restart. An unresolved or hash-mismatched
 block stops the live cursor at the preceding verified prefix. The repair due-set and updates are scoped to
 the configured LAND/Estate registries. Unknown legacy timestamps keep the
 collaborator readiness gate false until repair completes; ordinary ownership
-publication remains independent. Upgrade lock behavior and backlog estimates
-are documented in readiness (current evidence in Notion).
+publication remains independent. Verify upgrade lock behavior and backlog estimates before claiming readiness.
 
 The immutable signed entity timestamp minus the protocol's 15-minute maximum
 future skew must be strictly later than every relevant ownership event. No
@@ -126,7 +125,7 @@ renews the grant. This conservative rule assumes source deployment validation
 and ordinary agreement between source-node and chain clocks. A deployment
 timestamped within 15 minutes after an ownership change cannot restore the
 grant: another deployment with a later signed timestamp is required. Waiting
-alone does not restore that old entity. See the compatibility limitation (current evidence in Notion).
+alone does not restore that old entity.
 Unavailable LAND history affects this collaborator grant only; independent
 owner, player and scene-server grants retain their own authorization rules.
 
@@ -152,8 +151,7 @@ scenes in that world (expected up to a few hundred).
 World quotas and usage exclude recorded retired identities, and exclude the
 parked legacy `world` bucket once that world has an active identity; unknown
 other legacy scopes still count. Storage rows remain retained and inaccessible
-through new scene scopes. See migration and recovery limits (current evidence in Notion)
-and measured quota-query costs (current evidence in Notion).
+through new scene scopes. Verify migration and recovery limits and measure quota-query costs before acceptance.
 
 The world discovery listing remains one aggregate per world. Scene listings and
 place detail read the shared identities joined to active deployments; neither
@@ -305,7 +303,7 @@ Record missing measurements explicitly.
 verifies schema identity and version and fails clearly on a mismatch; it never
 resets persistent data. Drop and re-apply disposable development databases. A
 database holding local authority changes only through a data-safe release
-(record the data-safe release procedure and evidence in Notion): additive steps under
+(record the data-safe release procedure and evidence in the task report): additive steps under
 `schemas/migrations/` applied once by `catalyst schema migrate`; anything that
 drops, renames or retypes is its own reviewed release under `schemas/releases/`.
 
@@ -322,4 +320,4 @@ catalyst schema migrate
 `shop` beside `marketplace`. A version change is never rollback-compatible
 (`services/catalyst/tests/schema_upgrade_from_closure_base.rs` exercises the upgrade; deployment restore and rollback evidence remains a separate acceptance gate).
 
-Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in Notion before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
+Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in the task report before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.

@@ -48,7 +48,7 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   at exit, such as the benchmark stream's final bytes, runs in `Update`.
 - **Two GPUs: Chrome takes the low-power one.** On a laptop with integrated and discrete GPUs,
   Chrome's WebGPU renders on the integrated one while native wgpu takes the discrete one: on one
-  laptop the same web build ran much slower (measurements (current evidence in Notion)).
+  laptop the same web build ran much slower (measurements (evidence supplied for the task)).
   Start Chrome with `--force-high-performance-gpu` to compare with native (the benchmark's browser
   leg does).
 - **Rollout.** The web build ships to zone and org by a percentage walk; publishing any branch
@@ -71,7 +71,7 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   `CARGO_TARGET_DIR` on one drive. `cef-dll-sys` needs Ninja on `PATH`; Visual Studio ships one
   under `Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja`. A cold build at a high job count can
   run LLVM out of memory: limit it with `CARGO_BUILD_JOBS`, and keep tens of gigabytes free for a
-  debug target dir (measurements (current evidence in Notion)).
+  debug target dir (measurements (evidence supplied for the task)).
 - **Any change under `rendering/bevy-explorer/source` runs the whole engine CI**: clippy, the
   native test suite on Linux, Windows and macOS, the headless smoke test and the web build. Only
   changes confined to the packaging folder `apps/bevy-explorer` narrow the selection
@@ -117,7 +117,7 @@ wgpu (`robtfm/wgpu` `e25f3d4`, 24.0.5):
   (`chrome://flags/#enable-webgpu-developer-features`;
   [Chrome's WebGPU 121 notes](https://developer.chrome.com/blog/new-in-webgpu-121) give 100 µs).
   The benchmark runner does not set it. In the checked Chrome every web GPU value is a multiple of
-  65.536 µs (measurements (current evidence in Notion)). That is Chrome's behaviour, not wgpu's.
+  65.536 µs (measurements (evidence supplied for the task)). That is Chrome's behaviour, not wgpu's.
 - **Headless** has no render app, so it has no GPU time.
 
 ## Headless
@@ -126,7 +126,7 @@ wgpu (`robtfm/wgpu` `e25f3d4`, 24.0.5):
   server. It runs the same `ScenePlugin` and scene loop with a narrower plugin set and no
   render app. `source/docs/headless-sdk-preview.md` and `source/docs/PRESENCE_ISOLATION.md`
   cover the server-side contracts. Resolve scene-response isolation proposals
-  and their review status through authorized Notion context; proposals require
+  and their review status through authorized task context; proposals require
   a user verdict before implementation.
 - **It is feature-gated.** `--features headless --bin headless`. Running the wrong bin through a
   pipe exits 0 and tells you nothing.

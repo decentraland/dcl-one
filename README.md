@@ -28,7 +28,7 @@ approves merges. Start specialist sessions in `services/catalyst/`.
 
 | Role | Goal | Main functions |
 | --- | --- | --- |
-| [Main session][roles] | Coordinate delivery | Plan, dispatch, combine reviews, record decisions, save and verify Notion records |
+| [Main session][roles] | Coordinate delivery | Plan, dispatch, combine reviews, record decisions, reconcile evidence |
 | [Implementer][roles] | Deliver a work package | Code and tests in a worktree; report architecture changes |
 | [`comms-architect`][arch] | Simple, coherent architecture | Validate designs; propose decisions |
 | [`comms-ci-engineer`][ci] | Trustworthy gates | Rules into checks, PR gates, CI audits, releases |
@@ -71,4 +71,4 @@ git lfs install --local && git lfs pull
 
 Root code is [AGPL-3.0](LICENSE); the Explorer keeps Apache-2.0.
 
-Contributor contracts: [AGENTS.md](AGENTS.md), [DATABASE.md](DATABASE.md). Engineering references and [ADRs](docs/README.md) are tracked; internal ledger records live in Notion.
+Contributor contracts: [AGENTS.md](AGENTS.md), [DATABASE.md](DATABASE.md). Engineering references and [ADRs](docs/README.md) are tracked; working reports and private ledgers stay outside the public tree.

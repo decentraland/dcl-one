@@ -1,6 +1,6 @@
 # Divergence records: schema
 
-These fields describe the Notion divergence records and proposed updates. The main session saves and verifies them per [the record workflow](../../README.md). They are not repository files. Validate the field and status requirements before saving.
+These fields describe divergence reports and proposed record updates. The main session reconciles them per [the reporting workflow](../../README.md). Working reports stay in `.agent-work/`. Validate the field and status requirements before returning the report.
 
 **General rules**
 - Dates are `YYYY-MM-DD`. Text fields may carry `` `code` `` spans.
@@ -53,8 +53,8 @@ An editorial companion, not a second source of verdicts. Severity, status, tags 
 - When delivery changes, review the summary with the register so an old mismatch is not shown as a current regression.
 - Accepted does not mean fixed; deferred work stays unresolved; code delivery does not imply live-client or CI acceptance. Flow captions distinguish a recorded failure, required behaviour and verified code.
 
-Retain the full explanation, history, decision, check, dates and verified revision in Notion. After presentation edits, save and read back both the summary and its source records. Security leads remain in the authorized private review workflow.
+Retain the full explanation, history, decision, check, dates and verified revision in the task report. After presentation edits, verify that the summary agrees with its source records. Security leads remain in the authorized private review workflow.
 
 ## Run history: one line per run
 
-Append to the Notion run history: `- <date> | <target> | <scope> | <target pin> | <result: new findings, status changes, catalog changes>`
+Append to the run history: `- <date> | <target> | <scope> | <target pin> | <result: new findings, status changes, catalog changes>`

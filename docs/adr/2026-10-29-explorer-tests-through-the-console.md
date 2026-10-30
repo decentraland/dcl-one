@@ -7,7 +7,7 @@
 
 This ADR records the accepted direction. The public checkout does not yet carry
 the web driver, HUD automation helper or native automation modules described
-below. Check the target revision and current Notion acceptance evidence before
+below. Check the target revision and current acceptance evidence before
 claiming those commands or tests are available. Acceptance of the design is not
 evidence that its implementation has shipped.
 

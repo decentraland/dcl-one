@@ -1,6 +1,6 @@
 # Architecture records: schema
 
-These fields describe the Notion architecture records and proposed updates. The main session saves and verifies them per [the record workflow](../../README.md). They are not repository files. Validate the field and status requirements before saving.
+These fields describe architecture reports and proposed record updates. The main session reconciles them per [the reporting workflow](../../README.md). Working reports stay in `.agent-work/`. Validate the field and status requirements before returning the report.
 
 **General rules**
 - Dates are `YYYY-MM-DD`. Text fields may carry `` `code` `` spans.
@@ -45,7 +45,7 @@ These fields describe the Notion architecture records and proposed updates. The 
 
 **`conclusions`** (one per area, rewritten on every run covering it): `area`; `verdict` `sound|sound with changes|needs redesign|not reviewed`; `text` two to five sentences (what holds, what must change, what is unknown); `metrics` counts at the pin (e.g. `{ "crates": 1, "services": 3, "channels": 9 }`) or `{}`; `updated`.
 
-**`decisions`**. Decisions from changes: when an accepted or implemented change (or coherent group) establishes or revises an architectural choice (ownership, boundaries, deployment, technology, protocol, interface), add or update the decision card covering it; link it to the change-request IDs and link those back through their `decision` field; record context, options, choice, consequences and `current_stack`. Mark it `accepted` only when the user's verdict approves the choice (implementation is evidence, not approval); otherwise keep it `proposed`. Sync the card to Notion in the same task.
+**`decisions`**. Decisions from changes: when an accepted or implemented change (or coherent group) establishes or revises an architectural choice (ownership, boundaries, deployment, technology, protocol, interface), add or update the decision card covering it; link it to the change-request IDs and link those back through their `decision` field; record context, options, choice, consequences and `current_stack`. Mark it `accepted` only when the user's verdict approves the choice (implementation is evidence, not approval); otherwise keep it `proposed`. Include the proposed decision update in the report for the same task.
 - `id` `decision-<n>`; `title`; `area`; `status` `proposed|accepted|rejected|superseded`; `date` proposed on.
 - `status_changed_at`: when the current status took effect — `YYYY-MM-DD` if only the date is evidenced, else ISO 8601 with timezone. Set on creation, update on every transition, preserve on text edits and re-checks. Unknown for older entries: `""` (shown **Not recorded**); never substitute proposal date, last-check date or build time.
 - `context` two or three sentences; `options` one line each; `choice` and why the others lost; `consequences` fixes, costs, constraints.
@@ -64,4 +64,4 @@ These fields describe the Notion architecture records and proposed updates. The 
 
 ## Run history: one line per run
 
-Append to the Notion run history: `- <date> | <mode> | <target> | <target pin> | <result: decisions, change requests, model and status changes>`
+Append to the run history: `- <date> | <mode> | <target> | <target pin> | <result: decisions, change requests, model and status changes>`

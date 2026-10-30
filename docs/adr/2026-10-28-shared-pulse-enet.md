@@ -63,8 +63,8 @@ out or executing fetched code. The wrapper retains local patched-byte/reverse
 replay checks and the unfiltered vendor runtime, preceded by locked
 all-features/all-targets compilation. The imported workflow does not establish
 additional CI coverage. Local public 41-file comparison and integrated vendor
-compilation are evidenced at the scopes recorded in the Notion compatibility record;
+compilation are evidenced at the scopes recorded in the compatibility record;
 required final-head/default-branch enforcement and full native-client CI remain
 separate gates.
 
-Preserve the unassigned ownership entry for `library/vendor/rusty_enet/**`. Concrete maintenance ownership and required-review governance need a separate user decision; this ADR authorizes no CODEOWNERS or branch-protection change. Record that decision in Notion.
+Preserve the unassigned ownership entry for `library/vendor/rusty_enet/**`. Concrete maintenance ownership and required-review governance need a separate user decision; this ADR authorizes no CODEOWNERS or branch-protection change. Record that decision in the task report.

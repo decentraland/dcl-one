@@ -7,7 +7,7 @@
 /state/
 /credentials/
 /data/
-# AI session plans and handoffs are local; durable ledger outcomes belong in Notion.
+# AI session plans, handoffs and working reports are local.
 /.agent-work/
 **/.superpowers/
 **/docs/superpowers/

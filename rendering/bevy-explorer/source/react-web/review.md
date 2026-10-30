@@ -5,7 +5,7 @@
 > configs described below. Those procedures apply only in an authorized test
 > workspace that supplies them. Inspect the files at the target revision before
 > running a tier; a package script alone does not prove its suite is present.
-> Report unavailable tiers as **not run** and keep their evidence in Notion.
+> Report unavailable tiers as **not run** and keep their evidence in the task report.
 
 The single place to look before merging anything in `react-web/`. It defines the **test harness**
 (what proves "everything still works"), the **per-domain expectations**, and the **pre-merge

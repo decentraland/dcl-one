@@ -158,7 +158,7 @@ run*.
   conclusion. An exceptions verdict needs two laptops.
 
 Treat small GPU differences with caution: in this scene the GPU average is a few milliseconds
-(measurements (current evidence in Notion)), near the noise floor, so most GPU changes rightly stay ⚪.
+(measurements (evidence supplied for the task)), near the noise floor, so most GPU changes rightly stay ⚪.
 
 ## Launch options
 
@@ -300,7 +300,7 @@ native and web, with no flag; the headless build has none. The CSV writer
   GPU verdict.
 - **Chrome.** It quantises timestamps unless it starts with WebGPU developer features, which the
   runner does not do: a web GPU value is a multiple of Chrome's step, 65.536 µs in the checked
-  Chrome (measurements (current evidence in Notion)), well under the verdict's 0.5 ms threshold. A
+  Chrome (measurements (evidence supplied for the task)), well under the verdict's 0.5 ms threshold. A
   frame whose two timestamps quantise to the same value gives no sample, and the CSV repeats the
   previous value.
 - **Seeing it.** The diagnostics log line prints when `--log-fps` is on (default: the
@@ -309,7 +309,7 @@ native and web, with no flag; the headless build has none. The CSV writer
   setting is on, as the smoothed value or a dash. The panel belongs to the engine's own UI, which
   the native HUD hides: look for the row in a run without the HUD (for example
   `--system-scene none`).
-- **Cost.** Its cost is in measurements (current evidence in Notion).
+- **Cost.** Its cost is in measurements (evidence supplied for the task).
 - Which backends expose timestamp queries is in the [platform guide](platforms.md#gpu-timestamps).
 
 **Tests.** The unit tests cover the sample arithmetic, the slot ring and the publisher. Two test
@@ -663,7 +663,7 @@ port). The Chrome profile is the runner account's ([The runner](#the-runner)).
 
 ## Validation and acceptance
 
-Record current run evidence and open work in Notion. Before claiming a platform
+Record current run evidence and open work in the task report. Before claiming a platform
 or fleet setup works, verify it at the selected revision:
 
 - Exercise fake-app success, shell, storage, panic and give-up paths; compare

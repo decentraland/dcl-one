@@ -2,7 +2,7 @@
 
 `services/catalyst/comms` (`catalyst-comms`, layer 8) owns comms and multiplayer.
 The ownership boundary is the [root AGENTS.md "Ownership → comms" bullet](../../../../AGENTS.md#ownership);
-this file adds modules, interfaces and channel contracts. Decisions, findings and acceptance evidence live in Notion; use the [record workflow](README.md).
+this file adds modules, interfaces and channel contracts. Decisions, findings and acceptance evidence live in the task report; use the [record workflow](README.md).
 
 For the C# responsibility map and Rust ownership/threading migration instructions, read the
 [Pulse to Rust migration guide](pulse-rust-migration.md). Its proposed worker structure is
@@ -17,7 +17,7 @@ separate from the current runtime described here.
 - The shared vocabulary lives in comms; ban status has one answer, comms moderation; the MLS delivery service stays in social.
 - Friends' online status comes from Pulse's islands snapshot. Room occupancy and capacity stay on LiveKit as an interim; the target is Pulse.
 - Pulse retains unfinished takeover work in memory; gatekeeper alone applies LiveKit cleanup, confirms completion and mints under the authoritative token floor.
-- Pulse and the native Bevy client use one pinned, patched ENet source in `library/vendor/rusty_enet`. Each keeps its own transport driver; channel 1 explicitly bypasses local sender throttling while retaining sequenced-unreliable semantics. Pulse implements the opt-in 8192 payload/65536 charged queued bytes/256 command native receive boundary, with typed terminal early reason 16 and exact release; shared Explorer defaults/outgoing limits remain. Ordinary/connected event adapters preserve session ownership. No service/process/channel is added. Check current acceptance evidence in Notion before making runtime claims.
+- Pulse and the native Bevy client use one pinned, patched ENet source in `library/vendor/rusty_enet`. Each keeps its own transport driver; channel 1 explicitly bypasses local sender throttling while retaining sequenced-unreliable semantics. Pulse implements the opt-in 8192 payload/65536 charged queued bytes/256 command native receive boundary, with typed terminal early reason 16 and exact release; shared Explorer defaults/outgoing limits remain. Ordinary/connected event adapters preserve session ownership. No service/process/channel is added. Check current acceptance evidence in the task report before making runtime claims.
 - Public Pulse V4 and Archipelago native/negotiated V4 authentication are separate proposed capabilities, deferred pending a separate user verdict. Ordinary signed `/ws` and its configured ownership remain supported. Profile announcements require nonnegative, strictly increasing versions but do not consume the teleport/emote budget; emote IDs follow the baseline without a separate 512-character cap.
 - Scene hosting splits into a comms orchestrator and the engine runtime; Hammurabi is deprecated and never a source. See § Scene host.
 
@@ -98,7 +98,7 @@ with 1013; undecodable frames 1007; restart closes every socket with 1012.
 
 ## Bus messages
 
-Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contracts in the Notion architecture model.
+Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contracts in the architecture model.
 
 | Message | From → to | Subject | Cap, cadence | Recovery | NATS permission |
 |---|---|---|---|---|---|
@@ -183,7 +183,7 @@ Unknown remote removal and Pulse process loss require controlled maintenance wit
 closed until outstanding operations, participants and token validity are safe. A new Pulse
 incarnation does not revoke issued LiveKit tokens. Actual Cloud cutoff enforcement,
 self-hosted expiry, deployment routing and rollout rehearsal remain separate evidence gates.
-Consult the current Notion readiness and measurement evidence before release.
+Consult the current readiness and measurement evidence before release.
 
 ## Scene host
 
@@ -198,4 +198,4 @@ as `authoritative-server`):
 
 ## Acceptance evidence
 
-Read the current architecture, divergence and readiness records in Notion before planning or claiming deployment. Record missing implementation, measured capacity, live-client verification and required private security review there. Public ownership guidance does not itself establish readiness.
+Read the architecture decisions, divergence findings and readiness evidence supplied for the task before planning or claiming deployment. Record missing implementation, measured capacity, live-client verification and required private security review there. Public ownership guidance does not itself establish readiness.

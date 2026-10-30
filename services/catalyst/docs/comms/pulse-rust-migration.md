@@ -8,7 +8,7 @@ For navigation, start with the [responsibility map](#functional-responsibility-m
 
 ## Sources and scope
 
-The source baseline is [decentraland/Pulse at `91e44f89dd5a857e4ebe08259bec5fc808ae797b`](https://github.com/decentraland/Pulse/tree/91e44f89dd5a857e4ebe08259bec5fc808ae797b). The companion gatekeeper reference is [decentraland/comms-gatekeeper at `edcaebbd9ff9cfa95d9a88d9b2cb76043eae9786`](https://github.com/decentraland/comms-gatekeeper/tree/edcaebbd9ff9cfa95d9a88d9b2cb76043eae9786). Resolve client release pins, private fixtures and runtime acceptance evidence from the current Notion records. Re-verify destination paths at the target revision. Source links are immutable; destination links open repository files. A source inspection is not runtime acceptance.
+The source baseline is [decentraland/Pulse at `91e44f89dd5a857e4ebe08259bec5fc808ae797b`](https://github.com/decentraland/Pulse/tree/91e44f89dd5a857e4ebe08259bec5fc808ae797b). The companion gatekeeper reference is [decentraland/comms-gatekeeper at `edcaebbd9ff9cfa95d9a88d9b2cb76043eae9786`](https://github.com/decentraland/comms-gatekeeper/tree/edcaebbd9ff9cfa95d9a88d9b2cb76043eae9786). Resolve client release pins, private fixtures and runtime acceptance evidence from the current records supplied for the task. Re-verify destination paths at the target revision. Source links are immutable; destination links open repository files. A source inspection is not runtime acceptance.
 
 Use three distinct categories throughout implementation:
 
@@ -79,7 +79,7 @@ Rust batching, dormant application-relay support and connector control-position 
 
 ## Abstractions and layering
 
-Keep these layers inside the existing crate; a layer is a responsibility and dependency direction, not a new Cargo package. This follows [the repository layout ADR](../../../../docs/adr/2026-10-19-organizing-library-services-folders.md), [the module ownership guide](comms-crate.md) and the current Notion architecture constraints.
+Keep these layers inside the existing crate; a layer is a responsibility and dependency direction, not a new Cargo package. This follows [the repository layout ADR](../../../../docs/adr/2026-10-19-organizing-library-services-folders.md), [the module ownership guide](comms-crate.md) and the current architecture constraints.
 
 This is the target dependency direction. Current internal backreferences include simulation reading feature constants from `server`, batching reading WebTransport configuration, and `cluster` implementing a `PulseServer` method. Move shared constants/data and composition glue to their proper owner as those responsibilities are extracted; do not claim the existing modules already enforce this layering.
 
@@ -295,7 +295,7 @@ Pulse currently owns its own `async-nats` client. The accepted future shared-bus
 
 ## Accepted differences that a mechanical port must respect
 
-These are constraints from the destination's [ownership guide](comms-crate.md) and Notion architecture register. They explain where a former Pulse developer must look for a responsibility that is intentionally different. Reopening one requires a new user verdict and a verified Notion record update; do not change it implicitly as part of naming or threading work.
+These are constraints from the destination's [ownership guide](comms-crate.md) and the supplied architecture decisions. They explain where a former Pulse developer must look for a responsibility that is intentionally different. Reopening one requires a new user verdict and a verified decision record update; do not change it implicitly as part of naming or threading work.
 
 | Responsibility | Source behavior | Destination instruction |
 | --- | --- | --- |
@@ -312,7 +312,7 @@ These are constraints from the destination's [ownership guide](comms-crate.md) a
 | Remote configuration | Broad upstream remote configuration/provider and operational representation | Keep the four permitted remote IP-limit settings and the destination's full-lifetime connection accounting. Other upstream settings do not become remotely writable. |
 | Scene-listener authority | Baseline listener accepts a valid authentication chain | Require listener authority scoped to the authoritative address and parcels, and verify that boundary in the private acceptance review. |
 
-The Notion divergence register additionally records accepted behavior that must survive structural work:
+Preserve these accepted behavior constraints during structural work:
 
 - keep the destination's 60-second signed-timestamp window and durable consumed-handshake journal. Source replay protection is an in-memory TTL cache. Do not remove the journal under a blanket claim that Pulse has no persistence; it is distinct from avatar/room state.
 - keep the internal loopback Prometheus exporter, `pulse_*` names and the absence of the upstream public health/about/bearer surface. The configuration contract defines the full IP limiter and bounded remote flags within that operational choice.
@@ -401,7 +401,7 @@ Make each wait bounded or explicitly wakeable. Avoid a shutdown cycle where tran
 
 ## Migration sequence and evidence
 
-Follow the [implementation pipeline](implementation-pipeline.md). The stages below describe work packages; they are not a request to execute them as part of writing this guide. Keep architectural choices distinct from accepted decisions and save and read back Notion whenever a decision/change-request record is edited.
+Follow the [implementation pipeline](implementation-pipeline.md). The stages below describe work packages; they are not a request to execute them as part of writing this guide. Keep architectural choices distinct from accepted decisions and include proposed decision and change-request updates in the task report.
 
 | Stage | Change | Evidence required before moving on |
 | --- | --- | --- |
@@ -451,7 +451,7 @@ cargo test --locked -p catalyst --test pulse_batch_bandwidth
 
 Batch the relevant targets into one Cargo invocation when changing several of these boundaries. For `pulse_cluster_lookup` and broker restart cases, set `PULSE_NATS_SERVER_BIN` to an isolated broker executable. The cross-service `archipelago_nats_recovery` and `archipelago_control_extensions_websocket` cases also need `ARCHIPELAGO_NATS_SERVER_BIN` and disposable `CATALYST_TEST_DATABASE_URL`; use `--features catalyst-comms/test-support` for the real tracker fixture. Basic `pulse_nats_live` cases also support `PULSE_NATS_TEST_URL` pointing at a scratch broker. An environment-skipped case does not establish integration compatibility. Include `comms_v4_assignment_fence` when changing registration/assignment flow: its retained name covers shared legacy ownership, not enabled public V4 authentication. Run the wider required CI tiers and module-DAG checks when the actual change demands them. The upstream C# comparison uses `dotnet test src/DCLPulse/DCLPulse.sln -p:GenerateProto=false` from a separately pinned reference checkout. The destination build must remain self-contained and must not depend on that sibling checkout.
 
-The repository-root command `nix develop --command bash tooling/dev-test.sh rust` supplies disposable PostgreSQL and isolated NATS for the workspace suite. Its [regression manifest](../../../../tooling/dev-regressions.json) and [guard](../../../../tooling/dev-regressions.py) check test inventories, prerequisites and the unfiltered runtime invocation. Shared ENet provenance and deterministic regressions run separately. Read the current workflows and record exact commands, revisions, results and omitted scopes in Notion; historical CI results do not establish final-revision acceptance.
+The repository-root command `nix develop --command bash tooling/dev-test.sh rust` supplies disposable PostgreSQL and isolated NATS for the workspace suite. Its [regression manifest](../../../../tooling/dev-regressions.json) and [guard](../../../../tooling/dev-regressions.py) check test inventories, prerequisites and the unfiltered runtime invocation. Shared ENet provenance and deterministic regressions run separately. Read the current workflows and record exact commands, revisions, results and omitted scopes in the task report; historical CI results do not establish final-revision acceptance.
 
 Generate protobuf from the pinned schema source through the existing documented Rust generation process in `comms::protocol::pulse`; do not hand-edit generated Rust or C#. Test optional zero versus absent, enum/oneof values, unknown fields/messages, framing and quantization boundaries. Byte assertions are appropriate where encoding is contractually fixed; otherwise decode and compare semantic fields so harmless field/map serialization order does not cause false failures.
 

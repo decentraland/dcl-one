@@ -1,13 +1,13 @@
 # Implementation pipeline: catalyst-comms
 
 How agents build comms and multiplayer work ([comms-crate.md](comms-crate.md)) and where each role gates it.
-Role definitions: [`.claude/agents/`](../../.claude/agents/). Notion record workflow: [README.md](README.md).
+Role definitions: [`.claude/agents/`](../../.claude/agents/). Reporting workflow: [README.md](README.md).
 
 ## Roles
 
 | Role | Who | Does | Never |
 |---|---|---|---|
-| **Main session** | the user's driving session | plans work packages, dispatches every agent, merges reports into one fix list, records the user's decisions in Notion and verifies saved updates | writes implementation code; accepts a decision for the user |
+| **Main session** | the user's driving session | plans work packages, dispatches every agent, merges reports into one fix list, records the user's decisions and verifies the combined evidence | writes implementation code; accepts a decision for the user |
 | **Implementer** | one agent per work package, own worktree and branch | code and tests for its package; returns a report with an `architecture` block | changes a channel, crate boundary or decision on its own; touches another package's files |
 | **Architect** | `comms-architect` | validates technologies, channels, abstractions and complexity; raises decisions for the user and change requests for implementers | writes implementation code; accepts its own proposals |
 | **CI engineer** | `comms-ci-engineer` | turns rules into CI checks (catalog, tiers, supply-chain and release gates, flaky quarantine, toolchain); gives every PR revision a gate verdict | writes feature code or tests; decides a rule |
@@ -42,7 +42,7 @@ between crates or services. The main session checks the diff itself, not only th
 - No open Critical or High divergence without the user's decision; every changed client-facing API is `compatible` for each caller and its conformance check passes.
 - No open security finding at High or above.
 - The code reviewer approves.
-- The architecture and divergence updates are saved in Notion and read back by the main session.
+- The main session has reconciled the architecture and divergence reports and verified their evidence at the target revision.
 
 ## Implementer report `architecture` block
 
@@ -61,6 +61,6 @@ between crates or services. The main session checks the diff itself, not only th
 - Never negotiate design in an implementation: stop and report a deviation.
 - Turn each lead for `comms-ci-engineer` into a `build` run: architect rules and budgets, each divergence golden capture and its schema-diff gate, each tool-visible security bug class. Once a check is active, take its result instead of re-reading the code.
 - Show reviewers artefacts (diff, package, reports, CI results), never transcripts.
-- Return every changed record ID and its evidence; the main session saves and verifies the Notion updates per `README.md`.
+- Return every changed record ID and its evidence; the main session reconciles the reports and verifies their evidence per `README.md`.
 
 The security reviewer is configured in the authorized private review workspace. When a required review is unavailable, report that gate as pending; its absence is not approval.

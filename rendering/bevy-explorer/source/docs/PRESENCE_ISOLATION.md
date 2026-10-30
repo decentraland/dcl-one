@@ -24,4 +24,4 @@ player-ID allocator. Preserve these ownership boundaries when changing presence.
 
 Verify these contracts at the target revision with client and orchestrated-server
 tests. Route security findings, historical incidents and acceptance evidence
-through the authorized private review and Notion workflow.
+through the authorized private review and reporting workflow.

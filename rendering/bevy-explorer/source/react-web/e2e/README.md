@@ -5,7 +5,7 @@
 > configs described below. Those procedures apply only in an authorized test
 > workspace that supplies them. Inspect the files at the target revision before
 > running a tier; a package script alone does not prove its suite is present.
-> Report unavailable tiers as **not run** and keep their evidence in Notion.
+> Report unavailable tiers as **not run** and keep their evidence in the task report.
 
 Per-domain tests that drive the **live** app — the React HUD, the bevy engine (in a
 same-origin iframe), and the super-user bridge scene — and assert each API call

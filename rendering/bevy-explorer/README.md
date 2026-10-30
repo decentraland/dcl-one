@@ -73,7 +73,7 @@ or `python3 tooling/fetch-play.py` (main CI artifact); see the
 When the source HUD changes: review it against `apps/ui3/src/play`, keep every adaptation listed in
 "The HUD", regenerate bindings, run UI3 tests and typechecks, then record
 `python3 tooling/play-artifact.py hud-inputs` as `hud_source_sha256`, rebuild the engine and repeat
-the checks in the Notion readiness record (a matching fingerprint does not prove browser or multiplayer
+the checks in the readiness record (a matching fingerprint does not prove browser or multiplayer
 acceptance).
 
 ## Benchmark
