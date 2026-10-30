@@ -89,3 +89,10 @@ Code that serves none of these deliverables is removed, not kept for reference:
 - No machine names, private addresses, home paths, personal emails or the operator's domain; deployments supply them via gitignored config.
 - Never delete the gitignored `credentials` and `data` directories.
 - `/docs` data is `apps/sites/content/docs` (`pnpm gen:docs-content`); media is Git LFS.
+
+## UI standards
+
+Before changing web UI in `apps/`, `library/ui/` or
+`rendering/bevy-explorer/source/react-web/`, read and follow
+[`docs/ui-standards.md`](docs/ui-standards.md). It defines component styling,
+shared foundations and components, accessibility, migration and verification.

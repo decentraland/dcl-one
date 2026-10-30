@@ -1,6 +1,7 @@
 # Engineering references
 
 - [Development](development.md)
+- [UI standards](ui-standards.md)
 - [Database contract](../DATABASE.md)
 - [Images](../infra/containers/README.md)
 - [Comms ownership and agent workflow](../services/catalyst/docs/comms/README.md)
