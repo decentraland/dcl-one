@@ -38,9 +38,11 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   has a second output at `@location(1)` (`TRANSPARENT_FOCUS_OUTPUT`). A fragment shader that
   omits it fails pipeline creation on web and is silent on native.
 - **16-bit textures lose precision** through the web sampler. Expect banding if you rely on it.
-- **Build.** Run `make web` from repository-root `apps/bevy-explorer` to build the wasm
-  package, sandbox worker and HUD into `dist/web`. This builds artifacts; serving them is
-  a separate step (see [Running](running.md#web)). Build the wasm on
+- **Build.** `just wasm` in `source` builds the wasm package and the sandbox worker bundle and
+  starts the page dev server and the bridge. If a stale dev server is already on the port it
+  gets reused; kill it first. The distributable is `make web` from repository-root
+  `apps/bevy-explorer`, which builds the wasm package, sandbox worker and HUD into `dist/web`
+  without serving them (see [Running](running.md#web)). Build the wasm on
   Linux (CI does): built on Windows, `file!()` keeps backslashes and the fork's
   `embedded_asset!` panics at start (`Failed to find src_prefix "src"`).
 - **Exit work runs before `Last`.** On `AppExit`, `close_rooms_on_app_exit` blocks in `Last`
@@ -56,10 +58,11 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 
 ## Native
 
-- Follow the [native build steps](running.md#native) for CEF setup, HUD bundling and the
-  sidecar and client builds. Cargo alone does not bundle the HUD or stage the runtime
-  libraries; use the desktop workflow's packaging steps before launching its executable
-  with client arguments (`--realm <url> --position x,y`).
+- Build and run with `just native-debug` or `just native-release`, with the client's own
+  arguments after them (`--realm <url> --position x,y`). Both bundle the HUD when it is stale.
+  A bare `cargo run` gives a login screen with no HUD because the bundle isn't built. Both
+  binaries build: `cargo build --package dcl_deno_ipc` then `cargo build`. `just setup-cef`
+  fetches the CEF framework once. Packaging follows the [native build steps](running.md#native).
 - **CEF `localStorage` is ephemeral.** Anything the native HUD must remember goes through
   `lib/prefs`, which the engine persists to disk. No native popups from the HUD: CEF's popup
   windows aren't composited into the texture.

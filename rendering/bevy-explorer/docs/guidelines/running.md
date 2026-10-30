@@ -1,6 +1,7 @@
 # Running and testing
 
-Build entry points are in repository-root `apps/bevy-explorer/Makefile` and
+The dev loop is the `justfile` in `rendering/bevy-explorer/source` (`just --list`).
+Distributables are built by repository-root `apps/bevy-explorer/Makefile` and
 `.github/workflows/bevy-explorer-desktop.yml`. Commands below run from
 `rendering/bevy-explorer/source` unless another directory is named.
 
@@ -13,7 +14,16 @@ lockfile in.
 
 ## Native
 
-Use the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml) for the
+```
+just setup-cef                                   # once
+just native-debug --realm <about-url> --position x,y
+```
+
+`just native-debug` bundles the HUD when stale and runs the client. A plain `cargo run` boots to
+a login screen with no HUD. Both binaries must build: `cargo build --package dcl_deno_ipc`,
+then `cargo build`.
+
+To package, follow the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml):
 pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With those installed:
 
 ```sh
@@ -31,8 +41,12 @@ platform packaging steps, then launch the packaged executable with `--realm <abo
 
 ## Web
 
-Run `make web` in repository-root `apps/bevy-explorer` (`python3 build-web.py` without Make).
-It builds the engine wasm, sandbox worker and HUD into `apps/bevy-explorer/dist/web`; it
+`just wasm` builds the wasm package and the sandbox worker bundle, then starts the page dev
+server and the bridge. The page boots the engine from `deploy/web/engine/pkg/`. Kill any stale
+dev server on the ports first; a reused one serves the old build.
+
+For the distributable, run `make web` in repository-root `apps/bevy-explorer`
+(`python3 build-web.py` without Make). It builds the engine wasm, sandbox worker and HUD into `apps/bevy-explorer/dist/web`; it
 does not start a dev server. `make web-dev` skips wasm optimization. Import the artifact
 with `python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web` from the
 repository root, then follow the root README to run Sites. Sites serves it under `/play`
