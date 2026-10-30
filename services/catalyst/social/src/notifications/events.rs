@@ -279,6 +279,7 @@ async fn dispatch_page(
 pub async fn run_once(pool: &PgPool, base: &str, now: NaiveDateTime) -> anyhow::Result<u64> {
     scan_kind(pool, "events_starts_soon", 3600, now).await?;
     scan_kind(pool, "events_started", 0, now).await?;
+    super::event_ended::run_once(pool, now).await?;
     let mut emitted = 0;
     for _ in 0..DISPATCH_PAGES {
         let Some(inserted) = dispatch_page(pool, base, now).await? else {
@@ -326,6 +327,7 @@ mod tests {
 
     #[tokio::test]
     async fn event_notices_recover_without_duplicates_respect_consent_and_separate_channels() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
