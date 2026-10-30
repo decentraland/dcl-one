@@ -1,7 +1,7 @@
 //! Place reports: `POST /api/report` (signed fetch) answers the URL the
 //! client uploads its report document to and records the report; the
-//! client's `PUT` of that URL (`/api/report/upload/{filename}`, signed by
-//! the same wallet) stores the document; the operator queue (`GET
+//! client's `PUT` of that URL uses an expiring upload capability, so an
+//! existing presigned-upload client needs no second wallet signature. The queue (`GET
 //! /api/reports`, `PATCH /api/reports/{id}`, the admin bearer) lists and
 //! resolves them. The old service's default was an S3 presigned PUT; the
 //! document is small JSON, so v2 keeps it in `explore.place_reports.payload`
@@ -124,8 +124,9 @@ pub async fn post_report(
         .map(str::to_string);
     let now = Utc::now();
     let filename = report_filename(&reporter, now.timestamp());
+    let token = format!("{:032x}", rand::random::<u128>());
     let signed_url = format!(
-        "{}{}/upload/{filename}",
+        "{}{}/upload/{filename}?token={token}",
         request_base_url(&headers),
         public_path(&headers, uri.path())
     );
@@ -196,18 +197,58 @@ async fn fed_report(
     ))
 }
 
-/// `PUT /api/report/upload/{filename}`: the report document, by its reporter only.
+// S3 Expires is seconds: preserve the existing service's 60 * 1000 limit.
+const UPLOAD_TTL_SECONDS: f64 = 60_000.0;
+
+#[derive(Debug, Deserialize, Default)]
+pub struct UploadQuery {
+    token: Option<String>,
+}
+
+async fn upload_by_capability(
+    pool: &sqlx::PgPool,
+    filename: &str,
+    token: &str,
+    payload: &Value,
+) -> Result<u64, sqlx::Error> {
+    if token.len() != 32 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Ok(0);
+    }
+    // Only newly minted capability URLs authorize anonymous PUT. Older
+    // signed-fetch reports and federation reports cannot be uploaded this way.
+    Ok(sqlx::query(
+        "UPDATE explore.place_reports SET payload = $3 WHERE filename = $1 \
+         AND split_part(signed_url, '?token=', 2) = $2 \
+         AND created_at >= timezone('UTC', now()) - make_interval(secs => $4)",
+    )
+    .bind(filename)
+    .bind(token)
+    .bind(payload)
+    .bind(UPLOAD_TTL_SECONDS)
+    .execute(pool)
+    .await?
+    .rows_affected())
+}
+
+/// Accept the issued capability, or the original reporter's signed fetch.
 pub async fn put_report_upload(
     State(state): State<SharedState>,
     method: Method,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     Path(filename): Path<String>,
+    Query(upload): Query<UploadQuery>,
     body: Option<Json<Value>>,
 ) -> Result<Json<Value>, ApiError> {
     state.user_writes()?;
-    let reporter = state.signer(&headers, method.as_str(), uri.path()).await?;
     let payload = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
+    if let Some(token) = upload.token {
+        if upload_by_capability(&state.pool, &filename, &token, &payload).await? == 0 {
+            return Err(ApiError::forbidden("Invalid or expired upload URL"));
+        }
+        return Ok(Json(json!({ "ok": true })));
+    }
+    let reporter = state.signer(&headers, method.as_str(), uri.path()).await?;
     let updated = sqlx::query(
         "UPDATE explore.place_reports SET payload = $3 WHERE filename = $1 AND reporter = $2",
     )
@@ -367,5 +408,81 @@ mod tests {
         headers.insert("x-original-path", "/elsewhere".parse().unwrap());
         assert_eq!(public_path(&headers, "/api/report"), "/api/report");
         assert_eq!(request_base_url(&headers), "https://node.example");
+    }
+    #[tokio::test]
+    async fn upload_capability_is_bound_to_report_and_expiry() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let token = format!("{:032x}", rand::random::<u128>());
+        let filename = report_filename("0x12345678", Utc::now().timestamp());
+        let payload = json!({"reason":"broken scene"});
+        sqlx::query("INSERT INTO explore.place_reports (reporter, filename, signed_url) VALUES ('0x12345678', $1, $2)")
+            .bind(&filename).bind(format!("https://node.example/upload/{filename}?token={token}"))
+            .execute(&pool).await.unwrap();
+        use axum::body::Body;
+        use axum::http::{Request, StatusCode};
+        use tower::ServiceExt;
+        let mut settings = crate::Settings::for_tests();
+        settings.user_writes_enabled = true;
+        let app = crate::router(std::sync::Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            settings,
+            None,
+        )));
+        let url = format!("/api/report/upload/{filename}");
+        let request = |uri: String| {
+            Request::builder()
+                .method("PUT")
+                .uri(uri)
+                .header("content-type", "application/json")
+                .body(Body::from(payload.to_string()))
+                .unwrap()
+        };
+        assert_eq!(
+            app.clone()
+                .oneshot(request(url.clone()))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            app.oneshot(request(format!("{url}?token={token}")))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            upload_by_capability(&pool, "another-report", &token, &payload)
+                .await
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            upload_by_capability(
+                &pool,
+                &filename,
+                "00000000000000000000000000000000",
+                &payload
+            )
+            .await
+            .unwrap(),
+            0
+        );
+        sqlx::query("UPDATE explore.place_reports SET created_at = timezone('UTC', now()) - interval '1 day' WHERE filename = $1")
+            .bind(&filename).execute(&pool).await.unwrap();
+        assert_eq!(
+            upload_by_capability(&pool, &filename, &token, &payload)
+                .await
+                .unwrap(),
+            0
+        );
+        sqlx::query("DELETE FROM explore.place_reports WHERE filename = $1")
+            .bind(&filename)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }

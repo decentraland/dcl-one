@@ -1665,10 +1665,12 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         let url = body["data"]["signed_url"].as_str().unwrap().to_string();
         let upload = url[url.find("/api/report/upload/").unwrap()..].to_string();
+        // Without the capability token an unsigned upload is refused.
+        let without_token = upload.split('?').next().unwrap().to_string();
         let (status, _) = call(
             &app,
             "PUT",
-            &upload,
+            &without_token,
             None,
             Some(json!({ "reason": "scam_or_spam" })),
         )
@@ -1678,7 +1680,7 @@ mod tests {
             &app,
             "PUT",
             &upload,
-            Some("signed"),
+            None,
             Some(json!({ "reason": "scam_or_spam" })),
         )
         .await;
