@@ -137,17 +137,19 @@ A reference counts as approved once a reviewer has checked it against the scene'
 - **Suite checks**, on every pull request that touches this folder: `tsc`, the driver's tests
   (the web transport against a stub page in the runner's Chrome) and the tooling tests.
 - **Scenarios**, after each Bevy Explorer / CI run (a push to main, or a pull request of this
-  repository that changed the explorer's web app or this folder), nightly against main's newest
-  web app, and by hand (a commit, a group, record): `tooling/bevy-e2e-inputs.py` picks the web app
-  (the run's own, or main's newest for a PR that changed no web input), the job downloads it, runs
-  the InWorld scenarios, then builds the scenes and runs the Visual ones, and uploads `report/`.
-  It runs on the Windows runner with a GPU that the `BEVY_E2E_WINDOWS_RUNNER` repository variable
-  names (explorer-automation's `win-gpu-t4-explorer`, which an org admin enables for this
-  repository), in the `e2e` environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two
-  scenario steps. A pull request's run is that pull request's code under main's permissions, so
-  the job holds no write permission, saves no cache, and the environment's required reviewers (a
-  repository setting) are what holds it until a maintainer approves. Until the variable is set
-  the job is skipped.
+  repository that a maintainer labelled `run-e2e` and that changed the explorer's web app or this
+  folder), nightly against main's newest web app, and by hand (a commit, a group, record):
+  `tooling/bevy-e2e-inputs.py` picks the web app (the run's own, or main's newest for a PR that
+  changed no web input), the job downloads it, runs the InWorld scenarios, then builds the scenes
+  and runs the Visual ones, and uploads `report/`. It runs on the Windows runner with a GPU that
+  the `BEVY_E2E_WINDOWS_RUNNER` repository variable names (explorer-automation's
+  `win-gpu-t4-explorer`, which an org admin enables for this repository), in the `e2e`
+  environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. A pull
+  request's run is that pull request's code under main's permissions, with the accounts and the
+  shared runner: hence the label, which a maintainer applies on purpose, and the Inputs summary
+  naming the pull request and the commit under test. The job holds no write permission and saves
+  no cache; required reviewers on the environment (a repository setting) add an approval on top.
+  Until the variable is set the job is skipped.
 - **Status comment**, after a pull request's scenarios: a job without secrets, running only
   main's `tooling/bevy-e2e-report.py` and status action, writes the *InWorld* and *Automation*
   sections of the PR's CI status comment from the uploaded report.

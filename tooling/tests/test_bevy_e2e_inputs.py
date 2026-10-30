@@ -49,6 +49,9 @@ class ResolveTests(unittest.TestCase):
             f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?head_sha={SHA_PR}': {'workflow_runs': []},
             f'repos/{REPO}/pulls/194/files': [{'filename': 'services/catalyst/src/main.rs'}, {'filename': 'apps/bevy-explorer/e2e/specs/chat.test.ts'}],
             f'repos/{REPO}/pulls/195/files': [{'filename': 'services/catalyst/src/main.rs'}, {'filename': 'apps/sites/package.json'}],
+            f'repos/{REPO}/issues/194/labels': [{'name': 'explorer'}, {'name': inputs.RUN_LABEL}],
+            f'repos/{REPO}/issues/195/labels': [{'name': inputs.RUN_LABEL}],
+            f'repos/{REPO}/issues/196/labels': [{'name': 'explorer'}],
         })
         inputs.bench.api = self.api
 
@@ -64,6 +67,34 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(result['web_artifact'], f'bevy-explorer-web-{SHA_PR}')
         self.assertEqual(result['web_run_id'], '30')
         self.assertEqual(result['pr'], '194')
+
+    def test_a_pull_request_without_the_label_is_skipped_before_anything_is_fetched(self):
+        result = inputs.resolve('workflow_run', self.workflow_run(30, SHA_PR, 'pull_request', pulls=(196,)), REPO)
+        self.assertEqual(result['run'], False)
+        self.assertIn(f'`{inputs.RUN_LABEL}` label', result['reason'])
+        self.assertNotIn(f'repos/{REPO}/actions/runs/30/artifacts', self.api.calls)
+
+    def test_a_main_push_needs_no_label(self):
+        result = inputs.resolve('workflow_run', self.workflow_run(20, SHA_MAIN, 'push'), REPO)
+        self.assertEqual(result['run'], True)
+        self.assertFalse(any('/labels' in call for call in self.api.calls))
+
+    def test_the_summary_names_the_code_under_test(self):
+        import os
+        import tempfile
+        with tempfile.NamedTemporaryFile('w+', suffix='.md', delete=False) as handle:
+            path = handle.name
+        try:
+            os.environ['GITHUB_STEP_SUMMARY'] = path
+            inputs.write_outputs(inputs.chosen(SHA_PR, 'web', 30, '194', 'the reason'))
+            inputs.write_outputs(inputs.skip('no label'))
+        finally:
+            del os.environ['GITHUB_STEP_SUMMARY']
+        with open(path, encoding='utf-8') as handle:
+            text = handle.read()
+        os.unlink(path)
+        self.assertIn(f'Code under test: pull request #194, commit {SHA_PR}.', text)
+        self.assertEqual(text.count('Code under test'), 1)
 
     def test_a_pull_request_run_without_a_web_app_takes_mains_newest_when_the_suite_changed(self):
         result = inputs.resolve('workflow_run', self.workflow_run(31, SHA_PR, 'pull_request', pulls=(194,)), REPO)

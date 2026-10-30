@@ -13,11 +13,13 @@
 #
 # A `workflow_run` runs in main's context, so a pull request's run checks out and runs that pull
 # request's code (the suite, the scenes' build, dcl-scene-cli's build scripts) with main's
-# permissions. The job therefore holds no write permission, the accounts secret reaches only the
-# two steps that run scenarios, a pull request's run saves no cache, and the status comment is
-# written by a separate job that holds no secret and runs only this file's commit's tooling and
-# action. The `e2e` environment's required reviewers, a repository setting, are what holds a pull
-# request's scenarios until a maintainer approves the deployment: set them.
+# permissions, the accounts and the shared GPU runner. So a pull request's scenarios run only once
+# a maintainer has put the `run-e2e` label on it (tooling/bevy-e2e-inputs.py checks the label when
+# the CI run completes; the Inputs summary names the pull request and the commit under test). The
+# job holds no write permission, the accounts secret reaches only the two steps that run
+# scenarios, a pull request's run saves no cache, and the status comment is written by a separate
+# job that holds no secret and runs only this file's commit's tooling and action. Required
+# reviewers on the `e2e` environment, a repository setting, add an approval step on top.
 #
 # GitHub starts `workflow_run`, `schedule` and `workflow_dispatch` only from the workflow file on
 # the default branch: until this file is on main, only the pull request checks run.

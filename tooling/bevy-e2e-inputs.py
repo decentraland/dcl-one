@@ -7,9 +7,11 @@ download, from tooling/benchmark-inputs.py's artifact search), and `pr` (the pul
 or empty).
 
 - `workflow_run` of Bevy Explorer / CI: a successful run of this repository, a push to main or a
-  pull request from this repository. Its own web app when it built one; a pull request run that
-  built none (the PR changes no web input) takes main's newest when the PR changes the suite, its
-  workflow or its tooling, so the PR's specs still run; a PR that changes neither is skipped.
+  pull request from this repository that carries the RUN_LABEL label (a maintainer's decision to
+  run that pull request's code on the GPU runner with the accounts; without it the run is
+  skipped). Its own web app when it built one; a pull request run that built none (the PR changes
+  no web input) takes main's newest when the PR changes the suite, its workflow or its tooling, so
+  the PR's specs still run; a PR that changes neither is skipped.
 - `schedule`: main's newest web app and the commit that built it.
 - `workflow_dispatch`: `inputs.sha`'s CI run and web app, else main's newest.
 """
@@ -26,10 +28,17 @@ _spec.loader.exec_module(bench)
 
 # What the workflow's `pull_request` trigger lists: the suite, the workflow and its tooling.
 SUITE_PATHS = ('apps/bevy-explorer/e2e/', '.github/workflows/bevy-explorer-e2e.yml', 'tooling/bevy-e2e-', 'tooling/tests/test_bevy_e2e_')
+# The label a maintainer puts on a pull request whose code may run the scenarios.
+RUN_LABEL = 'run-e2e'
 
 
 def skip(reason):
     return {'run': False, 'reason': reason, 'sha': '', 'web_artifact': '', 'web_run_id': '', 'pr': ''}
+
+
+def labelled(repo, pr):
+    """Whether the pull request carries RUN_LABEL now (the CI run's event payload is older)."""
+    return any(row['name'] == RUN_LABEL for row in bench.api(f'repos/{repo}/issues/{pr}/labels?per_page=100'))
 
 
 def changes_suite(repo, pr):
@@ -80,6 +89,8 @@ def resolve(event_name, event, repo):
         pr = str(numbers[0]) if numbers else ''
         if trigger['event'] == 'pull_request' and not pr:
             return skip(f"CI run {trigger['id']} belongs to no open pull request")
+        if pr and not labelled(repo, pr):
+            return skip(f"#{pr} has no `{RUN_LABEL}` label: a maintainer applies it to run the scenarios on the pull request's code")
         web = bench.named(bench.artifacts(repo, trigger['id']), bench.WEB)
         if web:
             where = f'#{pr}' if pr else 'main'
@@ -123,6 +134,10 @@ def write_outputs(values):
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a', encoding='utf-8') as summary:
             summary.write(f"E2E suite {'runs' if values['run'] else 'skipped'}: {values['reason']}.\n")
+            if values['run']:
+                # What an approver of the `e2e` deployment is approving: the code the job checks out.
+                where = f"pull request #{values['pr']}, " if values['pr'] else ''
+                summary.write(f"Code under test: {where}commit {values['sha']}.\n")
 
 
 def main():

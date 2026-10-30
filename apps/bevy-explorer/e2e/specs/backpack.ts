@@ -575,16 +575,18 @@ export async function equipEmoteIntoSlot(explorer: Explorer, slot: number, card:
   return control
 }
 
-/** Put the slots back as `recordEmoteSlots` found them: each slot that differs is emptied and,
- *  when it held an emote, refilled from the card of that name (searched for), then the look is
- *  committed and the engine read until it selects the emotes it did. */
+/** Put the slots back as `recordEmoteSlots` found them: every slot that differs is emptied, then
+ *  each that held an emote is refilled from the card of that name (searched for), then the look is
+ *  committed and the engine read until it selects the emotes it did. Emptied first, all of them:
+ *  a card offers UNEQUIP while its emote sits in any slot (BackpackPage's `onEquip`), so a refill
+ *  while that emote still sits in a stale slot not yet emptied would find no EQUIP. */
 export async function restoreEmoteSlots(explorer: Explorer, record: EmoteSlotsRecord): Promise<void> {
   await closePage(explorer, 'backpack')
   await openBackpack(explorer, 'emotes')
   const current = await emoteSlots(explorer)
   const stale = record.slots.filter((slot) => normalize(slot.emote) !== normalize(current.find((now) => now.slot === slot.slot)?.emote ?? 'None'))
+  for (const slot of stale) await unequipEmoteSlot(explorer, slot.slot)
   for (const slot of stale) {
-    await unequipEmoteSlot(explorer, slot.slot)
     if (slot.emote === 'None') continue
     await searchFor(explorer, slot.emote)
     const card = await until(
