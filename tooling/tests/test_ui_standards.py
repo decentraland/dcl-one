@@ -41,7 +41,10 @@ class UiStandardsTest(unittest.TestCase):
                        "const lazy = import('styled-components')",
                        "require('styled-components')",
                        "import 'styled-components'",
-                       "export { default } from 'styled-components'"):
+                       "export { default } from 'styled-components'",
+                       "import styled from '@mui/styled-engine'",
+                       "const { styled } = require('@mui/material')",
+                       "import * as M from '@mui/material'\nconst Card = M.styled('div')({})"):
             with self.subTest(source=source):
                 self.assertTrue(ui_standards.forbidden_imports(source))
 
@@ -56,6 +59,7 @@ class UiStandardsTest(unittest.TestCase):
     def test_mentions_css_in_js(self):
         self.assertTrue(ui_standards.mentions_css_in_js('  styled,'))
         self.assertTrue(ui_standards.mentions_css_in_js("} from 'styled-components'"))
+        self.assertTrue(ui_standards.mentions_css_in_js("} from '@mui/material'"))
         self.assertFalse(ui_standards.mentions_css_in_js('  Box,'))
 
     def test_component_stylesheets(self):
@@ -131,6 +135,54 @@ class UiStandardsIntegrationTest(unittest.TestCase):
         self.commit('panel')
         component.write_text("import {\n  Box,\n  styled,\n} from '@mui/material'\n")
         self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Panel.tsx: new CSS-in-JS imports are not allowed'])
+
+    def test_changing_only_the_from_line_is_checked(self):
+        component = self.path / 'Panel.tsx'
+        component.write_text("import {\n  Box,\n  styled,\n} from './theme'\n")
+        self.git('add', '.')
+        self.commit('panel')
+        component.write_text("import {\n  Box,\n  styled,\n} from '@mui/material'\n")
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Panel.tsx: new CSS-in-JS imports are not allowed'])
+
+    def test_existing_import_is_not_reported_as_new(self):
+        component = self.path / 'Legacy.tsx'
+        component.write_text("import styled from 'styled-components'\nexport const A = styled.div``\n")
+        self.git('add', '.')
+        self.commit('legacy')
+        component.write_text("import styled from 'styled-components'\nexport const A = styled.div``\nexport const B = styled.span``\n")
+        self.assertEqual(ui_standards.check('HEAD'), [])
+
+    def test_colored_diff_config_does_not_hide_added_lines(self):
+        self.git('config', 'color.diff', 'always')
+        component = self.path / 'Card.tsx'
+        component.write_text('export const Card = () => null\n')
+        self.git('add', '.')
+        self.commit('card')
+        component.write_text("import styled from 'styled-components'\nexport const Card = () => null\n")
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Card.tsx: new CSS-in-JS imports are not allowed'])
+
+    def test_renaming_a_global_stylesheet_into_a_component_stylesheet_fails(self):
+        (self.path / 'Card.tsx').write_text('export const Card = () => null\n')
+        (self.path / 'global.css').write_text('.root {}\n')
+        self.git('add', '.')
+        self.commit('global')
+        self.git('mv', 'apps/sites/src/global.css', 'apps/sites/src/Card.css')
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Card.css: new component styles must use .module.css'])
+
+    def test_non_utf8_source_does_not_stop_the_check(self):
+        (self.path / 'Latin.tsx').write_bytes(b"// caf\xe9\nimport styled from 'styled-components'\n")
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Latin.tsx: new CSS-in-JS imports are not allowed'])
+
+    def test_shallow_clone_without_history_is_an_error(self):
+        (self.path / 'Card.tsx').write_text('export const Card = () => null\n')
+        self.git('add', '.')
+        self.commit('card')
+        shallow = Path(self.directory.name) / 'shallow'
+        subprocess.run(['git', 'clone', '-q', '--depth', '1', f'file://{self.root}', str(shallow)], check=True,
+                       capture_output=True)
+        with patch.object(ui_standards, 'ROOT', shallow):
+            with self.assertRaises(ValueError):
+                ui_standards.check('0' * 40)
 
     def test_missing_origin_main_warns(self):
         with patch('sys.stderr') as stderr:

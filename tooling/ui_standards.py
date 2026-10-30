@@ -22,7 +22,7 @@ NON_WEB_ROOTS = ('apps/dcl-scene-cli/scripts/', 'apps/dcl-scene-cli/src/template
 ENTRY_STYLESHEETS = ('app', 'index', 'main')
 ZERO_SHA = re.compile(r'^0+$')
 COMMIT_SHA = re.compile(r'^[0-9a-f]{40}$')
-CSS_IN_JS_MODULE = re.compile(r'^(?:styled-components|@emotion/(?:styled|react|css)|@mui/(?:material/styles|system)/styled)(?:/.*)?$')
+CSS_IN_JS_MODULE = re.compile(r'^(?:styled-components|@emotion/(?:styled|react|css)|@mui/(?:material/styles|system)/styled|@mui/styled-engine(?:-sc)?)(?:/.*)?$')
 MUI_MODULE = re.compile(r'^(?:@mui/material(?:/styles)?|@mui/system|decentraland-ui2)$')
 TOKEN = re.compile(
     r"(?P<comment>//[^\n]*|/\*.*?(?:\*/|\Z))"
@@ -50,7 +50,10 @@ def tokens(text):
 
 
 def forbidden_imports(text):
+    """Return the module specifiers of the CSS-in-JS imports in source text."""
     items = tokens(text)
+    found = []
+    namespaces = set()
     for index, (kind, value) in enumerate(items):
         if kind != 'word' or value not in ('import', 'export', 'require'):
             continue
@@ -58,32 +61,42 @@ def forbidden_imports(text):
             continue
         following = items[index + 1:]
         if following and following[0] == ('punct', '('):
-            if len(following) > 1 and following[1][0] == 'string' and CSS_IN_JS_MODULE.match(following[1][1]):
-                return True
+            if len(following) > 1 and following[1][0] == 'string':
+                specifier = following[1][1]
+                destructured = {word for word_kind, word in items[max(0, index - 12):index] if word_kind == 'word'}
+                if CSS_IN_JS_MODULE.match(specifier) or ('styled' in destructured and MUI_MODULE.match(specifier)):
+                    found.append(specifier)
             continue
         if value == 'require':
             continue
         # A module specifier is the first string, right after the keyword or after `from`.
-        names = set()
+        names = []
         previous = (kind, value)
         for next_kind, next_value in following:
             if next_kind == 'string':
                 is_specifier = previous == ('word', 'from') or (previous == ('word', 'import') and not names)
                 if is_specifier and (CSS_IN_JS_MODULE.match(next_value)
                                      or ('styled' in names and MUI_MODULE.match(next_value))):
-                    return True
+                    found.append(next_value)
+                elif is_specifier and MUI_MODULE.match(next_value) and names[:2] == ['*', 'as'] and len(names) > 2:
+                    namespaces.add(names[2])
                 break
             if next_kind == 'punct' and next_value == ';':
                 break
-            if next_kind == 'word':
-                names.add(next_value)
+            if next_kind in ('word', 'punct') and next_value not in (',', '{', '}'):
+                names.append(next_value)
             previous = (next_kind, next_value)
-    return False
+    for index in range(len(items) - 2):
+        if items[index][0] == 'word' and items[index][1] in namespaces \
+                and items[index + 1] == ('punct', '.') and items[index + 2] == ('word', 'styled'):
+            found.append(f'{items[index][1]}.styled')
+    return found
 
 
 def mentions_css_in_js(text):
     """Whether added text could belong to a CSS-in-JS import, so the whole file needs a scan."""
-    return any((kind == 'word' and value == 'styled') or (kind == 'string' and CSS_IN_JS_MODULE.match(value))
+    return any((kind == 'word' and value == 'styled')
+               or (kind == 'string' and (CSS_IN_JS_MODULE.match(value) or MUI_MODULE.match(value)))
                for kind, value in tokens(text))
 
 
@@ -126,14 +139,15 @@ def names(command, *args):
 
 def new_files(diff, base):
     """Paths added since base, plus renames whose old path was not already a plain stylesheet."""
-    fields = git(*diff, '--name-status', '-z', '-M', '--diff-filter=AR', '--end-of-options', base, '--').split('\0')
+    fields = git(*diff, '--no-color', '--name-status', '-z', '-M', '--diff-filter=AR', '--end-of-options', base, '--').split('\0')
     result = set()
     index = 0
     while index < len(fields) and fields[index]:
         status = fields[index]
         if status.startswith('R'):
             old, new = fields[index + 1], fields[index + 2]
-            if not is_plain_stylesheet(old):
+            moved = is_plain_stylesheet(old) and PurePosixPath(old).name == PurePosixPath(new).name
+            if not moved:
                 result.add(new)
             index += 3
         else:
@@ -166,14 +180,20 @@ def resolve_base(base):
     A push event reports an all-zero SHA for a new ref, and a force push can
     report a commit that is no longer present; both fall back to HEAD~1, or to
     HEAD in a repository with a single commit. Any other unresolvable base is
-    an error rather than a silent pass.
+    an error rather than a silent pass, and so is a shallow clone without the
+    history to compare against.
     """
     if not ZERO_SHA.match(base):
         if verify(base):
             return base
         if not COMMIT_SHA.match(base):
             raise ValueError(f'unknown base revision {base!r}')
-    fallback = 'HEAD~1' if verify('HEAD~1') else 'HEAD'
+    if verify('HEAD~1'):
+        fallback = 'HEAD~1'
+    elif git('rev-parse', '--is-shallow-repository').strip() == 'true':
+        raise ValueError(f'base {base!r} is not available in this shallow clone; fetch more history')
+    else:
+        fallback = 'HEAD'
     print(f'UI standards: base {base!r} is not a reachable commit; comparing with {fallback}', file=sys.stderr)
     return fallback
 
@@ -191,7 +211,15 @@ def check(base='HEAD', staged=False):
         untracked = names(('ls-files',), '--others', '--exclude-standard')
 
     def current(name):
-        return git('show', f':{name}') if staged else (ROOT / name).read_text(encoding='utf-8')
+        if staged:
+            return git('show', f':{name}')
+        return (ROOT / name).read_text(encoding='utf-8', errors='replace')
+
+    def previous(name):
+        try:
+            return git('show', f'{base}:{name}')
+        except subprocess.CalledProcessError:
+            return ''
 
     changed = names(diff, '--name-only', '--diff-filter=ACMR', '--end-of-options', base, '--') | untracked
     added = new_files(diff, base) | untracked
@@ -203,12 +231,17 @@ def check(base='HEAD', staged=False):
         if not is_ui_source(name) or not name.endswith(SCRIPT_EXTENSIONS):
             continue
         if name in untracked:
-            text = current(name)
+            new_imports = forbidden_imports(current(name))
         else:
-            text = '\n'.join(added_lines(git(*diff, '--no-ext-diff', '--unified=0', '--end-of-options', base, '--', name)))
-            if mentions_css_in_js(text):
-                text = current(name)
-        if forbidden_imports(text):
+            text = '\n'.join(added_lines(git(*diff, '--no-ext-diff', '--no-color', '--unified=0',
+                                              '--end-of-options', base, '--', name)))
+            if not mentions_css_in_js(text):
+                continue
+            new_imports = forbidden_imports(current(name))
+            for existing in forbidden_imports(previous(name)):
+                if existing in new_imports:
+                    new_imports.remove(existing)
+        if new_imports:
             issues.append(f'{name}: new CSS-in-JS imports are not allowed')
     return issues
 
