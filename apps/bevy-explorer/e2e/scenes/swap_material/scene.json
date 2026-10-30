@@ -1,0 +1,47 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "swap_material",
+    "description": "Visual regression scene swap_material (from explorer-automation 955b338)"
+  },
+  "owner": "",
+  "contact": {
+    "name": "explorer-automation",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": [
+      "144,0",
+      "145,0"
+    ],
+    "base": "144,0"
+  },
+  "skyboxConfig": {
+    "fixedTime": 43200
+  },
+  "spawnPoints": [
+    {
+      "name": "default",
+      "default": true,
+      "position": {
+        "x": [
+          8
+        ],
+        "y": [
+          0
+        ],
+        "z": [
+          8
+        ]
+      },
+      "cameraTarget": {
+        "x": 8,
+        "y": 1,
+        "z": 8
+      }
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "tweens",
+    "description": "Visual regression scene tweens (from explorer-automation 955b338)"
+  },
+  "owner": "",
+  "contact": {
+    "name": "explorer-automation",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": [
+      "180,0",
+      "181,0",
+      "182,0"
+    ],
+    "base": "180,0"
+  },
+  "spawnPoints": [
+    {
+      "name": "default",
+      "default": true,
+      "position": {
+        "x": [
+          8
+        ],
+        "y": [
+          0
+        ],
+        "z": [
+          8
+        ]
+      },
+      "cameraTarget": {
+        "x": 8,
+        "y": 1,
+        "z": 8
+      }
+    }
+  ],
+  "skyboxConfig": {
+    "fixedTime": 43200
+  }
+}

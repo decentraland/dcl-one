@@ -190,6 +190,10 @@ def select(base, head):
             # Launcher/package assembly cannot affect web or graphical/native tests.
             # Keep the headless build/smoke; main also packages all four platforms.
             affected = ('headless',)
+        elif path.startswith('apps/bevy-explorer/e2e/'):
+            # The end-to-end suite drives a built client; its own workflow (bevy-explorer-e2e.yml)
+            # checks it and runs it against the web app this workflow built.
+            affected = ()
         elif path.startswith('apps/bevy-explorer/') and path.removeprefix('apps/bevy-explorer/') in APP_INPUTS:
             affected = APP_INPUTS[path.removeprefix('apps/bevy-explorer/')]
         else:
