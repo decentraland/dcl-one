@@ -1,6 +1,7 @@
 //! `GET /api/events/{id}/attendees`: the local RSVPs (`explore.event_attendance_local`)
 //! ahead of the mirrored `latest_attendees`, deduplicated case-insensitively.
-//! The going/cancel writes (`events::writes`) upsert or delete the signer's
+//! The going/cancel writes (`events::writes`) upsert explicit local state,
+//! including a cancellation tombstone that overrides the mirrored preview.
 //! row and answer the list in the same transaction.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
@@ -15,7 +16,9 @@ const LOCAL_LIMIT: i64 = 500;
 /// The local RSVPs and the mirrored event ride in one row: `$1` is the event id.
 fn list_sql() -> String {
     format!(
-        "SELECT a.signers, a.names, a.times, e.raw, e.fetched_at \
+        "SELECT a.signers, a.names, a.times, e.raw, e.fetched_at, \
+          ARRAY(SELECT lower(ua.address) FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(e.raw->'latest_attendees')='array' THEN e.raw->'latest_attendees' ELSE '[]' END) ua(address) \
+                WHERE EXISTS (SELECT 1 FROM explore.event_attendance_local cancelled WHERE cancelled.event_id=$1 AND cancelled.signer=lower(ua.address) AND cancelled.action='cancel')) \
          FROM (SELECT coalesce(array_agg(x.signer ORDER BY x.signed_at DESC), '{{}}') AS signers, \
                       coalesce(array_agg(x.user_name ORDER BY x.signed_at DESC), '{{}}') AS names, \
                       coalesce(array_agg(x.signed_at ORDER BY x.signed_at DESC), '{{}}') AS times \
@@ -32,11 +35,15 @@ type ListRow = (
     Vec<NaiveDateTime>,
     Option<Value>,
     Option<NaiveDateTime>,
+    Vec<String>,
 );
 
 fn to_records(event_id: &str, row: ListRow) -> Vec<EventAttendeeRecord> {
-    let (signers, names, times, raw, fetched_at) = row;
-    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let (signers, names, times, raw, fetched_at, cancelled) = row;
+    let mut seen: std::collections::HashSet<String> = cancelled
+        .into_iter()
+        .map(|address| address.to_ascii_lowercase())
+        .collect();
     let mut out: Vec<EventAttendeeRecord> = Vec::new();
     for (i, signer) in signers.into_iter().enumerate() {
         if seen.insert(signer.to_lowercase()) {
@@ -113,14 +120,14 @@ pub async fn rsvp_going(
     Ok(to_records(event_id, row))
 }
 
-/// The signer is not going: the row deleted and the list read in one transaction.
+/// The cancellation marker survives mirror refreshes and overrides its preview.
 pub async fn rsvp_cancel(
     pool: &PgPool,
     event_id: &str,
     signer: &str,
 ) -> Result<Vec<EventAttendeeRecord>, ApiError> {
     let mut tx = pool.begin().await?;
-    sqlx::query("DELETE FROM explore.event_attendance_local WHERE event_id = $1 AND signer = $2")
+    sqlx::query("INSERT INTO explore.event_attendance_local (event_id, signer, action) VALUES ($1,$2,'cancel') ON CONFLICT (event_id,signer) DO UPDATE SET action='cancel',signed_at=timezone('UTC',now())")
         .bind(event_id)
         .bind(signer.to_lowercase())
         .execute(&mut *tx)
@@ -150,6 +157,7 @@ mod tests {
                 "latest_attendees": ["0xAAA", "0xccc"]
             })),
             Some(now),
+            Vec::new(),
         );
         let out = to_records("e1", row);
         assert_eq!(
@@ -163,6 +171,6 @@ mod tests {
                 .to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
             "2026-08-16T04:00:00.019Z"
         );
-        assert!(to_records("e2", (vec![], vec![], vec![], None, None)).is_empty());
+        assert!(to_records("e2", (vec![], vec![], vec![], None, None, vec![])).is_empty());
     }
 }

@@ -30,6 +30,8 @@ export const EventRecordSchema = z.object({
   image: z.string().nullable(),
   image_vertical: z.string().nullable(),
   description: z.string().nullable(),
+  contact: z.string().optional(),
+  details: z.string().optional(),
   start_at: z.string().nullable(),
   finish_at: z.string().nullable(),
   next_start_at: z.string().nullable(),

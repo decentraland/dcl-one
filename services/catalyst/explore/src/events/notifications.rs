@@ -17,6 +17,29 @@ fn text<'a>(raw: &'a Value, key: &str) -> Option<&'a str> {
         .filter(|value| !value.is_empty())
 }
 
+/// Only the fields needed to address and render a notice enter its durable
+/// payload. Private organizer details, recurrence arrays and future fields
+/// cannot accidentally become part of the notification record.
+pub fn snapshot(event: &Value) -> Value {
+    let mut result = serde_json::Map::new();
+    for key in [
+        "id",
+        "name",
+        "image",
+        "description",
+        "duration",
+        "user",
+        "community_id",
+        "rejection_reason",
+        "deleted_reason",
+    ] {
+        if let Some(value) = event.get(key) {
+            result.insert(key.into(), value.clone());
+        }
+    }
+    Value::Object(result)
+}
+
 /// Capture host state changes and approved community associations. Pending
 /// creation sends no user notice, matching the original moderation workflow.
 /// A local community association is required: mirrored metadata alone never
@@ -51,11 +74,12 @@ pub async fn record_transition(
     } else if !previously_deleted && flag(after, "deleted_by_admin") {
         kinds.push("event_deleted");
     }
+    let snapshot = snapshot(after);
     for kind in kinds {
         sqlx::query(
             "INSERT INTO explore.event_notification_intents (id,event_id,kind,event,local_event,occurred_at) \
              VALUES ($1,$2,$3,$4,$5,$6)",
-        ).bind(Uuid::new_v4()).bind(event_id).bind(kind).bind(after).bind(local)
+        ).bind(Uuid::new_v4()).bind(event_id).bind(kind).bind(&snapshot).bind(local)
             .bind(Utc::now().naive_utc()).execute(&mut **tx).await?;
     }
     Ok(())
@@ -68,4 +92,19 @@ pub fn occurrence_id(event_id: &str, starts_at: NaiveDateTime, kind: &str) -> Uu
         &Uuid::NAMESPACE_URL,
         format!("event-occurrence:{event_id}:{starts_at}:{kind}").as_bytes(),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn notice_snapshots_exclude_private_and_unneeded_fields_by_default() {
+        let payload = snapshot(
+            &serde_json::json!({"name":"Public", "duration":3600000, "contact":"private@example.org", "details":"secret", "recurrent_dates":["2099-01-01"], "future_private_field":"secret"}),
+        );
+        assert_eq!(
+            payload,
+            serde_json::json!({"name":"Public","duration":3600000})
+        );
+    }
 }

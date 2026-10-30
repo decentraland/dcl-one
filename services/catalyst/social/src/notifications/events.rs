@@ -94,7 +94,10 @@ async fn scan_kind(
         })
         .collect();
     let event_ids: Vec<&str> = rows.iter().map(|row| row.event_id.as_str()).collect();
-    let events: Vec<Value> = rows.iter().map(|row| row.event.clone()).collect();
+    let events: Vec<Value> = rows
+        .iter()
+        .map(|row| crate::explore::events::notifications::snapshot(&row.event))
+        .collect();
     let local: Vec<bool> = rows.iter().map(|row| row.local_event).collect();
     let starts: Vec<NaiveDateTime> = rows.iter().map(|row| row.starts_at).collect();
     let due: Vec<NaiveDateTime> = rows.iter().map(|row| row.due_at).collect();

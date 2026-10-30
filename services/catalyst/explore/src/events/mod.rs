@@ -7,6 +7,7 @@
 pub mod attendees;
 pub mod categories;
 pub mod handlers;
+mod metadata;
 pub mod mirror;
 pub mod moderation;
 pub mod notifications;
@@ -39,6 +40,12 @@ pub struct EventRecord {
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
     pub image_vertical: Option<Value>,
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub contact: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub details: Option<String>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
     pub start_at: Option<DateTime<Utc>>,
     #[cfg_attr(feature = "ts", ts(type = "string | null"))]
@@ -234,7 +241,6 @@ struct EventRow {
     highlighted: bool,
     trending: bool,
     approved: bool,
-    attending: Option<bool>,
     community_id: Option<String>,
     user_creator: Option<String>,
     coordinates_x: Option<i32>,
@@ -242,6 +248,10 @@ struct EventRow {
     description: Option<String>,
     raw: Value,
     local_attendees: i64,
+    #[sqlx(default)]
+    local_latest_attendees: Vec<String>,
+    #[sqlx(default)]
+    cancelled_attendees: Vec<String>,
     #[sqlx(default)]
     total_count: i64,
     #[sqlx(default)]
@@ -417,11 +427,8 @@ impl EventsComponent {
         if f.only_attendee
             && let Some(u) = &f.user
         {
-            let p1 = next_placeholder(binds, EventBind::Text(u.to_lowercase()));
-            let p2 = next_placeholder(binds, EventBind::Text(u.to_lowercase()));
-            sql.push_str(&format!(
-                " AND (id IN (SELECT event_id FROM explore.event_attendance_local WHERE signer = {p1} AND action = 'going') OR raw->'latest_attendees' ? {p2})"
-            ));
+            let p = next_placeholder(binds, EventBind::Text(u.to_lowercase()));
+            sql.push_str(&format!(" AND {}", attendance_sql(&p)));
         }
 
         if let Some(own) = crate::copies::origin::event_rows_sql() {
@@ -496,11 +503,8 @@ impl EventsComponent {
             return self.get(event_id).await;
         };
         let row = sqlx::query_as::<_, EventRow>(sqlx::AssertSqlSafe(format!(
-            "SELECT {EVENT_COLUMNS}, (EXISTS ( \
-               SELECT 1 FROM explore.event_attendance_local al \
-               WHERE al.event_id = event.id AND al.signer = $2 AND al.action = 'going' \
-             ) OR raw->'latest_attendees' ? $2) AS viewer_attending \
-             FROM explore.event WHERE id = $1"
+            "SELECT {EVENT_COLUMNS}, {} AS viewer_attending FROM explore.event WHERE id = $1",
+            attendance_sql("$2")
         )))
         .bind(event_id)
         .bind(viewer.to_lowercase())
@@ -508,7 +512,7 @@ impl EventsComponent {
         .await?;
         Ok(row.map(|r| {
             let attending = r.viewer_attending.unwrap_or(false);
-            let mut rec = event_row_to_record(r, None, self.rewrite_domain.as_deref());
+            let mut rec = event_row_to_record(r, Some(viewer), self.rewrite_domain.as_deref());
             rec.attending = attending;
             rec
         }))
@@ -671,15 +675,27 @@ impl AskedKeys {
 }
 
 /// Column list shared by every event read query.
-/// `local_attendees`: this node's RSVPs, which `total_attendees` adds to the
-/// upstream's count (a mirrored event's); a signer the upstream's
-/// `latest_attendees` already names is counted there.
+/// `local_attendees` is the signed delta over a mirrored count: new going
+/// signers add one; cancellation of a known preview signer subtracts one.
+/// Preview equality is case-insensitive, and local previews are bounded.
 const EVENT_COLUMNS: &str = "id, name, start_at, finish_at, duration_ms, recurrent, highlighted, trending, \
-     approved, attending, community_id, user_creator, coordinates_x, coordinates_y, \
+     approved, community_id, user_creator, coordinates_x, coordinates_y, \
      description, raw, \
-     (SELECT count(*) FROM explore.event_attendance_local la \
-      WHERE la.event_id = event.id AND la.action = 'going' \
-        AND NOT (COALESCE(event.raw->'latest_attendees', '[]') ? la.signer)) AS local_attendees";
+     (SELECT COALESCE(sum(CASE \
+         WHEN la.action='going' AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(event.raw->'latest_attendees')='array' THEN event.raw->'latest_attendees' ELSE '[]' END) ua(address) WHERE lower(ua.address)=la.signer) THEN 1 \
+         WHEN la.action='cancel' AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(event.raw->'latest_attendees')='array' THEN event.raw->'latest_attendees' ELSE '[]' END) ua(address) WHERE lower(ua.address)=la.signer) THEN -1 \
+         ELSE 0 END),0)::bigint FROM explore.event_attendance_local la WHERE la.event_id=event.id) AS local_attendees, \
+     ARRAY(SELECT la.signer FROM explore.event_attendance_local la WHERE la.event_id=event.id AND la.action='going' ORDER BY la.signed_at DESC,la.signer LIMIT 10) AS local_latest_attendees, \
+     ARRAY(SELECT lower(ua.address) FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(event.raw->'latest_attendees')='array' THEN event.raw->'latest_attendees' ELSE '[]' END) ua(address) \
+           WHERE EXISTS (SELECT 1 FROM explore.event_attendance_local la WHERE la.event_id=event.id AND la.signer=lower(ua.address) AND la.action='cancel')) AS cancelled_attendees";
+
+/// Explicit local state, including cancellation, overrides a mirrored preview.
+fn attendance_sql(user: &str) -> String {
+    format!(
+        "COALESCE((SELECT la.action='going' FROM explore.event_attendance_local la WHERE la.event_id=event.id AND la.signer={user}), \
+        EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(event.raw->'latest_attendees')='array' THEN event.raw->'latest_attendees' ELSE '[]' END) ua(address) WHERE lower(ua.address)={user}))"
+    )
+}
 
 // Keep a bounded active/future date window for existing list consumers.
 // Effective next_start_at still uses the complete series, before projection.
@@ -754,6 +770,7 @@ fn next_start_order_by(order: SortOrder) -> String {
 }
 
 fn attending_sql() -> String {
+    let attending = attendance_sql("$1");
     let columns = list_event_columns(false);
     format!(
         "SELECT {columns} FROM explore.event \
@@ -761,10 +778,7 @@ fn attending_sql() -> String {
            AND COALESCE((raw->>'rejected')::boolean, false) IS FALSE \
            AND (raw->>'deleted_by_user') IS DISTINCT FROM 'true' \
            AND (raw->>'deleted_by_admin') IS DISTINCT FROM 'true' \
-           AND ( \
-             id IN (SELECT event_id FROM explore.event_attendance_local WHERE signer = $1 AND action = 'going') \
-             OR raw->'latest_attendees' ? $1 \
-           ) \
+           AND {attending} \
          ORDER BY {EFF_NEXT_START_SQL} ASC NULLS LAST, id ASC"
     )
 }
@@ -815,11 +829,7 @@ fn build_list_sql(f: &EventListFilters, with_total: bool, binds: &mut Vec<EventB
     let viewer = match &f.user {
         Some(u) => {
             let p = next_placeholder(binds, EventBind::Text(u.to_lowercase()));
-            format!(
-                ", EXISTS (SELECT 1 FROM explore.event_attendance_local al \
-                 WHERE al.event_id = event.id AND al.signer = {p} AND al.action = 'going') \
-                 AS viewer_attending"
-            )
+            format!(", {} AS viewer_attending", attendance_sql(&p))
         }
         None => String::new(),
     };
@@ -920,6 +930,7 @@ fn event_row_to_record(
         .and_then(|v| v.as_str())
         .and_then(|s| validate_event_url(s).ok());
     let user = raw_str(raw, "user").or_else(|| r.user_creator.clone());
+    let owner_view = matches!((attending_user,user.as_deref()),(Some(viewer),Some(owner)) if viewer.eq_ignore_ascii_case(owner));
     let scene_name = raw_str(raw, "scene_name");
     let estate_name = raw_str(raw, "estate_name").or_else(|| scene_name.clone());
     let world = raw.get("world").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -951,21 +962,19 @@ fn event_row_to_record(
         _ => raw.get("live").and_then(|v| v.as_bool()).unwrap_or(false),
     };
     let attending = match attending_user {
-        Some(u) => {
-            r.viewer_attending.unwrap_or(false)
-                || raw
-                    .get("latest_attendees")
-                    .and_then(|v| v.as_array())
-                    .map(|arr| {
-                        arr.iter().any(|x| {
-                            x.as_str()
-                                .map(|s| s.eq_ignore_ascii_case(u))
-                                .unwrap_or(false)
-                        })
+        Some(u) => r.viewer_attending.unwrap_or_else(|| {
+            raw.get("latest_attendees")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter().any(|x| {
+                        x.as_str()
+                            .map(|s| s.eq_ignore_ascii_case(u))
+                            .unwrap_or(false)
                     })
-                    .unwrap_or(false)
-        }
-        None => r.attending.unwrap_or(false),
+                })
+                .unwrap_or(false)
+        }),
+        None => false,
     };
     let str_list = |key: &str| -> Vec<String> {
         raw.get(key)
@@ -987,6 +996,8 @@ fn event_row_to_record(
             .description
             .or_else(|| raw_str(raw, "description"))
             .map(|d| sanitize_event_description(&d)),
+        contact: owner_view.then(|| raw_str(raw, "contact")).flatten(),
+        details: owner_view.then(|| raw_str(raw, "details")).flatten(),
         start_at,
         finish_at,
         next_start_at,
@@ -1034,13 +1045,26 @@ fn event_row_to_record(
         recurrent_dates,
         categories: str_list("categories"),
         schedules: str_list("schedules"),
-        total_attendees: raw
+        total_attendees: (raw
             .get("total_attendees")
             .and_then(|v| v.as_i64())
             .unwrap_or(0)
             .max(0)
-            + r.local_attendees,
-        latest_attendees: str_list("latest_attendees"),
+            + r.local_attendees)
+            .max(0),
+        latest_attendees: {
+            let mut seen: HashSet<String> = r
+                .cancelled_attendees
+                .into_iter()
+                .map(|address| address.to_ascii_lowercase())
+                .collect();
+            r.local_latest_attendees
+                .into_iter()
+                .chain(str_list("latest_attendees"))
+                .filter(|address| seen.insert(address.to_ascii_lowercase()))
+                .take(10)
+                .collect()
+        },
         coordinates: [x, y],
         position: [x, y],
         live,
@@ -1140,7 +1164,6 @@ mod tests {
             highlighted: false,
             trending: false,
             approved: true,
-            attending: None,
             community_id: None,
             user_creator: None,
             coordinates_x: Some(0),
@@ -1148,6 +1171,8 @@ mod tests {
             description: None,
             raw,
             local_attendees: 0,
+            local_latest_attendees: Vec::new(),
+            cancelled_attendees: Vec::new(),
             total_count: 0,
             viewer_attending: None,
         }
