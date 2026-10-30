@@ -16,7 +16,7 @@ use sqlx::PgPool;
 use sqlx::Row;
 
 pub use crate::comms::rooms::{
-    ActiveDeployment, ResolveError, ResolvedRoom, RoomRequest, parse_room,
+    ActiveDeployment, ReplacedScene, ResolveError, ResolvedRoom, RoomRequest, parse_room,
 };
 use crate::comms::rooms::{
     gatekeeper_scene_room, worlds_service_scene_room, worlds_service_world_room,
@@ -105,6 +105,54 @@ pub async fn world_scene(
     .fetch_optional(pool)
     .await?;
     row.map(|r| world_row(world, &r)).transpose()
+}
+
+/// How long a replaced world scene stays reachable for scene comms.
+pub const REPLACED_SCENE_RETENTION: chrono::Duration = chrono::Duration::days(7);
+
+/// `scene` when a deploy replaced it in `world` within
+/// [`REPLACED_SCENE_RETENTION`] of `now` (`worlds.replaced_world_scenes`),
+/// with the bases of the active scenes now standing on its parcels.
+pub async fn replaced_world_scene(
+    pool: &PgPool,
+    world: &WorldName,
+    scene: &SceneId,
+    now: chrono::NaiveDateTime,
+) -> Result<Option<ReplacedScene>, ResolveError> {
+    let row: Option<(Vec<String>, Option<String>)> = sqlx::query_as(
+        "SELECT parcels, declared_base FROM worlds.replaced_world_scenes \
+         WHERE world_name = $1 AND entity_id = $2 AND replaced_at > $3",
+    )
+    .bind(world.key())
+    .bind(scene)
+    .bind(now - REPLACED_SCENE_RETENTION)
+    .fetch_optional(pool)
+    .await?;
+    let Some((parcels, base)) = row else {
+        return Ok(None);
+    };
+    let Ok((footprint_parcels, base)) = footprint(&parcels, base.as_deref(), scene) else {
+        return Ok(None);
+    };
+    let current: Vec<(String, Vec<String>, Option<String>)> = sqlx::query_as(
+        "SELECT entity_id, parcels, entity #>> '{metadata,scene,base}' FROM worlds.world_scenes \
+         WHERE world_name = $1 AND parcels && $2::text[]",
+    )
+    .bind(world.key())
+    .bind(footprint_parcels.canonical())
+    .fetch_all(pool)
+    .await?;
+    let mut successors: Vec<Parcel> = current
+        .iter()
+        .filter_map(|(id, parcels, base)| {
+            footprint(parcels, base.as_deref(), &SceneId::from_stored(id.clone()))
+                .ok()
+                .map(|(_, base)| base)
+        })
+        .collect();
+    successors.sort();
+    successors.dedup();
+    Ok(Some(ReplacedScene { base, successors }))
 }
 
 /// The world scene standing on `parcel` (newest first, like the about).
@@ -447,6 +495,14 @@ impl crate::comms::interfaces::SceneIdentity for SceneResolver {
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError> {
         world_active_scene(&self.pool, world).await
+    }
+
+    async fn replaced_world_scene(
+        &self,
+        world: &WorldName,
+        scene: &SceneId,
+    ) -> Result<Option<ReplacedScene>, ResolveError> {
+        replaced_world_scene(&self.pool, world, scene, chrono::Utc::now().naive_utc()).await
     }
 }
 

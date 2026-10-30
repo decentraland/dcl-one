@@ -330,13 +330,13 @@ impl Moderation {
     pub async fn ban(
         &self,
         actor: &Address,
-        scene: Option<&crate::world_identity::SceneId>,
+        scene: Option<&crate::access::SceneBanKey>,
         device: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Option<crate::access::Ban>, crate::AuthorityNotEstablished> {
         self.ban_at(
             actor,
-            scene.map(crate::world_identity::SceneId::as_str),
+            scene.map(crate::access::SceneBanKey::as_str),
             device,
             now,
         )
@@ -975,7 +975,7 @@ impl super::BanStatus for Moderation {
     async fn ban(
         &self,
         actor: &Address,
-        scene: Option<&crate::world_identity::SceneId>,
+        scene: Option<&crate::access::SceneBanKey>,
         device: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Option<crate::access::Ban>, crate::AuthorityNotEstablished> {

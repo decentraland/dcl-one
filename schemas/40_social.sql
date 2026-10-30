@@ -489,6 +489,23 @@ CREATE TABLE social.livekit_removal_intents (
 CREATE INDEX livekit_removal_intents_due_idx ON social.livekit_removal_intents (next_attempt_at, created_at, root_key, target_key);
 CREATE INDEX livekit_removal_intents_room_idx ON social.livekit_removal_intents (room_name, room_sid) WHERE room_name IS NOT NULL;
 
+-- Comms-owned shared-secret throttle of the world comms mints and the scene
+-- adapter, one fixed window per (world key, lowercase caller) shared by every
+-- replica. Each attempt is reserved (in_flight) before the secret is checked
+-- and purges a bounded batch of expired windows; a wrong secret turns its
+-- reservation into a failure, a correct one returns it.
+CREATE TABLE social.world_secret_attempts (
+    world_name text NOT NULL,
+    subject text NOT NULL,
+    window_started_at timestamp without time zone NOT NULL,
+    failures integer NOT NULL,
+    in_flight integer NOT NULL DEFAULT 0,
+    CONSTRAINT world_secret_attempts_pkey PRIMARY KEY (world_name, subject),
+    CONSTRAINT world_secret_attempts_failures CHECK (failures >= 0 AND in_flight >= 0)
+);
+-- The purge of expired windows.
+CREATE INDEX world_secret_attempts_window_idx ON social.world_secret_attempts (window_started_at);
+
 CREATE TABLE social.user_warnings (
     id uuid NOT NULL DEFAULT gen_random_uuid(),
     warned_address text NOT NULL,

@@ -2574,6 +2574,407 @@ async fn world_mint_refuses_at_capacity() {
     }
 }
 
+const WORLD_MINT_PATHS: [&str; 3] = [
+    "/worlds/alice.dcl.eth/comms",
+    "/worlds/alice.dcl.eth/scenes/bafkreiscene/comms",
+    "/get-comms-adapter/world-alice.dcl.eth",
+];
+
+async fn world_mint(
+    app: &axum::Router,
+    key: &str,
+    path: &str,
+    forwarded_for: Option<&str>,
+) -> (StatusCode, serde_json::Value) {
+    let mut req = Request::post(path).body(Body::empty()).unwrap();
+    let metadata = if path.starts_with("/get-comms-adapter/") {
+        r#"{"signer":"dcl:explorer","intent":"dcl:explorer:comms-handshake","secret":"wrong"}"#
+    } else {
+        r#"{"secret":"wrong"}"#
+    };
+    req.headers_mut()
+        .extend(signed(key, "post", path, metadata).await);
+    if let Some(ip) = forwarded_for {
+        req.headers_mut()
+            .insert("cf-connecting-ip", HeaderValue::from_str(ip).unwrap());
+    }
+    body_json(app.clone().oneshot(req).await.unwrap()).await
+}
+
+fn world_mint_state(pool: PgPool, policy: StubPolicy) -> CommsState {
+    use crate::rooms::ResolvedRoom;
+    use crate::world_identity::{RealmId, WorldName};
+    let world = WorldName::parse("alice.dcl.eth").unwrap();
+    let mut state = comms_state(pool, Settings::for_tests()).with_ban_status(Arc::new(
+        super::moderation::test_support::StubBanStatus(Ok(None)),
+    ));
+    state.policy = Arc::new(policy);
+    state.scenes = Arc::new(StubScenes {
+        room: Ok(ResolvedRoom {
+            realm: RealmId::World(world.clone()),
+            scene_id: None,
+            deployment: None,
+            room: crate::rooms::worlds_service_world_room(&world),
+        }),
+        ..StubScenes::default()
+    });
+    state
+}
+
+/// The old `isWorldValid`: no token for a world this node does not know, one
+/// the operator disabled or one whose name is deny-listed.
+#[tokio::test]
+async fn world_mints_answer_404_for_unknown_disabled_and_deny_listed_worlds() {
+    use crate::access::WorldStanding;
+    for standing in [
+        WorldStanding::Unknown,
+        WorldStanding::Disabled,
+        WorldStanding::DenyListed,
+    ] {
+        let state = world_mint_state(
+            lazy_pool(),
+            StubPolicy {
+                standing: Ok(standing),
+                ..StubPolicy::default()
+            },
+        );
+        let app = super::admission::world_mint::router(Arc::new(state));
+        for path in WORLD_MINT_PATHS {
+            let (status, body) = world_mint(&app, KEY, path, None).await;
+            let expected = if path.starts_with("/get-comms-adapter/") {
+                "World \"alice.dcl.eth\" was not found."
+            } else {
+                "World \"alice.dcl.eth\" is invalid or blocked."
+            };
+            assert_eq!(
+                (status, body["message"].as_str()),
+                (StatusCode::NOT_FOUND, Some(expected)),
+                "{standing:?} at {path}"
+            );
+        }
+    }
+}
+
+/// Every replica spends one shared-secret budget per world and caller, a
+/// window expires on its own, and other callers' rows cannot reset it.
+#[tokio::test]
+async fn shared_secret_throttle_is_shared_by_replicas_and_survives_many_keys() {
+    use crate::access::{AccessType, WorldStanding};
+    let Some(pool) = scratch().await else { return };
+    let caller = format!("caller-{}", tag());
+    sqlx::query("DELETE FROM social.world_secret_attempts WHERE world_name = 'alice.dcl.eth'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let replica = || {
+        let state = world_mint_state(
+            pool.clone(),
+            StubPolicy {
+                standing: Ok(WorldStanding::Open(AccessType::SharedSecret)),
+                access: Ok(crate::access::Access::InvalidSecret),
+                ..StubPolicy::default()
+            },
+        )
+        .with_shared_secret_max_attempts(3);
+        super::admission::world_mint::router(Arc::new(state))
+    };
+    let (a, b) = (replica(), replica());
+    let path = WORLD_MINT_PATHS[0];
+    for app in [&a, &b, &a] {
+        assert_eq!(
+            world_mint(app, KEY, path, Some(&caller)).await.0,
+            StatusCode::FORBIDDEN
+        );
+    }
+    sqlx::query(
+        "INSERT INTO social.world_secret_attempts (world_name, subject, window_started_at, failures) \
+         SELECT 'alice.dcl.eth', 'flood-' || n, timezone('UTC', now()), 1 FROM generate_series(1, 20000) n",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    for app in [&b, &a] {
+        let (status, body) = world_mint(app, KEY, path, Some(&caller)).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+    }
+    assert_eq!(
+        world_mint(&a, KEY, path, Some("203.0.113.9")).await.0,
+        StatusCode::FORBIDDEN,
+        "another caller keeps its own budget"
+    );
+    sqlx::query(
+        "UPDATE social.world_secret_attempts SET window_started_at = window_started_at - interval '61 seconds' \
+         WHERE world_name = 'alice.dcl.eth'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        world_mint(&b, KEY, path, Some(&caller)).await.0,
+        StatusCode::FORBIDDEN,
+        "an expired window admits a new attempt"
+    );
+    let left: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.world_secret_attempts WHERE world_name = 'alice.dcl.eth'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // Other tests' attempts may purge a few batches too.
+    assert!(
+        (19_000..20_002).contains(&left),
+        "an attempt purges a bounded batch of expired windows: {left}"
+    );
+}
+
+/// Parallel wrong secrets from one caller spend one budget: the attempt is
+/// reserved before the secret is checked.
+#[tokio::test]
+async fn concurrent_wrong_secrets_share_the_throttle_budget() {
+    use crate::access::{AccessType, WorldStanding};
+    let Some(pool) = scratch().await else { return };
+    let caller = format!("parallel-{}", tag());
+    let state = world_mint_state(
+        pool.clone(),
+        StubPolicy {
+            standing: Ok(WorldStanding::Open(AccessType::SharedSecret)),
+            access: Ok(crate::access::Access::InvalidSecret),
+            ..StubPolicy::default()
+        },
+    )
+    .with_shared_secret_max_attempts(3);
+    let app = super::admission::world_mint::router(Arc::new(state));
+    // A world of its own: the flood test resets alice.dcl.eth's windows.
+    let path = format!("/worlds/{}.dcl.eth/comms", tag());
+    let statuses =
+        futures::future::join_all((0..12).map(|_| world_mint(&app, KEY, &path, Some(&caller))))
+            .await;
+    let forbidden = statuses
+        .iter()
+        .filter(|(status, _)| *status == StatusCode::FORBIDDEN)
+        .count();
+    let throttled = statuses
+        .iter()
+        .filter(|(status, _)| *status == StatusCode::TOO_MANY_REQUESTS)
+        .count();
+    assert_eq!((forbidden, throttled), (3, 9));
+    sqlx::query("DELETE FROM social.world_secret_attempts WHERE subject = $1")
+        .bind(&caller)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// A correct secret returns its reservation: parallel correct attempts past
+/// the budget all mint, and none of them resets another attempt's failures.
+#[tokio::test]
+async fn correct_secrets_never_spend_or_reset_the_throttle_budget() {
+    use crate::access::{Access, AccessGrant, AccessType, WorldStanding};
+    let Some(pool) = scratch().await else { return };
+    let caller = format!("correct-{}", tag());
+    let replica = |access| {
+        let state = world_mint_state(
+            pool.clone(),
+            StubPolicy {
+                standing: Ok(WorldStanding::Open(AccessType::SharedSecret)),
+                access: Ok(access),
+                ..StubPolicy::default()
+            },
+        )
+        .with_shared_secret_max_attempts(3);
+        state.presence.complete_empty_fixture();
+        super::admission::world_mint::router(Arc::new(state))
+    };
+    let (right, wrong) = (
+        replica(Access::Allowed(AccessGrant::SharedSecret)),
+        replica(Access::InvalidSecret),
+    );
+    // A world of its own: the flood test resets alice.dcl.eth's windows.
+    let path = &format!("/worlds/{}.dcl.eth/comms", tag());
+    let statuses =
+        futures::future::join_all((0..12).map(|_| world_mint(&right, KEY, path, Some(&caller))))
+            .await;
+    assert!(
+        statuses.iter().all(|(status, _)| *status == StatusCode::OK),
+        "{statuses:?}"
+    );
+    let mut sequence = Vec::new();
+    for app in [&wrong, &wrong, &right, &wrong, &right] {
+        sequence.push(world_mint(app, KEY, path, Some(&caller)).await.0);
+    }
+    assert_eq!(
+        sequence,
+        [
+            StatusCode::FORBIDDEN,
+            StatusCode::FORBIDDEN,
+            StatusCode::OK,
+            StatusCode::FORBIDDEN,
+            StatusCode::TOO_MANY_REQUESTS,
+        ],
+        "the success between failures kept them"
+    );
+    sqlx::query("DELETE FROM social.world_secret_attempts WHERE subject = $1")
+        .bind(&caller)
+        .execute(&pool)
+        .await
+        .unwrap();
+}
+
+/// Migration step 0009 rekeys a world scene's bans with the base the room
+/// resolver derives (`ParcelSet::effective_base`); Genesis rows stay.
+#[tokio::test]
+async fn ban_key_backfill_matches_the_resolver_base() {
+    use crate::access::SceneBanKey;
+    use crate::world_identity::{ParcelSet, WorldName};
+    let Some(pool) = scratch().await else { return };
+    let step = crate::db::schema_migrate::parse_steps(crate::db::MIGRATIONS_SQL)
+        .into_iter()
+        .find(|s| s.name == "0009_world_scene_ban_keys")
+        .expect("the step is embedded");
+    let world = WorldName::parse(&format!("{}.dcl.eth", tag())).unwrap();
+    let banned = wallet();
+    let cases: [(&str, &[&str], Option<&str>); 5] = [
+        ("declared", &["3,4", "1,1"], Some(" 03 , 04 ")),
+        ("outside", &["-2,7", "5,5", "-2,3"], Some("9,9")),
+        ("missing", &["10,-1", "2,0"], None),
+        ("garbage", &["20,20"], Some("x,1")),
+        (
+            "junk",
+            &["invalid", "9999999999,1", " 08 , 7 ", "30,30"],
+            Some("8,7"),
+        ),
+    ];
+    let mut tx = pool.begin().await.unwrap();
+    let mut expected = Vec::new();
+    for (name, parcels, base) in cases {
+        let entity = format!("bafkrei{name}{}", tag());
+        let metadata = match base {
+            Some(base) => serde_json::json!({"metadata": {"scene": {"base": base}}}),
+            None => serde_json::json!({}),
+        };
+        sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1) ON CONFLICT DO NOTHING")
+            .bind(world.key())
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) \
+             VALUES ($1, $2, '[]'::json, $3, $4, $5, 1)",
+        )
+        .bind(world.key())
+        .bind(&entity)
+        .bind(metadata)
+        .bind(crate::shared::identity::ZERO_ADDRESS)
+        .bind(parcels.iter().map(|p| p.to_string()).collect::<Vec<_>>())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, $2, $2)")
+            .bind(&entity)
+            .bind(&banned)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        // The resolver's footprint: unusable stored parcels are skipped.
+        let base = parcels
+            .iter()
+            .filter_map(|p| crate::world_identity::Parcel::parse(p).ok())
+            .collect::<ParcelSet>()
+            .effective_base(base)
+            .unwrap();
+        expected.push(SceneBanKey::world(&world, base).as_str().to_owned());
+    }
+    let genesis = format!("bafkreigenesis{}", tag());
+    sqlx::query(
+        "INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, $2, $2)",
+    )
+    .bind(&genesis)
+    .bind(&banned)
+    .execute(&mut *tx)
+    .await
+    .unwrap();
+    expected.push(genesis);
+    expected.sort();
+    sqlx::raw_sql(sqlx::AssertSqlSafe(step.sql))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let mut keys: Vec<String> =
+        sqlx::query_scalar("SELECT place_id FROM social.scene_bans WHERE banned_address = $1")
+            .bind(&banned)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+    tx.rollback().await.unwrap();
+    keys.sort();
+    assert_eq!(keys, expected);
+}
+
+/// Two scenes of one world resolving to the same base, each with a ban of
+/// the same address: step 0009 moves the newest and leaves the other, never
+/// colliding on the primary key.
+#[tokio::test]
+async fn ban_key_backfill_moves_one_ban_per_key_and_address() {
+    use crate::access::SceneBanKey;
+    use crate::world_identity::{Parcel, WorldName};
+    let Some(pool) = scratch().await else { return };
+    let step = crate::db::schema_migrate::parse_steps(crate::db::MIGRATIONS_SQL)
+        .into_iter()
+        .find(|s| s.name == "0009_world_scene_ban_keys")
+        .expect("the step is embedded");
+    let world = WorldName::parse(&format!("{}.dcl.eth", tag())).unwrap();
+    let banned = wallet();
+    let (older, newer) = (
+        format!("bafkreiolder{}", tag()),
+        format!("bafkreinewer{}", tag()),
+    );
+    let mut tx = pool.begin().await.unwrap();
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(world.key())
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    for (entity, age) in [(&older, 2), (&newer, 1)] {
+        sqlx::query(
+            "INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) \
+             VALUES ($1, $2, '[]'::json, '{}'::jsonb, $3, ARRAY['0,0'], 1)",
+        )
+        .bind(world.key())
+        .bind(entity)
+        .bind(crate::shared::identity::ZERO_ADDRESS)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by, banned_at) VALUES ($1, $2, $2, timezone('UTC', now()) - make_interval(hours => $3))")
+            .bind(entity)
+            .bind(&banned)
+            .bind(age)
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+    }
+    sqlx::raw_sql(sqlx::AssertSqlSafe(step.sql))
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+    let mut keys: Vec<String> =
+        sqlx::query_scalar("SELECT place_id FROM social.scene_bans WHERE banned_address = $1")
+            .bind(&banned)
+            .fetch_all(&mut *tx)
+            .await
+            .unwrap();
+    tx.rollback().await.unwrap();
+    keys.sort();
+    let mut expected = vec![
+        SceneBanKey::world(&world, Parcel::parse("0,0").unwrap())
+            .as_str()
+            .to_owned(),
+        older,
+    ];
+    expected.sort();
+    assert_eq!(keys, expected);
+}
+
 /// The one revocation entry point (`CommsState::revoke`, gatekeeper-change-5)
 /// with LiveKit not configured: every arm returns at once, before the task
 /// that would reach LiveKit is spawned, and logs the debug line worlds' sink

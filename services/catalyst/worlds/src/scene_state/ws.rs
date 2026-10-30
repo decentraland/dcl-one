@@ -13,7 +13,7 @@ use chrono::NaiveDateTime;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::mpsc;
 
-use crate::policy::{Access, AccessGrant, Ban};
+use crate::policy::{Access, AccessGrant, Ban, WorldStanding};
 use crate::shared::identity::{Address, AuthorityNotEstablished};
 
 use super::auth::{candidate_paths, verify_auth_frame};
@@ -27,6 +27,8 @@ pub enum AdmissionRefused {
     Banned(Ban),
     InvalidSecret,
     NotAllowed,
+    /// The world is unknown, operator-disabled or deny-listed.
+    InvalidWorld,
     /// The policy could not answer (a store fault): refused, fail closed.
     Undetermined(String),
 }
@@ -37,6 +39,7 @@ impl std::fmt::Display for AdmissionRefused {
             Self::Banned(b) => write!(f, "banned ({b:?})"),
             Self::InvalidSecret => f.write_str("shared secret missing or invalid"),
             Self::NotAllowed => f.write_str("not allowed by the world's access setting"),
+            Self::InvalidWorld => f.write_str("world unknown, disabled or deny-listed"),
             Self::Undetermined(why) => write!(f, "permission undetermined: {why}"),
         }
     }
@@ -46,7 +49,8 @@ fn undetermined(e: AuthorityNotEstablished) -> AdmissionRefused {
     AdmissionRefused::Undetermined(e.to_string())
 }
 
-/// May `address` be in `scene` at `now`? A world scene asks
+/// May `address` be in `scene` at `now`? A world scene needs a known,
+/// enabled, non-deny-listed world, then asks
 /// `Policy::can_access` (bans, owner, the access setting; `secret` from the
 /// signed metadata), a Genesis scene `Policy::is_banned`, the local
 /// development scene nobody. `prior` is how the client was admitted before
@@ -60,12 +64,24 @@ pub async fn admit(
     prior: Option<AccessGrant>,
     now: NaiveDateTime,
 ) -> Result<Option<AccessGrant>, AdmissionRefused> {
-    let scene_id = scene.identity.scene_id();
+    let ban_key = scene.identity.ban_key();
     match &scene.identity.key {
         SceneKey::Local => Ok(None),
+        SceneKey::World(world)
+            if !matches!(
+                state
+                    .policy
+                    .world_standing(world)
+                    .await
+                    .map_err(undetermined)?,
+                WorldStanding::Open(_)
+            ) =>
+        {
+            Err(AdmissionRefused::InvalidWorld)
+        }
         SceneKey::World(world) => match state
             .policy
-            .can_access(world, address, secret, scene_id, None, now)
+            .can_access(world, address, secret, ban_key.as_ref(), None, now)
             .await
             .map_err(undetermined)?
         {
@@ -81,7 +97,7 @@ pub async fn admit(
         },
         SceneKey::Genesis(_) | SceneKey::GenesisParcel(_) => match state
             .policy
-            .is_banned(address, scene_id, None, now)
+            .is_banned(address, ban_key.as_ref(), None, now)
             .await
             .map_err(undetermined)?
         {

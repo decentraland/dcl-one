@@ -619,3 +619,96 @@ async fn stamped_database_additive_pass_installs_livekit_intents_and_preserves_b
     assert_eq!(claimed, 1);
     old.drop().await;
 }
+
+/// `0009_world_scene_ban_keys` on upgrade: bans under a deployed world
+/// scene's entity id move to `<world>:<base>`, Genesis rows stay; re-running
+/// the step when the key row already exists neither fails nor duplicates.
+#[tokio::test]
+async fn world_scene_bans_are_rekeyed_on_upgrade_and_the_step_reruns_cleanly() {
+    let Some(old) = stamped_with_the_closure_base().await else {
+        return;
+    };
+    let pool = &old.pool;
+    let (first, second) = (
+        format!("0x{}", "1".repeat(40)),
+        format!("0x{}", "2".repeat(40)),
+    );
+    sqlx::raw_sql(
+        "INSERT INTO worlds.worlds (name) VALUES ('bans.dcl.eth');
+         INSERT INTO worlds.world_scenes (world_name, entity_id, deployment_auth_chain, entity, deployer, parcels, size) VALUES
+           ('bans.dcl.eth', 'bafkreideclared', '[]'::json, '{\"metadata\": {\"scene\": {\"base\": \"4,5\"}}}', '0x0', ARRAY['3,3', '4,5'], 1),
+           ('bans.dcl.eth', 'bafkreilowest', '[]'::json, '{}', '0x0', ARRAY['7,1', '-2,9'], 1);",
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    for (place, address) in [
+        ("bafkreideclared", &first),
+        ("bafkreideclared", &second),
+        ("bafkreilowest", &first),
+        ("bafkreigenesis", &first),
+    ] {
+        sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, $2, $2)")
+            .bind(place)
+            .bind(address)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    sqlx::raw_sql(RELEASE_V2).execute(pool).await.unwrap();
+    let done =
+        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+            .await
+            .unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        done.steps
+            .iter()
+            .any(|step| step == "0009_world_scene_ban_keys"),
+        "{:?}",
+        done.steps
+    );
+    let bans = || async {
+        sqlx::query_as::<_, (String, String)>(
+            "SELECT place_id, banned_address FROM social.scene_bans ORDER BY place_id COLLATE \"C\", banned_address",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    };
+    let rekeyed = vec![
+        ("bafkreigenesis".to_owned(), first.clone()),
+        ("bans.dcl.eth:-2,9".to_owned(), first.clone()),
+        ("bans.dcl.eth:4,5".to_owned(), first.clone()),
+        ("bans.dcl.eth:4,5".to_owned(), second.clone()),
+    ];
+    assert_eq!(
+        bans().await,
+        rekeyed,
+        "declared base, else the lowest parcel"
+    );
+
+    // A ban written under the entity id after the step, its key row present.
+    sqlx::query("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ('bafkreideclared', $1, $1)")
+        .bind(&first)
+        .execute(pool)
+        .await
+        .unwrap();
+    let step = schema_migrate::parse_steps(catalyst::db::MIGRATIONS_SQL)
+        .into_iter()
+        .find(|s| s.name == "0009_world_scene_ban_keys")
+        .expect("the step is embedded");
+    for _ in 0..2 {
+        sqlx::raw_sql(sqlx::AssertSqlSafe(step.sql.clone()))
+            .execute(pool)
+            .await
+            .expect("the step re-runs over an existing key row");
+    }
+    let mut expected = rekeyed;
+    expected.insert(0, ("bafkreideclared".to_owned(), first.clone()));
+    assert_eq!(
+        bans().await,
+        expected,
+        "no duplicate, the key row untouched"
+    );
+    old.drop().await;
+}

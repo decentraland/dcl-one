@@ -374,6 +374,15 @@ pub struct WorldsConfig {
     #[arg(long, env = "MAX_USERS_PER_WORLD", default_value_t = 100)]
     pub max_users_per_world: i64,
 
+    /// Wrong shared secrets a caller may present to one world per minute,
+    /// counted across every replica.
+    #[arg(
+        long,
+        env = "SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE",
+        default_value_t = 10
+    )]
+    pub shared_secret_max_attempts_per_minute: u32,
+
     /// The deployment audience clients sign for /ws/v4; unset leaves the v4 control authority unavailable.
     #[arg(long, env = "ARCHIPELAGO_CONTROL_V4_AUDIENCE")]
     pub archipelago_control_v4_audience: Option<String>,

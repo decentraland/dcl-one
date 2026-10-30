@@ -3172,6 +3172,114 @@ async fn scoped_replacement_conflicts_on_unauthorized_overlap() {
     assert_eq!(scenes[0].1, vec!["0,0".to_string()]);
 }
 
+/// A replaced scene keeps its base parcel for scene comms seven days; the
+/// scene that replaced it, a never-deployed id and an expired one do not.
+#[tokio::test]
+async fn a_replaced_scene_stays_resolvable_for_the_retention_window() {
+    let Some(f) = fixture().await else { return };
+    let (world, owner) = (world_name(), Wallet::random().address);
+    let base_of = |id: &str, at: chrono::NaiveDateTime| {
+        let (pool, world, id) = (f.pool.clone(), world.clone(), SceneId::parse(id).unwrap());
+        async move {
+            rooms::replaced_world_scene(&pool, &world, &id, at)
+                .await
+                .unwrap()
+                .map(|r| r.base.canonical())
+        }
+    };
+    for (i, (id, base, footprint, replacement)) in [
+        ("bafyold", "0,1", &["0,0", "0,1"][..], Deploy::Owner),
+        ("bafymid", "0,0", &["0,0"][..], Deploy::Owner),
+        (
+            "bafynew",
+            "0,0",
+            &["0,0"][..],
+            Deploy::Scoped(vec![SceneId::parse("bafymid").unwrap()]),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut entity = scene_entity(&world, id, "bafymissing", base, footprint);
+        entity["timestamp"] = json!(1000 + i);
+        deploy(&f, &world, &owner, id, &entity, footprint, &replacement)
+            .await
+            .unwrap();
+    }
+    let now = chrono::Utc::now().naive_utc();
+    assert_eq!(base_of("bafyold", now).await.as_deref(), Some("0,1"));
+    assert_eq!(base_of("bafymid", now).await.as_deref(), Some("0,0"));
+    assert_eq!(base_of("bafynew", now).await, None, "the active scene");
+    assert_eq!(base_of("bafynever", now).await, None);
+    let old =
+        rooms::replaced_world_scene(&f.pool, &world, &SceneId::parse("bafyold").unwrap(), now)
+            .await
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        old.successors,
+        [crate::comms::world_identity::Parcel::parse("0,0").unwrap()],
+        "the active scene now on its parcels"
+    );
+    assert_eq!(
+        base_of("bafyold", now + chrono::Duration::days(8)).await,
+        None,
+        "past the window"
+    );
+
+    sqlx::query(
+        "UPDATE worlds.replaced_world_scenes SET replaced_at = replaced_at - interval '8 days' \
+         WHERE world_name = $1 AND entity_id = 'bafyold'",
+    )
+    .bind(world.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let other = world_name();
+    sqlx::query("INSERT INTO worlds.worlds (name) VALUES ($1)")
+        .bind(other.key())
+        .execute(&f.pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO worlds.replaced_world_scenes (world_name, entity_id, parcels, replaced_at) \
+         VALUES ($1, 'bafyelsewhere', '{0,0}', now() - interval '8 days')",
+    )
+    .bind(other.key())
+    .execute(&f.pool)
+    .await
+    .unwrap();
+    let mut last = scene_entity(&world, "last", "bafymissing", "0,0", &["0,0"]);
+    last["timestamp"] = json!(1003);
+    deploy(
+        &f,
+        &world,
+        &owner,
+        "bafylast",
+        &last,
+        &["0,0"],
+        &Deploy::Owner,
+    )
+    .await
+    .unwrap();
+    let kept: Vec<String> = sqlx::query_scalar(
+        "SELECT entity_id FROM worlds.replaced_world_scenes WHERE world_name = $1 ORDER BY entity_id",
+    )
+    .bind(world.key())
+    .fetch_all(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(kept, ["bafymid", "bafynew"], "a deploy purges expired rows");
+    let elsewhere: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM worlds.replaced_world_scenes WHERE world_name = $1",
+    )
+    .bind(other.key())
+    .fetch_one(&f.pool)
+    .await
+    .unwrap();
+    assert_eq!(elsewhere, 1, "the purge is scoped to the deploying world");
+}
+
 #[tokio::test]
 async fn admin_pages_and_the_index_agree_on_the_scene_count() {
     let Some(f) = fixture().await else { return };

@@ -28,7 +28,7 @@ use serde_json::Value;
 use sqlx::PgPool;
 use sqlx::Row;
 
-use crate::access::{Access, LandOperators, SceneRef};
+use crate::access::{Access, AccessType, LandOperators, SceneRef, WorldStanding};
 use crate::shared::cache::TtlMap;
 use crate::world_identity::{Parcel, ParcelSet, SceneId, WorldName, is_world_realm_name};
 use crate::{Address, AuthorityNotEstablished, PermissionDecision};
@@ -362,37 +362,65 @@ fn parcel_set(positions: &[String]) -> ParcelSet {
 
 /// Whether `identity` may enter `world_name` (the scene `scene_id` of it,
 /// when known): `Policy::can_access`, the local call that replaced the
-/// worlds service's `/permissions` document. The owner, an unrestricted
-/// world, an allow-listed wallet or a matching shared secret (the
-/// `secret` field of the signed metadata, the scene host's contract) are
-/// admitted; a ban, an allow-list miss, an nft-ownership world and a wrong
-/// or missing secret are not. A store that cannot answer is a 503, never a
-/// denial.
+/// worlds service's `/permissions` document. An unknown, operator-disabled
+/// or deny-listed world admits nobody (the old `isWorldValid`). The owner,
+/// an unrestricted world, an allow-listed wallet or a matching shared secret
+/// (the `secret` field of the signed metadata, the scene host's contract)
+/// are admitted; a ban, an allow-list miss, an nft-ownership world and a
+/// wrong or missing secret are not. A shared-secret world's attempts spend
+/// the world mints' budget per world and `caller` (429 past it). A store
+/// that cannot answer is a 503, never a denial.
 pub async fn has_world_access_permission(
     state: &CommsState,
     identity: &Address,
+    caller: &str,
     world_name: &str,
-    scene_id: Option<&str>,
+    scene: Option<&crate::access::SceneBanKey>,
     secret: Option<&str>,
     device_id: Option<&str>,
 ) -> Result<bool, ApiError> {
     let Some(world) = world_of(world_name) else {
         return Ok(false);
     };
-    let scene = scene_id.and_then(|id| SceneId::parse(id).ok());
+    let unavailable = |why: AuthorityNotEstablished| {
+        tracing::error!(error = %why, world = %world, "world access could not be decided");
+        service_unavailable(WORLD_ACCESS_UNAVAILABLE_MSG)
+    };
+    let shared_secret = match state.policy.world_standing(&world).await {
+        Ok(WorldStanding::Open(access_type)) => access_type == AccessType::SharedSecret,
+        Ok(WorldStanding::Unknown | WorldStanding::Disabled | WorldStanding::DenyListed) => {
+            return Ok(false);
+        }
+        Err(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => return Ok(false),
+        Err(why) => return Err(unavailable(why)),
+    };
     let now = chrono::Utc::now().naive_utc();
-    match state
+    let throttle = crate::gatekeeper::admission::world_mint::SecretThrottle {
+        pool: &state.pool,
+        max_attempts: state.world_mint.secret_max_attempts,
+        world: world.key(),
+        subject: caller,
+    };
+    if shared_secret && throttle.reserve(now).await {
+        return Err(ApiError::http(
+            429,
+            "Too many shared-secret attempts. Try again later.",
+        ));
+    }
+    let access = state
         .policy
-        .can_access(&world, identity, secret, scene.as_ref(), device_id, now)
-        .await
-    {
+        .can_access(&world, identity, secret, scene, device_id, now)
+        .await;
+    if shared_secret {
+        throttle
+            .settle(matches!(access, Ok(Access::Allowed(_))))
+            .await;
+    }
+    match access {
         Ok(Access::Allowed(_)) => Ok(true),
         Ok(Access::Banned(_) | Access::NotAllowed | Access::InvalidSecret) => Ok(false),
         Err(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => Ok(false),
-        Err(why) => {
-            tracing::error!(error = %why, world = %world, "world access could not be decided");
-            Err(service_unavailable(WORLD_ACCESS_UNAVAILABLE_MSG))
-        }
+        Err(why) => Err(unavailable(why)),
     }
 }
 
@@ -972,28 +1000,43 @@ pub(crate) async fn live_world_rooms(
 }
 
 /// Evicts from `world`'s rooms every participant the access setting no
-/// longer admits (the owner stays; a shared-secret participant must mint
-/// again with the new secret, as the host requires).
+/// longer admits (the owner and deployers stay; a shared-secret participant
+/// must mint again with the new secret, as the host requires). An undecided
+/// participant stays.
 pub(crate) async fn readmit_world_rooms(
     state: &CommsState,
     world: &WorldName,
 ) -> Result<(), String> {
-    let now = chrono::Utc::now().naive_utc();
+    let privileged = state
+        .policy
+        .privileged_addresses(world)
+        .await
+        .map_err(|error| error.to_string())?;
     for room in live_world_rooms(state, world).await? {
         let client = state.room_service();
         for identity in client.list_participant_identities(&room).await {
             let Ok(address) = Address::parse(&identity) else {
                 continue;
             };
-            let allowed = matches!(
-                state
-                    .policy
-                    .can_access(world, &address, None, None, None, now)
-                    .await,
-                Ok(Access::Allowed(_))
-            );
-            if !allowed && let Err(error) = client.remove_participant(&room, &identity).await {
-                tracing::warn!(%error, room = %room, %address, "failed to evict a revoked participant (best-effort)");
+            match crate::gatekeeper::revocation::evictable(
+                state.policy.as_ref(),
+                world,
+                &privileged,
+                &address,
+                true,
+            )
+            .await
+            {
+                Ok(false) => {}
+                Ok(true) => {
+                    if let Err(error) = client.remove_participant(&room, &identity).await {
+                        tracing::warn!(%error, room = %room, %address, "failed to evict a revoked participant (best-effort)");
+                    }
+                }
+                // Fail open by design: a store fault never evicts, and this pass is not retried.
+                Err(error) => {
+                    tracing::warn!(%error, room = %room, %address, "access undecided; participant kept");
+                }
             }
         }
     }
@@ -1285,5 +1328,180 @@ mod tests {
             BTreeSet::from(["0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string()])
         );
         assert_eq!(hits.load(Ordering::SeqCst), 1);
+    }
+
+    fn adapter_state(pool: sqlx::PgPool, policy: StubPolicy) -> CommsState {
+        CommsState::new(
+            pool,
+            crate::http::Outbound::for_tests(),
+            crate::gatekeeper::Settings::for_tests(),
+            None,
+            None,
+            Arc::new(policy),
+            Arc::new(StubScenes::default()),
+            Arc::new(crate::presence::Presence::new()),
+            Arc::new(crate::interfaces::test_support::StubDirectory::default()),
+        )
+    }
+
+    #[tokio::test]
+    async fn the_scene_adapter_refuses_invalid_worlds() {
+        use crate::access::WorldStanding;
+        let actor = Address::parse("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+        for standing in [
+            WorldStanding::Unknown,
+            WorldStanding::Disabled,
+            WorldStanding::DenyListed,
+        ] {
+            let state = adapter_state(
+                sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
+                StubPolicy {
+                    standing: Ok(standing),
+                    ..Default::default()
+                },
+            );
+            assert!(
+                !has_world_access_permission(
+                    &state,
+                    &actor,
+                    actor.as_str(),
+                    "alice.dcl.eth",
+                    None,
+                    None,
+                    None
+                )
+                .await
+                .unwrap(),
+                "{standing:?}"
+            );
+        }
+        let state = adapter_state(
+            sqlx::PgPool::connect_lazy("postgres://postgres@127.0.0.1:1/postgres").unwrap(),
+            StubPolicy {
+                standing: Err(AuthorityNotEstablished::store_unavailable(
+                    "worlds.worlds",
+                    &sqlx::Error::PoolTimedOut,
+                )),
+                ..Default::default()
+            },
+        );
+        let error = has_world_access_permission(
+            &state,
+            &actor,
+            actor.as_str(),
+            "alice.dcl.eth",
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, 503);
+    }
+
+    #[tokio::test]
+    async fn the_scene_adapter_spends_the_shared_secret_budget() {
+        use crate::access::{AccessType, WorldStanding};
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let world = format!("adapter-{}.dcl.eth", uuid::Uuid::new_v4().simple());
+        let actor = Address::parse("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+        let caller = format!("caller-{}", uuid::Uuid::new_v4().simple());
+        let state = |access| {
+            adapter_state(
+                pool.clone(),
+                StubPolicy {
+                    standing: Ok(WorldStanding::Open(AccessType::SharedSecret)),
+                    access: Ok(access),
+                    ..Default::default()
+                },
+            )
+            .with_shared_secret_max_attempts(2)
+        };
+        let check = |state: CommsState| {
+            let (world, caller, actor) = (world.clone(), caller.clone(), actor.clone());
+            async move {
+                has_world_access_permission(
+                    &state,
+                    &actor,
+                    &caller,
+                    &world,
+                    None,
+                    Some("guess"),
+                    None,
+                )
+                .await
+                .map_err(|error| error.code)
+            }
+        };
+        assert_eq!(
+            check(state(Access::Allowed(
+                crate::access::AccessGrant::SharedSecret
+            )))
+            .await,
+            Ok(true)
+        );
+        for _ in 0..2 {
+            assert_eq!(check(state(Access::InvalidSecret)).await, Ok(false));
+        }
+        assert_eq!(check(state(Access::InvalidSecret)).await, Err(429));
+        assert_eq!(
+            check(state(Access::Allowed(
+                crate::access::AccessGrant::SharedSecret
+            )))
+            .await,
+            Err(429),
+            "the budget is spent before the secret is checked"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_scene_adapter_refunds_correct_secrets() {
+        use crate::access::{AccessType, WorldStanding};
+        let Some(pool) = crate::db::scratch::pool(8).await else {
+            return;
+        };
+        let world = format!("adapter-{}.dcl.eth", uuid::Uuid::new_v4().simple());
+        let actor = Address::parse("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
+        let caller = format!("caller-{}", uuid::Uuid::new_v4().simple());
+        let state = |access| {
+            adapter_state(
+                pool.clone(),
+                StubPolicy {
+                    standing: Ok(WorldStanding::Open(AccessType::SharedSecret)),
+                    access: Ok(access),
+                    ..Default::default()
+                },
+            )
+            .with_shared_secret_max_attempts(2)
+        };
+        let check = |state: CommsState| {
+            let (world, caller, actor) = (world.clone(), caller.clone(), actor.clone());
+            async move {
+                has_world_access_permission(
+                    &state,
+                    &actor,
+                    &caller,
+                    &world,
+                    None,
+                    Some("guess"),
+                    None,
+                )
+                .await
+                .map_err(|error| error.code)
+            }
+        };
+        let right = || state(Access::Allowed(crate::access::AccessGrant::SharedSecret));
+        let parallel = futures::future::join_all((0..8).map(|_| check(right()))).await;
+        assert!(parallel.iter().all(|r| *r == Ok(true)), "{parallel:?}");
+        assert_eq!(check(state(Access::InvalidSecret)).await, Ok(false));
+        assert_eq!(check(right()).await, Ok(true));
+        assert_eq!(check(state(Access::InvalidSecret)).await, Ok(false));
+        assert_eq!(
+            check(right()).await,
+            Err(429),
+            "the success between failures kept them"
+        );
     }
 }

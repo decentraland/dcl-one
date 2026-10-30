@@ -608,6 +608,12 @@ impl CommsState {
         self
     }
 
+    /// `SHARED_SECRET_MAX_ATTEMPTS_PER_MINUTE` for the world comms mints (10 by default).
+    pub fn with_shared_secret_max_attempts(mut self, max: u32) -> Self {
+        self.world_mint.secret_max_attempts = max.max(1);
+        self
+    }
+
     pub fn eip1654(&self) -> Option<&dyn Eip1654Validator> {
         self.eip1654.as_deref()
     }
