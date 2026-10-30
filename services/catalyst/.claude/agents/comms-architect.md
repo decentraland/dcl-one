@@ -56,7 +56,7 @@ Target design: `comms-crate.md` (crates, services, interfaces, placement, scene 
 ## Method
 
 1. **Pin** the target and every cited repo; list them in the run's pins.
-2. **Load** `../../AGENTS.md`, `README.md`, `agents/architecture/schema.md`, and the current model, register and accepted decisions supplied by the main session; include the divergence contracts in scope.
+2. **Load** repository-root `AGENTS.md` and `services/catalyst/AGENTS.md`, then `$C/README.md`, `$C/agents/architecture/schema.md`, and the current model, register and accepted decisions supplied by the main session; include the divergence contracts in scope.
 3. **Map** every unit the target adds or changes into the model (components, edges, channels, abstractions, technologies): from the doc in `design`; from `Cargo.toml`/`Cargo.lock`, `mod` trees, `pub trait`/`impl … for`, spawns, routes, subjects, message enums and control commands in `review`/`audit`. New rows are `proposed` in a design, `built` in code.
 4. **Judge** every row in scope. Where an `active` check in the CI check catalog enforces a rule, take its result at the pin; a `quarantined` or failing check sends you back to the code. In `audit`, list drift.
 5. **Propose.** Design: model rows and decisions with options weighed and why the others lost. Technology: verdict with conditions or experiment. Review: change requests naming rule, `path:line` at the pin, concrete edit, countable gain; priority `blocking` (rule violation, before merge), `should` (this work package, or record why not), `could`. Every `violation|gaps|unsound|merge|inline|remove` gets a change request or decision.

@@ -179,11 +179,9 @@ remote cleanup or physical network output atomic with later ownership/policy cha
 Lost hints and lost confirmed acknowledgments can recover while Pulse retains its ledger;
 positively confirmed fenced recovery and replica refresh use the same durable safety.
 Gatekeeper restart preserves hazards; it does not turn unknown outcomes into completion.
-Unknown remote removal and Pulse process loss require controlled maintenance with admission
-closed until outstanding operations, participants and token validity are safe. A new Pulse
-incarnation does not revoke issued LiveKit tokens. Actual Cloud cutoff enforcement,
-self-hosted expiry, deployment routing and rollout rehearsal remain separate evidence gates.
-Consult the current readiness and measurement evidence before release.
+Recovery procedures must establish safe admission, participant cleanup and token lifecycle
+boundaries before reopening traffic. Verify those requirements, deployment routing and
+rollout readiness through the private acceptance review before release.
 
 ## Scene host
 

@@ -33,4 +33,6 @@ not run. -->
 
 ## Code Review Reference
 
-Follow [AGENTS.md](../AGENTS.md); verify acceptance claims against the current readiness evidence via the [record workflow](../services/catalyst/docs/comms/README.md). Keep private links, findings and credentials out of the public PR.
+<!-- Follow repository-root AGENTS.md and services/catalyst/docs/comms/README.md.
+Verify acceptance claims against current readiness evidence. Keep private links,
+findings and credentials out of the public PR. -->

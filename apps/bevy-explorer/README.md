@@ -16,8 +16,10 @@ make headless     # headless engine + sidecar -> dist/headless/native
 python3 build-headless.py --target x86_64-unknown-linux-gnu
 ```
 
-Native dev loop: in the source directory, `just setup-cef`, then `just native-release` or
-`just native-debug`. Importing into Sites (production requires the main CI artifact):
+For native prerequisites, CEF setup, HUD bundling and packaging, follow the checked-in
+[desktop workflow](../../.github/workflows/bevy-explorer-desktop.yml) and
+[native build guide](../../rendering/bevy-explorer/docs/guidelines/running.md#native).
+Importing into Sites (production requires the main CI artifact):
 [Explorer integration](../../rendering/bevy-explorer/README.md#native-builds-and-hud-updates).
 
 CI caches WASM outputs in `.cache/bevy-engine`; a restore that fails its identity, inventory or

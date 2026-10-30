@@ -5,11 +5,11 @@
 
 ## Implementation scope
 
-This ADR records the accepted direction. The public checkout does not yet carry
-the web driver, HUD automation helper or native automation modules described
-below. Check the target revision and current acceptance evidence before
-claiming those commands or tests are available. Acceptance of the design is not
-evidence that its implementation has shipped.
+The public checkout includes the web driver, HUD automation helper and native
+automation modules described below. Check command registration at the target
+revision and current runtime evidence before claiming platform acceptance.
+The optional react-web Playwright gate/visual suites and scene-kill harness are
+not included in this checkout; their procedures require an authorized test workspace.
 
 ## Context
 
@@ -33,8 +33,8 @@ End-to-end tests of the Explorer drive it only through its console, the engine A
 Playwright, nor another browser-automation framework (Puppeteer, Selenium or WebDriver,
 Synpress): what they need from a browser, the in-repo web driver does natively, with no
 dependency. This covers the console's test commands, the web driver, and the suite moving in from
-explorer-automation; Playwright already in the repository (react-web's `test:visual`, `test:e2e`
-and gate specs, the scene-kill harness) stays as it is.
+explorer-automation. Existing Playwright procedures for optional react-web tiers and the
+scene-kill harness remain outside this decision; their availability is stated above.
 
 - **One interface on both shells.** On the web a test runs console commands in the app frame
   through the web driver (`rendering/bevy-explorer/source/local-harness/web-driver`); on the
@@ -96,7 +96,8 @@ Not chosen:
 - Everything Playwright would have given these tests is built and kept here: page actions outside
   the Explorer, a wallet stand-in, screenshot comparison and a test report. That is more code to
   own, in exchange for one way to drive the browser in them and no dependency to follow.
-- react-web's Playwright tiers and the scene-kill harness are not affected.
+- Optional react-web Playwright tiers and the scene-kill harness are outside this decision;
+  this public checkout does not supply their specs and configs.
 
 ## Follow-ups
 

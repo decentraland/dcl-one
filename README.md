@@ -44,7 +44,7 @@ approves merges. Start specialist sessions in `services/catalyst/`.
 ## Build
 
 Needs Python 3.12+, Rust per `services/catalyst/rust-toolchain.toml`, Node 24+
-and pnpm. Images build with Nix (`nix build.#image-apis`, `.#image-sites`,
+and pnpm. Images build with Nix (`nix build .#image-apis`, `.#image-sites`,
 `.#image-gateway`; see [images](infra/containers/README.md)).
 
 ```sh

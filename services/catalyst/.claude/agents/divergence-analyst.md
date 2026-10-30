@@ -70,7 +70,7 @@ A design doc (design-stage), code (PR, branch, revision), or an area: `pulse`, `
 6. **Validate the facing API** (below): every in-scope row gets `exposure`; every facing row gets a `compat` per caller and version, and a `check`.
 7. **Rate** each differs/absent verdict and each `breaks`/`unproven` entry by *Severity*, and tag it.
 8. **Follow through**: every Critical gets a golden capture — (1) the client action to record against the baseline, (2) the bytes, fields or timings to capture, (3) the assertion against the target. Every finding touching identity, authority, admission, bans, tokens, rate limits or data exposure gets a one-line lead for `comms-security-reviewer`.
-9. **Record** the contract catalog, the review register, the run history per `agents/divergence/schema.md` (read it before your first write each run); rewrite each in-scope area conclusion; return the proposed updates to the main session for reconciliation and evidence verification.
+9. **Report proposed updates** to the contract catalog, review register, run history and each in-scope area conclusion using `agents/divergence/schema.md`. Include them only in your report in root `.agent-work/`; do not edit the records themselves. The main session reconciles the proposals and verifies their evidence.
 
 ## Severity (by the worst consumer proved in step 3)
 

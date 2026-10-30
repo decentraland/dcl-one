@@ -4,8 +4,8 @@
 
 ## Agent work and commits
 
-- Keep accepted architecture in `docs/adr/` and reusable instructions in this tree. Keep working reports and review evidence in ignored `.agent-work/`; follow `services/catalyst/docs/comms/README.md` for specialist reporting.
-- Keep plans, briefs, handoffs and per-task reports in the ignored `.agent-work/`; `services/catalyst/docs/comms/plans/` and `.superpowers/` stay local too.
+- Keep accepted architecture in `docs/adr/` and reusable instructions in this tree.
+- Keep plans, briefs, handoffs, task reports and review evidence in ignored `.agent-work/`; follow `services/catalyst/docs/comms/README.md` for specialist reporting. `services/catalyst/docs/comms/plans/` and `.superpowers/` stay local too.
 - Before committing, capture accepted public architectural choices in ADRs and check the staged paths for working documents and sensitive data.
 - Never commit working documents unless the user asks.
 - Tracked documentation must stand alone without local plans or private ledger exports.
@@ -23,7 +23,7 @@ Code that serves none of these deliverables is removed, not kept for reference:
 
 1. landing page;
 2. What's On and discovery (places, events, map);
-3. `/play`: Explorer (`rendering/bevy-explorer`), HUD (`apps/ui3/src/play`), `apps/desktop`;
+3. `/play`: Explorer (`rendering/bevy-explorer`), HUD (`apps/ui3/src/play`), desktop packaging (`apps/bevy-explorer`);
 4. `/shop`: Marketplace and Store merged;
 5. `/create`: Creator Hub, web and `apps/creator-hub`;
 6. `apps/dcl-scene-cli`: the `@dcl/sdk-commands` rewrite;

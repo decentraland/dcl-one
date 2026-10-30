@@ -310,7 +310,7 @@ These are constraints from the destination's [ownership guide](comms-crate.md) a
 | Presence authority | Iteration-2 plans propose a separate parcel presence feed | Social online derives from complete Pulse wallet topology; room occupancy/capacity has a distinct LiveKit authority. Do not merge these data sources merely to match a newer plan. |
 | Bans | Upstream ban polling/enforcement | Keep the destination's conditional moderator HTTP snapshot and common policy; do not add another ban bus. |
 | Remote configuration | Broad upstream remote configuration/provider and operational representation | Keep the four permitted remote IP-limit settings and the destination's full-lifetime connection accounting. Other upstream settings do not become remotely writable. |
-| Scene-listener authority | Baseline listener accepts a valid authentication chain | Require listener authority scoped to the authoritative address and parcels, and verify that boundary in the private acceptance review. |
+| Scene-listener authority | Verify against pinned source through private acceptance review | Require listener authority scoped to the authoritative address and parcels. |
 
 Preserve these accepted behavior constraints during structural work:
 

@@ -65,8 +65,8 @@ with `--check-upstream`) and `cargo-patches.toml` (`[patch.crates-io]` pins for
 
 ## Native builds and HUD updates
 
-Build from `rendering/bevy-explorer/source` per its README (`just wasm` for the web engine), or
-`make web` in the app. Import with `python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web`
+Build the web engine with `make web` in `apps/bevy-explorer` (repository root).
+For native builds, follow the [native build guide](docs/guidelines/running.md#native). Import with `python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web`
 or `python3 tooling/fetch-play.py` (main CI artifact); see the
 [container build contract](../../infra/containers/README.md#sites-explorer-build-input).
 

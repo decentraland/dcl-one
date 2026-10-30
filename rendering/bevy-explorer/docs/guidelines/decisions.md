@@ -31,7 +31,8 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   shells, so one spec runs on the web and the standalone, and what they need from a browser (real
   input, pages outside the client such as sign-in, screenshots) the in-repo web driver does
   natively over the DevTools pipe; no Puppeteer, WebDriver or Synpress either. react-web's own
-  Playwright tiers and the scene-kill harness are unaffected. See the
+  Playwright tiers and the scene-kill harness are outside this decision and are not supplied
+  in this public checkout. See the
   [ADR](../../../../docs/adr/2026-10-29-explorer-tests-through-the-console.md).
 - **The automation surface ships in every build.** The console commands, the HUD and input
   commands natively, and the loopback `dcl/console` server behind `--automation-token` are the

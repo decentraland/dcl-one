@@ -14,8 +14,8 @@ worst) and exceptions per run, with a verdict for each. It has three parts:
   each laptop and posts the report ([How a run starts](#how-a-run-starts),
   [The workflow](#the-workflow), [The fleet](#the-fleet)).
 
-unity-explorer's own benchmark stays in `decentraland/performance-testing`, on the same laptops
-([The fleet](#the-fleet)).
+For comparisons with unity-explorer, obtain its benchmark source and dated results through
+authorized task context; record the revisions, workload and hardware with the comparison.
 
 Read this before changing `--autopilot`, the benchmark CSV, the benchmark log format, the browser
 stream, the report or the workflows: the report parses the files byte for byte, and one runner

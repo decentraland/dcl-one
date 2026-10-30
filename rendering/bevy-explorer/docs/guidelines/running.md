@@ -1,7 +1,8 @@
 # Running and testing
 
-The authoritative build commands are in the repo `CLAUDE.md` and the `justfile`. This page is
-the map of what exists to run and test, and the traps.
+Build entry points are in repository-root `apps/bevy-explorer/Makefile` and
+`.github/workflows/bevy-explorer-desktop.yml`. Commands below run from
+`rendering/bevy-explorer/source` unless another directory is named.
 
 ## Node
 
@@ -12,25 +13,32 @@ lockfile in.
 
 ## Native
 
-```
-just setup-cef                                   # once
-just native-debug --realm <about-url> --position x,y
+Use the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml) for the
+pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With those installed:
+
+```sh
+sh scripts/gen-ts-bindings.sh
+npm --prefix react-web ci
+npm --prefix react-web/bridge-scene ci
+npm --prefix react-web run bundle:native
+cargo build --release --locked --package dcl_deno_ipc
+cargo build --release --locked
 ```
 
-`just native-debug` bundles the HUD when stale and runs the client. A plain `cargo run` boots to
-a login screen with no HUD. Both binaries must build: `cargo build --package dcl_deno_ipc`,
-then `cargo build`.
+The workflow also stages the CEF helper, runtime libraries, assets and sidecar. Follow its
+platform packaging steps, then launch the packaged executable with `--realm <about-url>
+--position x,y`. A Cargo build alone does not bundle the HUD or package those runtime files.
 
 ## Web
 
-`just wasm` builds the wasm package and the sandbox worker bundle, then starts the page dev
-server and the bridge. The page boots the engine from `deploy/web/engine/pkg/`. Kill any stale
-dev server on the ports first; a reused one serves the old build. Full DevTools logging needs
-DevTools open before the page loads, and the Chrome extension cannot see the engine iframe.
-
-The distributable, as CI builds it, is `make web` in `apps/bevy-explorer` at the dcl-one root.
-Sites serves it under `/play` with its own copy of the HUD, `apps/ui3/src/play`; see
-`rendering/bevy-explorer/README.md` for how that copy tracks `react-web`.
+Run `make web` in repository-root `apps/bevy-explorer` (`python3 build-web.py` without Make).
+It builds the engine wasm, sandbox worker and HUD into `apps/bevy-explorer/dist/web`; it
+does not start a dev server. `make web-dev` skips wasm optimization. Import the artifact
+with `python3 tooling/fetch-play.py --from-build apps/bevy-explorer/dist/web` from the
+repository root, then follow the root README to run Sites. Sites serves it under `/play`
+with its own HUD, `apps/ui3/src/play`; see `rendering/bevy-explorer/README.md` for how that
+copy tracks `react-web`. Full DevTools logging needs DevTools open before the page loads.
+The engine console lives in the app iframe.
 
 ## Headless
 
@@ -52,13 +60,11 @@ not the shell page: pick the app frame in the DevTools context selector first.
 
 ## Test commands
 
-> **Implementation availability:** this section preserves the accepted automation
-> contract. The public tree does not yet include `local-harness/web-driver`,
-> `react-web/src/lib/hudAutomation.ts`, `src/automation.rs` or
-> `src/react_hud_cef/automation.rs`. The HUD/input commands and token-gated native
-> loopback console below are design requirements, not runnable capabilities of
-> this checkout. Verify command registration and the exact target revision before
-> claiming availability; record implementation and runtime evidence in the task report.
+> **Implementation and acceptance:** the web driver, HUD automation helper and native
+> automation modules are checked in. Verify command registration at the target revision
+> and record runtime evidence in the task report before claiming acceptance on a platform.
+> The [web driver README](../../source/local-harness/web-driver/README.md) describes its
+> requirements and invocation; source availability alone is not a test pass.
 
 End-to-end tests drive the client through the console, the HUD included, so one spec runs on the
 web and on the standalone, with no Playwright
@@ -190,12 +196,13 @@ of the contract.
 - `cargo test --all`, not `cargo test -p <crate>`. The full workspace unifies `serde_json` with
   `preserve_order` from `deno_core`, so a per-crate run can pass on map ordering that the
   workspace run breaks. Parse JSON in tests; never compare serialised strings.
-- `react-web`: `npm test` (vitest), `npm run test:e2e` (playwright), `npm run test:visual` with
-  `test:visual:update` to refresh snapshots. `react-web/review.md` defines the tiers and when
-  each must run.
-- `local-harness/presence` and `local-harness/scene-kill` are the multi-client server harnesses
-  for presence isolation and scene teardown. The presence harness needs
-  `Transport__PeerTimeoutMs=8000` on the server.
+- `react-web`: `npm test` runs the checked-in Vitest suite. The Playwright visual/engine
+  gate specs and configs are absent from this public checkout; the corresponding package
+  scripts do not establish suite availability. See `react-web/review.md` for the optional
+  tiers and report them as not run unless the authorized test workspace supplies them.
+- `local-harness/presence` tests presence isolation and needs
+  `Transport__PeerTimeoutMs=8000` on the server. The scene-teardown harness
+  `local-harness/scene-kill` is not included in this public checkout.
 - `local-harness/benchmark` is the benchmark's runner and report, a binary with its own tests (the
   stream protocol, the server's security rules, the report on fixtures, the page's sender and the
   reset page under node when it is installed); see [Benchmark](benchmark.md#the-runner).
