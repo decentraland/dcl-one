@@ -21,6 +21,8 @@
       - infra/packages/**
       - infra/containers/**
       - services/catalyst/**
+      - schemas/**
+      - apps/dcl-scene-cli/**
       - library/**
       - apps/sites/**
       - apps/ui3/**
@@ -49,6 +51,8 @@
       - infra/packages/**
       - infra/containers/**
       - services/catalyst/**
+      - schemas/**
+      - apps/dcl-scene-cli/**
       - library/**
       - apps/sites/**
       - apps/ui3/**
