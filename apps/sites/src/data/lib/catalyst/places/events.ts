@@ -46,6 +46,7 @@ export type Event = {
   recurrent_frequency: string | null;
   total_attendees: number | null;
   place_id: string | null;
+  connected_addresses?: string[];
 };
 
 export type EventCategory = {
@@ -68,7 +69,10 @@ function parseEvents(raw: unknown[]): Event[] {
   for (const row of raw ?? []) {
     const r = EventRecordSchema.safeParse(row);
     if (r.success) out.push(r.data);
-    else warnInvalid("Event", r.error.issues);
+    else {
+      warnInvalid("Event", r.error.issues);
+      throw new CatalystError("event payload failed validation", "events");
+    }
   }
   return out;
 }
@@ -86,6 +90,10 @@ type FetchEventsParams = {
   list?: "live" | "active" | "highlight" | "trending";
   search?: string;
   category?: string;
+  from?: string;
+  to?: string;
+  recurrent?: boolean;
+  with_connected_users?: boolean;
   limit?: number;
   offset?: number;
 };
@@ -125,6 +133,10 @@ export async function fetchEvents(
     query: {
       list: params.list,
       search: params.search,
+      from: params.from,
+      to: params.to,
+      recurrent: params.recurrent,
+      with_connected_users: params.with_connected_users,
       limit: params.limit,
       offset: params.offset,
     },
@@ -133,7 +145,7 @@ export async function fetchEvents(
   const env = EventListEnvelope.safeParse(raw);
   if (!env.success) {
     warnInvalid("Events envelope", env.error.issues);
-    return { data: [], total: 0, copy };
+    throw new CatalystError("events envelope failed validation", "events");
   }
   const payload = env.data.data;
   const data = parseEvents(Array.isArray(payload) ? payload : payload.events);
@@ -283,7 +295,7 @@ export function toLiveNowCard(e: Event): LiveNowCard {
   return {
     id: e.id,
     title: e.name ?? "Untitled event",
-    users: e.total_attendees,
+    users: e.connected_addresses ? new Set(e.connected_addresses.map((address) => address.toLowerCase())).size : null,
     isEvent: true,
     creator: e.user_name ?? e.scene_name ?? "Decentraland",
     hue: hueFor(e.id),
