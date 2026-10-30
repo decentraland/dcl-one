@@ -108,27 +108,32 @@ const SEND_TIMEOUT: Duration = Duration::from_secs(15);
 /// Rejections per error line after the first.
 const REJECTIONS_PER_LOG: u32 = 30;
 
-/// The Segment source this run reports to, `prod` or `dev`: prod only against Decentraland's
-/// production site. Natively that is the resolved base domain (`--base-domain`, `decentraland.org`
-/// by default) in a release build, so a debug run and a build pointed at the zone staging domain
-/// are dev. The web engine is always a release build and one npm version serves every site, so
-/// there the page's host decides.
+/// `prod` or `dev`, on every event: prod only against Decentraland's production site, unless the
+/// build was made with `BEVY_ANALYTICS_DEV=1` (CI does for a desktop build of a ref other than main
+/// or a tag). Natively the site is the resolved base domain (`--base-domain`, `decentraland.org` by
+/// default) in a release build, so a debug run and a build pointed at the zone staging domain are
+/// dev. The web engine is always a release build and one npm version serves every site, so there
+/// the page's host decides.
 pub fn environment() -> &'static str {
     #[cfg(not(target_arch = "wasm32"))]
     let production = !cfg!(debug_assertions) && is_production_site(common::base_domain::get());
     #[cfg(target_arch = "wasm32")]
     let production = page_host().is_some_and(|host| is_production_site(&host));
-    if production {
+    resolved_environment(DEV_BUILD, production)
+}
+
+fn resolved_environment(dev_build: Option<&str>, production: bool) -> &'static str {
+    if production && dev_build != Some("1") {
         "prod"
     } else {
         "dev"
     }
 }
 
-/// Decentraland's production domain or a host under it, keyed as react-web/src/lib/baseDomain.ts
-/// `hostBaseDomain` keys the deployments.
+/// Only `decentraland.org` itself: its subdomains (the CDN, which serves every published version
+/// and PR preview, among them) are not where players play.
 fn is_production_site(host: &str) -> bool {
-    host == "decentraland.org" || host.ends_with(".decentraland.org")
+    host == "decentraland.org"
 }
 
 /// The host of the page running the engine, from the engine worker's own location.
@@ -141,24 +146,21 @@ fn page_host() -> Option<String> {
 }
 
 const SHARED_WRITE_KEY: &str = "EAdAcIyGP6lIQAfpFF2BXpNzpj7XNWMm";
-// Both sources' keys are compiled in (apps/bevy-explorer/README.md); the environment picks.
-const PROD_WRITE_KEY: Option<&str> = option_env!("BEVY_SEGMENT_WRITE_KEY_PROD");
-const DEV_WRITE_KEY: Option<&str> = option_env!("BEVY_SEGMENT_WRITE_KEY_DEV");
+// One source for every environment; the data stack filters on `environment`
+// (apps/bevy-explorer/README.md).
+const WRITE_KEY: Option<&str> = option_env!("BEVY_SEGMENT_WRITE_KEY");
+// `1` from CI for a desktop build of a ref other than main or a tag, so a QA build pointed at
+// decentraland.org is not counted as prod.
+const DEV_BUILD: Option<&str> = option_env!("BEVY_ANALYTICS_DEV");
 
 fn write_key() -> &'static str {
-    configured_key(environment(), PROD_WRITE_KEY, DEV_WRITE_KEY)
+    configured_key(WRITE_KEY)
 }
 
-/// The environment's configured key, else the key every environment shared before the sources
-/// were split. Empty counts as unset: CI exports an undefined variable as "".
-fn configured_key(
-    environment: &str,
-    prod: Option<&'static str>,
-    dev: Option<&'static str>,
-) -> &'static str {
-    let configured = if environment == "prod" { prod } else { dev };
-    configured
-        .filter(|key| !key.is_empty())
+/// The configured key, else the key the engine shared with the mobile client. Empty counts as
+/// unset: CI exports an undefined variable as "".
+fn configured_key(key: Option<&'static str>) -> &'static str {
+    key.filter(|key| !key.is_empty())
         .unwrap_or(SHARED_WRITE_KEY)
 }
 
@@ -625,17 +627,24 @@ mod tests {
         assert!(!local(&app));
     }
 
-    // The environment's key when the build has one, the shared key otherwise; an empty value is
-    // what CI exports for a variable nobody set.
+    // The build's key when it has one, the shared key otherwise; an empty value is what CI
+    // exports for a variable nobody set.
     #[test]
-    fn the_environment_picks_its_configured_key() {
-        assert_eq!(configured_key("prod", Some("p"), Some("d")), "p");
-        assert_eq!(configured_key("dev", Some("p"), Some("d")), "d");
-        assert_eq!(
-            configured_key("prod", Some(""), Some("d")),
-            SHARED_WRITE_KEY
-        );
-        assert_eq!(configured_key("dev", None, None), SHARED_WRITE_KEY);
+    fn the_build_picks_its_configured_key() {
+        assert_eq!(configured_key(Some("k")), "k");
+        assert_eq!(configured_key(Some("")), SHARED_WRITE_KEY);
+        assert_eq!(configured_key(None), SHARED_WRITE_KEY);
+    }
+
+    // A dev build is dev even against the production site; only `1` marks one, so a stray `0` or
+    // an unset CI variable leaves a release build prod.
+    #[test]
+    fn a_dev_build_is_dev_everywhere() {
+        assert_eq!(resolved_environment(Some("1"), true), "dev");
+        assert_eq!(resolved_environment(Some(""), true), "prod");
+        assert_eq!(resolved_environment(Some("0"), true), "prod");
+        assert_eq!(resolved_environment(None, true), "prod");
+        assert_eq!(resolved_environment(None, false), "dev");
     }
 
     // Only Decentraland's production site is prod: the page's host on the web, the resolved base
@@ -643,10 +652,11 @@ mod tests {
     #[test]
     fn only_the_production_site_is_prod() {
         assert!(is_production_site("decentraland.org"));
-        assert!(is_production_site("play.decentraland.org"));
+        assert!(!is_production_site("play.decentraland.org"));
         assert!(!is_production_site("play.decentraland.zone"));
         assert!(!is_production_site("localhost"));
         assert!(!is_production_site("decentraland.org.example.com"));
+        assert!(!is_production_site("cdn.decentraland.org"));
     }
 
     // A batch Segment refused is dropped, and the next one is not held behind it.
