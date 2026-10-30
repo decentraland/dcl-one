@@ -30,7 +30,7 @@ crates = [
 [[source]]
 url = "https://github.com/robtfm/bevy"
 branch = "release-0.16-dcl"
-rev = "fdfca192418deb8ff2d53e7e024d142657712353"
+rev = "dac1ac9ce08aa610e6f2aa7eef1e4e99130c196a"
 parent = "bevyengine/bevy"
 default_branch = "main"
 pushed_at = "2026-10-24"

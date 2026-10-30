@@ -212,14 +212,14 @@ pub async fn load_imposter_remote(
     // bounds the connect+headers phase and the body by an inactivity timeout, so a
     // slow-but-progressing download isn't killed.
     let request = client.get(&zip_url).build()?;
-    let fetched = match platform::fetch(
+    let bytes = match platform::fetch(
         ipfs.async_request(request, client),
         std::time::Duration::from_secs(30),
         std::time::Duration::from_secs(10),
     )
     .await
     {
-        Ok(fetched) => fetched,
+        Ok(fetched) => fetched.body,
         // a missing imposter for this area is an expected 404
         Err(platform::FetchError::Status(_)) => return Ok(()),
         Err(platform::FetchError::Send(e)) => return Err(e),
@@ -231,7 +231,6 @@ pub async fn load_imposter_remote(
         }
         Err(platform::FetchError::Body(e)) => return Err(anyhow::anyhow!(e)),
     };
-    let bytes = fetched.body;
     let mut zip = ZipArchive::new(Cursor::new(bytes))?;
     let root = file_root(ipfs.cache_path(), false, id, level);
     platform_fs::create_dir_all(&root).await?;
@@ -241,7 +240,14 @@ pub async fn load_imposter_remote(
 
     #[cfg(target_arch = "wasm32")]
     {
-        for i in 0..zip.len() {
+        // spec last: a readable spec marks the tile as cached, so an aborted load must not
+        // leave one beside a half-written texture
+        let mut indices: Vec<usize> = (0..zip.len()).collect();
+        indices.sort_by_key(|&i| {
+            zip.by_index_raw(i)
+                .is_ok_and(|f| f.name().ends_with("-spec.json"))
+        });
+        for i in indices {
             use futures_lite::io::AsyncWriteExt;
             use std::io::Read;
 
