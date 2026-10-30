@@ -3,102 +3,97 @@
 # Assign real GitHub teams/users, regenerate, then enable required owner reviews.
 
 # platform
-* @pentreathm @eordano @decentraland-bot
+* @decentraland/infra
 
 # infrastructure
-/infra/ @pentreathm @charly-bg @eordano @braianj @juanmahidalgo @kuruk-mm
-/.github/ @pentreathm @charly-bg @eordano @braianj @juanmahidalgo @kuruk-mm
-/ownership.json @pentreathm @charly-bg @eordano @braianj @juanmahidalgo @kuruk-mm
+/infra/ @decentraland/infra
+/.github/ @decentraland/infra
+/ownership.json @decentraland/infra
 
 # catalyst-runtime
-/services/catalyst/ @pentreathm @LautaroPetaccio @mikhail-dcl @eordano
+/services/catalyst/ @decentraland/apis
 
 # content
-/services/catalyst/content/ @LautaroPetaccio @mikhail-dcl @pentreathm @dalkia
+/services/catalyst/content/ @decentraland/apis
 
 # explore
-/services/catalyst/explore/ @LautaroPetaccio @braianj @lorux0 @lorenzo-ranciaffi
+/services/catalyst/explore/ @decentraland/apis
 
 # worlds
-/services/catalyst/worlds/ @LautaroPetaccio @mikhail-dcl @pentreathm
+/services/catalyst/worlds/ @decentraland/apis
 
 # social
-/services/catalyst/social/ @pentreathm @LautaroPetaccio @lorenzo-ranciaffi @lorux0
+/services/catalyst/social/ @decentraland/apis
 
 # shop
-/services/catalyst/shop/ @juanmahidalgo @RocioCM @davidejensen @vickydecampos-1
+/services/catalyst/shop/ @decentraland/apis
 
 # builder
-/services/catalyst/builder/ @RocioCM @juanmahidalgo @nicoecheza @nearnshaw
+/services/catalyst/builder/ @decentraland/apis
 
 # camera-reel
-/services/catalyst/camera-reel/ @LautaroPetaccio @juanmahidalgo @popuz @NickKhalow
+/services/catalyst/camera-reel/ @decentraland/apis
 
 # shared-backend
-/library/dcl-auth/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/library/dcl-http/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/library/catalyst-api/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/services/catalyst/fed/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/services/catalyst/jobs/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/services/catalyst/shared/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/services/catalyst/config/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/services/catalyst/storage/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/services/catalyst/price/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/services/catalyst/chain-index/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/services/catalyst/land-authz/ @pentreathm @LautaroPetaccio @mikhail-dcl
-/services/catalyst/testing/ @pentreathm @LautaroPetaccio @mikhail-dcl
+/library/dcl-auth/ @decentraland/apis
+/library/dcl-http/ @decentraland/apis
+/library/catalyst-api/ @decentraland/apis
+/services/catalyst/fed/ @decentraland/apis
+/services/catalyst/jobs/ @decentraland/apis
+/services/catalyst/shared/ @decentraland/apis
+/services/catalyst/config/ @decentraland/apis
+/services/catalyst/storage/ @decentraland/apis
+/services/catalyst/price/ @decentraland/apis
+/services/catalyst/chain-index/ @decentraland/apis
+/services/catalyst/land-authz/ @decentraland/apis
+/services/catalyst/testing/ @decentraland/apis
 
 # protocol
-/library/protocol/ @dalkia @mikhail-dcl @pentreathm @pravusjif @eordano
+/library/protocol/ @decentraland/client @decentraland/apis
 
 # database
-/DATABASE.md @LautaroPetaccio @mikhail-dcl @pentreathm
-/schemas/ @LautaroPetaccio @mikhail-dcl @pentreathm
-/services/catalyst/db/ @LautaroPetaccio @mikhail-dcl @pentreathm
+/schemas/ @decentraland/apis
+/services/catalyst/db/ @decentraland/apis
 
 # creator-sdk
-/apps/dcl-scene-cli/ @dalkia @nearnshaw @pravusjif @eordano @nicoecheza @leanmendoza
-/library/dcl-scene-authoring/ @dalkia @nearnshaw @pravusjif @eordano @nicoecheza @leanmendoza
-/library/dcl-scene-build/ @dalkia @nearnshaw @pravusjif @eordano @nicoecheza @leanmendoza
-/library/dcl-preview-tunnel/ @dalkia @nearnshaw @pravusjif @eordano @nicoecheza @leanmendoza
-/library/dcl-preview-tunnel-protocol/ @dalkia @nearnshaw @pravusjif @eordano @nicoecheza @leanmendoza
-
-# indexer
-/services/indexer/ @juanmahidalgo @pentreathm @LautaroPetaccio
+/apps/dcl-scene-cli/ @decentraland/client
+/library/dcl-scene-authoring/ @decentraland/client
+/library/dcl-scene-build/ @decentraland/client
+/library/dcl-preview-tunnel/ @decentraland/client
+/library/dcl-preview-tunnel-protocol/ @decentraland/client
 
 # comms
-/services/catalyst/comms/ @mikhail-dcl @pentreathm @lorenzo-ranciaffi
-/library/vendor/rusty_enet/ @mikhail-dcl @pentreathm @lorenzo-ranciaffi
-/library/dcl-livekit-token/ @mikhail-dcl @pentreathm @lorenzo-ranciaffi
+/services/catalyst/comms/ @decentraland/apis
+/library/vendor/rusty_enet/ @decentraland/apis
+/library/dcl-livekit-token/ @decentraland/apis
 
 # pulse
-/services/pulse/ @mikhail-dcl @pentreathm @lorenzo-ranciaffi
-/services/catalyst/comms/src/pulse/ @mikhail-dcl @pentreathm @lorenzo-ranciaffi
+/services/catalyst/comms/src/pulse/ @decentraland/apis
 
 # web
-/apps/sites/ @braianj @pentreathm @lorux0 @mikhail-dcl @juanmahidalgo @RocioCM @vickydecampos-1
-/apps/ui3/ @braianj @pentreathm @lorux0 @mikhail-dcl @juanmahidalgo @RocioCM @vickydecampos-1
+/apps/sites/ @decentraland/web-applications
+/apps/ui3/ @decentraland/web-applications
 
 # shop-ui
-/apps/ui3/src/shop/ @juanmahidalgo @davidejensen @RocioCM @vickydecampos-1 @lorux0
-/apps/sites/src/routes/shop/ @juanmahidalgo @davidejensen @RocioCM @vickydecampos-1 @lorux0
+/apps/ui3/src/shop/ @decentraland/web-applications
+/apps/sites/src/routes/shop/ @decentraland/web-applications
 
 # explore-ui
-/apps/ui3/src/explorer/ @braianj @lorux0 @lorenzo-ranciaffi @vickydecampos-1
+/apps/ui3/src/explorer/ @decentraland/web-applications
 
 # creator-ui
-/apps/ui3/src/editor/ @nearnshaw @nicoecheza @cyaiox @leanmendoza @pravusjif @juanmahidalgo @RocioCM
-/apps/ui3/editor-scene/ @nearnshaw @nicoecheza @cyaiox @leanmendoza @pravusjif @juanmahidalgo @RocioCM
-/apps/creator-hub/ @nearnshaw @nicoecheza @cyaiox @leanmendoza @pravusjif @juanmahidalgo @RocioCM
+/apps/ui3/src/editor/ @decentraland/web-applications
+/apps/ui3/editor-scene/ @decentraland/web-applications
+/apps/creator-hub/ @decentraland/web-applications
 
 # explorer-client
-/rendering/bevy-explorer/ @robtfm @mikhail-dcl @gonpombo8 @leanmendoza @NickKhalow @popuz @alejandro-jimenez-dcl @MadRex @pravusjif @dalkia @lorenzo-ranciaffi @lorux0 @braianj @charly-bg
-/apps/bevy-explorer/ @robtfm @mikhail-dcl @gonpombo8 @leanmendoza @NickKhalow @popuz @alejandro-jimenez-dcl @MadRex @pravusjif @dalkia @lorenzo-ranciaffi @lorux0 @braianj @charly-bg
-/.github/workflows/bevy-explorer-*.yml @robtfm @mikhail-dcl @gonpombo8 @leanmendoza @NickKhalow @popuz @alejandro-jimenez-dcl @MadRex @pravusjif @dalkia @lorenzo-ranciaffi @lorux0 @braianj @charly-bg
-/.github/actions/bevy-explorer-*/ @robtfm @mikhail-dcl @gonpombo8 @leanmendoza @NickKhalow @popuz @alejandro-jimenez-dcl @MadRex @pravusjif @dalkia @lorenzo-ranciaffi @lorux0 @braianj @charly-bg
+/rendering/bevy-explorer/ @decentraland/client
+/apps/bevy-explorer/ @decentraland/client
+/.github/workflows/bevy-explorer-*.yml @decentraland/client
+/.github/actions/bevy-explorer-*/ @decentraland/client
 
 # quality
-/services/catalyst/tests/ @anicalbano @pentreathm @charly-bg @kuruk-mm
+/services/catalyst/tests/ @decentraland/qa
 
 # documentation
-/docs/ @pentreathm @eordano @braianj @nearnshaw
+/docs/ @decentraland/infra

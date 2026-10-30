@@ -4,9 +4,7 @@
       "id": "platform",
       "description": "Default ownership, build contracts and repository checks",
       "owners": [
-        "@pentreathm",
-        "@eordano",
-        "@decentraland-bot"
+        "@decentraland/infra"
       ],
       "paths": [
         "*"
@@ -16,12 +14,7 @@
       "id": "infrastructure",
       "description": "Foundation infrastructure and review policy",
       "owners": [
-        "@pentreathm",
-        "@charly-bg",
-        "@eordano",
-        "@braianj",
-        "@juanmahidalgo",
-        "@kuruk-mm"
+        "@decentraland/infra"
       ],
       "paths": [
         "/infra/",
@@ -33,10 +26,7 @@
       "id": "catalyst-runtime",
       "description": "Shared Rust workspace and API process",
       "owners": [
-        "@pentreathm",
-        "@LautaroPetaccio",
-        "@mikhail-dcl",
-        "@eordano"
+        "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/"
@@ -46,10 +36,7 @@
       "id": "content",
       "description": "content domain; compiled into the shared Catalyst runtime",
       "owners": [
-        "@LautaroPetaccio",
-        "@mikhail-dcl",
-        "@pentreathm",
-        "@dalkia"
+        "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/content/"
@@ -59,10 +46,7 @@
       "id": "explore",
       "description": "explore domain; compiled into the shared Catalyst runtime",
       "owners": [
-        "@LautaroPetaccio",
-        "@braianj",
-        "@lorux0",
-        "@lorenzo-ranciaffi"
+        "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/explore/"
@@ -72,9 +56,7 @@
       "id": "worlds",
       "description": "worlds domain; compiled into the shared Catalyst runtime",
       "owners": [
-        "@LautaroPetaccio",
-        "@mikhail-dcl",
-        "@pentreathm"
+        "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/worlds/"
@@ -84,10 +66,7 @@
       "id": "social",
       "description": "social domain; compiled into the shared Catalyst runtime",
       "owners": [
-        "@pentreathm",
-        "@LautaroPetaccio",
-        "@lorenzo-ranciaffi",
-        "@lorux0"
+        "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/social/"
@@ -97,10 +76,7 @@
       "id": "shop",
       "description": "shop domain; compiled into the shared Catalyst runtime",
       "owners": [
-        "@juanmahidalgo",
-        "@RocioCM",
-        "@davidejensen",
-        "@vickydecampos-1"
+        "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/shop/"
@@ -110,10 +86,7 @@
       "id": "builder",
       "description": "builder domain; compiled into the shared Catalyst runtime",
       "owners": [
-        "@RocioCM",
-        "@juanmahidalgo",
-        "@nicoecheza",
-        "@nearnshaw"
+        "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/builder/"
@@ -123,10 +96,7 @@
       "id": "camera-reel",
       "description": "camera-reel domain; compiled into the shared Catalyst runtime",
       "owners": [
-        "@LautaroPetaccio",
-        "@juanmahidalgo",
-        "@popuz",
-        "@NickKhalow"
+        "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/camera-reel/"
@@ -136,9 +106,7 @@
       "id": "shared-backend",
       "description": "Shared backend libraries with enforced module layers",
       "owners": [
-        "@pentreathm",
-        "@LautaroPetaccio",
-        "@mikhail-dcl"
+        "@decentraland/apis"
       ],
       "paths": [
         "/library/dcl-auth/",
@@ -159,11 +127,8 @@
       "id": "protocol",
       "description": "The .proto contract: the one proto source the Explorer, the SDK and the services build from",
       "owners": [
-        "@dalkia",
-        "@mikhail-dcl",
-        "@pentreathm",
-        "@pravusjif",
-        "@eordano"
+        "@decentraland/client",
+        "@decentraland/apis"
       ],
       "paths": [
         "/library/protocol/"
@@ -173,12 +138,9 @@
       "id": "database",
       "description": "One schema bootstrap, migrations and database invariants",
       "owners": [
-        "@LautaroPetaccio",
-        "@mikhail-dcl",
-        "@pentreathm"
+        "@decentraland/apis"
       ],
       "paths": [
-        "/DATABASE.md",
         "/schemas/",
         "/services/catalyst/db/"
       ]
@@ -187,12 +149,7 @@
       "id": "creator-sdk",
       "description": "Creator SDK and preview tooling; selected separately from the node workspace build",
       "owners": [
-        "@dalkia",
-        "@nearnshaw",
-        "@pravusjif",
-        "@eordano",
-        "@nicoecheza",
-        "@leanmendoza"
+        "@decentraland/client"
       ],
       "paths": [
         "/apps/dcl-scene-cli/",
@@ -203,24 +160,10 @@
       ]
     },
     {
-      "id": "indexer",
-      "description": "Independent index process using the Catalyst artifact",
-      "owners": [
-        "@juanmahidalgo",
-        "@pentreathm",
-        "@LautaroPetaccio"
-      ],
-      "paths": [
-        "/services/indexer/"
-      ]
-    },
-    {
       "id": "comms",
       "description": "Communication and multiplayer crate (layer 8): the archipelago connector, the gatekeeper (admission, moderation, voice, streaming, LiveKit webhook, room events), live presence and Pulse",
       "owners": [
-        "@mikhail-dcl",
-        "@pentreathm",
-        "@lorenzo-ranciaffi"
+        "@decentraland/apis"
       ],
       "paths": [
         "/services/catalyst/comms/",
@@ -232,12 +175,9 @@
       "id": "pulse",
       "description": "Independent realtime process (catalyst pulse); its code is comms::pulse, listed after comms so the narrower path wins",
       "owners": [
-        "@mikhail-dcl",
-        "@pentreathm",
-        "@lorenzo-ranciaffi"
+        "@decentraland/apis"
       ],
       "paths": [
-        "/services/pulse/",
         "/services/catalyst/comms/src/pulse/"
       ]
     },
@@ -245,13 +185,7 @@
       "id": "web",
       "description": "Sites SSR and shared React UI",
       "owners": [
-        "@braianj",
-        "@pentreathm",
-        "@lorux0",
-        "@mikhail-dcl",
-        "@juanmahidalgo",
-        "@RocioCM",
-        "@vickydecampos-1"
+        "@decentraland/web-applications"
       ],
       "paths": [
         "/apps/sites/",
@@ -262,11 +196,7 @@
       "id": "shop-ui",
       "description": "Shop product UI",
       "owners": [
-        "@juanmahidalgo",
-        "@davidejensen",
-        "@RocioCM",
-        "@vickydecampos-1",
-        "@lorux0"
+        "@decentraland/web-applications"
       ],
       "paths": [
         "/apps/ui3/src/shop/",
@@ -277,10 +207,7 @@
       "id": "explore-ui",
       "description": "Discovery frontend",
       "owners": [
-        "@braianj",
-        "@lorux0",
-        "@lorenzo-ranciaffi",
-        "@vickydecampos-1"
+        "@decentraland/web-applications"
       ],
       "paths": [
         "/apps/ui3/src/explorer/"
@@ -290,13 +217,7 @@
       "id": "creator-ui",
       "description": "Creator editor and native shell",
       "owners": [
-        "@nearnshaw",
-        "@nicoecheza",
-        "@cyaiox",
-        "@leanmendoza",
-        "@pravusjif",
-        "@juanmahidalgo",
-        "@RocioCM"
+        "@decentraland/web-applications"
       ],
       "paths": [
         "/apps/ui3/src/editor/",
@@ -308,20 +229,7 @@
       "id": "explorer-client",
       "description": "Explorer source, local app builds and component workflows",
       "owners": [
-        "@robtfm",
-        "@mikhail-dcl",
-        "@gonpombo8",
-        "@leanmendoza",
-        "@NickKhalow",
-        "@popuz",
-        "@alejandro-jimenez-dcl",
-        "@MadRex",
-        "@pravusjif",
-        "@dalkia",
-        "@lorenzo-ranciaffi",
-        "@lorux0",
-        "@braianj",
-        "@charly-bg"
+        "@decentraland/client"
       ],
       "paths": [
         "/rendering/bevy-explorer/",
@@ -334,10 +242,7 @@
       "id": "quality",
       "description": "Journey evidence, conformance and checks",
       "owners": [
-        "@anicalbano",
-        "@pentreathm",
-        "@charly-bg",
-        "@kuruk-mm"
+        "@decentraland/qa"
       ],
       "paths": [
         "/services/catalyst/tests/"
@@ -347,10 +252,7 @@
       "id": "documentation",
       "description": "Architecture, compatibility evidence and measured performance",
       "owners": [
-        "@pentreathm",
-        "@eordano",
-        "@braianj",
-        "@nearnshaw"
+        "@decentraland/infra"
       ],
       "paths": [
         "/docs/"
