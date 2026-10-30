@@ -329,6 +329,13 @@ impl ExploreState {
                 self.settings.events_base_url.clone(),
                 jobs,
             );
+            events::upcoming::spawn(
+                self.pool.clone(),
+                client.clone(),
+                endpoint.clone(),
+                self.settings.events_base_url.clone(),
+                jobs,
+            );
         }
         let cfg = |interval: Duration| {
             PeriodicCfg::every(interval)
