@@ -73,6 +73,7 @@
 # web
 /apps/sites/ @decentraland/web-applications
 /apps/ui3/ @decentraland/web-applications
+/library/ui/ @decentraland/web-applications
 
 # shop-ui
 /apps/ui3/src/shop/ @decentraland/web-applications

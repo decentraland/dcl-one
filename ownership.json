@@ -189,7 +189,8 @@
       ],
       "paths": [
         "/apps/sites/",
-        "/apps/ui3/"
+        "/apps/ui3/",
+        "/library/ui/"
       ]
     },
     {
