@@ -63,3 +63,6 @@ wasm-bindgen-test = { workspace = true }
 js-sys = { workspace = true }
 
 bevy_console = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+bevy = { workspace = true, features = ["web-worker"] }

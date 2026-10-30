@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use common::util::ReportErr;
+use dcl_component::proto_components::sdk::components::VideoState;
 use ipfs::IpfsResource;
 use media::{AVCommand, VideoData};
 
@@ -8,7 +9,6 @@ use crate::{AVPlayer, AVSinks};
 use {
     crate::audio_sink::AudioSink,
     common::structs::AudioDecoderError,
-    dcl_component::proto_components::sdk::components::VideoState,
     kira::sound::streaming::StreamingSoundData,
     media::{ffmpeg_worker, AudioHandle},
 };
@@ -18,7 +18,6 @@ pub struct VideoSink {
     pub video_receiver: tokio::sync::mpsc::Receiver<VideoData>,
     pub image: Handle<Image>,
     pub current_time: f64,
-    pub last_reported_time: f64,
     pub length: Option<f64>,
     /// The image changed size and the materials on it must rebind.
     pub resized: bool,
@@ -35,7 +34,6 @@ impl VideoSink {
             video_receiver,
             image,
             current_time: -1.0,
-            last_reported_time: -1.0,
             length: None,
             resized: false,
         }
@@ -48,12 +46,13 @@ pub fn av_sinks<T: AVPlayer>(
     ipfs: IpfsResource,
     source: String,
     hash: String,
-    image: Handle<Image>,
+    image: Option<Handle<Image>>,
     playing: bool,
     repeat: bool,
 ) -> AVSinks<T> {
     let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
+    let (state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     #[cfg(feature = "ffmpeg")]
     let audio = {
@@ -61,11 +60,14 @@ pub fn av_sinks<T: AVPlayer>(
         let (handle_sender, handle_receiver) = tokio::sync::oneshot::channel();
         spawn_av_thread(
             ipfs,
-            command_receiver,
-            command_sender.downgrade(),
-            T::has_video().then_some(video_sender),
-            audio_sender,
-            handle_receiver,
+            SendersAndReceivers {
+                commands: command_receiver,
+                disposed: command_sender.downgrade(),
+                frames: T::HAS_VIDEO.then_some(video_sender),
+                audio: audio_sender,
+                state_sender,
+                audio_handle: handle_receiver,
+            },
             source.clone(),
             hash,
         );
@@ -79,9 +81,10 @@ pub fn av_sinks<T: AVPlayer>(
         media::spawn_av(
             command_receiver,
             video_sender,
+            state_sender,
             Some(url),
-            T::has_video(),
-            &image,
+            T::HAS_VIDEO,
+            image.as_ref(),
         );
     }
 
@@ -93,10 +96,15 @@ pub fn av_sinks<T: AVPlayer>(
     AVSinks {
         #[cfg(feature = "ffmpeg")]
         audio,
-        video: T::has_video().then_some(VideoSink::new(source, video_receiver, image)),
+        video: image
+            .filter(|_| T::HAS_VIDEO)
+            .map(|image| VideoSink::new(source, video_receiver, image)),
         command_sender,
         rate: None,
+        state: state_receiver,
+        sent_event: 0.,
         sent_volume: None,
+        sent_state: VideoState::VsNone,
         _phantom: Default::default(),
     }
 }
@@ -107,29 +115,23 @@ static AV_THREADS: std::sync::Mutex<Vec<std::thread::JoinHandle<()>>> =
     std::sync::Mutex::new(Vec::new());
 
 #[cfg(feature = "ffmpeg")]
-#[expect(clippy::too_many_arguments)]
-pub fn spawn_av_thread(
-    ipfs: IpfsResource,
+pub struct SendersAndReceivers {
     commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
     disposed: tokio::sync::mpsc::WeakUnboundedSender<AVCommand>,
     frames: Option<tokio::sync::mpsc::Sender<VideoData>>,
     audio: tokio::sync::mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
+    state_sender: tokio::sync::watch::Sender<VideoState>,
     audio_handle: tokio::sync::oneshot::Receiver<AudioHandle>,
+}
+
+#[cfg(feature = "ffmpeg")]
+pub fn spawn_av_thread(
+    ipfs: IpfsResource,
+    senders_and_receivers: SendersAndReceivers,
     path: String,
     hash: String,
 ) {
-    let thread = std::thread::spawn(move || {
-        av_thread(
-            ipfs,
-            commands,
-            disposed,
-            frames,
-            audio,
-            audio_handle,
-            path,
-            hash,
-        )
-    });
+    let thread = std::thread::spawn(move || av_thread(ipfs, senders_and_receivers, path, hash));
     let mut threads = AV_THREADS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -167,14 +169,9 @@ pub fn join_av_threads(timeout: std::time::Duration) -> bool {
 }
 
 #[cfg(feature = "ffmpeg")]
-#[expect(clippy::too_many_arguments)]
 fn av_thread(
     ipfs: IpfsResource,
-    commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
-    disposed: tokio::sync::mpsc::WeakUnboundedSender<AVCommand>,
-    frames: Option<tokio::sync::mpsc::Sender<VideoData>>,
-    audio: tokio::sync::mpsc::Sender<StreamingSoundData<AudioDecoderError>>,
-    audio_handle: tokio::sync::oneshot::Receiver<AudioHandle>,
+    senders_and_receivers: SendersAndReceivers,
     path: String,
     hash: String,
 ) {
@@ -183,21 +180,26 @@ fn av_thread(
         std::thread::current().id()
     );
     let _span = bevy::log::tracing::info_span!("av-thread").entered();
+    let SendersAndReceivers {
+        commands,
+        disposed,
+        frames,
+        audio,
+        state_sender,
+        audio_handle,
+    } = senders_and_receivers;
     if let Err(e) = ffmpeg_worker(
         &ipfs,
         commands,
         disposed,
         frames.clone(),
         audio,
+        state_sender.clone(),
         audio_handle,
         path,
         hash,
     ) {
-        if let Some(ref frames) = frames {
-            frames
-                .blocking_send(VideoData::State(VideoState::VsError))
-                .report();
-        }
+        state_sender.send_replace(VideoState::VsError);
         warn!("av error: {e}");
     } else {
         debug!("av closed");
@@ -205,9 +207,11 @@ fn av_thread(
 }
 
 /// Sinks that never play: an empty source.
-pub fn noop_sinks<T: AVPlayer>(source: String, image: Handle<Image>) -> AVSinks<T> {
+pub fn noop_sinks<T: AVPlayer>(source: String, image: Option<Handle<Image>>) -> AVSinks<T> {
     let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
+    #[cfg_attr(not(feature = "html"), expect(unused))]
+    let (state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
 
     #[cfg(feature = "ffmpeg")]
     let audio = {
@@ -218,15 +222,25 @@ pub fn noop_sinks<T: AVPlayer>(source: String, image: Handle<Image>) -> AVSinks<
         Some(AudioSink::new(audio_receiver, handle_sender))
     };
     #[cfg(feature = "html")]
-    media::spawn_av(command_receiver, video_sender, None, T::has_video(), &image);
+    media::spawn_av(
+        command_receiver,
+        video_sender,
+        state_sender,
+        None,
+        T::HAS_VIDEO,
+        image.as_ref(),
+    );
 
     AVSinks {
         #[cfg(feature = "ffmpeg")]
         audio,
-        video: Some(VideoSink::new(source, video_receiver, image)),
+        video: image.map(|image| VideoSink::new(source, video_receiver, image)),
         command_sender,
         rate: None,
+        state: state_receiver,
+        sent_event: 0.,
         sent_volume: None,
+        sent_state: VideoState::VsNone,
         _phantom: Default::default(),
     }
 }

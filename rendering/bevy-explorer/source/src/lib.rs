@@ -19,7 +19,7 @@ use std::str::FromStr;
 
 use analytics::{metrics::MetricsPlugin, segment_system::SegmentConfig};
 use assets::EmbedAssetsPlugin;
-use av::AVPlayerPlugin;
+use av::plugin::AVPlayerPlugin;
 use avatar::AvatarPlugin;
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::window::{PresentMode, WindowResolution};

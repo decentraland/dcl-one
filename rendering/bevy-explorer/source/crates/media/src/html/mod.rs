@@ -16,6 +16,7 @@ use std::sync::{
 };
 
 use bevy::prelude::*;
+use common::util::watch_send_if_modified;
 use dcl_component::proto_components::sdk::components::VideoState;
 use futures_channel::mpsc::{UnboundedReceiver, UnboundedSender};
 use once_cell::sync::OnceCell;
@@ -95,6 +96,7 @@ struct AvSource {
     id: MediaId,
     commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
     video: tokio::sync::mpsc::Sender<VideoData>,
+    state_sender: tokio::sync::watch::Sender<VideoState>,
     size: Option<(u32, u32)>,
     duration: f64,
 }
@@ -103,14 +105,16 @@ impl AvSource {
     fn new(
         commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
         video: tokio::sync::mpsc::Sender<VideoData>,
-        image: &Handle<Image>,
+        state_sender: tokio::sync::watch::Sender<VideoState>,
+        image: Option<&Handle<Image>>,
     ) -> Self {
         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-        send_target(id, Some(image.id()));
+        send_target(id, image.map(|image| image.id()));
         Self {
             id,
             commands,
             video,
+            state_sender,
             size: None,
             duration: 0.0,
         }
@@ -120,6 +124,10 @@ impl AvSource {
         if self.video.try_send(data).is_err() {
             trace!("media {}: video channel full or closed", self.id);
         }
+    }
+
+    fn send_state(&self, video_state: VideoState) {
+        watch_send_if_modified(&self.state_sender, video_state);
     }
 
     fn send_info(&self) {
@@ -140,11 +148,12 @@ impl AvSource {
 pub fn spawn_av(
     commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
     video: tokio::sync::mpsc::Sender<VideoData>,
+    state_sender: tokio::sync::watch::Sender<VideoState>,
     url: Option<String>,
     has_video: bool,
-    image: &Handle<Image>,
+    image: Option<&Handle<Image>>,
 ) {
-    let source = AvSource::new(commands, video, image);
+    let source = AvSource::new(commands, video, state_sender, image);
     send_host(HostCommand::Create {
         id: source.id,
         url,
@@ -159,9 +168,10 @@ pub fn spawn_av(
 pub fn adopt_video(
     commands: tokio::sync::mpsc::UnboundedReceiver<AVCommand>,
     video: tokio::sync::mpsc::Sender<VideoData>,
+    state_sender: tokio::sync::watch::Sender<VideoState>,
     image: &Handle<Image>,
 ) -> MediaId {
-    let source = AvSource::new(commands, video, image);
+    let source = AvSource::new(commands, video, state_sender, Some(image));
     let id = source.id;
     NEW_SOURCES.lock().unwrap().push(source);
     id

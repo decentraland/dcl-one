@@ -13,13 +13,8 @@ use common::{
     structs::{AudioSettings, PrimaryUser},
     util::ReportErr,
 };
-use dcl_component::{
-    proto_components::sdk::components::{PbVideoEvent, VideoState},
-    SceneComponentId,
-};
-use dcl_types::interface::CrdtType;
 use ipfs::IpfsResource;
-use livestream_manager::ReceiverVolume;
+use livestream_manager::{ReceiverImage, ReceiverVolume};
 use media::{AVCommand, VideoData, VideoInfo};
 use scene_runner::{
     automatic_testing::SnapshotInProgress,
@@ -29,6 +24,7 @@ use scene_runner::{
 };
 
 use crate::{
+    plugin::push_state_to_crdt,
     video_stream::{av_sinks, noop_sinks},
     AVPlayer, AVPlayerConfig, AVSinks, AudioStream, ShouldBePlaying, Stream, VideoPlayer,
     LIVEKIT_VIDEO_STREAM,
@@ -42,13 +38,21 @@ impl Plugin for VideoPlayerPlugin {
         app.add_systems(
             Update,
             (
+                publish_av_player_state::<AudioStream>,
+                publish_av_player_state::<VideoPlayer>,
+                publish_stream_state,
+            ),
+        );
+        app.add_systems(
+            Update,
+            (
                 update_av_volume::<AudioStream>,
                 update_av_volume::<VideoPlayer>,
             ),
         );
 
-        app.add_observer(new_player_source::<AudioStream>);
-        app.add_observer(new_player_source::<VideoPlayer>);
+        app.add_observer(new_audio_stream_source);
+        app.add_observer(new_video_player_source);
         app.add_observer(player_source_replaced::<AudioStream>);
         app.add_observer(player_source_replaced::<VideoPlayer>);
         app.add_observer(player_config_added::<AudioStream>);
@@ -65,14 +69,62 @@ impl Plugin for VideoPlayerPlugin {
 }
 
 #[expect(clippy::type_complexity)]
-fn new_player_source<T: AVPlayer>(
-    trigger: Trigger<OnInsert, T::Source>,
+fn new_audio_stream_source(
+    trigger: Trigger<OnInsert, <AudioStream as AVPlayer>::Source>,
     mut commands: Commands,
     av_players: Query<(
-        &T::Source,
+        &<AudioStream as AVPlayer>::Source,
+        &ContainerEntity,
+        Option<&AVSinks<AudioStream>>,
+    )>,
+    scenes: Query<&RendererSceneContext>,
+    ipfs: Res<IpfsResource>,
+) {
+    let entity = trigger.target();
+
+    let (source, container_entity, maybe_sinks) = av_players
+        .get(entity)
+        .unwrap_or_else(|e| panic!("new_audio_stream_source query failed: {e}"));
+    let Ok(context) = scenes.get(container_entity.root) else {
+        debug_panic!(
+            "{} has an invalid link to RendererSceneContext",
+            disqualified::ShortName::of::<<AudioStream as AVPlayer>::Source>()
+        );
+    };
+
+    if let Some(sinks) = maybe_sinks {
+        sinks.command_sender.send(AVCommand::Dispose).report();
+    }
+
+    let sinks = match &(**source) {
+        "" => noop_sinks::<AudioStream>((**source).to_owned(), None),
+        other => av_sinks::<AudioStream>(
+            (*ipfs).clone(),
+            other.to_owned(),
+            context.hash.to_string(),
+            None,
+            true,
+            false,
+        ),
+    };
+
+    debug!(
+        "Creating new sinks for {} targeting \"{}\"",
+        entity,
+        &(**source)
+    );
+    commands.entity(entity).try_insert(sinks);
+}
+
+#[expect(clippy::type_complexity)]
+fn new_video_player_source(
+    trigger: Trigger<OnInsert, <VideoPlayer as AVPlayer>::Source>,
+    mut commands: Commands,
+    av_players: Query<(
+        &<VideoPlayer as AVPlayer>::Source,
         &ContainerEntity,
         Option<&VideoTextureOutput>,
-        Option<&AVSinks<T>>,
+        Option<&AVSinks<VideoPlayer>>,
         Has<Stream>,
     )>,
     scenes: Query<&RendererSceneContext>,
@@ -82,16 +134,13 @@ fn new_player_source<T: AVPlayer>(
     let entity = trigger.target();
 
     let (source, container_entity, mut maybe_video_texture_output, maybe_sinks, has_stream) =
-        av_players.get(entity).unwrap_or_else(|e| {
-            panic!(
-                "new_player_source::<{}> query failed: {e}",
-                disqualified::ShortName::of::<T>()
-            )
-        });
+        av_players
+            .get(entity)
+            .unwrap_or_else(|e| panic!("new_video_player_source query failed: {e}"));
     let Ok(context) = scenes.get(container_entity.root) else {
         debug_panic!(
             "{} has an invalid link to RendererSceneContext",
-            disqualified::ShortName::of::<T::Source>()
+            disqualified::ShortName::of::<<VideoPlayer as AVPlayer>::Source>()
         );
     };
 
@@ -100,20 +149,12 @@ fn new_player_source<T: AVPlayer>(
     }
 
     let livestream = &**source == LIVEKIT_VIDEO_STREAM;
-    if T::ALLOWS_LIVESTREAM && livestream != has_stream {
+    if livestream != has_stream {
         if livestream {
-            debug!(
-                "{} {} now a stream.",
-                disqualified::ShortName::of::<T>(),
-                entity
-            );
+            debug!("VideoPlayer {} now a stream.", entity);
             commands.entity(entity).try_insert(Stream);
         } else {
-            debug!(
-                "{} {} no longer a stream.",
-                disqualified::ShortName::of::<T>(),
-                entity
-            );
+            debug!("VideoPlayer {} no longer a stream.", entity);
             commands.entity(entity).try_remove::<Stream>();
             let _ = maybe_video_texture_output.take();
         }
@@ -145,16 +186,16 @@ fn new_player_source<T: AVPlayer>(
     };
 
     let image = match &(**source) {
-        LIVEKIT_VIDEO_STREAM if T::ALLOWS_LIVESTREAM => return,
+        LIVEKIT_VIDEO_STREAM => return,
         _ => create_image_handle(),
     };
     let sinks = match &(**source) {
-        "" => noop_sinks::<T>((**source).to_owned(), image.clone()),
-        other => av_sinks::<T>(
+        "" => noop_sinks::<VideoPlayer>((**source).to_owned(), Some(image.clone())),
+        other => av_sinks::<VideoPlayer>(
             (*ipfs).clone(),
             other.to_owned(),
             context.hash.to_string(),
-            image.clone(),
+            Some(image.clone()),
             true,
             false,
         ),
@@ -233,8 +274,11 @@ fn player_config_added<T: AVPlayer>(
             audio: _,
         video: _,
         command_sender,
-        sent_volume: _,
         rate,
+        state: _,
+        sent_event: _,
+        sent_volume: _,
+        sent_state: _,
         _phantom,
     } = sinks.as_mut();
 
@@ -270,7 +314,10 @@ fn update_av_volume<T: AVPlayer>(
             video: _,
             command_sender,
             rate: _,
+            state: _,
+            sent_event: _,
             sent_volume,
+            sent_state: _,
             _phantom,
         } = sinks.as_mut();
 
@@ -336,6 +383,8 @@ fn av_player_should_be_playing_on_add<T: AVPlayer>(
     sinks.command_sender.send(AVCommand::Play).report();
 }
 
+/// Sends [`AVCommand::Pause`] to [`AVPlayer`]
+/// on removal of [`ShouldBePlaying`]
 fn av_player_should_be_playing_on_remove<T: AVPlayer>(
     trigger: Trigger<OnRemove, ShouldBePlaying<T>>,
     av_players: Query<&AVSinks<T>, With<T>>,
@@ -350,13 +399,7 @@ fn av_player_should_be_playing_on_remove<T: AVPlayer>(
 
 fn play_videos(
     mut images: ResMut<Assets<Image>>,
-    mut q: Query<(
-        &mut AVSinks<VideoPlayer>,
-        &ContainerEntity,
-        &mut VideoTextureOutput,
-    )>,
-    mut scenes: Query<&mut RendererSceneContext>,
-    frame: Res<FrameCount>,
+    mut q: Query<(&mut AVSinks<VideoPlayer>, &mut VideoTextureOutput)>,
     snapshot: Option<Res<SnapshotInProgress>>,
 ) {
     // A software-rendered capture can take several video frames to become ready.
@@ -365,14 +408,17 @@ fn play_videos(
         return;
     }
 
-    for (mut video_player_sinks, container, mut output) in q.iter_mut() {
+    for (mut video_player_sinks, mut output) in q.iter_mut() {
         let AVSinks {
             #[cfg(feature = "ffmpeg")]
                 audio: _,
             video: Some(video),
             command_sender: _,
             rate: sink_rate,
+            state: _,
+            sent_event: _,
             sent_volume: _,
+            sent_state: _,
             _phantom,
         } = video_player_sinks.as_mut()
         else {
@@ -380,7 +426,6 @@ fn play_videos(
         };
 
         let mut last_frame_received = None;
-        let mut new_state = None;
         loop {
             match video.video_receiver.try_recv() {
                 Ok(VideoData::Info(VideoInfo {
@@ -410,7 +455,6 @@ fn play_videos(
                     last_frame_received = Some(frame);
                     video.current_time = time;
                 }
-                Ok(VideoData::State(state)) => new_state = Some(state),
                 Err(_) => break,
             }
         }
@@ -437,33 +481,71 @@ fn play_videos(
                 output.set_changed();
             }
         }
+    }
+}
 
-        const VIDEO_REPORT_FREQUENCY: f64 = 1.0;
-        if new_state.is_none()
-            && (video.current_time > video.last_reported_time + VIDEO_REPORT_FREQUENCY
-                || video.current_time < video.last_reported_time)
+const EVENT_REPORT_FREQUENCY: f64 = 1.0;
+
+fn publish_av_player_state<T: AVPlayer>(
+    mut q: Query<(&mut AVSinks<T>, &ContainerEntity)>,
+    mut scenes: Query<&mut RendererSceneContext>,
+    time: Res<Time>,
+    frame: Res<FrameCount>,
+) {
+    for (mut video_player_sinks, container) in q.iter_mut() {
+        let AVSinks {
+            #[cfg(feature = "ffmpeg")]
+                audio: _,
+            video,
+            command_sender: _,
+            rate: _,
+            state,
+            sent_event,
+            sent_volume: _,
+            sent_state,
+            _phantom,
+        } = video_player_sinks.as_mut();
+
+        let Ok(mut context) = scenes.get_mut(container.root) else {
+            continue;
+        };
+
+        let new_state = *state.borrow_and_update();
+        if &new_state != sent_state
+            || time.elapsed_secs_f64() >= *sent_event + EVENT_REPORT_FREQUENCY
         {
-            new_state = Some(VideoState::VsPlaying);
+            *sent_event = time.elapsed_secs_f64();
+            *sent_state = new_state;
+            push_state_to_crdt::<T>(&mut context, container, &frame, new_state, video.as_mut());
         }
+    }
+}
 
-        if let Some(state) = new_state {
-            if let Ok(mut context) = scenes.get_mut(container.root) {
-                trace!("send current time = {}", video.current_time);
-                let event = PbVideoEvent {
-                    timestamp: frame.0,
-                    tick_number: context.tick_number,
-                    current_offset: video.current_time as f32,
-                    video_length: video.length.unwrap_or(-1.0) as f32,
-                    state: state.into(),
-                };
-                context.update_crdt(
-                    SceneComponentId::VIDEO_EVENT,
-                    CrdtType::GO_ANY,
-                    container.container_id,
-                    &event,
-                );
-                video.last_reported_time = video.current_time;
-            }
+fn publish_stream_state(
+    mut q: Query<(&mut ReceiverImage, &ContainerEntity), With<VideoPlayer>>,
+    mut scenes: Query<&mut RendererSceneContext>,
+    time: Res<Time>,
+    frame: Res<FrameCount>,
+) {
+    for (mut receiver_image, container) in q.iter_mut() {
+        let ReceiverImage {
+            image: _,
+            state,
+            sent_event,
+            sent_state,
+        } = receiver_image.as_mut();
+
+        let Ok(mut context) = scenes.get_mut(container.root) else {
+            continue;
+        };
+
+        let new_state = *state.borrow_and_update();
+        if &new_state != sent_state
+            || time.elapsed_secs_f64() >= *sent_event + EVENT_REPORT_FREQUENCY
+        {
+            *sent_event = time.elapsed_secs_f64();
+            *sent_state = new_state;
+            push_state_to_crdt::<VideoPlayer>(&mut context, container, &frame, new_state, None);
         }
     }
 }
@@ -471,7 +553,7 @@ fn play_videos(
 #[cfg(test)]
 mod snapshot_tests {
     use super::*;
-    use dcl_component::SceneEntityId;
+    use dcl_component::{proto_components::sdk::components::VideoState, SceneEntityId};
 
     #[test]
     fn holds_video_updates_until_snapshot_readback_finishes() {
@@ -495,6 +577,7 @@ mod snapshot_tests {
             ));
         let (sender, receiver) = tokio::sync::mpsc::channel(10);
         let (commands, _commands_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (_state_sender, state_receiver) = tokio::sync::watch::channel(VideoState::VsLoading);
         app.world_mut().spawn((
             AVSinks::<VideoPlayer> {
                 #[cfg(feature = "ffmpeg")]
@@ -504,12 +587,14 @@ mod snapshot_tests {
                     video_receiver: receiver,
                     image: image.clone(),
                     current_time: -1.0,
-                    last_reported_time: -1.0,
                     length: None,
                     resized: false,
                 }),
                 command_sender: commands,
                 rate: None,
+                state: state_receiver,
+                sent_event: 0.,
+                sent_state: VideoState::VsLoading,
                 sent_volume: None,
                 _phantom: Default::default(),
             },
