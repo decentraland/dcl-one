@@ -71,6 +71,8 @@ fn set_rejected(raw: &mut Map<String, Value>, actor: &str, reason: Option<String
     raw.insert("approved".into(), json!(false));
     raw.insert("approved_by".into(), Value::Null);
     raw.insert("rejected".into(), json!(true));
+    raw.insert("highlighted".into(), json!(false));
+    raw.insert("trending".into(), json!(false));
     raw.insert(
         "rejection_reason".into(),
         reason.map(Value::from).unwrap_or(Value::Null),
@@ -121,6 +123,7 @@ pub fn apply_admin_state(
             set_approved(raw, actor);
         } else {
             raw.insert("approved".into(), json!(false));
+            raw.insert("approved_by".into(), Value::Null);
         }
         handled = true;
     }
@@ -130,6 +133,7 @@ pub fn apply_admin_state(
         } else {
             raw.insert("rejected".into(), json!(false));
             raw.insert("rejected_by".into(), Value::Null);
+            raw.insert("rejection_reason".into(), Value::Null);
         }
         handled = true;
     }
@@ -305,6 +309,7 @@ impl Decision {
         let verdict = matches!(action, Some("approve" | "reject" | "archive"))
             || body.approved == Some(true)
             || body.rejected == Some(true);
+        let rejects = verdict && flag(raw, "rejected");
         let pick = |touched: bool, key: &str| touched.then(|| flag(raw, key));
         let approved = pick(verdict || body.approved.is_some(), "approved");
         let rejected = pick(verdict || body.rejected.is_some(), "rejected");
@@ -315,10 +320,12 @@ impl Decision {
             approved,
             rejected,
             highlighted: pick(
-                matches!(action, Some("feature" | "unfeature")) || body.highlighted.is_some(),
+                matches!(action, Some("feature" | "unfeature"))
+                    || body.highlighted.is_some()
+                    || rejects,
                 "highlighted",
             ),
-            trending: pick(body.trending.is_some(), "trending"),
+            trending: pick(body.trending.is_some() || rejects, "trending"),
             hidden: None,
             approved_by: with(approved, "approved_by"),
             rejected_by: with(rejected, "rejected_by"),
@@ -548,6 +555,19 @@ pub fn validate_create(body: &CreateEvent, now: DateTime<Utc>) -> Result<DateTim
         .is_some_and(|d| d.chars().count() > 5000)
     {
         return Err(ApiError::bad_request("description too long"));
+    }
+    if body
+        .details
+        .as_ref()
+        .is_some_and(|value| value.chars().count() > 5000)
+        || body
+            .contact
+            .as_ref()
+            .is_some_and(|value| value.chars().count() > 100)
+    {
+        return Err(ApiError::bad_request(
+            "organizer text exceeds the maximum length",
+        ));
     }
     if let Some(u) = &body.url {
         crate::sanitize::validate_event_url(u).map_err(ApiError::bad_request)?;
@@ -839,6 +859,9 @@ pub async fn create_as(
     let operator = signer;
     let now = Utc::now();
     let start_at = validate_create(body, now)?;
+    for image in [&body.image, &body.image_vertical].into_iter().flatten() {
+        super::posters::validate_upload(pool, image).await?;
+    }
     let (place_id, world) = resolve_location(
         pool,
         body.world.unwrap_or(false),
@@ -1129,7 +1152,13 @@ mod tests {
         assert!(moderate(&pool, &mirrored, &body, actor).await.unwrap());
         assert_eq!(
             overlay().await,
-            Some((Some(false), Some(true), Some(true), None, actor.to_string()))
+            Some((
+                Some(false),
+                Some(true),
+                Some(true),
+                Some(false),
+                actor.to_string()
+            ))
         );
         let row = || {
             let pool = pool.clone();
@@ -1148,7 +1177,7 @@ mod tests {
         };
         assert_eq!(
             row().await,
-            ("upstream".into(), false, true, true, json!(true), 0)
+            ("upstream".into(), false, true, false, json!(true), 0)
         );
         assert!(
             super::super::mirror::upsert_event(&pool, &upstream("renamed upstream"))
@@ -1157,7 +1186,14 @@ mod tests {
         );
         assert_eq!(
             row().await,
-            ("renamed upstream".into(), false, true, true, json!(true), 0),
+            (
+                "renamed upstream".into(),
+                false,
+                true,
+                false,
+                json!(true),
+                0
+            ),
             "the pass writes the upstream's name and keeps the operator's flags"
         );
         let approve = AdminPatch {
@@ -1167,7 +1203,13 @@ mod tests {
         assert!(moderate(&pool, &mirrored, &approve, actor).await.unwrap());
         assert_eq!(
             overlay().await,
-            Some((Some(true), Some(false), Some(true), None, actor.to_string())),
+            Some((
+                Some(true),
+                Some(false),
+                Some(true),
+                Some(false),
+                actor.to_string()
+            )),
             "a later decision merges into the earlier one"
         );
 

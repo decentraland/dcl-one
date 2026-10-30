@@ -74,15 +74,8 @@ pub(super) async fn enrich(
             .map(str::to_owned);
         if let Some(image) = fallback {
             raw.insert("image".into(), json!(image));
-        } else if raw.get("world").and_then(Value::as_bool) != Some(true) {
-            let x = raw.get("x").and_then(Value::as_i64).unwrap_or(0);
-            let y = raw.get("y").and_then(Value::as_i64).unwrap_or(0);
-            raw.insert(
-                "image".into(),
-                json!(format!(
-                    "https://api.decentraland.org/v1/parcels/{x}/{y}/map.png"
-                )),
-            );
+        } else {
+            raw.insert("image".into(), json!(super::posters::DEFAULT_EVENT_IMAGE));
         }
     }
     Ok(())
