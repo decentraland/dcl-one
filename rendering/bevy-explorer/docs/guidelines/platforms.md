@@ -127,7 +127,7 @@ wgpu (`robtfm/wgpu` `e25f3d4`, 24.0.5):
   cover the server-side contracts. Resolve scene-response isolation proposals
   and their review status through authorized task context; proposals require
   a user verdict before implementation.
-- **It is feature-gated.** `--features headless --bin headless`. Running the wrong bin through a
+- **It is feature-gated.** `--bin headless --no-default-features --features headless,livekit`. Running the wrong bin through a
   pipe exits 0 and tells you nothing.
 - **Missing resources only show at runtime.** The headless plugin set skips `InputManagerPlugin`
   among others, so a system that takes a `Res<>` from a skipped plugin compiles and panics on

@@ -12,7 +12,7 @@ Role definitions: [`.claude/agents/`](../../.claude/agents/). Reporting workflow
 | **Architect** | `comms-architect` | validates technologies, channels, abstractions and complexity; raises decisions for the user and change requests for implementers | writes implementation code; accepts its own proposals |
 | **CI engineer** | `comms-ci-engineer` | turns rules into CI checks (catalog, tiers, supply-chain and release gates, flaky quarantine, toolchain); gives every PR revision a gate verdict | writes feature code or tests; decides a rule |
 | **Code reviewer** | a fresh agent per PR, or `/code-review` | correctness and tests | sees the implementer's transcript |
-| **Divergence analyst** | `divergence-analyst` | compatibility of every client- and user-facing API with each client version in use; writes its conformance check | judges architecture or security |
+| **Divergence analyst** | `divergence-analyst` | compatibility of every client- and user-facing API with each client version in use; proposes its conformance check for the CI engineer to build | judges architecture or security |
 | **Security reviewer** | private `comms-security-reviewer` workflow | exploit paths in identity, tokens, admission, bans, relayed messages, rate limits and subjects | fixes code |
 | **The user** | | accepts or rejects decisions, declines blocking change requests, approves merges | |
 

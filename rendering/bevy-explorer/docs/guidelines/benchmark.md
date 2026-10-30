@@ -370,8 +370,9 @@ the reset page's two (`reset`, `reset-done`) under `/__perf/`:
 - One runner serves both builds of a leg, and their web apps come from different commits: a
   change to this protocol keeps the receiver accepting the baseline's sender.
 - Serve with `Cross-Origin-Opener-Policy: same-origin`, `Cross-Origin-Embedder-Policy:
-  require-corp` and `Cross-Origin-Resource-Policy: cross-origin` (`deploy/web/serve.json`), in a
-  visible Chrome window: a hidden tab pauses the engine.
+  require-corp` and `Cross-Origin-Resource-Policy: cross-origin`, as set by the benchmark
+  runner in `local-harness/benchmark/src/server.rs`, in a visible Chrome window: a hidden
+  tab pauses the engine.
 
 ## The runner
 
