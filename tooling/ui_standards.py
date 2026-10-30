@@ -18,8 +18,9 @@ COMPONENT_EXTENSIONS = ('.tsx', '.jsx')
 UI_ROOTS = ('apps/', 'library/ui/', 'rendering/bevy-explorer/source/react-web/')
 # Under apps/ but not web UI: the scene SDK toolchain's scripts, scene templates and fixtures.
 NON_WEB_ROOTS = ('apps/dcl-scene-cli/scripts/', 'apps/dcl-scene-cli/src/templates/', 'apps/dcl-scene-cli/testdata/')
-# Application entry stylesheets (App.css, index.css, main.css) are global by design.
+# Application entry stylesheets (App.css, index.css, main.css directly in an app's src/) are global by design.
 ENTRY_STYLESHEETS = ('app', 'index', 'main')
+ENTRY_DIRECTORY = re.compile(r'^(?:apps/[^/]+/src|rendering/bevy-explorer/source/react-web/src)/[^/]+$')
 ZERO_SHA = re.compile(r'^0+$')
 COMMIT_SHA = re.compile(r'^[0-9a-f]{40}$')
 CSS_IN_JS_MODULE = re.compile(r'^(?:styled-components|@emotion/(?:styled|react|css)|@mui/(?:material/styles|system)/styled|@mui/styled-engine(?:-sc)?)(?:/.*)?$')
@@ -49,52 +50,100 @@ def tokens(text):
     return result
 
 
+STATEMENT_WORDS = {'const', 'let', 'var', 'function', 'class', 'return', 'if', 'for', 'while', 'switch',
+                   'interface', 'enum', 'default', 'export', 'import', 'await', 'async', 'new'}
+EMOTION_PRAGMA = re.compile(r'@jsxImportSource\s+@emotion/react\b')
+
+
+def import_clause(items, start):
+    """Read an import/export clause from items[start:] up to its specifier.
+
+    Returns (names, specifier) or None when the statement is not a module import or re-export.
+    Braces may span lines; outside them, a statement keyword ends the clause, so code without
+    semicolons does not run into the next statement.
+    """
+    names = []
+    depth = 0
+    previous = None
+    for kind, value in items[start:]:
+        if kind == 'string':
+            if previous == ('word', 'from') or (previous is None and not names):
+                return names, value
+            return None
+        if kind == 'punct' and value == ';':
+            return None
+        if kind == 'punct' and value == '{':
+            depth += 1
+        elif kind == 'punct' and value == '}':
+            depth -= 1
+        elif kind == 'word':
+            if depth == 0 and value in STATEMENT_WORDS and value != 'default':
+                return None
+            names.append(value)
+        elif kind == 'punct' and value == '*':
+            names.append(value)
+        previous = (kind, value)
+    return None
+
+
+def destructured_before(items, index):
+    """Names destructured on the left of `= [await] require(...)` / `= await import(...)`."""
+    cursor = index - 1
+    if cursor >= 0 and items[cursor] == ('word', 'await'):
+        cursor -= 1
+    if cursor < 0 or items[cursor] != ('punct', '='):
+        return set()
+    cursor -= 1
+    if cursor < 0 or items[cursor] != ('punct', '}'):
+        return set()
+    names = set()
+    while cursor >= 0 and items[cursor] != ('punct', '{'):
+        if items[cursor][0] == 'word':
+            names.add(items[cursor][1])
+        cursor -= 1
+    return names
+
+
 def forbidden_imports(text):
     """Return the module specifiers of the CSS-in-JS imports in source text."""
+    found = ['@emotion/react (jsxImportSource)'] if EMOTION_PRAGMA.search(text) else []
     items = tokens(text)
-    found = []
     namespaces = set()
     for index, (kind, value) in enumerate(items):
         if kind != 'word' or value not in ('import', 'export', 'require'):
             continue
         if index and items[index - 1] == ('punct', '.'):
             continue
-        following = items[index + 1:]
+        following = items[index + 1:index + 3]
         if following and following[0] == ('punct', '('):
             if len(following) > 1 and following[1][0] == 'string':
                 specifier = following[1][1]
-                destructured = {word for word_kind, word in items[max(0, index - 12):index] if word_kind == 'word'}
-                if CSS_IN_JS_MODULE.match(specifier) or ('styled' in destructured and MUI_MODULE.match(specifier)):
+                if CSS_IN_JS_MODULE.match(specifier) or (
+                        MUI_MODULE.match(specifier) and 'styled' in destructured_before(items, index)):
                     found.append(specifier)
             continue
         if value == 'require':
             continue
-        # A module specifier is the first string, right after the keyword or after `from`.
-        names = []
-        previous = (kind, value)
-        for next_kind, next_value in following:
-            if next_kind == 'string':
-                is_specifier = previous == ('word', 'from') or (previous == ('word', 'import') and not names)
-                if is_specifier and (CSS_IN_JS_MODULE.match(next_value)
-                                     or ('styled' in names and MUI_MODULE.match(next_value))):
-                    found.append(next_value)
-                elif is_specifier and MUI_MODULE.match(next_value) and names[:2] == ['*', 'as'] and len(names) > 2:
-                    namespaces.add(names[2])
-                break
-            if next_kind == 'punct' and next_value == ';':
-                break
-            if next_kind in ('word', 'punct') and next_value not in (',', '{', '}'):
-                names.append(next_value)
-            previous = (next_kind, next_value)
-    for index in range(len(items) - 2):
-        if items[index][0] == 'word' and items[index][1] in namespaces \
-                and items[index + 1] == ('punct', '.') and items[index + 2] == ('word', 'styled'):
-            found.append(f'{items[index][1]}.styled')
+        clause = import_clause(items, index + 1)
+        if clause is None:
+            continue
+        names, specifier = clause
+        if CSS_IN_JS_MODULE.match(specifier) or ('styled' in names and MUI_MODULE.match(specifier)):
+            found.append(specifier)
+        elif MUI_MODULE.match(specifier) and names[:2] == ['*', 'as'] and len(names) > 2:
+            namespaces.add(names[2])
+    for namespace in sorted(namespaces):
+        uses_styled = any(items[i][0] == 'word' and items[i][1] == namespace and items[i + 1] == ('punct', '.')
+                          and items[i + 2] == ('word', 'styled') for i in range(len(items) - 2))
+        if uses_styled:
+            found.append(f'{namespace}.styled')
     return found
 
 
 def mentions_css_in_js(text):
     """Whether added text could belong to a CSS-in-JS import, so the whole file needs a scan."""
+    if EMOTION_PRAGMA.search(text):
+        return True
     return any((kind == 'word' and value == 'styled')
                or (kind == 'string' and (CSS_IN_JS_MODULE.match(value) or MUI_MODULE.match(value)))
                for kind, value in tokens(text))
@@ -103,7 +152,7 @@ def mentions_css_in_js(text):
 def is_component_stylesheet(path, paths):
     if not path.endswith('.css') or path.endswith('.module.css'):
         return False
-    if PurePosixPath(path).stem.casefold() in ENTRY_STYLESHEETS:
+    if PurePosixPath(path).stem.casefold() in ENTRY_STYLESHEETS and ENTRY_DIRECTORY.match(path):
         return False
     base = path[:-4].casefold()
     normalized = {name.casefold() for name in paths}

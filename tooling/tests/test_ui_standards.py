@@ -56,6 +56,25 @@ class UiStandardsTest(unittest.TestCase):
         self.assertFalse(ui_standards.forbidden_imports("export function styled() { return '@mui/system' }"))
         self.assertFalse(ui_standards.forbidden_imports("const url = 'https://example.invalid/styled-components'"))
 
+    def test_statements_without_semicolons_stay_separate(self):
+        self.assertFalse(ui_standards.forbidden_imports(
+            "import { styled } from './theme'\nimport { Box } from '@mui/material'"))
+        self.assertFalse(ui_standards.forbidden_imports(
+            "export const styled = 1\nimport { Box } from '@mui/material'"))
+        self.assertFalse(ui_standards.forbidden_imports(
+            "export { styled } from './theme'\nconst m = import('@mui/material')"))
+        self.assertTrue(ui_standards.forbidden_imports(
+            "import {\n  Box,\n  styled\n} from '@mui/material'\nconst a = 1"))
+        self.assertTrue(ui_standards.forbidden_imports("const { styled } = await import('@mui/material')"))
+
+    def test_namespace_styled_is_counted_once(self):
+        source = "import * as M from '@mui/material'\nconst A = M.styled('a')({})\nconst B = M.styled('b')({})"
+        self.assertEqual(ui_standards.forbidden_imports(source), ['M.styled'])
+
+    def test_emotion_jsx_pragma_is_detected(self):
+        self.assertTrue(ui_standards.forbidden_imports("/** @jsxImportSource @emotion/react */\nexport const A = 1"))
+        self.assertTrue(ui_standards.mentions_css_in_js("/** @jsxImportSource @emotion/react */"))
+
     def test_mentions_css_in_js(self):
         self.assertTrue(ui_standards.mentions_css_in_js('  styled,'))
         self.assertTrue(ui_standards.mentions_css_in_js("} from 'styled-components'"))
@@ -70,6 +89,12 @@ class UiStandardsTest(unittest.TestCase):
         self.assertFalse(ui_standards.is_component_stylesheet('apps/sites/src/global.css', {'apps/sites/src/Button.tsx'}))
         self.assertFalse(ui_standards.is_component_stylesheet('apps/sites/src/App.css', {'apps/sites/src/App.tsx'}))
         self.assertFalse(ui_standards.is_component_stylesheet('apps/sites/src/main.css', {'apps/sites/src/main.tsx'}))
+        self.assertFalse(ui_standards.is_component_stylesheet(
+            'rendering/bevy-explorer/source/react-web/src/App.css', {'rendering/bevy-explorer/source/react-web/src/App.tsx'}))
+        self.assertTrue(ui_standards.is_component_stylesheet(
+            'apps/sites/src/components/Main/Main.css', {'apps/sites/src/components/Main/Main.tsx'}))
+        self.assertTrue(ui_standards.is_component_stylesheet(
+            'apps/sites/src/Button/index.css', {'apps/sites/src/Button/index.tsx'}))
 
     def test_added_lines_keep_lines_starting_with_plus(self):
         diff = '--- a/x.ts\n+++ b/x.ts\n@@ -0,0 +1,2 @@\n+++i\n+const a = 1\n'
