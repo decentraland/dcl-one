@@ -23,7 +23,7 @@ let
     pnpm = pnpm';
     src = depsSrc;
     fetcherVersion = 4;
-    hash = "sha256-XIPJ6YXQstlI6H+DRcScQteTGoxHi95jFmttSp6RucQ=";
+    hash = "sha256-2cRPchEs+4cfvaqjGn1WKmTtEoIieRfkvBsN5gIlURA=";
   };
   runtimeDeps = stdenv.mkDerivation {
     pname = "foundation-sites-runtime-deps";
