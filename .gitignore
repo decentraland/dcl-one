@@ -7,8 +7,8 @@
 /state/
 /credentials/
 /data/
-# AI session plans and handoffs are local; durable outcomes belong in ledgers.
-/.agent-work/
+# AI session plans, handoffs and working reports are local.
+**/.agent-work/
 **/.superpowers/
 **/docs/superpowers/
 **/.env
@@ -33,3 +33,29 @@ result-*
 /rendering/bevy-explorer/source/package/
 /rendering/bevy-explorer/source/libs/
 /rendering/bevy-explorer/source/bevy-explorer-desktop-*
+
+# Private agent records and generated ledger pages stay outside the public tree.
+/services/catalyst/docs/comms/plans/
+/services/catalyst/docs/comms/agents/**/model.json
+/services/catalyst/docs/comms/agents/**/register.json
+/services/catalyst/docs/comms/agents/**/contracts.json
+/services/catalyst/docs/comms/agents/**/checks.json
+/services/catalyst/docs/comms/agents/**/presentation.json
+/services/catalyst/docs/comms/agents/**/run-log.md
+/services/catalyst/docs/comms/agents/**/tools/
+/services/catalyst/docs/comms/agents/architecture/designs/
+/services/catalyst/docs/comms/agents/lineage/
+/services/catalyst/docs/comms/*.html
+/services/catalyst/docs/crates/agents/builder-creator-sdk.json
+/services/catalyst/docs/crates/agents/camera-reel-quests-governance.json
+/services/catalyst/docs/crates/agents/content.json
+/services/catalyst/docs/crates/agents/cross-area.json
+/services/catalyst/docs/crates/agents/explore.json
+/services/catalyst/docs/crates/agents/pages.json
+/services/catalyst/docs/crates/agents/shared-backend.json
+/services/catalyst/docs/crates/agents/shop.json
+/services/catalyst/docs/crates/agents/social.json
+/services/catalyst/docs/crates/agents/worlds.json
+/services/catalyst/docs/crates/agents/*-evidence.md
+/services/catalyst/docs/crates/agents/tools/
+/services/catalyst/docs/crates/*.html
