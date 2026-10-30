@@ -31,8 +31,6 @@ use scene_runner::{
     renderer_context::{RendererSceneContext, FROZEN_BLOCK},
 };
 
-use tokio_util::sync::CancellationToken;
-
 use crate::{
     bake_scene::IMPOSTERCEPTION_LAYER,
     floor_imposter::{FloorImposter, FloorImposterLoader},
@@ -130,18 +128,7 @@ pub struct SceneImposter {
 }
 
 #[derive(Component)]
-pub struct ImposterLoadTask(Task<Option<BakedScene>>, CancellationToken);
-
-impl Drop for ImposterLoadTask {
-    fn drop(&mut self) {
-        // On native, `Task::drop` already cancels the future. On wasm,
-        // `bevy_tasks::Task` is uncancellable (it wraps a `wasm_bindgen_futures::spawn_local`
-        // task with no abort handle), so we use this explicit signal — the task body
-        // races against `cancel.cancelled()` and drops its work future (and thereby
-        // the IPFS permit and the in-flight reqwest fetch) when this fires.
-        self.1.cancel();
-    }
-}
+pub struct ImposterLoadTask(Task<Option<BakedScene>>);
 
 impl ImposterLoadTask {
     pub fn new_mip(
@@ -152,7 +139,6 @@ impl ImposterLoadTask {
         crc: u32,
         download: bool,
     ) -> Self {
-        let cancel = CancellationToken::new();
         let task = IoTaskPool::get().spawn_compat(load_imposter(
             ipfas.ipfs().clone(),
             address.to_string(),
@@ -160,9 +146,8 @@ impl ImposterLoadTask {
             level,
             Some(crc),
             download,
-            cancel.clone(),
         ));
-        Self(task, cancel)
+        Self(task)
     }
 }
 
