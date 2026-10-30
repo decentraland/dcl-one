@@ -1,0 +1,11 @@
+syntax = "proto3";
+package decentraland.sdk.components;
+
+import "decentraland/sdk/components/common/id.proto";
+option (common.ecs_component_id) = 1505;
+
+// ExplorerConfiguration is the client's configuration that scenes may adapt to. It is
+// written by the explorer on the RootEntity and updated when the player changes it.
+message PBExplorerConfiguration {
+  optional string locale = 1; // the player's client language as a BCP-47 tag (e.g. "es", "pt-BR", "en-GB")
+}

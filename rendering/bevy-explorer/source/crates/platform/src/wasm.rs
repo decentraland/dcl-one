@@ -227,6 +227,15 @@ pub fn platform_pointer_is_locked() -> Option<bool> {
     (!POINTER_LOCK_PENDING.load(Ordering::Acquire)).then(|| POINTER_LOCKED.load(Ordering::Relaxed))
 }
 
+/// The browser language as a BCP-47 tag (`en-GB`). The engine runs in a worker.
+pub fn system_language() -> Option<String> {
+    use wasm_bindgen::JsCast;
+    js_sys::global()
+        .dyn_into::<web_sys::WorkerGlobalScope>()
+        .ok()
+        .and_then(|scope| scope.navigator().language())
+}
+
 pub fn default_camera_components() -> impl Bundle {
     (
         Tonemapping::AcesFitted,

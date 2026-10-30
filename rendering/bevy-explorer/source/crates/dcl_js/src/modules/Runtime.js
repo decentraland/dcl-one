@@ -28,9 +28,11 @@ module.exports.getSceneInformation = async function (body) {
 }
 
 module.exports.getExplorerInformation = async function (body) {
+    // `configurations.locale` is what the SDK's getPlayerLanguage reads
+    const locale = Deno.core.ops.op_get_player_language()
     return {
         agent: 'bevy',
         platform: Deno.core.ops.op_get_platform(),
-        configurations: {}
+        configurations: locale ? { locale } : {}
     }
 }

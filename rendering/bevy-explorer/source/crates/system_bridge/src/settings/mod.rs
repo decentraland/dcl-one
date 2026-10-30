@@ -29,12 +29,13 @@ use common::{
     sets::SceneSets,
     structs::{
         AaSetting, AppConfig, BloomSetting, CameraSmoothing, DofSetting, FogSetting,
-        ParcelGrassConfig, ParcelGrassSetting, PointAtMarkerVisibility, PreviewMode,
-        SessionGraphics, ShadowSetting, SkyReflectionSetting, WindowSetting,
+        ParcelGrassConfig, ParcelGrassSetting, PlayerLanguage, PointAtMarkerVisibility,
+        PreviewMode, SessionGraphics, ShadowSetting, SkyReflectionSetting, WindowSetting,
     },
 };
 use constrain_ui::ConstrainUiSetting;
 use frame_rate::FpsTargetSetting;
+use language_setting::LanguageSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
@@ -61,6 +62,7 @@ pub mod dof_setting;
 pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
+pub mod language_setting;
 pub mod load_distance;
 pub mod max_avatars;
 pub mod max_downloads;
@@ -192,6 +194,8 @@ impl Plugin for SettingBridgePlugin {
         add_int_setting::<AvatarVolumeSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<DmPrivacy>(app, &mut settings, &mut schedule, &config);
+        app.init_resource::<PlayerLanguage>();
+        add_enum_setting::<LanguageSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<ConstrainUiSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<WalkSpeedSetting>(app, &mut settings, &mut schedule, &config);

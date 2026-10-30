@@ -9714,6 +9714,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "spin",
+ "sys-locale",
  "tokio",
  "tungstenite 0.21.0",
  "url",
