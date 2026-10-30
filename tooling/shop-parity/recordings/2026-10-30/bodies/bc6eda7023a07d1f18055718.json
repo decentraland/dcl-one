@@ -1,0 +1,51 @@
+{
+ "quotedAt": 1793378781668,
+ "offers": [
+  {
+   "asset": {
+    "chainId": 137,
+    "contract": "0xfa4e000000000000000000000000000000000001",
+    "token": {
+     "kind": "item",
+     "itemId": "4"
+    }
+   },
+   "kind": "wearable",
+   "sale": "primaryMint",
+   "bundle": false,
+   "eligibility": {
+    "allowed": [
+     "credits"
+    ],
+    "default": "credits",
+    "reasons": [
+     "creditsFirst",
+     "signInForCredits"
+    ],
+    "guidance": null
+   },
+   "quotes": [
+    {
+     "method": "credits",
+     "quoted": 30
+    }
+   ],
+   "unavailable": [],
+   "settlement": [
+    {
+     "method": "credits",
+     "key": {
+      "method": "credits",
+      "chainId": 137,
+      "contract": "0xfa4e000000000000000000000000000000000001",
+      "call": {
+       "kind": "accept"
+      }
+     }
+    }
+   ],
+   "available": 999,
+   "quotedAt": 1793378781668
+  }
+ ]
+}

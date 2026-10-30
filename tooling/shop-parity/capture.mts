@@ -1,0 +1,73 @@
+// Compare apps/ui3/src/shop with the pinned reference shop over a committed recording.
+//
+//   node capture.mts [--set <recording>] [--pages overview,items] [--viewports desktop,mobile] [--out <dir>] [--build]
+//
+// Writes <out>/index.html (the report), run.json and summary.txt; default out is
+// state/shop-parity/runs/<timestamp>/. Nothing is read from the network.
+import { spawnSync } from "node:child_process";
+import { mkdirSync, readdirSync } from "node:fs";
+import { join } from "node:path";
+import { PAGES } from "./pages.mts";
+import { GATE_FILE, RECORDINGS, ROOT, SITES, STATE } from "./lib/paths.mts";
+import { Recording } from "./lib/recording.mts";
+import { summaryText, writeReport } from "./lib/report.mts";
+import { runAll, selectViewports, type PageResult } from "./lib/run.mts";
+import { prepareReference } from "./reference.mts";
+import { existsSync, readFileSync } from "node:fs";
+
+export function defaultSet(): string {
+  if (existsSync(GATE_FILE)) return (JSON.parse(readFileSync(GATE_FILE, "utf8")) as { recording: string }).recording;
+  const sets = readdirSync(RECORDINGS).sort();
+  if (!sets.length) throw new Error("no recording under tooling/shop-parity/recordings: run record.mts");
+  return sets.at(-1)!;
+}
+
+/** The dcl-one build identity: the commit plus whether apps/ui3 or apps/sites differ from it. */
+export function dclOneIdentity(): string {
+  const head = spawnSync("git", ["rev-parse", "--short=12", "HEAD"], { cwd: ROOT, encoding: "utf8" }).stdout.trim();
+  const dirty = spawnSync("git", ["status", "--porcelain", "--", "apps/ui3/src", "apps/sites/src"], { cwd: ROOT, encoding: "utf8" }).stdout.trim();
+  return dirty ? `${head}+uncommitted` : head;
+}
+
+export function buildSites(): void {
+  const r = spawnSync("pnpm", ["build"], { cwd: SITES, stdio: "inherit" });
+  if (r.status !== 0) throw new Error("sites build failed");
+}
+
+export async function capture(opts: { set: string; pages?: string[]; viewports?: string; out: string; build?: boolean; quiet?: boolean }): Promise<PageResult[]> {
+  prepareReference();
+  if (opts.build) buildSites();
+  const recording = new Recording(join(RECORDINGS, opts.set));
+  if (!recording.manifest) throw new Error(`recording ${opts.set} has no manifest`);
+  await recording.fetchAssets();
+  const specs = opts.pages ? PAGES.filter((p) => opts.pages!.includes(p.id)) : PAGES;
+  mkdirSync(opts.out, { recursive: true });
+  const startedAt = new Date().toISOString();
+  const { results, executable } = await runAll(recording, specs, selectViewports(opts.viewports), {
+    now: Date.parse(recording.manifest.recordedAt),
+    targets: recording.manifest.targets,
+    out: opts.out,
+    onResult: (r) => {
+      if (!opts.quiet) console.log(`${r.identical ? "identical" : "different"} ${r.page}@${r.viewport}: ${r.pixels.diff} px, ${r.structure.filter((d) => !d.expected).length} structural`);
+    },
+  });
+  writeReport(opts.out, results, {
+    recording: opts.set,
+    recordedAt: recording.manifest.recordedAt,
+    reference: recording.manifest.reference,
+    dclOne: dclOneIdentity(),
+    chromium: executable,
+    startedAt,
+  });
+  return results;
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const arg = (name: string) => {
+    const i = process.argv.indexOf(name);
+    return i >= 0 ? process.argv[i + 1] : undefined;
+  };
+  const out = arg("--out") ?? join(STATE, "runs", new Date().toISOString().replace(/[:.]/g, "-"));
+  const results = await capture({ set: arg("--set") ?? defaultSet(), pages: arg("--pages")?.split(","), viewports: arg("--viewports"), out, build: process.argv.includes("--build") });
+  console.log(`\n${summaryText(results)}\nreport: ${join(out, "index.html")}`);
+}

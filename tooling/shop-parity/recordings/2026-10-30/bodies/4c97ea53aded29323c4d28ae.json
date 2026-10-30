@@ -1,0 +1,120 @@
+{
+ "timestamp": 1791922018081,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "Mi emo ADI ic GIKO edevi izulahi! HavAmo.uga.esu",
+   "tutorialStep": 4095,
+   "name": "VemOre",
+   "userId": "0xfa4e000000000000000000000000000000000069",
+   "email": "",
+   "ethAddress": "0xfa4e000000000000000000000000000000000069",
+   "version": 174,
+   "unclaimedName": "",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000163:1:105312291668557186697918027683670432318895095400549111254310977541",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000163:2:210624583337114373395836055367340864637790190801098222508621955077",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000163:0:5",
+     "urn:decentraland:off-chain:base-avatars:keanu_hair",
+     "urn:decentraland:off-chain:base-avatars:f_eyebrows_06",
+     "urn:decentraland:off-chain:base-avatars:eyes_02",
+     "urn:decentraland:off-chain:base-avatars:mouth_06"
+    ],
+    "forceRender": [],
+    "emotes": [
+     {
+      "slot": 0,
+      "urn": "urn:decentraland:off-chain:base-emotes:tik"
+     },
+     {
+      "slot": 1,
+      "urn": "urn:decentraland:off-chain:base-emotes:hammer"
+     },
+     {
+      "slot": 2,
+      "urn": "urn:decentraland:off-chain:base-emotes:hohoho"
+     },
+     {
+      "slot": 3,
+      "urn": "urn:decentraland:off-chain:base-emotes:robot"
+     },
+     {
+      "slot": 4,
+      "urn": "urn:decentraland:off-chain:base-emotes:raiseHand"
+     },
+     {
+      "slot": 5,
+      "urn": "urn:decentraland:off-chain:base-emotes:clap"
+     },
+     {
+      "slot": 6,
+      "urn": "urn:decentraland:off-chain:base-emotes:money"
+     },
+     {
+      "slot": 7,
+      "urn": "urn:decentraland:off-chain:base-emotes:kiss"
+     },
+     {
+      "slot": 8,
+      "urn": "urn:decentraland:off-chain:base-emotes:snowfall"
+     },
+     {
+      "slot": 9,
+      "urn": "urn:decentraland:off-chain:base-emotes:shrug"
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0.0319055952,
+      "g": 0.2552708,
+      "b": 0.303294957,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.831372559,
+      "g": 0.8235577,
+      "b": 0.823058844,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.9490196,
+      "g": 0.7607843,
+      "b": 0.647058845,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzze/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzze/body.png"
+    }
+   },
+   "country": "",
+   "gender": "",
+   "pronouns": "",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "",
+   "employmentStatus": "",
+   "profession": "",
+   "realName": "",
+   "hobbies": "",
+   "birthDate": 0,
+   "links": [],
+   "blocked": [],
+   "interests": [],
+   "nameColor": {
+    "r": 1,
+    "g": 0.25,
+    "b": 0.272959,
+    "a": 1
+   }
+  }
+ ]
+}

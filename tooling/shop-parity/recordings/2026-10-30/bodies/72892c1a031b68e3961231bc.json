@@ -1,0 +1,134 @@
+{
+ "timestamp": 1793292466926,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "Kehopu - Etado - Odovo Eba - Abeka Uhe - Aku Ufas - Matin Sukakev - KU - Amuc - Velihir Dusom",
+   "tutorialStep": 0,
+   "name": "DikasuLogime",
+   "userId": "0xfa4e000000000000000000000000000000000160",
+   "email": "",
+   "ethAddress": "0xfa4e000000000000000000000000000000000160",
+   "version": 431,
+   "unclaimedName": "",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000231:1:105312291668557186697918027683670432318895095400549111254310977756",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000232:8:842498333348457493583344221469363458551160763204392890034487820521",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000123:10:1053122916685571866979180276836704323188950954005491112543109775377",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000182:0:16",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000233:0:3",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000184:0:3",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000234:0:9",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000235:0:2",
+     "urn:decentraland:off-chain:base-avatars:keanu_hair",
+     "urn:decentraland:off-chain:base-avatars:eyebrows_00",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000236:0:114",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000049:1:105312291668557186697918027683670432318895095400549111254310977557"
+    ],
+    "forceRender": [
+     "helmet",
+     "mask",
+     "hat"
+    ],
+    "emotes": [
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000018f:0:29",
+      "slot": 0
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001da:0:10",
+      "slot": 1
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000190:0:294",
+      "slot": 2
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000010d:0:48",
+      "slot": 3
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000237:0:32",
+      "slot": 4
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000018e:1:105312291668557186697918027683670432318895095400549111254310977549",
+      "slot": 5
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000005c:3:315936875005671560093754083051011296956685286201647333762932932642",
+      "slot": 6
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000193:2:210624583337114373395836055367340864637790190801098222508621955442",
+      "slot": 7
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001a9:2:210624583337114373395836055367340864637790190801098222508621955079",
+      "slot": 8
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001b7:0:57",
+      "slot": 9
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0.211764708,
+      "g": 0.149019614,
+      "b": 0.149019614,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.4589177,
+      "g": 0,
+      "b": 0.8780966,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0,
+      "g": 0.7746533,
+      "b": 0.104442813,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzu/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzu/body.png"
+    }
+   },
+   "country": "Tosipabo",
+   "gender": "Tava",
+   "pronouns": "Gi / Adi",
+   "relationshipStatus": "",
+   "sexualOrientation": "Firatupurefi",
+   "language": "Gafetepaze",
+   "employmentStatus": "Bogefac",
+   "profession": "",
+   "realName": "",
+   "hobbies": "Rila",
+   "birthDate": 0,
+   "links": [
+    {
+     "title": "Duvubucub",
+     "url": "https://example.org/link-23"
+    }
+   ],
+   "blocked": [],
+   "interests": [],
+   "nameColor": {
+    "r": 0.25,
+    "g": 1,
+    "b": 0.7212956,
+    "a": 1
+   }
+  }
+ ]
+}

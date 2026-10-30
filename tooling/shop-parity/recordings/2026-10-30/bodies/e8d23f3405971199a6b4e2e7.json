@@ -1,0 +1,132 @@
+{
+ "timestamp": 1792282027155,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "Surugec Kovuv Nehasezu Umi\u000bOHIR miduharisu!\u000bDEV Vivivuhuseza Atidudelav Fumif\u000bCavat & Zelocodi Agirope",
+   "tutorialStep": 256,
+   "name": "GomiNeb",
+   "userId": "0xfa4e000000000000000000000000000000000119",
+   "email": "",
+   "ethAddress": "0xfa4e000000000000000000000000000000000119",
+   "version": 2480,
+   "unclaimedName": "",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000000b8:6:631873750011343120187508166102022593913370572403294667525865866016",
+     "urn:decentraland:off-chain:base-avatars:emerald_ring",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001db:0:15",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000222:0:109",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001fc:1:105312291668557186697918027683670432318895095400549111254310977543",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000178:0:434",
+     "urn:decentraland:off-chain:base-avatars:standard_hair",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000223:0:9",
+     "urn:decentraland:off-chain:base-avatars:eyes_04",
+     "urn:decentraland:off-chain:base-avatars:mouth_07"
+    ],
+    "forceRender": [
+     "mouth"
+    ],
+    "emotes": [
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000224:0:25",
+      "slot": 0
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000225:0:21",
+      "slot": 1
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000014c:0:6",
+      "slot": 2
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001fe:0:988",
+      "slot": 3
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000226:0:34",
+      "slot": 4
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000227:0:27",
+      "slot": 5
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000016b:0:2",
+      "slot": 6
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000228:0:2",
+      "slot": 7
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000229:2:210624583337114373395836055367340864637790190801098222508621955073",
+      "slot": 8
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000022a:2:210624583337114373395836055367340864637790190801098222508621955110",
+      "slot": 9
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0.93,
+      "g": 0.77655,
+      "b": 0.4185,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.2901961,
+      "g": 0.2901961,
+      "b": 0.2901961,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.9490196,
+      "g": 0.7607843,
+      "b": 0.6313726,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzs/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzs/body.png"
+    }
+   },
+   "country": "Bavahe Econed po Uvezona",
+   "gender": "Tava",
+   "pronouns": "Gi / Adi",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "Netibul",
+   "employmentStatus": "",
+   "profession": "Fedogive",
+   "realName": "P.P.",
+   "hobbies": "CABELAH",
+   "birthDate": 0,
+   "links": [
+    {
+     "title": "Milalezib",
+     "url": "https://example.org/link-21"
+    },
+    {
+     "title": "ZUV",
+     "url": "https://market.decentraland.org/accounts/0xfa4e000000000000000000000000000000000119"
+    },
+    {
+     "title": "Nolehan",
+     "url": "https://example.org/link-22"
+    }
+   ],
+   "blocked": [],
+   "interests": []
+  }
+ ]
+}

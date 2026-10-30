@@ -1,0 +1,185 @@
+[
+ {
+  "version": "v3",
+  "id": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcu",
+  "type": "emote",
+  "pointers": [
+   "urn:decentraland:matic:collections-v2:0x9620151fe5e1c8fd0638a4840cf5e63d19b09765:0"
+  ],
+  "timestamp": 1679503214038,
+  "content": [
+   {
+    "file": "female/1C.glb",
+    "hash": "bafybeifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcv"
+   },
+   {
+    "file": "image.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzda"
+   },
+   {
+    "file": "male/1C.glb",
+    "hash": "bafybeifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcv"
+   },
+   {
+    "file": "thumbnail.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzdb"
+   }
+  ],
+  "metadata": {
+   "id": "urn:decentraland:matic:collections-v2:0x9620151fe5e1c8fd0638a4840cf5e63d19b09765:0",
+   "name": "Catwalk F & Double Twirls MVFW23",
+   "description": "Catwalk Runway Metaverse Fashion Week 2023",
+   "collectionAddress": "0x9620151fe5e1c8fd0638a4840cf5e63d19b09765",
+   "rarity": "legendary",
+   "i18n": [
+    {
+     "code": "en",
+     "text": "Catwalk F & Double Twirls MVFW23"
+    }
+   ],
+   "emoteDataADR74": {
+    "category": "poses",
+    "representations": [
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseMale"
+      ],
+      "mainFile": "male/1C.glb",
+      "contents": [
+       "male/1C.glb"
+      ]
+     },
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseFemale"
+      ],
+      "mainFile": "female/1C.glb",
+      "contents": [
+       "female/1C.glb"
+      ]
+     }
+    ],
+    "tags": [
+     "MVFW23",
+     "#MVFW23",
+     "ARMANNFT",
+     "Metaverse Fashion Week",
+     "Runway",
+     "Catwalk"
+    ],
+    "loop": true
+   },
+   "image": "image.png",
+   "thumbnail": "thumbnail.png",
+   "metrics": {
+    "triangles": 0,
+    "materials": 0,
+    "textures": 0,
+    "meshes": 0,
+    "bodies": 0,
+    "entities": 1
+   }
+  }
+ },
+ {
+  "version": "v3",
+  "id": "QmFa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzdc",
+  "type": "wearable",
+  "pointers": [
+   "urn:decentraland:matic:collections-v2:0x6c3ca91dbac390d60d4267fdcf48576f6c051dbe:0"
+  ],
+  "timestamp": 1647976977238,
+  "content": [
+   {
+    "file": "female/AvatarFemale.glb",
+    "hash": "QmFa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzdd"
+   },
+   {
+    "file": "image.png",
+    "hash": "QmFa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzde"
+   },
+   {
+    "file": "male/AvatarFemale.glb",
+    "hash": "QmFa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzdd"
+   },
+   {
+    "file": "thumbnail.png",
+    "hash": "QmFa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzdf"
+   }
+  ],
+  "metadata": {
+   "id": "urn:decentraland:matic:collections-v2:0x6c3ca91dbac390d60d4267fdcf48576f6c051dbe:0",
+   "name": "Moutan",
+   "description": "AVATAR NETWORK_2022MVFW",
+   "collectionAddress": "0x6c3ca91dbac390d60d4267fdcf48576f6c051dbe",
+   "rarity": "epic",
+   "i18n": [
+    {
+     "code": "en",
+     "text": "Moutan"
+    }
+   ],
+   "data": {
+    "replaces": [],
+    "hides": [
+     "earring",
+     "eyewear",
+     "hat",
+     "helmet",
+     "mask",
+     "tiara"
+    ],
+    "tags": [],
+    "category": "skin",
+    "representations": [
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseMale"
+      ],
+      "mainFile": "male/AvatarFemale.glb",
+      "contents": [
+       "male/AvatarFemale.glb"
+      ],
+      "overrideHides": [
+       "earring",
+       "eyewear",
+       "hat",
+       "helmet",
+       "mask",
+       "tiara"
+      ],
+      "overrideReplaces": []
+     },
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseFemale"
+      ],
+      "mainFile": "female/AvatarFemale.glb",
+      "contents": [
+       "female/AvatarFemale.glb"
+      ],
+      "overrideHides": [
+       "earring",
+       "eyewear",
+       "hat",
+       "helmet",
+       "mask",
+       "tiara"
+      ],
+      "overrideReplaces": []
+     }
+    ]
+   },
+   "image": "image.png",
+   "thumbnail": "thumbnail.png",
+   "metrics": {
+    "triangles": 5999,
+    "materials": 5,
+    "textures": 5,
+    "meshes": 5,
+    "bodies": 5,
+    "entities": 1
+   }
+  }
+ }
+]

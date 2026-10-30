@@ -1,0 +1,110 @@
+{
+ "timestamp": 1791736243517,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "",
+   "tutorialStep": 256,
+   "name": "FuluBigul",
+   "userId": "0xfa4e000000000000000000000000000000000161",
+   "email": "",
+   "ethAddress": "0xfa4e000000000000000000000000000000000161",
+   "version": 3,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:off-chain:base-avatars:baggy_pullover",
+     "urn:decentraland:off-chain:base-avatars:comfortablepants",
+     "urn:decentraland:off-chain:base-avatars:m_greenflipflops",
+     "urn:decentraland:off-chain:base-avatars:cornrows",
+     "urn:decentraland:off-chain:base-avatars:f_eyes_06",
+     "urn:decentraland:off-chain:base-avatars:beard"
+    ],
+    "forceRender": [],
+    "emotes": [
+     {
+      "slot": 0,
+      "urn": "clap"
+     },
+     {
+      "slot": 1,
+      "urn": "crafting"
+     },
+     {
+      "slot": 2,
+      "urn": "cry"
+     },
+     {
+      "slot": 3,
+      "urn": "dab"
+     },
+     {
+      "slot": 4,
+      "urn": "dance"
+     },
+     {
+      "slot": 5,
+      "urn": "disco"
+     },
+     {
+      "slot": 6,
+      "urn": "dontsee"
+     },
+     {
+      "slot": 7,
+      "urn": "fistpump"
+     },
+     {
+      "slot": 8,
+      "urn": "hammer"
+     },
+     {
+      "slot": 9,
+      "urn": "handsair"
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0.23137255012989044,
+      "g": 0.6235294342041016,
+      "b": 0.3137255012989044
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.42959895730018616,
+      "g": 0.6482277512550354,
+      "b": 0
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.5835001468658447,
+      "g": 0.8666666746139526,
+      "b": 0.5607843399047852
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzl/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzl/body.png"
+    }
+   },
+   "blocked": [],
+   "interests": [],
+   "unclaimedName": "",
+   "hasConnectedWeb3": true,
+   "country": "",
+   "employmentStatus": "",
+   "gender": "",
+   "pronouns": "",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "",
+   "profession": "",
+   "realName": "",
+   "hobbies": "",
+   "birthdate": 0,
+   "links": []
+  }
+ ]
+}

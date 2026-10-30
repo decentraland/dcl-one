@@ -1,0 +1,136 @@
+{
+ "timestamp": 1793376316963,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "",
+   "tutorialStep": 0,
+   "name": "PuguvIzo",
+   "userId": "0xfa4e000000000000000000000000000000000066",
+   "email": "",
+   "ethAddress": "0xfa4e000000000000000000000000000000000066",
+   "version": 8621,
+   "unclaimedName": "CerocOnanogOfe9",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:4:421249166674228746791672110734681729275580381602196445017243910145",
+     "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000005d:0:2",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000181:3:315936875005671560093754083051011296956685286201647333762932932651",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000182:0:8",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000183:0:23",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000184:0:1",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000185:0:59",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000186:0:67",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000187:1:105312291668557186697918027683670432318895095400549111254310977547",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000060:0:1",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000188:0:11",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000189:0:62",
+     "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000018a:0:29",
+     "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000018b:0:137"
+    ],
+    "forceRender": [
+     "tiara",
+     "mask",
+     "eyewear"
+    ],
+    "emotes": [
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000018c:3:315936875005671560093754083051011296956685286201647333762932932630",
+      "slot": 0
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000018d:0:4",
+      "slot": 1
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000018e:1:105312291668557186697918027683670432318895095400549111254310977537",
+      "slot": 2
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000018f:0:49",
+      "slot": 3
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000190:0:87",
+      "slot": 4
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000018e:0:1",
+      "slot": 5
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000191:0:5",
+      "slot": 6
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000192:0:1",
+      "slot": 7
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000193:2:210624583337114373395836055367340864637790190801098222508621955879",
+      "slot": 8
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000194:0:34",
+      "slot": 9
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 1,
+      "g": 0,
+      "b": 0,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.369966537,
+      "g": 0.369966537,
+      "b": 0.369966537,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.6171339,
+      "g": 0.609148264,
+      "b": 0.597850144,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzi/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzi/body.png"
+    }
+   },
+   "country": "Bavahe Econed po Uvezona",
+   "gender": "",
+   "pronouns": "",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "",
+   "employmentStatus": "",
+   "profession": "",
+   "realName": "li",
+   "hobbies": "",
+   "birthDate": 0,
+   "links": [
+    {
+     "title": "Vusomu",
+     "url": "https://example.org/link-3"
+    }
+   ],
+   "blocked": [],
+   "interests": [],
+   "nameColor": {
+    "r": 1,
+    "g": 0.099684,
+    "b": 0,
+    "a": 1
+   }
+  }
+ ]
+}

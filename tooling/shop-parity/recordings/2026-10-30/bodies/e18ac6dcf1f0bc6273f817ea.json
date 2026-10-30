@@ -1,0 +1,130 @@
+{
+ "timestamp": 1793337672170,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "do",
+   "tutorialStep": 256,
+   "name": "Rodil",
+   "userId": "0xfa4e000000000000000000000000000000000156",
+   "email": "",
+   "ethAddress": "0xfa4e000000000000000000000000000000000156",
+   "version": 6486,
+   "unclaimedName": "",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseFemale",
+    "wearables": [
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001b2:1:105312291668557186697918027683670432318895095400549111254310977540",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000055:1:105312291668557186697918027683670432318895095400549111254310977540",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001b3:0:27",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000165:0:98",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001b4:0:21",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000185:0:7",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000061:0:1",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001b5:2:210624583337114373395836055367340864637790190801098222508621955073",
+     "urn:decentraland:off-chain:base-avatars:eyebrows_01",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001b6:0:1",
+     "urn:decentraland:off-chain:base-avatars:f_mouth_00"
+    ],
+    "forceRender": [
+     "hair",
+     "earring",
+     "helmet"
+    ],
+    "emotes": [
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001b7:0:23",
+      "slot": 0
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001b8:0:8",
+      "slot": 1
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000019a:0:14",
+      "slot": 2
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000014c:7:737186041679900306885426193785693026232265667803843778780176842756",
+      "slot": 3
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000016f:3:315936875005671560093754083051011296956685286201647333762932932617",
+      "slot": 4
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001b9:0:70",
+      "slot": 5
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001ba:0:784",
+      "slot": 6
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001bb:0:10",
+      "slot": 7
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001bc:0:82",
+      "slot": 8
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001bd:0:30",
+      "slot": 9
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0.23137255,
+      "g": 0.623529434,
+      "b": 0.3137255,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.109803922,
+      "g": 0.109803922,
+      "b": 0.109803922,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.9490196,
+      "g": 0.7607843,
+      "b": 0.647058845,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzze/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzze/body.png"
+    }
+   },
+   "country": "",
+   "gender": "",
+   "pronouns": "",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "",
+   "employmentStatus": "",
+   "profession": "",
+   "realName": "",
+   "hobbies": "",
+   "birthDate": 0,
+   "links": [],
+   "blocked": [
+    "0xfa4e0000000000000000000000000000000001be"
+   ],
+   "interests": [],
+   "nameColor": {
+    "r": 0.762464166,
+    "g": 1,
+    "b": 0.25,
+    "a": 1
+   }
+  }
+ ]
+}

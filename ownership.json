@@ -200,7 +200,8 @@
       ],
       "paths": [
         "/apps/ui3/src/shop/",
-        "/apps/sites/src/routes/shop/"
+        "/apps/sites/src/routes/shop/",
+        "/tooling/shop-parity/"
       ]
     },
     {

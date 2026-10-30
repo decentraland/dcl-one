@@ -1,0 +1,9 @@
+{
+  "repository": "https://github.com/decentraland/shop.git",
+  "revision": "3a322cf97490b6ae4ffcfac1fbe9946d5e3a6279",
+  "date": "2026-10-30",
+  "app": "app",
+  "buildEnv": {
+    "VITE_DCL_DEFAULT_ENV": "prod"
+  }
+}

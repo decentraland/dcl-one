@@ -1,0 +1,48 @@
+{
+ "data": [
+  {
+   "id": "0xfa4e000000000000000000000000000000000001-4",
+   "name": "I am Cat and Cat is Me Hoodie",
+   "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:4/thumbnail",
+   "url": "/contracts/0xfa4e000000000000000000000000000000000001/items/4",
+   "category": "wearable",
+   "contractAddress": "0xfa4e000000000000000000000000000000000001",
+   "itemId": "4",
+   "rarity": "epic",
+   "price": "300000000000000000",
+   "available": "999",
+   "isOnSale": true,
+   "creator": "0xfa4e000000000000000000000000000000000031",
+   "beneficiary": "0xfa4e000000000000000000000000000000000031",
+   "createdAt": "1793248054",
+   "updatedAt": "1793292401",
+   "reviewedAt": "1793280265",
+   "soldAt": "1793292401",
+   "data": {
+    "wearable": {
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "category": "upper_body",
+     "description": "Cat=Me=Cat",
+     "rarity": "epic",
+     "isSmart": false
+    }
+   },
+   "network": "MATIC",
+   "chainId": 137,
+   "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:4",
+   "firstListedAt": 1793290553000,
+   "picks": {
+    "itemId": "0xfa4e000000000000000000000000000000000001-4",
+    "count": 0
+   },
+   "utility": null,
+   "tradeId": "15e9e512-b21f-44e0-84a7-30052d4bf659",
+   "tradeExpiresAt": 1809015786060,
+   "tradeContractAddress": "0xe38ef22abe871513555cba89adfe45ab4f548ada"
+  }
+ ],
+ "total": 1
+}

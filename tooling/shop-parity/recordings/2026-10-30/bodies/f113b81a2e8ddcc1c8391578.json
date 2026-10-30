@@ -1,0 +1,117 @@
+{
+ "timestamp": 1792804293153,
+ "avatars": [
+  {
+   "hasClaimedName": false,
+   "description": "",
+   "tutorialStep": 0,
+   "name": "zanegebupavura",
+   "userId": "0xfa4e00000000000000000000000000000000015f",
+   "email": "",
+   "ethAddress": "0xfa4e00000000000000000000000000000000015f",
+   "version": 3,
+   "unclaimedName": "",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:off-chain:base-avatars:poloblacktshirt",
+     "urn:decentraland:off-chain:base-avatars:f_brown_trousers",
+     "urn:decentraland:off-chain:base-avatars:citycomfortableshoes",
+     "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000019d:0:1",
+     "urn:decentraland:off-chain:base-avatars:black_sun_glasses",
+     "urn:decentraland:off-chain:base-avatars:casual_hair_01",
+     "urn:decentraland:off-chain:base-avatars:eyebrows_01",
+     "urn:decentraland:off-chain:base-avatars:eyes_00",
+     "urn:decentraland:off-chain:base-avatars:mouth_07",
+     "urn:decentraland:off-chain:base-avatars:beard"
+    ],
+    "forceRender": [],
+    "emotes": [
+     {
+      "slot": 0,
+      "urn": "urn:decentraland:off-chain:base-emotes:clap"
+     },
+     {
+      "slot": 1,
+      "urn": "urn:decentraland:off-chain:base-emotes:cry"
+     },
+     {
+      "slot": 2,
+      "urn": "urn:decentraland:off-chain:base-emotes:dab"
+     },
+     {
+      "slot": 3,
+      "urn": "urn:decentraland:off-chain:base-emotes:dance"
+     },
+     {
+      "slot": 4,
+      "urn": "urn:decentraland:off-chain:base-emotes:disco"
+     },
+     {
+      "slot": 5,
+      "urn": "urn:decentraland:off-chain:base-emotes:dontsee"
+     },
+     {
+      "slot": 6,
+      "urn": "urn:decentraland:off-chain:base-emotes:fistpump"
+     },
+     {
+      "slot": 7,
+      "urn": "urn:decentraland:off-chain:base-emotes:hammer"
+     },
+     {
+      "slot": 8,
+      "urn": "urn:decentraland:off-chain:base-emotes:handsair"
+     },
+     {
+      "slot": 9,
+      "urn": "urn:decentraland:off-chain:base-emotes:wave"
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0.451271772,
+      "g": 0.7989774,
+      "b": 0.222891629,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.482352942,
+      "g": 0.282352954,
+      "b": 0.09411765,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.78,
+      "g": 0.53,
+      "b": 0.26,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzza/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzza/body.png"
+    }
+   },
+   "country": "",
+   "gender": "",
+   "pronouns": "",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "",
+   "employmentStatus": "",
+   "profession": "",
+   "realName": "",
+   "hobbies": "",
+   "birthDate": 0,
+   "links": [],
+   "blocked": [],
+   "interests": []
+  }
+ ]
+}

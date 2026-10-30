@@ -1,0 +1,118 @@
+{
+ "timestamp": 1793155895178,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "R ni ihiz za utup v ninu idup MON ziracovec. E om ra Usabadacot re Olu Atofeta Abor.",
+   "tutorialStep": 0,
+   "name": "Kupukosu",
+   "userId": "0xfa4e00000000000000000000000000000000015c",
+   "email": "",
+   "ethAddress": "0xfa4e00000000000000000000000000000000015c",
+   "version": 29,
+   "unclaimedName": "",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000046:1:105312291668557186697918027683670432318895095400549111254310977537",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000215:0:1103",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000046:0:2"
+    ],
+    "forceRender": [
+     "hands_wear"
+    ],
+    "emotes": [
+     {
+      "slot": 0,
+      "urn": "urn:decentraland:off-chain:base-emotes:clap"
+     },
+     {
+      "slot": 1,
+      "urn": "urn:decentraland:off-chain:base-emotes:tik"
+     },
+     {
+      "slot": 2,
+      "urn": "urn:decentraland:off-chain:base-emotes:dab"
+     },
+     {
+      "slot": 3,
+      "urn": "urn:decentraland:off-chain:base-emotes:dance"
+     },
+     {
+      "slot": 4,
+      "urn": "urn:decentraland:off-chain:base-emotes:disco"
+     },
+     {
+      "slot": 5,
+      "urn": "urn:decentraland:off-chain:base-emotes:dontsee"
+     },
+     {
+      "slot": 6,
+      "urn": "urn:decentraland:off-chain:base-emotes:fistpump"
+     },
+     {
+      "slot": 7,
+      "urn": "urn:decentraland:off-chain:base-emotes:hammer"
+     },
+     {
+      "slot": 8,
+      "urn": "urn:decentraland:off-chain:base-emotes:handsair"
+     },
+     {
+      "slot": 9,
+      "urn": "urn:decentraland:off-chain:base-emotes:wave"
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0.1254902,
+      "g": 0.7019608,
+      "b": 0.9647059,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.549019635,
+      "g": 0.1254902,
+      "b": 0.0784313753,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 1,
+      "g": 0.894117653,
+      "b": 0.7764706,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzq/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzq/body.png"
+    }
+   },
+   "country": "Digarozegov",
+   "gender": "Tava",
+   "pronouns": "Gi / Adi",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "",
+   "employmentStatus": "",
+   "profession": "",
+   "realName": "",
+   "hobbies": "",
+   "birthDate": 0,
+   "links": [],
+   "blocked": [],
+   "interests": [],
+   "nameColor": {
+    "r": 1,
+    "g": 0.25,
+    "b": 0.6801473,
+    "a": 1
+   }
+  }
+ ]
+}

@@ -1,0 +1,54 @@
+{
+ "timestamp": 1792388081885,
+ "avatars": [
+  {
+   "name": "Lucumalosa",
+   "description": "",
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "skin": {
+     "color": {
+      "r": 1,
+      "g": 0.8941176533699036,
+      "b": 0.7764706015586853,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.9254902005195618,
+      "g": 0.9098039269447327,
+      "b": 0.886274516582489,
+      "a": 1
+     }
+    },
+    "eyes": {
+     "color": {
+      "r": 0.125490203499794,
+      "g": 0.7019608020782471,
+      "b": 0.9647058844566345,
+      "a": 1
+     }
+    },
+    "wearables": [
+     "urn:decentraland:off-chain:base-avatars:striped_pijama",
+     "urn:decentraland:off-chain:base-avatars:pijama_pants",
+     "urn:decentraland:off-chain:base-avatars:bear_slippers",
+     "urn:decentraland:off-chain:base-avatars:semi_bold",
+     "urn:decentraland:off-chain:base-avatars:mouth_04"
+    ],
+    "emotes": [],
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzd/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzd/body.png"
+    }
+   },
+   "hasClaimedName": false,
+   "ethAddress": "0xfa4e00000000000000000000000000000000015d",
+   "tutorialStep": 0,
+   "version": 1,
+   "userId": "0xfa4e00000000000000000000000000000000015d",
+   "hasConnectedWeb3": true
+  }
+ ]
+}

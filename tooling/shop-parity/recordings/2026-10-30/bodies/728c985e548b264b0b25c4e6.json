@@ -1,0 +1,122 @@
+{
+ "timestamp": 1791825690537,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "Nagalemi Idinika, tuv Micekam zum resodav.",
+   "tutorialStep": 384,
+   "name": "DANEPIhamicUNE",
+   "userId": "0xfa4e00000000000000000000000000000000007a",
+   "email": "",
+   "ethAddress": "0xfa4e00000000000000000000000000000000007a",
+   "version": 989,
+   "unclaimedName": "NIBAPUdilok",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001bf:0:2",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001c0:0:2",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001c1:0:37",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001c2:3:315936875005671560093754083051011296956685286201647333762932932610",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001c3:1:105312291668557186697918027683670432318895095400549111254310977605"
+    ],
+    "forceRender": [
+     "tiara"
+    ],
+    "emotes": [
+     {
+      "slot": 0,
+      "urn": "urn:decentraland:off-chain:base-emotes:handsair"
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001c4:0:80",
+      "slot": 1
+     },
+     {
+      "slot": 2,
+      "urn": "urn:decentraland:off-chain:base-emotes:fistpump"
+     },
+     {
+      "slot": 3,
+      "urn": "urn:decentraland:off-chain:base-emotes:dance"
+     },
+     {
+      "slot": 4,
+      "urn": "urn:decentraland:off-chain:base-emotes:raiseHand"
+     },
+     {
+      "slot": 5,
+      "urn": "urn:decentraland:off-chain:base-emotes:clap"
+     },
+     {
+      "slot": 6,
+      "urn": "urn:decentraland:off-chain:base-emotes:money"
+     },
+     {
+      "slot": 7,
+      "urn": "urn:decentraland:off-chain:base-emotes:kiss"
+     },
+     {
+      "slot": 8,
+      "urn": "urn:decentraland:off-chain:base-emotes:headexplode"
+     },
+     {
+      "slot": 9,
+      "urn": "urn:decentraland:off-chain:base-emotes:shrug"
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0.37109375,
+      "g": 0.22265625,
+      "b": 0.1953125,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.55078125,
+      "g": 0.125,
+      "b": 0.078125,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.8671875,
+      "g": 0.6953125,
+      "b": 0.5625,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzf/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzf/body.png"
+    }
+   },
+   "country": "",
+   "gender": "",
+   "pronouns": "",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "",
+   "employmentStatus": "",
+   "profession": "",
+   "realName": "",
+   "hobbies": "",
+   "birthDate": 0,
+   "links": [],
+   "blocked": [
+    "0xfa4e0000000000000000000000000000000001c5"
+   ],
+   "interests": [],
+   "nameColor": {
+    "r": 0.8716384,
+    "g": 0.25,
+    "b": 1,
+    "a": 1
+   }
+  }
+ ]
+}

@@ -1,0 +1,87 @@
+// Check out and build the pinned decentraland/shop (tooling/shop-parity/reference.json) under
+// state/shop-parity/reference/<revision>/, outside git. The build is the production bundle with
+// base "/" and the production environment selected; every network read is answered by the replay
+// at capture time, so nothing in the build is pointed anywhere else.
+//
+//   node reference.mts [--force]
+//
+// SHOP_PARITY_REFERENCE_REPO overrides the clone source (a local mirror holding the revision).
+import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { childEnv } from "./lib/env.mts";
+import { referenceDir, referenceDist, referencePin } from "./lib/paths.mts";
+
+function run(cmd: string, args: string[], cwd: string, env: NodeJS.ProcessEnv = process.env): string {
+  const r = spawnSync(cmd, args, { cwd, env, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], maxBuffer: 1 << 26 });
+  if (r.status !== 0) throw new Error(`${cmd} ${args.join(" ")} failed in ${cwd} (exit ${r.status})`);
+  return r.stdout.trim();
+}
+
+/** sha256 over every file of a tree, by relative path, so a changed byte changes the identity. */
+export function treeHash(dir: string): string {
+  const h = createHash("sha256");
+  const walk = (d: string) => {
+    for (const name of readdirSync(d).sort()) {
+      const p = join(d, name);
+      if (statSync(p).isDirectory()) walk(p);
+      else h.update(relative(dir, p)).update("\0").update(readFileSync(p)).update("\0");
+    }
+  };
+  walk(dir);
+  return h.digest("hex");
+}
+
+export function prepareReference(force = false): { dist: string; stamp: Record<string, unknown> } {
+  const pin = referencePin();
+  const dir = referenceDir(pin);
+  const src = join(dir, "src");
+  const dist = referenceDist(pin);
+  const stampFile = join(dir, "build.json");
+  if (!force && existsSync(stampFile) && existsSync(dist)) {
+    const stamp = JSON.parse(readFileSync(stampFile, "utf8"));
+    const same = stamp.revision === pin.revision && JSON.stringify(stamp.buildEnv) === JSON.stringify(pin.buildEnv) && stamp.node === process.version;
+    if (same && stamp.distSha256 === treeHash(dist)) return { dist, stamp };
+  }
+  rmSync(dir, { recursive: true, force: true });
+  mkdirSync(src, { recursive: true });
+  const repo = process.env.SHOP_PARITY_REFERENCE_REPO || pin.repository;
+  run("git", ["init", "-q"], src);
+  try {
+    run("git", ["fetch", "-q", "--depth", "1", "--no-tags", repo, pin.revision], src);
+  } catch {
+    run("git", ["fetch", "-q", "--no-tags", repo, "+refs/heads/*:refs/remotes/origin/*"], src);
+  }
+  run("git", ["-c", "advice.detachedHead=false", "checkout", "-q", pin.revision], src);
+  const head = run("git", ["rev-parse", "HEAD"], src);
+  if (head !== pin.revision) throw new Error(`checked out ${head}, pinned ${pin.revision}`);
+
+  const app = join(src, pin.app);
+  // Only what npm and Vite need to run: a developer's own VITE_* or deploy variables must not reach the build.
+  const env = childEnv();
+  Object.assign(env, { PUPPETEER_SKIP_DOWNLOAD: "1", CI: "1" });
+  // --ignore-scripts: the app's `prepare` installs git hooks and puppeteer/sentry-cli download
+  // binaries; the build needs none of them.
+  run("npm", ["ci", "--ignore-scripts", "--no-audit", "--no-fund"], app, env);
+  const buildEnv: NodeJS.ProcessEnv = { ...env, ...pin.buildEnv };
+  run(process.execPath, ["node_modules/vite/bin/vite.js", "build", "--logLevel", "warn"], app, buildEnv);
+
+  const stamp = {
+    repository: pin.repository,
+    revision: pin.revision,
+    date: pin.date,
+    buildEnv: pin.buildEnv,
+    node: process.version,
+    builtAt: new Date().toISOString(),
+    lockSha256: createHash("sha256").update(readFileSync(join(app, "package-lock.json"))).digest("hex"),
+    distSha256: treeHash(dist),
+  };
+  writeFileSync(stampFile, `${JSON.stringify(stamp, null, 2)}\n`);
+  return { dist, stamp };
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const { dist, stamp } = prepareReference(process.argv.includes("--force"));
+  console.log(`reference ${stamp.revision} built at ${dist}`);
+}

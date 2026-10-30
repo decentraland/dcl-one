@@ -1,0 +1,559 @@
+[
+ {
+  "version": "v3",
+  "id": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzbv",
+  "type": "wearable",
+  "pointers": [
+   "urn:decentraland:off-chain:base-avatars:m_sweater"
+  ],
+  "timestamp": 1780496140888,
+  "content": [
+   {
+    "file": "Avatar_FemaleSkinBase.png.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzca"
+   },
+   {
+    "file": "Avatar_MaleSkinBase.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzbh"
+   },
+   {
+    "file": "F_uBody_Sweater_01.glb",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcb"
+   },
+   {
+    "file": "M_uBody_Sweater_01.glb",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcc"
+   },
+   {
+    "file": "M_uBody_Sweater_01.png.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcd"
+   },
+   {
+    "file": "thumbnail.png",
+    "hash": "bafybeifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzce"
+   }
+  ],
+  "metadata": {
+   "id": "urn:decentraland:off-chain:base-avatars:m_sweater",
+   "name": "m_sweater",
+   "description": "",
+   "image": "",
+   "thumbnail": "thumbnail.png",
+   "i18n": [
+    {
+     "code": "en",
+     "text": "Blue and Red Sweater"
+    },
+    {
+     "code": "es",
+     "text": "Suéter Azul y Rojo"
+    }
+   ],
+   "data": {
+    "replaces": [],
+    "hides": [],
+    "removesDefaultHiding": [
+     "hands"
+    ],
+    "tags": [
+     "unisex",
+     "upper",
+     "body",
+     "Blue",
+     "and",
+     "Red",
+     "Sweater",
+     "base-wearable"
+    ],
+    "category": "upper_body",
+    "representations": [
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseMale"
+      ],
+      "mainFile": "M_uBody_Sweater_01.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "F_uBody_Sweater_01.glb",
+       "M_uBody_Sweater_01.png.png",
+       "Avatar_FemaleSkinBase.png.png",
+       "M_uBody_Sweater_01.glb",
+       "Avatar_MaleSkinBase.png"
+      ]
+     },
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseFemale"
+      ],
+      "mainFile": "F_uBody_Sweater_01.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "F_uBody_Sweater_01.glb",
+       "M_uBody_Sweater_01.png.png",
+       "Avatar_FemaleSkinBase.png.png",
+       "M_uBody_Sweater_01.glb",
+       "Avatar_MaleSkinBase.png"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ {
+  "version": "v3",
+  "id": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcf",
+  "type": "wearable",
+  "pointers": [
+   "urn:decentraland:off-chain:base-avatars:swim_short"
+  ],
+  "timestamp": 1780495908925,
+  "content": [
+   {
+    "file": "Avatar_FemaleSkinBase.png.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzca"
+   },
+   {
+    "file": "Avatar_MaleSkinBase.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzbh"
+   },
+   {
+    "file": "F_lBody_SwimShort.glb",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcg"
+   },
+   {
+    "file": "lBody_SwimShort_512.png",
+    "hash": "bafybeifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzch"
+   },
+   {
+    "file": "M_lBody_SwimShort.glb",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzci"
+   },
+   {
+    "file": "thumbnail.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcj"
+   }
+  ],
+  "metadata": {
+   "id": "urn:decentraland:off-chain:base-avatars:swim_short",
+   "name": "swim_short",
+   "description": "",
+   "image": "",
+   "thumbnail": "thumbnail.png",
+   "i18n": [
+    {
+     "code": "en",
+     "text": "Swim Short"
+    },
+    {
+     "code": "es",
+     "text": "Traje de baño Corto"
+    }
+   ],
+   "data": {
+    "replaces": [],
+    "hides": [],
+    "removesDefaultHiding": [],
+    "tags": [
+     "unisex",
+     "lower_body",
+     "Swim",
+     "Short",
+     "base-wearable"
+    ],
+    "category": "lower_body",
+    "representations": [
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseMale"
+      ],
+      "mainFile": "M_lBody_SwimShort.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "F_lBody_SwimShort.glb",
+       "lBody_SwimShort_512.png",
+       "Avatar_FemaleSkinBase.png.png",
+       "M_lBody_SwimShort.glb",
+       "Avatar_MaleSkinBase.png"
+      ]
+     },
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseFemale"
+      ],
+      "mainFile": "F_lBody_SwimShort.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "F_lBody_SwimShort.glb",
+       "lBody_SwimShort_512.png",
+       "Avatar_FemaleSkinBase.png.png",
+       "M_lBody_SwimShort.glb",
+       "Avatar_MaleSkinBase.png"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ {
+  "version": "v3",
+  "id": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzca",
+  "type": "wearable",
+  "pointers": [
+   "urn:decentraland:off-chain:base-avatars:crocs"
+  ],
+  "timestamp": 1780495607224,
+  "content": [
+   {
+    "file": "Avatar_MaleSkinBase.png",
+    "hash": "bafybeifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcb"
+   },
+   {
+    "file": "AvatarWearables_TX.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcc"
+   },
+   {
+    "file": "Crocs.glb",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcd"
+   },
+   {
+    "file": "thumbnail.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzce"
+   }
+  ],
+  "metadata": {
+   "id": "urn:decentraland:off-chain:base-avatars:crocs",
+   "name": "crocs",
+   "description": "",
+   "image": "",
+   "thumbnail": "thumbnail.png",
+   "i18n": [
+    {
+     "code": "en",
+     "text": "Crocs"
+    },
+    {
+     "code": "es",
+     "text": "Crocs"
+    }
+   ],
+   "data": {
+    "replaces": [],
+    "hides": [],
+    "removesDefaultHiding": [],
+    "tags": [
+     "unisex",
+     "feet",
+     "Crocs",
+     "base-wearable"
+    ],
+    "category": "feet",
+    "representations": [
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseMale"
+      ],
+      "mainFile": "Crocs.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "Crocs.glb",
+       "Avatar_MaleSkinBase.png",
+       "AvatarWearables_TX.png"
+      ]
+     },
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseFemale"
+      ],
+      "mainFile": "Crocs.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "Crocs.glb",
+       "Avatar_MaleSkinBase.png",
+       "AvatarWearables_TX.png"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ {
+  "version": "v3",
+  "id": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcf",
+  "type": "wearable",
+  "pointers": [
+   "urn:decentraland:off-chain:base-avatars:cool_hair"
+  ],
+  "timestamp": 1780495741559,
+  "content": [
+   {
+    "file": "Hair_Cool.glb",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcg"
+   },
+   {
+    "file": "Image_0.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzch"
+   },
+   {
+    "file": "thumbnail.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzci"
+   }
+  ],
+  "metadata": {
+   "id": "urn:decentraland:off-chain:base-avatars:cool_hair",
+   "name": "cool_hair",
+   "description": "",
+   "image": "",
+   "thumbnail": "thumbnail.png",
+   "i18n": [
+    {
+     "code": "en",
+     "text": "Cool Hair"
+    },
+    {
+     "code": "es",
+     "text": "Peinado con Estilo"
+    }
+   ],
+   "data": {
+    "replaces": [],
+    "hides": [],
+    "removesDefaultHiding": [],
+    "tags": [
+     "unisex",
+     "hair",
+     "Cool",
+     "Hair",
+     "base-wearable"
+    ],
+    "category": "hair",
+    "representations": [
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseMale"
+      ],
+      "mainFile": "Hair_Cool.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "Hair_Cool.glb",
+       "Image_0.png"
+      ]
+     },
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseFemale"
+      ],
+      "mainFile": "Hair_Cool.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "Hair_Cool.glb",
+       "Image_0.png"
+      ]
+     }
+    ],
+    "springBones": {
+     "version": 1,
+     "models": {
+      "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcg": {
+       "Hair_springBone_A_1": {
+        "stiffness": 1,
+        "gravityPower": 0,
+        "gravityDir": [
+         0,
+         -1,
+         0
+        ],
+        "drag": 0.1,
+        "isRoot": true
+       },
+       "Hair_springBone_B_1": {
+        "stiffness": 1,
+        "gravityPower": 0,
+        "gravityDir": [
+         0,
+         -1,
+         0
+        ],
+        "drag": 0.1,
+        "isRoot": true
+       }
+      }
+     }
+    }
+   }
+  }
+ },
+ {
+  "version": "v3",
+  "id": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcj",
+  "type": "wearable",
+  "pointers": [
+   "urn:decentraland:off-chain:base-avatars:old_mustache_beard"
+  ],
+  "timestamp": 1780495594030,
+  "content": [
+   {
+    "file": "AvatarWearables_TX.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzbe"
+   },
+   {
+    "file": "F_FacialHair_OldMoustache.glb",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzck"
+   },
+   {
+    "file": "M_FacialHair_OldMoustache.glb",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcl"
+   },
+   {
+    "file": "thumbnail.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcm"
+   }
+  ],
+  "metadata": {
+   "id": "urn:decentraland:off-chain:base-avatars:old_mustache_beard",
+   "name": "old_mustache_beard",
+   "description": "",
+   "image": "",
+   "thumbnail": "thumbnail.png",
+   "i18n": [
+    {
+     "code": "en",
+     "text": "Chevron"
+    },
+    {
+     "code": "es",
+     "text": "Chevron"
+    }
+   ],
+   "data": {
+    "replaces": [],
+    "hides": [],
+    "removesDefaultHiding": [],
+    "tags": [
+     "unisex",
+     "facial_hair",
+     "Chevron",
+     "base-wearable"
+    ],
+    "category": "facial_hair",
+    "representations": [
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseMale"
+      ],
+      "mainFile": "M_FacialHair_OldMoustache.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "F_FacialHair_OldMoustache.glb",
+       "AvatarWearables_TX.png",
+       "M_FacialHair_OldMoustache.glb"
+      ]
+     },
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseFemale"
+      ],
+      "mainFile": "F_FacialHair_OldMoustache.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "F_FacialHair_OldMoustache.glb",
+       "AvatarWearables_TX.png",
+       "M_FacialHair_OldMoustache.glb"
+      ]
+     }
+    ]
+   }
+  }
+ },
+ {
+  "version": "v3",
+  "id": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcn",
+  "type": "wearable",
+  "pointers": [
+   "urn:decentraland:off-chain:base-avatars:black_sun_glasses"
+  ],
+  "timestamp": 1788199648602,
+  "content": [
+   {
+    "file": "AvatarWearables_TX.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcc"
+   },
+   {
+    "file": "F_Eyewear_BlackSunglasses.glb",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzco"
+   },
+   {
+    "file": "thumbnail.png",
+    "hash": "bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzcp"
+   }
+  ],
+  "metadata": {
+   "id": "urn:decentraland:off-chain:base-avatars:black_sun_glasses",
+   "name": "black_sun_glasses",
+   "description": "",
+   "image": "",
+   "thumbnail": "thumbnail.png",
+   "i18n": [
+    {
+     "code": "en",
+     "text": "Black Sunglasses"
+    },
+    {
+     "code": "es",
+     "text": "Anteojos Negros"
+    }
+   ],
+   "data": {
+    "replaces": [
+     "mask",
+     "helmet"
+    ],
+    "hides": [],
+    "removesDefaultHiding": [],
+    "tags": [
+     "unisex",
+     "eyewear",
+     "Black",
+     "Sunglasses",
+     "base-wearable"
+    ],
+    "category": "eyewear",
+    "representations": [
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseMale"
+      ],
+      "mainFile": "F_Eyewear_BlackSunglasses.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "F_Eyewear_BlackSunglasses.glb",
+       "AvatarWearables_TX.png"
+      ]
+     },
+     {
+      "bodyShapes": [
+       "urn:decentraland:off-chain:base-avatars:BaseFemale"
+      ],
+      "mainFile": "F_Eyewear_BlackSunglasses.glb",
+      "overrideReplaces": [],
+      "overrideHides": [],
+      "contents": [
+       "F_Eyewear_BlackSunglasses.glb",
+       "AvatarWearables_TX.png"
+      ]
+     }
+    ]
+   }
+  }
+ }
+]

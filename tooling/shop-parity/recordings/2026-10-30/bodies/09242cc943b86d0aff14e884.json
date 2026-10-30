@@ -1,0 +1,52 @@
+{
+ "timestamp": 1752685120846,
+ "avatars": [
+  {
+   "name": "",
+   "description": "",
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "skin": {
+     "color": {
+      "r": 0.800000011920929,
+      "g": 0.6078431606292725,
+      "b": 0.46666666865348816,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.23529411852359772,
+      "g": 0.12941177189350128,
+      "b": 0.04313725605607033,
+      "a": 1
+     }
+    },
+    "eyes": {
+     "color": {
+      "r": 0.5254902243614197,
+      "g": 0.3803921639919281,
+      "b": 0.25882354378700256,
+      "a": 1
+     }
+    },
+    "wearables": [
+     "urn:decentraland:off-chain:base-avatars:green_hoodie",
+     "urn:decentraland:off-chain:base-avatars:brown_pants",
+     "urn:decentraland:off-chain:base-avatars:sneakers",
+     "urn:decentraland:off-chain:base-avatars:casual_hair_01",
+     "urn:decentraland:off-chain:base-avatars:beard"
+    ],
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzb/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzb/body.png"
+    },
+    "emotes": []
+   },
+   "hasClaimedName": false,
+   "ethAddress": "0xfa4e000000000000000000000000000000000162",
+   "tutorialStep": 1,
+   "version": 1
+  }
+ ]
+}

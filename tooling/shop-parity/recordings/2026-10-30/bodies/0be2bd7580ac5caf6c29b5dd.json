@@ -1,0 +1,135 @@
+{
+ "timestamp": 1793375852720,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "Hef!\nOdevor & dimatagasot bizodok.\nOga'u eredocod lo eriru edo inilocido.",
+   "tutorialStep": 256,
+   "name": "modic",
+   "userId": "0xfa4e00000000000000000000000000000000006e",
+   "email": "",
+   "ethAddress": "0xfa4e00000000000000000000000000000000006e",
+   "version": 3616,
+   "unclaimedName": "",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000195:0:38",
+     "urn:decentraland:off-chain:base-avatars:crocs",
+     "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000014c:4:421249166674228746791672110734681729275580381602196445017243910145",
+     "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000014d:3:315936875005671560093754083051011296956685286201647333762932932609",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000196:0:10",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000197:2:210624583337114373395836055367340864637790190801098222508621956254",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000000e8:0:51",
+     "urn:decentraland:off-chain:base-avatars:eyebrows_03",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000198:0:10",
+     "urn:decentraland:off-chain:base-avatars:f_mouth_04",
+     "urn:decentraland:off-chain:base-avatars:balbo_beard"
+    ],
+    "forceRender": [
+     "hat"
+    ],
+    "emotes": [
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000199:1:105312291668557186697918027683670432318895095400549111254310977578",
+      "slot": 0
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000019a:0:3",
+      "slot": 1
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000014c:0:3",
+      "slot": 2
+     },
+     {
+      "slot": 3,
+      "urn": "urn:decentraland:off-chain:base-emotes:handsair"
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000014c:1:105312291668557186697918027683670432318895095400549111254310977538",
+      "slot": 4
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000014c:6:631873750011343120187508166102022593913370572403294667525865865219",
+      "slot": 5
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000019b:0:7",
+      "slot": 6
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000016d:0:7",
+      "slot": 7
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000190:0:251",
+      "slot": 8
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000019c:0:5",
+      "slot": 9
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0,
+      "g": 1,
+      "b": 0.6244869,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.0444464125,
+      "g": 0.2902925,
+      "b": 0.919858634,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.047358986,
+      "g": 0.6464835,
+      "b": 0.8614822,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzj/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzj/body.png"
+    }
+   },
+   "country": "",
+   "gender": "Tava",
+   "pronouns": "Gi / Adi",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "Soperi",
+   "employmentStatus": "Facar",
+   "profession": "Pimuru",
+   "realName": "",
+   "hobbies": "cuzoveza onuse",
+   "birthDate": 0,
+   "links": [
+    {
+     "title": "M",
+     "url": "https://example.org/link-4"
+    },
+    {
+     "title": "Bu Av Ki",
+     "url": "https://example.org/link-5"
+    }
+   ],
+   "blocked": [],
+   "interests": [],
+   "nameColor": {
+    "r": 0.9630871,
+    "g": 0,
+    "b": 1,
+    "a": 1
+   }
+  }
+ ]
+}

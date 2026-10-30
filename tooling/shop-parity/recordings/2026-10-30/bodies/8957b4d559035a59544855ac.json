@@ -1,0 +1,92 @@
+{
+ "timestamp": 1769249641892,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "",
+   "tutorialStep": 4095,
+   "name": "HOZIRO",
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000164:0:709"
+    ],
+    "forceRender": [],
+    "emotes": [
+     {
+      "slot": 0,
+      "urn": "handsair"
+     },
+     {
+      "slot": 1,
+      "urn": "wave"
+     },
+     {
+      "slot": 2,
+      "urn": "fistpump"
+     },
+     {
+      "slot": 3,
+      "urn": "dance"
+     },
+     {
+      "slot": 4,
+      "urn": "raiseHand"
+     },
+     {
+      "slot": 5,
+      "urn": "clap"
+     },
+     {
+      "slot": 6,
+      "urn": "money"
+     },
+     {
+      "slot": 7,
+      "urn": "kiss"
+     },
+     {
+      "slot": 8,
+      "urn": "headexplode"
+     },
+     {
+      "slot": 9,
+      "urn": "shrug"
+     }
+    ],
+    "snapshots": {
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzf/body.png",
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzf/face.png"
+    },
+    "eyes": {
+     "color": {
+      "r": 0.125490203499794,
+      "g": 0.7019608020782471,
+      "b": 0.9647058844566345,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.2219541221857071,
+      "g": 0.009900049306452274,
+      "b": 0.9900000095367432,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.800000011920929,
+      "g": 0.6078431606292725,
+      "b": 0.46666666865348816,
+      "a": 1
+     }
+    }
+   },
+   "ethAddress": "0xfa4e000000000000000000000000000000000100",
+   "userId": "0xfa4e000000000000000000000000000000000100",
+   "version": 18,
+   "hasConnectedWeb3": true
+  }
+ ]
+}

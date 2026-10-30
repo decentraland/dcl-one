@@ -1,0 +1,128 @@
+{
+ "timestamp": 1793364182552,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "VIPAFUSOZU - Enofah POB Suke\n - CIFA 8 UGOB KOD fuledu eco igove odusasogi UHUZUVUG du Aduvebahodan! \n\nobusofu es hi I @ ure_oboz\n\nIRI UM TIS N MELE UTUVIHUT\n\nemuz",
+   "tutorialStep": 4095,
+   "name": "23456789",
+   "userId": "0xfa4e00000000000000000000000000000000006b",
+   "email": "",
+   "ethAddress": "0xfa4e00000000000000000000000000000000006b",
+   "version": 2385,
+   "unclaimedName": "",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:ethereum:collections-v1:dc_meta:meta_upper_body:21",
+     "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000019f:0:94",
+     "urn:decentraland:ethereum:collections-v1:dc_meta:meta_lower_body:22",
+     "urn:decentraland:ethereum:collections-v1:wz_wonderbot:wz_wonderbot_feet:25",
+     "urn:decentraland:ethereum:collections-v1:dc_meta:meta_helmet:19",
+     "urn:decentraland:ethereum:collections-v1:dc_meta:meta_tiara:20",
+     "urn:decentraland:ethereum:collections-v1:dc_meta:meta_hair:18",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000243:0:1",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000243:1:105312291668557186697918027683670432318895095400549111254310977537",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000243:2:210624583337114373395836055367340864637790190801098222508621955073"
+    ],
+    "forceRender": [],
+    "emotes": [
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000017f:0:312",
+      "slot": 0
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000005c:0:1",
+      "slot": 1
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000005c:2:210624583337114373395836055367340864637790190801098222508621955073",
+      "slot": 2
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000005c:1:105312291668557186697918027683670432318895095400549111254310977537",
+      "slot": 3
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000005c:3:315936875005671560093754083051011296956685286201647333762932932632",
+      "slot": 4
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000244:0:1",
+      "slot": 5
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000245:0:1",
+      "slot": 6
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000245:1:105312291668557186697918027683670432318895095400549111254310977537",
+      "slot": 7
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000245:2:210624583337114373395836055367340864637790190801098222508621955073",
+      "slot": 8
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000245:3:315936875005671560093754083051011296956685286201647333762932932609",
+      "slot": 9
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0.211764708,
+      "g": 0.152784318,
+      "b": 0.149019629,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.831372559,
+      "g": 0.831372559,
+      "b": 0.831372559,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.60546875,
+      "g": 0.4609375,
+      "b": 0.35546875,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzba/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzba/body.png"
+    }
+   },
+   "country": "",
+   "gender": "",
+   "pronouns": "",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "",
+   "employmentStatus": "",
+   "profession": "",
+   "realName": "",
+   "hobbies": "",
+   "birthDate": 0,
+   "links": [
+    {
+     "title": "HucukEnava",
+     "url": "https://example.org/link-26"
+    }
+   ],
+   "blocked": [],
+   "interests": [],
+   "nameColor": {
+    "r": 1,
+    "g": 0.25,
+    "b": 0.6801473,
+    "a": 1
+   }
+  }
+ ]
+}

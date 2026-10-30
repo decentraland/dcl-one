@@ -1,0 +1,215 @@
+{
+ "data": [
+  {
+   "id": "0xfa4e000000000000000000000000000000000001-0",
+   "name": "Instructions Unclear Hoodie",
+   "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:0/thumbnail",
+   "url": "/contracts/0xfa4e000000000000000000000000000000000001/items/0",
+   "category": "wearable",
+   "contractAddress": "0xfa4e000000000000000000000000000000000001",
+   "itemId": "0",
+   "rarity": "epic",
+   "price": "300000000000000000",
+   "available": "998",
+   "isOnSale": true,
+   "creator": "0xfa4e000000000000000000000000000000000031",
+   "beneficiary": "0xfa4e000000000000000000000000000000000031",
+   "createdAt": "1793248054",
+   "updatedAt": "1793295262",
+   "reviewedAt": "1793280265",
+   "soldAt": "1793295262",
+   "data": {
+    "wearable": {
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "category": "upper_body",
+     "description": "Life needs to explain to me. ",
+     "rarity": "epic",
+     "isSmart": false
+    }
+   },
+   "network": "MATIC",
+   "chainId": 137,
+   "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:0",
+   "firstListedAt": 1793290553000,
+   "picks": {
+    "count": 0
+   },
+   "tradeId": "566b84e6-c4a8-4964-87b5-cebb95b84645",
+   "tradeExpiresAt": 1809015641858,
+   "tradeContractAddress": "0xe38ef22abe871513555cba89adfe45ab4f548ada",
+   "priceCredits": 3
+  },
+  {
+   "id": "0xfa4e000000000000000000000000000000000001-1",
+   "name": "One Brain Cell Hoodie",
+   "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:1/thumbnail",
+   "url": "/contracts/0xfa4e000000000000000000000000000000000001/items/1",
+   "category": "wearable",
+   "contractAddress": "0xfa4e000000000000000000000000000000000001",
+   "itemId": "1",
+   "rarity": "epic",
+   "price": "300000000000000000",
+   "available": "999",
+   "isOnSale": true,
+   "creator": "0xfa4e000000000000000000000000000000000031",
+   "beneficiary": "0xfa4e000000000000000000000000000000000031",
+   "createdAt": "1793248054",
+   "updatedAt": "1793293327",
+   "reviewedAt": "1793280265",
+   "soldAt": "1793293327",
+   "data": {
+    "wearable": {
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "category": "upper_body",
+     "description": "I am Cat.",
+     "rarity": "epic",
+     "isSmart": false
+    }
+   },
+   "network": "MATIC",
+   "chainId": 137,
+   "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:1",
+   "firstListedAt": 1793290553000,
+   "picks": {
+    "count": 0
+   },
+   "tradeId": "617da8ec-b132-4043-bf59-5ca2cccd9857",
+   "tradeExpiresAt": 1809015723489,
+   "tradeContractAddress": "0xe38ef22abe871513555cba89adfe45ab4f548ada",
+   "priceCredits": 3
+  },
+  {
+   "id": "0xfa4e000000000000000000000000000000000001-2",
+   "name": "Evolution Isn't Always Helpful",
+   "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:2/thumbnail",
+   "url": "/contracts/0xfa4e000000000000000000000000000000000001/items/2",
+   "category": "wearable",
+   "contractAddress": "0xfa4e000000000000000000000000000000000001",
+   "itemId": "2",
+   "rarity": "epic",
+   "price": "300000000000000000",
+   "available": "999",
+   "isOnSale": true,
+   "creator": "0xfa4e000000000000000000000000000000000031",
+   "beneficiary": "0xfa4e000000000000000000000000000000000031",
+   "createdAt": "1793248054",
+   "updatedAt": "1793292401",
+   "reviewedAt": "1793280265",
+   "soldAt": "1793292401",
+   "data": {
+    "wearable": {
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "category": "upper_body",
+     "description": "Evolution? Nahh I'd rather sleep.",
+     "rarity": "epic",
+     "isSmart": false
+    }
+   },
+   "network": "MATIC",
+   "chainId": 137,
+   "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:2",
+   "firstListedAt": 1793290553000,
+   "picks": {
+    "count": 0
+   },
+   "tradeId": "4fac8297-21bf-4125-b85b-e2f98caddb8f",
+   "tradeExpiresAt": 1809015748705,
+   "tradeContractAddress": "0xe38ef22abe871513555cba89adfe45ab4f548ada",
+   "priceCredits": 3
+  },
+  {
+   "id": "0xfa4e000000000000000000000000000000000001-3",
+   "name": "Exercise is for the Weak Hoodie",
+   "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:3/thumbnail",
+   "url": "/contracts/0xfa4e000000000000000000000000000000000001/items/3",
+   "category": "wearable",
+   "contractAddress": "0xfa4e000000000000000000000000000000000001",
+   "itemId": "3",
+   "rarity": "epic",
+   "price": "300000000000000000",
+   "available": "999",
+   "isOnSale": true,
+   "creator": "0xfa4e000000000000000000000000000000000031",
+   "beneficiary": "0xfa4e000000000000000000000000000000000031",
+   "createdAt": "1793248054",
+   "updatedAt": "1793293327",
+   "reviewedAt": "1793280265",
+   "soldAt": "1793293327",
+   "data": {
+    "wearable": {
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "category": "upper_body",
+     "description": "Why Exercise when you can eat?",
+     "rarity": "epic",
+     "isSmart": false
+    }
+   },
+   "network": "MATIC",
+   "chainId": 137,
+   "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:3",
+   "firstListedAt": 1793290553000,
+   "picks": {
+    "count": 0
+   },
+   "tradeId": "5ea0decb-dbfd-4dd6-9f22-d4ba96ab5ed1",
+   "tradeExpiresAt": 1809015770912,
+   "tradeContractAddress": "0xe38ef22abe871513555cba89adfe45ab4f548ada",
+   "priceCredits": 3
+  },
+  {
+   "id": "0xfa4e000000000000000000000000000000000001-4",
+   "name": "I am Cat and Cat is Me Hoodie",
+   "thumbnail": "https://peer.decentraland.org/lambdas/collections/contents/urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:4/thumbnail",
+   "url": "/contracts/0xfa4e000000000000000000000000000000000001/items/4",
+   "category": "wearable",
+   "contractAddress": "0xfa4e000000000000000000000000000000000001",
+   "itemId": "4",
+   "rarity": "epic",
+   "price": "300000000000000000",
+   "available": "999",
+   "isOnSale": true,
+   "creator": "0xfa4e000000000000000000000000000000000031",
+   "beneficiary": "0xfa4e000000000000000000000000000000000031",
+   "createdAt": "1793248054",
+   "updatedAt": "1793292401",
+   "reviewedAt": "1793280265",
+   "soldAt": "1793292401",
+   "data": {
+    "wearable": {
+     "bodyShapes": [
+      "BaseMale",
+      "BaseFemale"
+     ],
+     "category": "upper_body",
+     "description": "Cat=Me=Cat",
+     "rarity": "epic",
+     "isSmart": false
+    }
+   },
+   "network": "MATIC",
+   "chainId": 137,
+   "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000001:4",
+   "firstListedAt": 1793290553000,
+   "picks": {
+    "count": 0
+   },
+   "tradeId": "15e9e512-b21f-44e0-84a7-30052d4bf659",
+   "tradeExpiresAt": 1809015786060,
+   "tradeContractAddress": "0xe38ef22abe871513555cba89adfe45ab4f548ada",
+   "priceCredits": 3
+  }
+ ],
+ "total": 5
+}

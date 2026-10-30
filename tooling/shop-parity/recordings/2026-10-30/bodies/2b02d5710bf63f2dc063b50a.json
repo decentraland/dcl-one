@@ -1,0 +1,132 @@
+{
+ "timestamp": 1790485120174,
+ "avatars": [
+  {
+   "hasClaimedName": true,
+   "description": "buhusugin G R K Z P - V H R L L FOTA aleroruke 56 me era 45,78\nogatogoci I I E I E A O I E U U E O  sobatunen 6 mi ihi -45,789",
+   "tutorialStep": 256,
+   "name": "Sifab0N9gozaki",
+   "userId": "0xfa4e00000000000000000000000000000000015e",
+   "email": "",
+   "ethAddress": "0xfa4e00000000000000000000000000000000015e",
+   "version": 1176,
+   "unclaimedName": "",
+   "hasConnectedWeb3": true,
+   "avatar": {
+    "bodyShape": "urn:decentraland:off-chain:base-avatars:BaseMale",
+    "wearables": [
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001ec:0:2",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001ed:0:35",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001c0:0:35",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001ee:0:38",
+     "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000042:0:100",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001ef:0:82",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001f0:0:72",
+     "urn:decentraland:matic:collections-v2:0xfa4e00000000000000000000000000000000005a:0:44",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001f1:0:245",
+     "urn:decentraland:off-chain:base-avatars:mouth_05",
+     "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001f2:0:61"
+    ],
+    "forceRender": [
+     "facial_hair",
+     "earring"
+    ],
+    "emotes": [
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001f3:0:178",
+      "slot": 0
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001f4:0:19",
+      "slot": 1
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e000000000000000000000000000000000193:2:210624583337114373395836055367340864637790190801098222508621955483",
+      "slot": 2
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001f5:0:411",
+      "slot": 3
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001f6:0:24",
+      "slot": 4
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000000c1:2:210624583337114373395836055367340864637790190801098222508621955097",
+      "slot": 5
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001f7:0:969",
+      "slot": 6
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001f8:0:155",
+      "slot": 7
+     },
+     {
+      "urn": "urn:decentraland:matic:collections-v2:0xfa4e0000000000000000000000000000000001f9:1:105312291668557186697918027683670432318895095400549111254310977546",
+      "slot": 9
+     }
+    ],
+    "eyes": {
+     "color": {
+      "r": 0.806486666,
+      "g": 0.0914050043,
+      "b": 0.0914050043,
+      "a": 1
+     }
+    },
+    "hair": {
+     "color": {
+      "r": 0.4323306,
+      "g": 0,
+      "b": 1,
+      "a": 1
+     }
+    },
+    "skin": {
+     "color": {
+      "r": 0.9490196,
+      "g": 0.7607843,
+      "b": 0.647058845,
+      "a": 1
+     }
+    },
+    "snapshots": {
+     "face256": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzk/face.png",
+     "body": "https://profile-images.decentraland.org/entities/bafkreifa4ezzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzk/body.png"
+    }
+   },
+   "country": "Bavahe Econed po Uvezona",
+   "gender": "",
+   "pronouns": "",
+   "relationshipStatus": "",
+   "sexualOrientation": "",
+   "language": "Netibul",
+   "employmentStatus": "",
+   "profession": "",
+   "realName": "",
+   "hobbies": "",
+   "birthDate": 0,
+   "links": [
+    {
+     "title": "l",
+     "url": "https://example.org/link-15"
+    },
+    {
+     "title": "vofis6t0hicuhe",
+     "url": "https://example.org/link-16"
+    }
+   ],
+   "blocked": [],
+   "interests": [],
+   "nameColor": {
+    "r": 0.25,
+    "g": 1,
+    "b": 0.6007389,
+    "a": 1
+   }
+  }
+ ]
+}
