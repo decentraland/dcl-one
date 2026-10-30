@@ -192,10 +192,10 @@ class SelectionTest(unittest.TestCase):
         result = ci.select(self.base, self.commit())
         self.assertFalse(any(result[lane] for lane in ci.LANES) or result['scenes'])
 
-    def test_embedded_catalyst_files_rebuild_images_and_engine_docs_do_not(self):
+    def test_schema_files_rebuild_images_and_independent_crates_or_docs_do_not(self):
         base = self.base
-        for name, expected in (('schemas/10_explore.sql', True), ('apps/dcl-scene-cli/Cargo.toml', True),
-                               ('apps/dcl-scene-cli/docs/x.md', False), ('rendering/bevy-explorer/README.md', False)):
+        for name, expected in (('schemas/10_explore.sql', True), ('apps/dcl-scene-cli/src/main.rs', False),
+                               ('rendering/bevy-explorer/README.md', False)):
             self.write(name, 'changed')
             head = self.commit()
             self.assertEqual(ci.consumer_changed(base, head, 'images'), expected, name)

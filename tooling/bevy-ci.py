@@ -42,8 +42,6 @@ IMAGES_INPUTS = (
     'infra/containers/**',
     'services/catalyst/**',
     'schemas/**',
-    'apps/dcl-scene-cli/Cargo.toml',
-    'apps/dcl-scene-cli/src/main.rs',
     'library/**',
     '.cargo/**',
     'apps/sites/**',
