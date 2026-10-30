@@ -110,6 +110,15 @@ pub struct WorldsConfig {
     )]
     pub worlds_personal_world_max_size_bytes: u64,
 
+    /// Pause between passes rewriting the stored owner of the DCL-NAME worlds
+    /// published here from the name authority (upstream's 12 h); 0 = off.
+    #[arg(
+        long,
+        env = "WORLDS_OWNER_RECONCILE_INTERVAL_SECS",
+        default_value_t = 43_200
+    )]
+    pub worlds_owner_reconcile_interval_secs: u64,
+
     /// Deploy payload bytes buffered at once across every upload (>= one 350 MiB deploy).
     #[arg(
         long,
@@ -453,6 +462,7 @@ mod tests {
             ),
             (0, 52_428_800)
         );
+        assert_eq!(c.worlds.worlds_owner_reconcile_interval_secs, 43_200);
         assert_eq!(
             (
                 c.worlds.max_in_flight_upload_bytes,

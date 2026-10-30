@@ -29,8 +29,9 @@ pub trait AccessPolicy: Send + Sync {
         &self,
         world: &WorldName,
     ) -> Result<Option<AccessType>, AuthorityNotEstablished>;
-    /// The stored owner of a known world row, not a fresh chain ownership verdict.
-    /// An unknown world or unset owner is `None`; failed reads remain unavailable.
+    /// The current owner (personal rule, NAME holder, else the stored owner,
+    /// which a name-authority fault also answers). `None` when none is known;
+    /// a failed store read remains unavailable.
     async fn world_owner(
         &self,
         world: &WorldName,
