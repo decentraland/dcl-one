@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use dcl_types::RpcCalls;
 
-use super::State;
+use super::{runtime::player_language, State};
 
 const MAX_NETWORK_MESSAGE_QUEUE: usize = 1024;
 
@@ -41,6 +41,15 @@ impl_event!(ProfileChanged, "profileChanged");
 impl_event!(RealmChanged, "onRealmChanged");
 impl_event!(PlayerClicked, "playerClicked");
 impl_event!(MessageBus, "comms");
+
+// `localeChanged` needs nothing from the engine: the language arrives in the scene's own
+// EXPLORER_CONFIGURATION. Present while subscribed, holding the language last reported.
+struct LastLocale(Option<String>);
+
+#[derive(Serialize)]
+struct LocaleChangedBody {
+    locale: String,
+}
 
 pub fn op_subscribe(state: &mut impl State, id: &str) -> Result<(), anyhow::Error> {
     macro_rules! register {
@@ -112,6 +121,15 @@ pub fn op_subscribe(state: &mut impl State, id: &str) -> Result<(), anyhow::Erro
         return Ok(());
     }
 
+    if id == "localeChanged" {
+        if !state.has::<LastLocale>() {
+            // the current language is the baseline, not a change
+            let current = player_language(&*state);
+            state.put(LastLocale(current));
+        }
+        return Ok(());
+    }
+
     warn!("subscribe to unrecognised event {id}");
     Ok(())
 }
@@ -139,6 +157,11 @@ pub fn op_unsubscribe(state: &mut impl State, id: &str) {
     unregister!(id, state, RealmChanged);
     unregister!(id, state, PlayerClicked);
     unregister!(id, state, MessageBus);
+
+    if id == "localeChanged" {
+        state.try_take::<LastLocale>();
+        return;
+    }
 
     warn!("unsubscribe for unrecognised event {id}");
 }
@@ -189,6 +212,21 @@ pub fn op_send_batch(state: &mut impl State) -> Vec<Event> {
     poll!(state, RealmChanged, "onRealmChanged");
     poll!(state, PlayerClicked, "playerClicked");
     poll!(state, MessageBus, "comms");
+
+    if let Some(last) = state.try_borrow::<LastLocale>().map(|last| last.0.clone()) {
+        let current = player_language(&*state);
+        if current != last {
+            if let Some(locale) = current.clone() {
+                results.push(Event {
+                    generic: EventGeneric {
+                        event_id: "localeChanged".to_owned(),
+                        event_data: serde_json::to_string(&LocaleChangedBody { locale }).unwrap(),
+                    },
+                });
+            }
+            state.put(LastLocale(current));
+        }
+    }
 
     results
 }

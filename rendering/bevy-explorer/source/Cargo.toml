@@ -253,6 +253,7 @@ bevy_simple_text_input = { git = "https://github.com/robtfm/bevy_simple_text_inp
   "clipboard",
 ], branch = "0.16" }
 directories = "6"
+sys-locale = "0.3"
 winreg = "0.50"
 uuid = { version = "1.23", features = ["v4"] }
 build-time = "0.1.3"

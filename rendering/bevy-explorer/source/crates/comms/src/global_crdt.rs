@@ -12,7 +12,7 @@ use common::{
     rpc::{RpcCall, RpcCallEvent, RpcEventSender, RpcOrigin, RpcStreamSender},
     structs::{
         AudioDecoderError, EmoteCommand, EmoteLifecycle, EmoteLifecycleEvent, EmoteLifecycleSource,
-        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PointAtSync,
+        EmoteMask, GlobalCrdtStateUpdate, HeadSync, MoveKind, PlayerLanguage, PointAtSync,
         SceneDrivenAnimationRequest,
     },
     util::ModifyComponentExt,
@@ -25,7 +25,7 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use dcl_component::{
     proto_components::{
         kernel::comms::rfc4::{self, packet::Message},
-        sdk::components::PbPlayerIdentityData,
+        sdk::components::{PbExplorerConfiguration, PbPlayerIdentityData},
     },
     transform_and_parent::{DclQuat, DclTransformAndParent, DclTranslation},
     DclReader, DclWriter, GlobalCrdtData, Localizer, SceneComponentId, SceneEntityId, SceneOrigin,
@@ -110,6 +110,14 @@ impl Plugin for GlobalCrdtPlugin {
         app.add_event::<EmoteLifecycleEvent>();
         app.add_systems(Update, process_transport_updates);
         app.add_systems(Update, despawn_players);
+        app.init_resource::<PlayerLanguage>();
+        // a server has no local player, so no language to report
+        if !common::structs::server_mode() {
+            app.add_systems(
+                Update,
+                push_explorer_configuration.run_if(resource_changed::<PlayerLanguage>),
+            );
+        }
         app.add_observer(remove_transport_from_foreign_audio_source);
         app.add_observer(remove_transport_from_foreign_players);
         // a headless app plays no voices, so never subscribes to foreign audio
@@ -132,6 +140,24 @@ impl Plugin for GlobalCrdtPlugin {
         app.add_event::<PlayerSceneAnimEvent>();
         app.add_event::<ProfileEvent>();
         app.add_event::<ChatEvent>();
+    }
+}
+
+/// Scenes read the explorer's configuration from `EXPLORER_CONFIGURATION` on their root entity.
+fn push_explorer_configuration(
+    language: Res<PlayerLanguage>,
+    mut contexts: Query<&mut GlobalCrdtState>,
+) {
+    let configuration = PbExplorerConfiguration {
+        locale: language.0.clone(),
+    };
+    for mut global_crdt in contexts.iter_mut() {
+        global_crdt.update_crdt(
+            SceneComponentId::EXPLORER_CONFIGURATION,
+            CrdtType::LWW_ANY,
+            SceneEntityId::ROOT,
+            &configuration,
+        );
     }
 }
 

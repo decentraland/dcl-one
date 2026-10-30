@@ -30,6 +30,7 @@ rand = { workspace = true }
 async-compat = { workspace = true }
 tokio = { workspace = true }
 url = { workspace = true }
+sys-locale = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }
