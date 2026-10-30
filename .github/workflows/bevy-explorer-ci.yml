@@ -68,7 +68,7 @@
         required: false
         default: ''
 concurrency:
-  group: bevy-explorer-ci-${{ github.ref }}
+  group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: true
 name: Bevy Explorer / CI
 jobs:
