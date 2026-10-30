@@ -17,6 +17,7 @@ pub mod profiles;
 mod recurrence;
 pub mod schedules;
 pub mod sitemap;
+pub(crate) mod upcoming;
 pub mod v1;
 pub mod writes;
 
