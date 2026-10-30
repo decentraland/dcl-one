@@ -317,32 +317,37 @@ impl PgAssignmentAuthority {
 
     async fn set_renewal(&self, owner: &V4Owner, renewed_at: &'static str) -> Result<(), V4Error> {
         checked_epoch(owner.epoch)?;
-        let changed = sqlx::query(sqlx::AssertSqlSafe(format!(
+        let (changed, still_owned): (bool, bool) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "WITH held AS MATERIALIZED (
                 SELECT lane_key, updated_at FROM social.archipelago_v4_assignments
                 WHERE deployment_audience = $1 AND owner_address = $2
                   AND owner_session = $3 AND owner_epoch = $4
                 ORDER BY lane_key FOR UPDATE
-             )
+             ), changed AS (
              UPDATE social.archipelago_v4_assignments AS current SET updated_at = {renewed_at}
              WHERE deployment_audience = $1
                AND owner_address = $2
                AND owner_session = $3
                AND owner_epoch = $4
                AND EXISTS (SELECT 1 FROM held WHERE held.lane_key = current.lane_key
-                 AND held.updated_at >= clock_timestamp() - interval '90 seconds')"
+                 AND held.updated_at >= clock_timestamp() - interval '90 seconds')
+             RETURNING 1
+             )
+             SELECT EXISTS (SELECT 1 FROM changed), EXISTS (SELECT 1 FROM held)"
         )))
         .bind(&self.namespace)
         .bind(&owner.address)
         .bind(&owner.session)
         .bind(owner.epoch as i64)
-        .execute(&self.pool)
+        .fetch_one(&self.pool)
         .await
         .map_err(|_| V4Error::AuthorityUnavailable)?;
-        if changed.rows_affected() == 0 {
-            Err(V4Error::AuthorityConflict)
-        } else {
+        if changed {
             Ok(())
+        } else if still_owned {
+            Err(V4Error::AuthorityUnavailable)
+        } else {
+            Err(V4Error::AuthorityConflict)
         }
     }
 

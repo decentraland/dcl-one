@@ -651,9 +651,9 @@ mod tests {
         };
         use std::sync::Arc;
         use tower::ServiceExt;
-        let Some(pool) = crate::db::scratch::pool(3).await else {
-            return;
-        };
+        let pool = crate::db::scratch::pool(3)
+            .await
+            .expect("signed favorites roundtrip requires CATALYST_TEST_DATABASE_URL");
         let state = Arc::new(crate::ExploreState::new(
             pool.clone(),
             crate::Settings::for_tests(),
@@ -726,6 +726,7 @@ mod tests {
             corrupt.insert("x-identity-auth-chain-2", link.to_string().parse().unwrap());
             for headers in [
                 corrupt.clone(),
+                hud_client_headers(&owner, &format!("/{endpoint}"), &timestamp).await,
                 hud_client_headers(
                     &owner,
                     &format!("/{}", endpoint.rsplit('/').next().unwrap()),

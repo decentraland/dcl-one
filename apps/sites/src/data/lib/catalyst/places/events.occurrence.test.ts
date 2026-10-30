@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { heroEventCards, parseHomeContent, withLiveEvents, type HomeContent } from "../landings/home";
 import { eventDetailToMarkdown, whatsOnToMarkdown } from "../../agent/markdown";
 import { eventOccurrence, effectiveStartAt, formatEventTime, formatEventWhen, toUpcomingCard, type Event } from "./events";
@@ -30,6 +30,31 @@ describe("when a recurring event has a series end months after its next occurren
     beforeEach(() => { event.duration = null; });
     it("should omit an end rather than stretching a calendar entry across the series", () => {
       expect(eventOccurrence(event).finish).toBeUndefined();
+    });
+  });
+  describe("and the API returns an end equal to the start without a duration", () => {
+    beforeEach(() => { event.duration = null; event.next_finish_at = event.next_start_at; });
+    it("should omit the end so calendar exports can use their fallback duration", () => {
+      expect(eventOccurrence(event).finish).toBeUndefined();
+    });
+  });
+  describe("and the API returns an end before the start", () => {
+    beforeEach(() => { event.next_finish_at = "2099-06-01T17:00:00Z"; });
+    it("should calculate the end from the positive occurrence duration", () => {
+      expect(eventOccurrence(event).finish).toBe("2099-06-01T20:00:00.000Z");
+    });
+  });
+  describe("and the supplied duration is zero", () => {
+    beforeEach(() => { event.duration = 0; event.next_finish_at = event.next_start_at; });
+    it("should omit the end instead of exporting a zero-length event", () => {
+      expect(eventOccurrence(event).finish).toBeUndefined();
+    });
+  });
+  describe("and its next occurrence is already in progress", () => {
+    beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(new Date("2099-06-01T19:00:00Z")); event.live = true; });
+    afterEach(() => { vi.useRealTimers(); });
+    it("should retain the ongoing occurrence's original start and finish", () => {
+      expect(eventOccurrence(event)).toEqual({ start: "2099-06-01T18:00:00Z", finish: "2099-06-01T20:00:00.000Z" });
     });
   });
   describe("and the event is not recurrent", () => {

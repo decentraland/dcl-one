@@ -366,11 +366,14 @@ export function groupEventsByDay(
 /** Public cards, detail pages and calendar exports refer to the same next occurrence. */
 export function eventOccurrence(event: Pick<Event, "start_at" | "next_start_at" | "finish_at" | "next_finish_at" | "duration" | "recurrent">): { start: string | undefined; finish: string | undefined } {
   const start = event.next_start_at ?? event.start_at ?? undefined;
+  const startTime = start ? Date.parse(start) : NaN;
   const duration = event.duration ?? (!event.recurrent && event.finish_at && event.start_at
     ? Date.parse(event.finish_at) - Date.parse(event.start_at)
     : undefined);
-  const finish = event.next_finish_at ?? (start && Number.isFinite(Date.parse(start)) && duration !== undefined && Number.isFinite(duration) && duration >= 0
-    ? new Date(Date.parse(start) + duration).toISOString()
+  const finish = event.next_finish_at && Date.parse(event.next_finish_at) > startTime
+    ? event.next_finish_at
+    : (Number.isFinite(startTime) && duration !== undefined && Number.isFinite(duration) && duration > 0
+    ? new Date(startTime + duration).toISOString()
     : undefined);
   return { start, finish };
 }
