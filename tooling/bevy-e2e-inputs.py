@@ -9,13 +9,16 @@ commit whose suite runs, checked out by the job), `web_artifact` and `web_run_id
 download, from tooling/benchmark-inputs.py's artifact search), and `pr` (the pull request number,
 or empty). `suite-changed` writes `changed` (true or false) instead.
 
-- `pull_request`: a pull request of this repository, not a draft, that carries the RUN_LABEL label:
-  a maintainer's decision to run that pull request's code on the GPU runner with the accounts (a
-  `labeled` event for any other label is skipped, so it cancels nothing). The job waits for the
-  commit's Bevy Explorer / CI run (BEVY_E2E_CI_WAIT_SECONDS, polled every BEVY_E2E_CI_POLL_SECONDS)
-  and takes the web app it built; a pull request whose CI built none, or that started no CI run,
-  takes main's newest when it changes the suite, its workflow or its tooling, so its specs still
-  run; one that changes neither is skipped.
+- `pull_request`: the `labeled` event of the RUN_LABEL label on a pull request of this repository
+  that is not a draft: a maintainer's decision to run the pull request's code, as it is at that
+  moment, on the GPU runner with the accounts. The label admits that commit alone: a push to the
+  pull request (`synchronize`) takes the label off and runs nothing, and the maintainer puts it
+  back to run the new commit; any other event, and a `labeled` event for another label, runs
+  nothing. The job waits for the commit's Bevy Explorer / CI run (BEVY_E2E_CI_WAIT_SECONDS, polled
+  every BEVY_E2E_CI_POLL_SECONDS) and takes the web app it built; a run whose web app has expired
+  is skipped, saying so; a pull request whose CI built none, or that started no CI run, takes
+  main's newest when it changes the suite, its workflow or its tooling, so its specs still run;
+  one that changes neither is skipped.
 - `workflow_run` of Bevy Explorer / CI: a successful push to main, with the web app that run
   built. A pull request's CI run is skipped here: its scenarios run from its own event.
 - `schedule`: main's newest web app and the commit that built it.
@@ -24,10 +27,12 @@ or empty). `suite-changed` writes `changed` (true or false) instead.
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import quote
 
 _spec = importlib.util.spec_from_file_location('benchmark_inputs', Path(__file__).resolve().parent / 'benchmark-inputs.py')
 bench = importlib.util.module_from_spec(_spec)
@@ -46,8 +51,31 @@ DEFAULT_POLL_SECONDS = 30
 START_SECONDS = 180
 
 
+def api_delete(path):
+    """A DELETE of the GitHub REST API through gh."""
+    subprocess.check_output(['gh', 'api', '--method', 'DELETE', path], timeout=60)
+
+
 def skip(reason):
     return {'run': False, 'reason': reason, 'sha': '', 'web_artifact': '', 'web_run_id': '', 'pr': ''}
+
+
+def unlabel(repo, pr):
+    """Take RUN_LABEL off the pull request: the commit it admitted is no longer the head."""
+    api_delete(f'repos/{repo}/issues/{pr}/labels/{quote(RUN_LABEL, safe="")}')
+
+
+def web_app_of(repo, run_id):
+    """The run's web app artifact: (name, 'kept'), (name, 'expired') or (None, 'none'). Expired
+    artifacts are told apart from a run that built none: a pull request's web app is kept 7 days."""
+    data = bench.api(f'repos/{repo}/actions/runs/{run_id}/artifacts?per_page=100')
+    rows = [row for row in data['artifacts'] if re.fullmatch(re.escape(bench.WEB) + '-[0-9a-f]{40}', row['name'])]
+    kept = [row for row in rows if not row['expired']]
+    if kept:
+        return kept[0]['name'], 'kept'
+    if rows:
+        return rows[0]['name'], 'expired'
+    return None, 'none'
 
 
 def chosen(sha, artifact, run_id, pr, reason):
@@ -123,15 +151,22 @@ def against_main(repo, sha, pr, why):
 def resolve_pull_request(event, repo, wait):
     pull = event['pull_request']
     pr = str(pull['number'])
-    if event.get('action') == 'labeled' and (event.get('label') or {}).get('name') != RUN_LABEL:
+    sha = pull['head']['sha']
+    action = event.get('action')
+    labelled = RUN_LABEL in [label['name'] for label in pull.get('labels') or []]
+    if action == 'synchronize':
+        if labelled:
+            unlabel(repo, pr)
+            return skip(f"#{pr}: the `{RUN_LABEL}` label admitted an earlier commit and is taken off; a maintainer puts it back to run {sha}")
+        return skip(f"#{pr} has no `{RUN_LABEL}` label: a maintainer applies it to run the scenarios on {sha}")
+    if action != 'labeled':
+        return skip(f"#{pr}: the scenarios run when a maintainer applies the `{RUN_LABEL}` label, not on {action}")
+    if (event.get('label') or {}).get('name') != RUN_LABEL:
         return skip(f"#{pr}: the label `{(event.get('label') or {}).get('name')}` is not `{RUN_LABEL}`")
-    if RUN_LABEL not in [label['name'] for label in pull.get('labels') or []]:
-        return skip(f"#{pr} has no `{RUN_LABEL}` label: a maintainer applies it to run the scenarios on the pull request's code")
     if ((pull.get('head') or {}).get('repo') or {}).get('full_name') != repo:
         return skip(f'#{pr} is not from this repository')
     if pull.get('draft'):
         return skip(f'#{pr} is a draft')
-    sha = pull['head']['sha']
     try:
         run = wait(repo, sha)
     except StillRunning as exc:
@@ -140,9 +175,11 @@ def resolve_pull_request(event, repo, wait):
         return against_main(repo, sha, pr, 'started no CI run')
     if run['conclusion'] != 'success':
         return skip(f"#{pr} at {sha}: CI run {run['id']} ended {run['conclusion']}")
-    web = bench.named(bench.artifacts(repo, run['id']), bench.WEB)
-    if web:
+    web, state = web_app_of(repo, run['id'])
+    if state == 'kept':
         return chosen(sha, web, run['id'], pr, f"#{pr} at {sha}: the web app CI run {run['id']} built")
+    if state == 'expired':
+        return skip(f"#{pr} at {sha}: the web app CI run {run['id']} built has expired; re-run that CI run or push a new commit, then apply the label again")
     return against_main(repo, sha, pr, 'no web input changed')
 
 
@@ -174,9 +211,11 @@ def resolve(event_name, event, repo, wait=None):
             run = run_of(repo, sha)
             if not run:
                 return skip(f'{sha} has no successful Bevy Explorer / CI run')
-            web = bench.named(bench.artifacts(repo, run['id']), bench.WEB)
-            if not web:
-                return skip(f"CI run {run['id']} of {sha} has no web app: it built none or the artifact expired")
+            web, state = web_app_of(repo, run['id'])
+            if state == 'expired':
+                return skip(f"CI run {run['id']} of {sha} built a web app that has expired: re-run that CI run")
+            if state == 'none':
+                return skip(f"CI run {run['id']} of {sha} built no web app")
             return chosen(sha, web, run['id'], '', f"{sha}: the web app CI run {run['id']} built")
         main = newest_main(repo)
         if not main:

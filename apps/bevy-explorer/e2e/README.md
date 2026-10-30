@@ -139,15 +139,16 @@ A reference counts as approved once a reviewer has checked it against the scene'
   the tooling tests. The workflow also listens to the explorer's paths, for the label below, and
   the job then passes without running them.
 - **Scenarios**, as unity-explorer runs explorer-automation: on a pull request of this repository
-  once a maintainer labels it `ci:e2e` (the label starts the run; a later push to the labelled
-  pull request runs again; a draft or a fork does not run), after each Bevy Explorer / CI run of a
-  push to main, nightly against main's newest web app, and by hand (a commit, a group, record).
-  A pull request's run comes from its own event, so it is one of the pull request's checks and an
+  when a maintainer applies the `ci:e2e` label (the label admits the commit it is applied to, and
+  that alone: a push takes it off and runs nothing, and the maintainer puts it back to run the
+  new commit; a draft or a fork does not run), after each Bevy Explorer / CI run of a push to
+  main, nightly against main's newest web app, and by hand (a commit, a group, record). A pull
+  request's run comes from its own event, so it is one of the pull request's checks and an
   approval of the `e2e` deployment names its commit. `tooling/bevy-e2e-inputs.py` picks the web
   app: a pull request's job waits for the commit's Bevy Explorer / CI run and takes the web app it
-  built, or main's newest when the pull request changed no web input but changed the suite. The
-  job downloads it, runs the InWorld scenarios, then builds the scenes and runs the Visual ones,
-  and uploads `report/`. It runs on the Windows runner with a GPU that the
+  built (one that has expired is reported, never replaced by main's), or main's newest when the
+  pull request changed no web input but changed the suite. The job downloads it, runs the InWorld
+  scenarios, then builds the scenes and runs the Visual ones, and uploads `report/`. It runs on the Windows runner with a GPU that the
   `BEVY_E2E_WINDOWS_RUNNER` repository variable names (explorer-automation's
   `win-gpu-t4-explorer`, which an org admin enables for this repository), in the `e2e`
   environment, whose `DCL_E2E_ACCOUNT_KEYS` secret reaches only the two scenario steps. The label

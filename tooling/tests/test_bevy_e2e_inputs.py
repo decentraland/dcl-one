@@ -22,8 +22,8 @@ def run(run_id, sha, event, branch='main', status='completed', conclusion='succe
             'head_sha': sha, 'head_branch': branch, 'head_repository': {'full_name': REPO}}
 
 
-def artifacts(*names):
-    return {'total_count': len(names), 'artifacts': [{'name': name, 'id': index + 1, 'expired': False}
+def artifacts(*names, expired=()):
+    return {'total_count': len(names), 'artifacts': [{'name': name, 'id': index + 1, 'expired': name in expired}
                                                      for index, name in enumerate(names)]}
 
 
@@ -40,11 +40,12 @@ class FakeApi:
         raise AssertionError(f'unexpected API call {path}')
 
 
-def pull_request(number, sha, action='synchronize', labels=(inputs.RUN_LABEL,), label=None, draft=False, repo=REPO):
+def pull_request(number, sha, action='labeled', labels=(inputs.RUN_LABEL,), label=inputs.RUN_LABEL, draft=False, repo=REPO):
+    """A pull_request event: by default, the maintainer's `labeled` event for the run label."""
     event = {'action': action,
              'pull_request': {'number': number, 'draft': draft, 'head': {'sha': sha, 'repo': {'full_name': repo}},
                               'labels': [{'name': name} for name in labels]}}
-    if label is not None:
+    if action == 'labeled':
         event['label'] = {'name': label}
     return event
 
@@ -55,6 +56,8 @@ class ResolveTests(unittest.TestCase):
         self.api = FakeApi({
             f'repos/{REPO}/actions/runs/30/artifacts': artifacts(f'bevy-explorer-web-{SHA_PR}', 'other'),
             f'repos/{REPO}/actions/runs/31/artifacts': artifacts('other'),
+            f'repos/{REPO}/actions/runs/32/artifacts': artifacts(f'bevy-explorer-web-{SHA_NEW}', 'other', expired=(f'bevy-explorer-web-{SHA_NEW}',)),
+            f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?head_sha={SHA_NEW}&status=success': {'workflow_runs': [run(32, SHA_NEW, 'pull_request')]},
             f'repos/{REPO}/actions/runs/20/artifacts': artifacts(f'bevy-explorer-web-{SHA_MAIN}'),
             f'repos/{REPO}/actions/runs/10/artifacts': artifacts(f'bevy-explorer-web-{SHA_OLD}'),
             f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?branch=main': self.main_runs,
@@ -65,6 +68,8 @@ class ResolveTests(unittest.TestCase):
         })
         inputs.bench.api = self.api
         self.waits = []
+        self.deleted = []
+        inputs.api_delete = self.deleted.append
 
     def wait(self, result):
         """A `wait` that answers at once: a run, None (no CI run started) or a StillRunning."""
@@ -107,19 +112,43 @@ class ResolveTests(unittest.TestCase):
         self.assertIn('neither', result['reason'])
         self.assertNotIn(f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?branch=main', self.api.calls)
 
-    def test_a_pull_request_without_the_label_is_skipped_before_anything_is_fetched(self):
-        result = inputs.resolve('pull_request', pull_request(194, SHA_PR, labels=('explorer',)), REPO, wait=self.wait(run(30, SHA_PR, 'pull_request')))
+    def test_a_push_to_a_labelled_pull_request_takes_the_label_off_and_runs_nothing(self):
+        result = inputs.resolve('pull_request', pull_request(194, SHA_NEW, action='synchronize'), REPO, wait=self.wait(run(30, SHA_NEW, 'pull_request')))
         self.assertEqual(result['run'], False)
-        self.assertIn(f'`{inputs.RUN_LABEL}` label', result['reason'])
+        self.assertIn('is taken off', result['reason'])
+        self.assertIn(SHA_NEW, result['reason'])
+        self.assertEqual(self.deleted, [f'repos/{REPO}/issues/194/labels/ci%3Ae2e'])
         self.assertEqual((self.waits, self.api.calls), ([], []))
 
+    def test_a_push_to_an_unlabelled_pull_request_runs_nothing_and_touches_nothing(self):
+        result = inputs.resolve('pull_request', pull_request(194, SHA_NEW, action='synchronize', labels=('explorer',)), REPO, wait=self.wait(run(30, SHA_NEW, 'pull_request')))
+        self.assertEqual(result['run'], False)
+        self.assertIn(f'`{inputs.RUN_LABEL}` label', result['reason'])
+        self.assertEqual((self.deleted, self.waits, self.api.calls), ([], [], []))
+
+    def test_other_events_run_nothing_even_with_the_label_on(self):
+        for action in ('opened', 'reopened', 'ready_for_review'):
+            with self.subTest(action=action):
+                result = inputs.resolve('pull_request', pull_request(194, SHA_PR, action=action), REPO, wait=self.wait(run(30, SHA_PR, 'pull_request')))
+                self.assertEqual(result['run'], False)
+                self.assertIn(f'not on {action}', result['reason'])
+        self.assertEqual((self.deleted, self.waits), ([], []))
+
     def test_the_labeled_event_runs_only_for_the_run_label(self):
-        other = pull_request(194, SHA_PR, action='labeled', label='explorer')
+        other = pull_request(194, SHA_PR, label='explorer')
         result = inputs.resolve('pull_request', other, REPO, wait=self.wait(run(30, SHA_PR, 'pull_request')))
         self.assertEqual(result['run'], False)
         self.assertIn('is not `', result['reason'])
-        ours = pull_request(194, SHA_PR, action='labeled', label=inputs.RUN_LABEL)
-        self.assertEqual(inputs.resolve('pull_request', ours, REPO, wait=self.wait(run(30, SHA_PR, 'pull_request')))['run'], True)
+        self.assertEqual(inputs.resolve('pull_request', pull_request(194, SHA_PR), REPO, wait=self.wait(run(30, SHA_PR, 'pull_request')))['run'], True)
+
+    def test_an_expired_web_app_is_skipped_and_never_replaced_by_mains(self):
+        result = inputs.resolve('pull_request', pull_request(194, SHA_NEW), REPO, wait=self.wait(run(32, SHA_NEW, 'pull_request')))
+        self.assertEqual(result['run'], False)
+        self.assertIn('has expired', result['reason'])
+        self.assertNotIn(f'repos/{REPO}/pulls/194/files?per_page=100&page=1', self.api.calls)
+        by_hand = inputs.resolve('workflow_dispatch', {'inputs': {'sha': SHA_NEW}}, REPO)
+        self.assertEqual(by_hand['run'], False)
+        self.assertIn('has expired', by_hand['reason'])
 
     def test_a_fork_or_a_draft_is_skipped(self):
         for event in (pull_request(194, SHA_PR, repo='someone/fork'), pull_request(194, SHA_PR, draft=True)):
@@ -192,7 +221,7 @@ class ResolveTests(unittest.TestCase):
     def test_a_manual_run_takes_the_named_commit(self):
         result = inputs.resolve('workflow_dispatch', {'inputs': {'sha': SHA_OLD}}, REPO)
         self.assertEqual((result['run'], result['sha'], result['web_run_id']), (True, SHA_OLD, '10'))
-        self.assertEqual(inputs.resolve('workflow_dispatch', {'inputs': {'sha': SHA_PR}}, REPO)['run'], False)
+        self.assertIn('no successful', inputs.resolve('workflow_dispatch', {'inputs': {'sha': SHA_PR}}, REPO)['reason'])
         with self.assertRaises(ValueError):
             inputs.resolve('workflow_dispatch', {'inputs': {'sha': 'abc'}}, REPO)
         result = inputs.resolve('workflow_dispatch', {'inputs': {'sha': ''}}, REPO)

@@ -2,12 +2,18 @@
 // (Escape, as explorer-automation's SetUp does), records every console command and keeps the
 // final frame, whatever the outcome. A scenario the client cannot run is a `todo` with its
 // reason: the report lists it, and it is never a pass.
-import { test, type TestContext } from 'node:test'
+import { after, test, type TestContext } from 'node:test'
 import path from 'node:path'
 import type { Explorer } from './explorer.ts'
 import { ScenarioReport } from './report.ts'
-import { BOOT_ALLOWANCE_MS, openExplorer, type OpenOptions } from './session.ts'
+import { BOOT_ALLOWANCE_MS, closeSessions, openExplorer, type OpenOptions } from './session.ts'
 import { TimeoutError } from './wait.ts'
+
+// Every spec imports this module before its first test, so this hook is the root's: it runs once
+// every spec file is done (`--test-isolation=none` keeps them in one process) and closes the
+// clients and the web server. Registered from inside a scenario it would be that scenario's, and
+// the shared client would close after the first scenario.
+after(() => closeSessions())
 
 export interface ScenarioContext {
   explorer: Explorer

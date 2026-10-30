@@ -4,11 +4,13 @@
 # runner's Chrome, the tooling tests) run on pull requests that change it. The scenarios run
 # against the web app a Bevy Explorer / CI run built, which tooling/bevy-e2e-inputs.py picks:
 #
-# - on a pull request of this repository, once a maintainer labels it `ci:e2e` (the label starts
-#   the run, and a later push to the labelled pull request runs again), from the pull request's own
-#   event, so the result is one of its checks and an approval of the `e2e` deployment names its
-#   commit. The Inputs job waits for the commit's Bevy Explorer / CI run and takes the web app it
-#   built, or main's newest when the pull request changed no web input but changed the suite;
+# - on a pull request of this repository, when a maintainer applies the `ci:e2e` label: the label
+#   admits the commit it is applied to, and that alone (a push takes the label off and runs
+#   nothing; the maintainer puts it back to run the new commit), from the pull request's own event,
+#   so the result is one of its checks and an approval of the `e2e` deployment names its commit.
+#   The Inputs job waits for the commit's Bevy Explorer / CI run and takes the web app it built
+#   (an expired one is reported, never replaced), or main's newest when the pull request changed
+#   no web input but changed the suite;
 # - after each Bevy Explorer / CI run of a push to main;
 # - nightly, against main's newest web app;
 # - by hand, against a commit's web app or main's newest.
@@ -129,7 +131,8 @@ jobs:
     permissions:
       contents: read
       actions: read
-      pull-requests: read
+      # write: a push to a labelled pull request takes the label off.
+      pull-requests: write
     outputs:
       run: ${{ steps.inputs.outputs.run }}
       sha: ${{ steps.inputs.outputs.sha }}

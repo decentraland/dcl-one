@@ -5,8 +5,8 @@
 
 Reads the JUnit report `node --test` writes (a `testcase` with a `failure` failed; one with a
 `<skipped type="todo">` is a recorded gap; one with `<skipped type="skipped">` was skipped) and
-prints Markdown: a badge, the counts and the failing scenarios. A missing report is a failure to
-say so.
+prints Markdown: a badge, the counts and the failing scenarios. A missing report, or one cut off
+before it closed (the run killed by the step timeout), is a failure to say so.
 """
 import sys
 import xml.etree.ElementTree as ElementTree
@@ -79,7 +79,13 @@ def main(argv):
     if not path.is_file():
         sys.stdout.write(missing(run_url, label))
         return 0
-    sys.stdout.write(section(path.read_text(encoding='utf-8'), run_url, label))
+    try:
+        text = section(path.read_text(encoding='utf-8'), run_url, label)
+    except ElementTree.ParseError:
+        # `node --test` opens `<testsuites>` first and closes it at exit: a run the step timeout
+        # killed leaves the header alone.
+        text = missing(run_url, label)
+    sys.stdout.write(text)
     return 0
 
 

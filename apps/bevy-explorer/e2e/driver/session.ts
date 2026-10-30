@@ -2,7 +2,6 @@
 // Chrome through the web driver or attaches to the standalone's loopback console), signs in and
 // waits for the world; every later scenario shares it, as explorer-automation keeps one client
 // for a whole run. `--test-isolation=none` keeps the spec files in one process.
-import { after } from 'node:test'
 import { chromeArgs } from './chrome.ts'
 import type { Console } from './console.ts'
 import { Explorer, type WorldState } from './explorer.ts'
@@ -35,14 +34,15 @@ export interface Session {
 
 const sessions = new Map<string, Promise<Session>>()
 let webServer: Promise<StaticServer> | undefined
-let registeredClose = false
 
 function key(target: Target, options: OpenOptions): string {
   const size = options.windowSize ?? target.windowSize
   return [options.realm ?? target.realm, options.position ?? target.position, size.join('x'), options.signIn ?? 'account'].join('|')
 }
 
-/** The client for these options, booted on first use. */
+/** The client for these options, booted on first use. The harness closes every session once the
+ *  whole run is done (its module-level `after`): a hook registered from inside a scenario would
+ *  belong to that scenario and close the client after it. */
 export function openSession(options: OpenOptions = {}, target: Target = readTarget()): Promise<Session> {
   const id = key(target, options)
   let session = sessions.get(id)
@@ -52,10 +52,6 @@ export function openSession(options: OpenOptions = {}, target: Target = readTarg
       throw error
     })
     sessions.set(id, session)
-    if (!registeredClose) {
-      registeredClose = true
-      after(() => closeSessions())
-    }
   }
   return session
 }

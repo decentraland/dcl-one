@@ -47,6 +47,29 @@ class ReportTests(unittest.TestCase):
         text = report.missing('https://example.test/run/3', 'Visual')
         self.assertIn('Visual-No%20report-ff0000', text)
 
+    def test_a_report_cut_off_by_the_step_timeout_says_so(self):
+        import io
+        import sys
+        import tempfile
+        from contextlib import redirect_stdout
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            cut = Path(folder) / 'junit-inworld.xml'
+            cut.write_text('<?xml version="1.0" encoding="utf-8"?>\n<testsuites>\n', encoding='utf-8')
+            out = io.StringIO()
+            with redirect_stdout(out):
+                code = report.main(['bevy-e2e-report.py', str(cut), 'https://example.test/run/4', 'InWorld'])
+            self.assertEqual(code, 0)
+            self.assertIn('InWorld-No%20report-ff0000', out.getvalue())
+            self.assertIn('did not start or was cut off', out.getvalue())
+            whole = Path(folder) / 'junit-visual.xml'
+            whole.write_text(JUNIT, encoding='utf-8')
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(report.main(['bevy-e2e-report.py', str(whole), 'https://example.test/run/5', 'Visual']), 0)
+            self.assertIn('1 passed, 1 failed', out.getvalue())
+        del sys
+
 
 if __name__ == '__main__':
     unittest.main()
