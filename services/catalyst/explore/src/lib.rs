@@ -123,6 +123,8 @@ pub struct Settings {
     pub asset_rewrite_domain: Option<String>,
     /// Bearer for the events moderation routes; unset refuses them.
     pub events_admin_token: Option<String>,
+    /// Optional moderation webhook, dispatched only with operator writes enabled.
+    pub events_slack_webhook: Option<String>,
     pub places_upstream: Option<MirrorSource>,
     pub places_interval: Duration,
     pub worlds_upstream: Option<MirrorSource>,
@@ -174,6 +176,7 @@ impl Settings {
             content_public_url: "http://localhost/content/".to_string(),
             asset_rewrite_domain: None,
             events_admin_token: None,
+            events_slack_webhook: None,
             places_upstream: None,
             places_interval: Duration::from_secs(3600),
             worlds_upstream: None,
@@ -312,6 +315,21 @@ impl ExploreState {
     /// away (jittered), then every interval, doubling the wait after a failed
     /// pass up to an hour.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs, client: crate::http::Outbound) {
+        if self.settings.operator_writes_enabled
+            && let Some(endpoint) = self
+                .settings
+                .events_slack_webhook
+                .as_ref()
+                .filter(|url| !url.trim().is_empty())
+        {
+            events::hooks::spawn(
+                self.pool.clone(),
+                client.clone(),
+                endpoint.clone(),
+                self.settings.events_base_url.clone(),
+                jobs,
+            );
+        }
         let cfg = |interval: Duration| {
             PeriodicCfg::every(interval)
                 .with_jitter(Duration::from_secs(30))
@@ -703,7 +721,10 @@ pub fn router(state: SharedState) -> Router {
                 .delete(evp::profile_subscriptions),
         )
         .route("/api/poster", post(events::posters::upload_poster))
-        .route("/assets/event-default.webp", get(events::posters::default_image))
+        .route(
+            "/assets/event-default.webp",
+            get(events::posters::default_image),
+        )
         .route(
             "/api/poster-vertical",
             post(events::posters::upload_poster_vertical),

@@ -19,6 +19,7 @@ pub mod admin;
 pub mod delivery;
 pub mod email;
 pub mod errors;
+mod event_ended;
 pub mod events;
 pub mod first_wear;
 pub mod handlers;

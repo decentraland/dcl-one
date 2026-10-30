@@ -64,6 +64,11 @@ pub struct ExploreConfig {
     #[arg(long, env = "CATALYRST_EVENTS_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_events_admin_token: Option<String>,
 
+    /// Optional Slack-compatible moderation webhook; unset disables delivery.
+    /// Requires OPS_WRITES_ENABLED. Also accepts SLACK_WEBHOOK_FILE.
+    #[arg(long, env = "SLACK_WEBHOOK", hide_env_values = true)]
+    pub events_slack_webhook: Option<String>,
+
     /// The places admin bearer (the reports queue, POIs, moderation,
     /// featured, rankings; also PLACES_ADMIN_AUTH_TOKEN_FILE); unset refuses it.
     #[arg(long, env = "PLACES_ADMIN_AUTH_TOKEN", hide_env_values = true)]

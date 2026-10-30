@@ -82,6 +82,7 @@ pub async fn record_transition(
         ).bind(Uuid::new_v4()).bind(event_id).bind(kind).bind(&snapshot).bind(local)
             .bind(Utc::now().naive_utc()).execute(&mut **tx).await?;
     }
+    super::hooks::record(tx, event_id, before, after, local).await?;
     Ok(())
 }
 
