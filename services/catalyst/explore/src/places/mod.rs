@@ -23,7 +23,7 @@ pub mod v1;
 pub mod world_scenes;
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use sqlx::{PgPool, Row};
@@ -81,6 +81,7 @@ pub struct PlacesComponent {
     worlds_mirror_configured: bool,
     category_cache: TtlCache<CategoryCounts>,
     parcel_alias_cache: TtlCache<ParcelAliases>,
+    land_authz: OnceLock<Arc<crate::land_authz::LandAuthzState>>,
 }
 
 impl PlacesComponent {
@@ -93,6 +94,7 @@ impl PlacesComponent {
             worlds_mirror_configured: false,
             category_cache: Default::default(),
             parcel_alias_cache: Default::default(),
+            land_authz: OnceLock::new(),
         }
     }
 
@@ -124,10 +126,28 @@ impl PlacesComponent {
         true
     }
 
-    /// LAND parcels `owner` operates. The old node read the squid index; v2
-    /// has no chain reader for it yet, so the filter matches nothing.
-    pub async fn operated_positions(&self, _owner: &str) -> Result<Vec<String>, ApiError> {
-        Ok(vec![])
+    /// Attaches the shared LAND authority after its chain readers are initialized.
+    pub fn set_land_authz(&self, land: Arc<crate::land_authz::LandAuthzState>) {
+        let _ = self.land_authz.set(land);
+    }
+
+    /// The direct update-operator parcels used by the legacy lands-permissions
+    /// route. A stale/uninitialized index does not supply permissions; the
+    /// catalogue's independent owner leg still matches its known owned rows.
+    pub async fn operated_positions(&self, owner: &str) -> Result<Vec<String>, ApiError> {
+        let Some(land) = self.land_authz.get() else {
+            return Ok(vec![]);
+        };
+        if land.ready().await.is_none() {
+            return Ok(vec![]);
+        }
+        Ok(land
+            .store()
+            .parcels_with_update_operator(owner)
+            .await?
+            .into_iter()
+            .map(|p| format!("{},{}", p.x, p.y))
+            .collect())
     }
 
     /// One statement per page: rows plus the windowed total, falling back to a COUNT

@@ -30,7 +30,7 @@
 //! authority for the rows it lists.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -103,6 +103,25 @@ fn str_array(v: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Creator categories follow the upstream active catalogue: at most three,
+/// deduplicated in tag order. Editorial categories are operator authority.
+fn creator_categories(tags: &[String]) -> Vec<String> {
+    let mut categories = Vec::new();
+    for tag in tags {
+        if tag != "poi"
+            && tag != "featured"
+            && super::handlers::category_i18n_en(tag).is_some()
+            && !categories.contains(tag)
+        {
+            categories.push(tag.clone());
+            if categories.len() == 3 {
+                break;
+            }
+        }
+    }
+    categories
+}
+
 pub fn derive(
     deployer_address: &str,
     pointers: &[String],
@@ -143,21 +162,29 @@ pub fn derive(
             h
         )
     });
-    let creator_address = non_empty(Some(deployer_address)).map(|s| s.to_lowercase());
+    let creator_address = non_empty(m.get("creator").and_then(Value::as_str))
+        .or_else(|| non_empty(Some(deployer_address)))
+        .map(|s| s.to_lowercase());
+    let owner = non_empty(m.get("owner").and_then(Value::as_str))
+        .or_else(|| non_empty(Some(deployer_address)))
+        .map(|s| s.to_lowercase());
+    let categories = creator_categories(&tags);
     let id = super::parcel_place_id(&base);
     let at = deployed_at.map(|d| DateTime::<Utc>::from_naive_utc_and_offset(d, Utc));
     let mut raw = json!({
         "id": id,
         "title": title,
         "description": description,
-        "owner": creator_address,
+        "owner": owner,
+        "creator_address": creator_address,
+        "sdk": non_empty(m.get("runtimeVersion").and_then(Value::as_str)),
         "positions": positions,
         "base_position": base,
         "contact_name": contact_name,
         "contact_email": contact_email,
         "image": image,
         "tags": tags,
-        "categories": [],
+        "categories": categories,
         "disabled": false,
         "world": false,
         "deployed_at": at,
@@ -189,6 +216,7 @@ pub fn derive(
 pub const SELECT_SCENES: &str = r#"
     SELECT
         d.id,
+        d.entity_id,
         d.deployer_address,
         d.entity_pointers,
         d.entity_timestamp AS deployed_at,
@@ -197,7 +225,10 @@ pub const SELECT_SCENES: &str = r#"
         (SELECT cf.content_hash FROM content.content_files cf
           WHERE cf.deployment = d.id
             AND cf.key = (d.entity_metadata::jsonb)->'v'->'display'->>'navmapThumbnail'
-          LIMIT 1) AS thumbnail_hash
+          LIMIT 1) AS thumbnail_hash,
+        (SELECT cf.content_hash FROM content.content_files cf
+          WHERE cf.deployment = d.id AND cf.key = 'scene.json'
+          LIMIT 1) AS scene_json_hash
     FROM content.deployments d
     LEFT JOIN content.local_entities le ON le.entity_id = d.entity_id
     WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND d.id > $2
@@ -220,7 +251,8 @@ const UPSERT: &str = r#"
          raw, fetched_at, origin)
     SELECT u.id, u.base_position, u.title, u.description, u.creator_address,
            COALESCE(m.content_rating, u.content_rating),
-           '{}', 0, 0, 0, u.deployed_at, COALESCE(m.disabled, false), COALESCE(m.highlighted, false),
+           ARRAY(SELECT jsonb_array_elements_text(u.raw->'categories')), 0, 0, 0,
+           u.deployed_at, COALESCE(m.disabled, false), COALESCE(m.highlighted, false),
            u.raw || COALESCE(r.overlay, '{}'::jsonb), timezone('UTC', now()), u.origin
     FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
                 $7::timestamp[], $8::jsonb[], $9::text[])
@@ -233,6 +265,8 @@ const UPSERT: &str = r#"
         title           = EXCLUDED.title,
         description     = EXCLUDED.description,
         creator_address = EXCLUDED.creator_address,
+        categories = ARRAY(SELECT DISTINCT c FROM unnest(EXCLUDED.categories || explore.place.categories) c
+                           WHERE c IN ('poi', 'featured') OR c = ANY(EXCLUDED.categories)),
         deployed_at     = EXCLUDED.deployed_at,
         raw = EXCLUDED.raw || jsonb_strip_nulls(jsonb_build_object(
             'ranking',              explore.place.raw->'ranking',
@@ -314,8 +348,8 @@ const UPSERT_LOCAL_WORLDS: &str = r#"
                jsonb_build_object(
                    'title', COALESCE(w.title, NULLIF(btrim(s.meta->'display'->>'title'), '')),
                    'description', w.description,
-                   'image', CASE WHEN w.thumbnail_hash IS NOT NULL
-                                 THEN rtrim($1, '/') || '/contents/' || w.thumbnail_hash END,
+                   'image', CASE WHEN COALESCE(w.thumbnail_hash, s.thumbnail_hash) IS NOT NULL
+                                 THEN rtrim($1, '/') || '/contents/' || COALESCE(w.thumbnail_hash, s.thumbnail_hash) END,
                    'owner', w.owner,
                    'content_rating', w.content_rating,
                    'categories', to_jsonb(COALESCE(w.categories, '{}')),
@@ -325,6 +359,8 @@ const UPSERT_LOCAL_WORLDS: &str = r#"
                    'is_private', w.access_type <> 'unrestricted',
                    'settings_version', w.settings_version,
                    'contact_name', NULLIF(btrim(s.meta->'contact'->>'name'), ''),
+                   'contact_email', NULLIF(btrim(s.meta->'contact'->>'email'), ''),
+                   'sdk', NULLIF(btrim(s.meta->>'runtimeVersion'), ''),
                    'base_position', COALESCE(NULLIF(btrim(s.meta->'scene'->>'base'), ''), s.parcels[1], '0,0'),
                    'disabled', false,
                    'world', true,
@@ -336,7 +372,10 @@ const UPSERT_LOCAL_WORLDS: &str = r#"
                ) AS raw
         FROM worlds.worlds w
         CROSS JOIN LATERAL (
-            SELECT ws.entity->'metadata' AS meta, ws.parcels, ws.created_at
+            SELECT ws.entity->'metadata' AS meta, ws.parcels, ws.created_at,
+                   (SELECT file->>'hash' FROM jsonb_array_elements(ws.entity->'content') file
+                    WHERE file->>'file' = ws.entity->'metadata'->'display'->>'navmapThumbnail'
+                    LIMIT 1) AS thumbnail_hash
             FROM worlds.world_scenes ws
             WHERE ws.world_name = w.name AND ws.mirror_source IS NULL
             ORDER BY ws.created_at DESC, ws.entity_id
@@ -425,6 +464,64 @@ pub async fn run_once(
     scope: DeriveScope,
     content_public_url: &str,
 ) -> Result<PassSummary> {
+    run_once_with_storage(pool, scope, content_public_url, None).await
+}
+
+/// The stored, hash-addressed scene.json supplies creator/runtimeVersion.
+/// Limit each read to 2 MiB; missing, withheld or malformed metadata keeps
+/// the catalogue available without turning a storage fault into an empty pass.
+async fn scene_file(
+    storage: &crate::storage::Storage,
+    entity: &str,
+    hash: &str,
+) -> Result<Option<Value>> {
+    const MAX_SCENE_JSON_BYTES: u64 = 2 * 1024 * 1024;
+    if storage.withholds(entity) {
+        return Ok(None);
+    }
+    let Some(mut file) = storage.open(hash).await? else {
+        return Ok(None);
+    };
+    if file.size > MAX_SCENE_JSON_BYTES {
+        tracing::warn!(
+            entity,
+            hash,
+            size = file.size,
+            "place scene.json exceeds metadata read limit"
+        );
+        return Ok(None);
+    }
+    let last = file.size.saturating_sub(1);
+    let bytes = file.read_range(0, last).await?;
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(value) if value.is_object() => Ok(Some(value)),
+        Ok(_) => Ok(None),
+        Err(error) => {
+            tracing::debug!(entity, hash, %error, "place scene.json is not JSON metadata");
+            Ok(None)
+        }
+    }
+}
+
+fn apply_scene_file(place: &mut DerivedPlace, scene: &Value, metadata: &Value) {
+    place.creator_address =
+        non_empty(scene.get("creator").and_then(Value::as_str)).map(|value| value.to_lowercase());
+    place.raw["creator_address"] = json!(place.creator_address);
+    place.raw["sdk"] = json!(
+        non_empty(scene.get("runtimeVersion").and_then(Value::as_str)).or_else(|| non_empty(
+            scene_json(metadata)
+                .get("runtimeVersion")
+                .and_then(Value::as_str)
+        ))
+    );
+}
+
+async fn run_once_with_storage(
+    pool: &PgPool,
+    scope: DeriveScope,
+    content_public_url: &str,
+    storage: Option<&crate::storage::Storage>,
+) -> Result<PassSummary> {
     let started: NaiveDateTime = sqlx::query_scalar("SELECT timezone('UTC', clock_timestamp())")
         .fetch_one(pool)
         .await?;
@@ -447,7 +544,7 @@ pub async fn run_once(
             let meta: Value = row.try_get("meta").unwrap_or(Value::Null);
             let local: bool = row.try_get("local").unwrap_or(false);
             let thumb: Option<String> = row.try_get("thumbnail_hash").unwrap_or(None);
-            if let Some(p) = derive(
+            if let Some(mut p) = derive(
                 &deployer,
                 &pointers,
                 deployed_at,
@@ -456,6 +553,15 @@ pub async fn run_once(
                 content_public_url,
                 local,
             ) {
+                if let (Some(storage), Some(hash)) = (
+                    storage,
+                    row.try_get::<Option<String>, _>("scene_json_hash")?,
+                ) {
+                    let entity: String = row.try_get("entity_id")?;
+                    if let Some(scene) = scene_file(storage, &entity, &hash).await? {
+                        apply_scene_file(&mut p, &scene, &meta);
+                    }
+                }
                 page.push(p);
                 derived += 1;
             }
@@ -656,15 +762,16 @@ pub fn spawn_job(
     scope: DeriveScope,
     interval: Duration,
     content_public_url: String,
+    storage: Option<Arc<crate::storage::Storage>>,
 ) {
     tracing::info!(scope = ?scope, interval_secs = interval.as_secs(), "place catalogue: deriving from content deployments");
     jobs.spawn_periodic_leased(
         JOB_NAME,
         PeriodicCfg::every(interval).with_error_backoff(Duration::from_secs(3600)),
         move |ctx| {
-            let (pool, url) = (pool.clone(), content_public_url.clone());
+            let (pool, url, storage) = (pool.clone(), content_public_url.clone(), storage.clone());
             async move {
-                let out = run_once(&pool, scope, &url).await?;
+                let out = run_once_with_storage(&pool, scope, &url, storage.as_deref()).await?;
                 ctx.progress(format!(
                     "{} places derived, {} pruned",
                     out.derived, out.pruned
@@ -712,6 +819,63 @@ mod tests {
         assert!(p.raw.get("local").is_none());
         let local = derive("0xABC", &[], None, &wrapped(), None, "/content", true).unwrap();
         assert_eq!(local.raw["local"], true);
+    }
+
+    #[test]
+    fn scene_file_supplies_creator_and_sdk_without_changing_land_owner() {
+        let mut metadata = wrapped();
+        metadata["v"]["owner"] = json!("0xLAND");
+        metadata["v"]["runtimeVersion"] = json!("6");
+        metadata["v"]["tags"] =
+            json!(["poi", "game", "game", "art", "social", "music", "featured"]);
+        let mut place = derive("0xDEPLOYER", &[], None, &metadata, None, "/content", true).unwrap();
+        apply_scene_file(
+            &mut place,
+            &json!({ "creator": "0xAUTHOR", "runtimeVersion": "7.1" }),
+            &metadata,
+        );
+        assert_eq!(place.creator_address.as_deref(), Some("0xauthor"));
+        assert_eq!(place.raw["owner"], "0xland");
+        assert_eq!(place.raw["sdk"], "7.1");
+        assert_eq!(place.raw["categories"], json!(["game", "art", "social"]));
+        apply_scene_file(&mut place, &json!({}), &metadata);
+        assert!(place.creator_address.is_none());
+        assert_eq!(place.raw["sdk"], "6");
+    }
+
+    #[tokio::test]
+    async fn creator_categories_survive_rebuild_and_preserve_editorial_categories() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let mut meta = wrapped();
+        let base = format!(
+            "{},{}",
+            u16::from_str_radix(&token[..4], 16).unwrap(),
+            u16::from_str_radix(&token[4..8], 16).unwrap()
+        );
+        meta["v"]["scene"]["base"] = json!(base);
+        meta["v"]["scene"]["parcels"] = json!([base]);
+        let place = derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap();
+        let id = place.id.clone();
+        upsert_page(&pool, vec![place]).await.unwrap();
+        sqlx::query("UPDATE explore.place SET categories = array_append(categories, 'featured') WHERE id = $1").bind(&id).execute(&pool).await.unwrap();
+        meta["v"]["tags"] = json!(["music"]);
+        upsert_page(
+            &pool,
+            vec![derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap()],
+        )
+        .await
+        .unwrap();
+        let mut categories: Vec<String> =
+            sqlx::query_scalar("SELECT categories FROM explore.place WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        categories.sort();
+        assert_eq!(categories, vec!["featured", "music"]);
     }
 
     #[test]

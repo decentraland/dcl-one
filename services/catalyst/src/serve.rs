@@ -514,6 +514,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         land_settings,
         Some(market.index.clone()),
     ));
+    explore.places.set_land_authz(land.clone());
 
     // The content validator of the local write path (src/content/validator):
     // the old catalyrst-validator rules over the ONE pool (the escrow

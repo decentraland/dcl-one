@@ -211,7 +211,11 @@ fn owner_param(pairs: &[(String, String)]) -> Option<&str> {
 fn require_feed_content(f: &mut PlaceListFilters) {
     let lookup = is_lookup_query(f);
     let names_parcels = f.positions.iter().any(|p| !p.is_empty());
-    let names_worlds = f.names.iter().any(|n| !n.is_empty());
+    let names_worlds = f
+        .names
+        .iter()
+        .chain(&f.partial_names)
+        .any(|n| !n.is_empty());
     f.require_content_places = !lookup && !names_parcels;
     f.require_content_worlds = !lookup && !names_worlds;
 }
@@ -281,8 +285,9 @@ pub fn parse_with_options(pairs: &[(String, String)]) -> Result<DestinationFlags
 fn select_branches(f: &mut PlaceListFilters, kinds: &[String]) {
     let wants_place = kinds.is_empty() || kinds.iter().any(|k| k == "place");
     let wants_world = kinds.is_empty() || kinds.iter().any(|k| k == "world");
-    let excludes_worlds = !f.positions.is_empty() && f.names.is_empty();
-    let excludes_places = !f.names.is_empty() && f.positions.is_empty();
+    let has_names = !f.names.is_empty() || !f.partial_names.is_empty();
+    let excludes_worlds = !f.positions.is_empty() && !has_names;
+    let excludes_places = has_names && f.positions.is_empty();
     let place_branch = wants_place && !excludes_places;
     let world_branch = wants_world && !excludes_worlds;
     f.only_places = !world_branch;
@@ -314,10 +319,8 @@ pub(crate) fn parse_filters(
     if positions.is_empty() {
         positions = positions_param(pairs, "pointer")?;
     }
-    let mut names = multi(pairs, "world_names")?;
-    if names.is_empty() {
-        names = multi(pairs, "names")?;
-    }
+    let names = multi(pairs, "world_names")?;
+    let partial_names = multi(pairs, "names")?;
     let sdk = if truthy(pairs, "only_sdk7") {
         Some("7".to_string())
     } else {
@@ -329,6 +332,7 @@ pub(crate) fn parse_filters(
         positions,
         categories: multi(pairs, "categories")?,
         names,
+        partial_names,
         ids: multi(pairs, "ids")?
             .into_iter()
             .map(|id| id.to_lowercase())
@@ -482,6 +486,7 @@ pub(crate) async fn list_destinations(
     }
     if let Some(owner) = owner_param(pairs) {
         filters.owner_filtered = true;
+        filters.owner = Some(owner.to_lowercase());
         filters.operated_positions = state.places.operated_positions(owner).await?;
     }
     run_list(state, filters, &flags).await
@@ -688,10 +693,17 @@ mod param_parity_tests {
             filters(&[("positions", "1,1"), ("pointer", "2,2")]).positions,
             vec!["1,1"]
         );
-        assert_eq!(filters(&[("names", "a.dcl.eth")]).names, vec!["a.dcl.eth"]);
+        assert_eq!(
+            filters(&[("names", "a.dcl.eth")]).partial_names,
+            vec!["a.dcl.eth"]
+        );
         assert_eq!(
             filters(&[("world_names", "b.dcl.eth"), ("names", "a.dcl.eth")]).names,
             vec!["b.dcl.eth"]
+        );
+        assert_eq!(
+            filters(&[("world_names", "b.dcl.eth"), ("names", "a")]).partial_names,
+            vec!["a"]
         );
     }
 
