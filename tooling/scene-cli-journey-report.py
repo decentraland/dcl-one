@@ -33,6 +33,8 @@ def manifest(raw):
         seen.add(key)
         if stage.get('screenshot') not in (None, key + '.png') or stage.get('status') not in ('passed', 'failed'):
             raise ValueError('Invalid screenshot path or stage status')
+        if 'comparison_sha256' in stage and not re.fullmatch(r'[0-9a-f]{64}', stage['comparison_sha256']):
+            raise ValueError('Invalid comparison hash')
     return value
 
 
@@ -57,14 +59,27 @@ def stages(results):
     return {label: {stage['id']: stage for stage in value['stages']} for label, value in results.items()}
 
 
+def changed_stages(results):
+    indexed = stages(results)
+    changes = {}
+    for key in dict.fromkeys([*indexed['head'], *indexed['base']]):
+        before, after = (indexed[label].get(key, {}) for label in ('base', 'head'))
+        signature = lambda stage: (stage.get('comparison_sha256', stage.get('sha256')), stage.get('status'), stage.get('error'))
+        if signature(before) != signature(after):
+            stage = after or before
+            group = re.sub(r'[^a-z0-9-]', '', stage.get('journey', 'other'))[:50]
+            changes.setdefault(group, []).append(key)
+    return changes
+
+
 def render(directory, output):
     results = read_results(directory)
     indexed = stages(results)
+    changed = {key for keys in changed_stages(results).values() for key in keys}
     esc = html.escape
     rows = []
     for key in dict.fromkeys([*indexed['head'], *indexed['base']]):
         pair = [indexed[label].get(key, {}) for label in ('base', 'head')]
-        changed = pair[0].get('sha256') != pair[1].get('sha256')
         title = pair[1].get('title', pair[0].get('title', key))
         cells = []
         for label, stage in zip(('base', 'head'), pair):
@@ -74,7 +89,7 @@ def render(directory, output):
                 image = '<img loading="lazy" alt="' + esc(label + ': ' + title) + '" src="data:image/png;base64,' + base64.b64encode(data).decode() + '">'
             error = stage.get('error', '')
             cells.append(f'<div><strong>{label}</strong> · {esc(stage.get("status", "missing"))}<p>{esc(error)}</p>{image}</div>')
-        rows.append(f'<section><h2>{esc(title)}</h2><p>{esc(key)} · {"Screenshot changed" if changed else "Same screenshot"}</p><div class="pair">{"".join(cells)}</div></section>')
+        rows.append(f'<section><h2>{esc(title)}</h2><p>{esc(key)} · {"Screenshot changed" if key in changed else "Same comparison"}</p><div class="pair">{"".join(cells)}</div></section>')
     errors = '<br>'.join(esc(label + ': ' + str(error)) for label, value in results.items() for error in value.get('errors', []))
     document = '''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Scene CLI journeys</title><style>
 body{font:16px/1.5 system-ui;margin:32px;background:#f6f5f1;color:#24272a}main{max-width:1500px;margin:auto}section{border-top:1px solid #ccc;padding:24px 0}h1,h2{line-height:1.2}.pair{display:grid;grid-template-columns:1fr 1fr;gap:20px}img{width:100%;cursor:zoom-in;background:white}img:focus{outline:3px solid #a22}p{max-width:85ch}dialog{width:95vw;max-width:1600px;border:0;padding:0}dialog::backdrop{background:#000b}dialog img{width:100%;cursor:zoom-out}@media(max-width:700px){body{margin:16px}.pair{grid-template-columns:1fr}}
@@ -153,29 +168,23 @@ def read_archive(data):
 
 
 def comment(repo, run, pr, results, urls, artifact):
-    indexed = stages(results)
-    body = [MARKER, '## Scene CLI journeys',
+    changes = changed_stages(results)
+    noun = 'journey' if len(changes) == 1 else 'journeys'
+    body = [MARKER, f'This PR generated changes in the following {len(changes)} {noun}:',
             f'Commit `{pr["head"]["sha"][:12]}` · [workflow run]({run["html_url"]}) · **{run["conclusion"]}**',
             f'[Download HTML, all screenshots and logs](https://github.com/{repo}/actions/runs/{run["id"]}/artifacts/{artifact["id"]})',
-            'Before = PR base; after = proposed commit. Screenshot differences request review; they do not fail the check.',
-            'Wallet signatures and live external services are not exercised. Local fixtures contain no real credentials.']
+            'Before = PR base; after = proposed commit. Only changed stages are shown; all screenshots remain in the artifact.',
+            'Comparisons mask carets, clocks, request counts and minted entity IDs. Attached screenshots are unmodified. Live wallets and services are not exercised.']
     for label, value in results.items():
         failed = sum(stage['status'] == 'failed' for stage in value['stages'])
         body.append(f'\n**{label}:** {len(value["stages"])} stages, {failed} failures, {len(value.get("errors", []))} setup errors.')
-    groups = {}
-    for key in dict.fromkeys([*indexed['head'], *indexed['base']]):
-        stage = indexed['head'].get(key, indexed['base'].get(key))
-        group = re.sub(r'[^a-z0-9-]', '', stage.get('journey', 'other'))[:50]
-        changed = indexed['base'].get(key, {}).get('sha256') != indexed['head'].get(key, {}).get('sha256')
-        row = [f'**{key.replace("-", " ")}** · {"changed" if changed else "same screenshot"}', '| Before | After |', '| --- | --- |']
-        cells = []
-        for label in ('base', 'head'):
-            url = urls.get((label, key))
-            cells.append(f'![{label}]({url})' if url else 'No screenshot; inspect workflow logs')
-        row.append('| ' + ' | '.join(cells) + ' |')
-        groups.setdefault(group, []).append('\n'.join(row))
-    for group, rows in groups.items():
-        body.append(f'\n<details><summary>{group}: {len(rows)} stages</summary>\n\n' + '\n\n'.join(rows) + '\n\n</details>')
+    for group, keys in changes.items():
+        rows = []
+        for key in keys:
+            cells = [f'![{label}]({urls[label, key]})' if (label, key) in urls else 'See artifact' for label in ('base', 'head')]
+            rows.append(f'**{key.replace("-", " ")}**\n\n| Before | After |\n| --- | --- |\n| ' + ' | '.join(cells) + ' |')
+        label = 'stage' if len(rows) == 1 else 'stages'
+        body.append(f'\n<details><summary>{group}: {len(rows)} {label}</summary>\n\n' + '\n\n'.join(rows) + '\n\n</details>')
     text = '\n\n'.join(body)
     if len(text) > 60000:
         raise ValueError('Screenshot comment exceeds safe length')
@@ -199,41 +208,40 @@ def publish(repo, run_id):
     results, images = read_archive(api(f'{prefix}/actions/artifacts/{artifact["id"]}/zip', raw=True))
     if results['head'].get('revision') not in (None, pr['head']['sha']) or results['base'].get('revision') not in (None, pr['base']['sha']):
         raise ValueError('Artifact revisions differ from current PR head/base')
-    tag = f'scene-cli-journeys-pr-{pr["number"]}'
-    try:
-        release = api(f'{prefix}/releases/tags/{tag}')
-    except urllib.error.HTTPError as error:
-        if error.code != 404:
-            raise
-        default = api(prefix)['default_branch']
-        release = api(f'{prefix}/releases', {'tag_name': tag, 'target_commitish': default,
-            'name': f'Scene CLI journey screenshots for PR #{pr["number"]}', 'prerelease': True, 'make_latest': 'false',
-            'body': 'Latest before/after journey screenshots. Full reports and logs are GitHub Actions artifacts; these are not product binaries.'})
-    if not release['prerelease'] or release['draft']:
-        raise ValueError('Screenshot tag must name a published prerelease')
-    assets = list(pages(f'{prefix}/releases/{release["id"]}/assets'))
+    previous = [c for c in pages(f'{prefix}/issues/{pr["number"]}/comments')
+                if c['user']['login'] == 'github-actions[bot]' and c['body'].startswith(MARKER)]
+    changes = changed_stages(results)
+    if not changes and not previous and run['conclusion'] == 'success':
+        print('No changed journeys; keeping results in the workflow artifact')
+        return
     urls = {}
-    run_prefix = f'run-{run_id}-{run["run_attempt"]}-'
+    uploaded = {}
+    repository_id = api(prefix)['id']
     for (label, key), image in images.items():
-        name = run_prefix + label + '-' + key + '.png'
-        asset = next((a for a in assets if a['name'] == name), None)
-        if asset is None:
-            asset = api(f'https://uploads.github.com/{prefix}/releases/{release["id"]}/assets?name={urllib.parse.quote(name)}',
-                        image, content_type='image/png')
-        urls[label, key] = asset['browser_download_url']
+        if not any(key in keys for keys in changes.values()):
+            continue
+        digest = hashlib.sha256(image).hexdigest()
+        if digest not in uploaded:
+            query = urllib.parse.urlencode({'name': f'{label}-{key}.png', 'content_type': 'image/png', 'repository_id': repository_id})
+            try:
+                asset = api('https://uploads.github.com/user-attachments/assets?' + query, image, content_type='application/octet-stream')
+            except urllib.error.HTTPError as error:
+                if error.code not in (403, 404):
+                    raise
+                print('Inline upload unavailable for this token; linking the screenshot artifact instead')
+                break
+            if not asset.get('url', '').startswith('https://github.com/user-attachments/assets/'):
+                raise ValueError('Unexpected attachment URL')
+            uploaded[digest] = asset['url']
+        urls[label, key] = uploaded[digest]
     if api(f'{prefix}/pulls/{pr["number"]}')['head']['sha'] != pr['head']['sha']:
         print('PR advanced during image upload; not replacing its comment')
         return
     body = comment(repo, run, pr, results, urls, artifact)
-    previous = [c for c in pages(f'{prefix}/issues/{pr["number"]}/comments')
-                if c['user']['login'] == 'github-actions[bot]' and c['body'].startswith(MARKER)]
     if previous:
         api(f'{prefix}/issues/comments/{previous[-1]["id"]}', {'body': body}, method='PATCH')
     else:
         api(f'{prefix}/issues/{pr["number"]}/comments', {'body': body})
-    for asset in assets:
-        if re.fullmatch(r'run-\d+-\d+-(base|head)-[a-z0-9-]+\.png', asset['name']) and not asset['name'].startswith(run_prefix):
-            api(f'{prefix}/releases/assets/{asset["id"]}', method='DELETE')
 
 
 if __name__ == '__main__':

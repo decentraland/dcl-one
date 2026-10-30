@@ -15,12 +15,15 @@ limits and PNG paths before publishing images. It never executes downloaded
 artifact code. Fork PRs receive the same reports without write credentials in
 the build job.
 
-Inline comment images use a dedicated prerelease per PR, excluded from the latest
-product release. Updating the bot comment replaces previous screenshot assets;
-the complete historical reports remain workflow artifacts for 30 days. Binary
-images and generated reports are not committed to the source tree. PR identity
-comes from GitHub APIs, never from artifact metadata. Stale head results do not
-replace newer comments.
+Only changed journeys appear in one updated PR comment, grouped in collapsed
+`<details>` sections. Images use GitHub's direct user-attachment storage, the same
+endpoint used by GitHub CLI's attachment support. There are no releases, tags,
+branches, external storage or contents-write permissions. With no changes and no
+failures, no initial comment is posted; an existing comment is updated to clear
+stale results. Full reports remain workflow artifacts for 30 days. PR identity
+comes from GitHub APIs, never artifact metadata; stale heads do not replace
+newer comments. Raw screenshots are retained, while separate comparison hashes
+mask carets, clock labels, request counts and minted entity IDs to limit noise.
 
 Live wallet signatures, deployments, World mutations and external runtimes remain
 explicit verification boundaries. No live compatibility claim follows from the

@@ -65,9 +65,12 @@ screenshots request review; they do not fail a pixel baseline. Current visual
 defects are observable without tests requiring them to persist.
 
 The 30-day `scene-cli-journeys` artifact contains PNGs, manifests, logs and
-`report.html`. A trusted publisher updates one bot PR comment with inline
-before/after images hosted on a dedicated screenshot prerelease. Its prior images
-are replaced after the new comment is written. Live wallets, remote deployment,
+`report.html`. A trusted publisher updates one bot PR comment with changed journeys
+in collapsed `<details>` sections and direct GitHub image attachments. It creates
+no releases or tags. With no changes or failures it posts no initial comment;
+an existing comment is updated to clear stale results. Comparisons mask carets,
+clock labels, request counts and minted entity IDs; uploaded screenshots are
+unmodified. Live wallets, remote deployment,
 World mutations, voice and external clients/editors remain unverified boundaries.
 The publisher workflow must exist on the default branch before `workflow_run`
 comments start; a maintainer can bootstrap the first PR with:
@@ -76,6 +79,9 @@ comments start; a maintainer can bootstrap the first PR with:
 python3 tooling/scene-cli-journey-report.py publish --repo OWNER/REPO --run-id RUN_ID
 ```
 
-This needs `GH_TOKEN` with Actions read, contents write and PR write permissions.
+This needs `GH_TOKEN` with Actions read, contents read and PR write permissions,
+and a token accepted by GitHub's attachment endpoint for inline images.
+If the endpoint refuses the token, the comment links to the artifact instead;
+no extra secret or storage service is required.
 See the [journey CI ADR](../../../docs/adr/2026-10-30-scene-cli-journey-ci.md) for the
 publication boundary.

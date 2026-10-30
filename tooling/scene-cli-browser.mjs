@@ -75,9 +75,15 @@ export async function chrome(executable, profile, log) {
     },
     async screenshot(file) {
       const { cssContentSize } = await send('Page.getLayoutMetrics');
-      const result = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true,
+      const capture = () => send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true,
         clip: { x: 0, y: 0, width: cssContentSize.width, height: Math.min(cssContentSize.height, 12000), scale: 1 } });
+      const result = await capture();
       await fs.writeFile(file, Buffer.from(result.data, 'base64'));
+      await evaluate(`const style=document.createElement('style');style.id='journey-comparison-style';style.textContent='*{caret-color:transparent!important;animation:none!important;transition:none!important}[data-journey-mask],.sto__meta{visibility:hidden!important}';document.head.append(style);
+        for(const e of document.querySelectorAll('#sign-panel .kv'))if(e.querySelector('.k')?.textContent==='Entity')e.querySelector('code')?.setAttribute('data-journey-mask','');
+        for(const e of document.querySelectorAll('details.drawer'))if(e.querySelector('summary')?.textContent.startsWith('Recent requests'))e.setAttribute('data-journey-mask','')`);
+      try { return Buffer.from((await capture()).data, 'base64'); }
+      finally { await evaluate(`document.querySelector('#journey-comparison-style')?.remove();document.querySelectorAll('[data-journey-mask]').forEach(e=>e.removeAttribute('data-journey-mask'))`); }
     },
     async close() {
       ws.close();

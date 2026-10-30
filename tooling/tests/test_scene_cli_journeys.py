@@ -17,6 +17,11 @@ spec.loader.exec_module(report)
 PNG = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR' + struct.pack('>II', 1440, 1000)
 MANIFEST = {'schema': 1, 'revision': 'a' * 40, 'stages': [
     {'id': 'preview', 'journey': 'preview', 'title': 'Preview', 'status': 'passed', 'screenshot': 'preview.png'}]}
+RUN = {'event': 'pull_request', 'status': 'completed', 'conclusion': 'success', 'id': 1,
+       'html_url': 'https://github.com/org/repo/actions/runs/1', 'path': report.WORKFLOW,
+       'head_sha': 'a' * 40, 'pull_requests': [{'number': 7}]}
+PR = {'state': 'open', 'number': 7, 'base': {'repo': {'full_name': 'org/repo'}, 'sha': 'a' * 40}, 'head': {'sha': 'a' * 40}}
+ARTIFACT = {'id': 1, 'name': report.ARTIFACT, 'expired': False, 'size_in_bytes': 100}
 
 
 class JourneyReportTests(unittest.TestCase):
@@ -48,16 +53,13 @@ class JourneyReportTests(unittest.TestCase):
         self.assertTrue(results['base']['errors'])
 
     def test_fork_association_is_api_derived_and_stale_heads_are_ignored(self):
-        run = {'event': 'pull_request', 'status': 'completed', 'path': report.WORKFLOW,
-               'head_sha': 'a' * 40, 'pull_requests': [{'number': 7}]}
-        pr = {'state': 'open', 'number': 7, 'base': {'repo': {'full_name': 'org/repo'}}, 'head': {'sha': 'a' * 40}}
-        with patch.object(report, 'api', return_value=pr):
-            self.assertEqual(report.current_pr('org/repo', run)['number'], 7)
-            self.assertIsNone(report.current_pr('another/repo', run))
-            self.assertIsNone(report.current_pr('org/repo', {**run, 'head_sha': 'b' * 40}))
+        with patch.object(report, 'api', return_value=PR):
+            self.assertEqual(report.current_pr('org/repo', RUN)['number'], 7)
+            self.assertIsNone(report.current_pr('another/repo', RUN))
+            self.assertIsNone(report.current_pr('org/repo', {**RUN, 'head_sha': 'b' * 40}))
         for field, value in [('event', 'push'), ('path', '.github/workflows/other.yml'), ('status', 'in_progress')]:
             with self.assertRaises(ValueError):
-                report.current_pr('org/repo', {**run, field: value})
+                report.current_pr('org/repo', {**RUN, field: value})
 
     def test_redirect_does_not_forward_the_github_token(self):
         request = urllib.request.Request('https://api.github.com/archive', headers={'Authorization': 'secret'})
@@ -80,7 +82,9 @@ class JourneyReportTests(unittest.TestCase):
             self.assertIn('data:image/png;base64,', text)
 
     def test_comment_links_artifact_and_inlines_before_after_images(self):
-        results = {'base': MANIFEST, 'head': MANIFEST}
+        after = copy.deepcopy(MANIFEST)
+        after['stages'][0]['sha256'] = 'b' * 64
+        results = {'base': MANIFEST, 'head': after}
         text = report.comment('org/repo', {'id': 1, 'html_url': 'https://github.com/org/repo/actions/runs/1', 'conclusion': 'failure'},
                               {'head': {'sha': 'a' * 40}}, results,
                               {('base', 'preview'): 'https://example.org/base.png', ('head', 'preview'): 'https://example.org/head.png'}, {'id': 2})
@@ -89,6 +93,39 @@ class JourneyReportTests(unittest.TestCase):
         self.assertIn('![head](https://example.org/head.png)', text)
         self.assertIn('/actions/runs/1/artifacts/2', text)
         self.assertIn('**failure**', text)
+        self.assertIn('following 1 journey:', text)
+        self.assertIn('<details><summary>preview: 1 stage</summary>', text)
+
+    def test_comparison_ignores_volatile_raw_pixels_but_keeps_failures(self):
+        before, after = copy.deepcopy(MANIFEST), copy.deepcopy(MANIFEST)
+        for value, raw in ((before, 'a'), (after, 'b')):
+            value['stages'][0].update(sha256=raw * 64, comparison_sha256='c' * 64)
+        self.assertEqual(report.changed_stages({'base': before, 'head': after}), {})
+        after['stages'][0]['status'] = 'failed'
+        self.assertEqual(report.changed_stages({'base': before, 'head': after}), {'preview': ['preview']})
+
+    def test_unchanged_success_does_not_upload_or_post_a_comment(self):
+        with patch.object(report, 'api', side_effect=[RUN, PR, {'artifacts': [ARTIFACT]}, b'archive', []]) as api:
+            with patch.object(report, 'read_archive', return_value=({'base': MANIFEST, 'head': MANIFEST}, {})):
+                report.publish('org/repo', 1)
+        self.assertEqual(api.call_count, 5)
+        self.assertTrue(all(call.args[0].startswith('repos/') and len(call.args) == 1 for call in api.call_args_list))
+
+    def test_changed_journey_uses_direct_attachments_and_reuses_identical_bytes(self):
+        before, after = copy.deepcopy(MANIFEST), copy.deepcopy(MANIFEST)
+        before['stages'][0]['comparison_sha256'] = 'a' * 64
+        after['stages'][0]['comparison_sha256'] = 'b' * 64
+        url = 'https://github.com/user-attachments/assets/example'
+        responses = [RUN, PR, {'artifacts': [ARTIFACT]}, b'archive', [], {'id': 123}, {'url': url}, PR, {}]
+        with patch.object(report, 'api', side_effect=responses) as api:
+            with patch.object(report, 'read_archive', return_value=({'base': before, 'head': after}, {('base','preview'): PNG, ('head','preview'): PNG})):
+                report.publish('org/repo', 1)
+        uploads = [call for call in api.call_args_list if call.args[0].startswith('https://uploads.github.com/')]
+        self.assertEqual(len(uploads), 1)
+        self.assertIn('/user-attachments/assets?', uploads[0].args[0])
+        self.assertIn('repository_id=123', uploads[0].args[0])
+        self.assertIn('![base](' + url + ')', api.call_args.args[1]['body'])
+        self.assertIn('![head](' + url + ')', api.call_args.args[1]['body'])
 
 
 if __name__ == '__main__':

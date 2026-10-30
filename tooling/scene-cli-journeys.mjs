@@ -88,7 +88,8 @@ try {
       console.error(`${id}: ${error.message}`);
     }
     try {
-      await browser.screenshot(path.join(output, entry.screenshot));
+      const comparison = await browser.screenshot(path.join(output, entry.screenshot));
+      entry.comparison_sha256 = createHash('sha256').update(comparison).digest('hex');
       entry.sha256 = createHash('sha256').update(await fs.readFile(path.join(output, entry.screenshot))).digest('hex');
     } catch (error) { entry.status = 'failed'; entry.error = `${entry.error || ''} Screenshot: ${error.message}`; delete entry.screenshot; }
     manifest.stages.push(entry);
