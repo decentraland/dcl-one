@@ -203,6 +203,16 @@
             }
           },
           {
+            "name": "with_recurrent_dates",
+            "in": "query",
+            "description": "Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time, and the requested event page limit is capped at 25. Invalid dates and occurrences that have already finished are excluded in both modes.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "false"
+            }
+          },
+          {
             "name": "approved",
             "in": "query",
             "required": false,
@@ -505,6 +515,16 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "with_recurrent_dates",
+            "in": "query",
+            "description": "Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time, and the requested event page limit is capped at 25. Invalid dates and occurrences that have already finished are excluded in both modes.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "false"
             }
           },
           {
@@ -2135,6 +2155,16 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "with_recurrent_dates",
+            "in": "query",
+            "description": "Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time, and the requested event page limit is capped at 25. Invalid dates and occurrences that have already finished are excluded in both modes.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "false"
             }
           },
           {
