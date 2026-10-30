@@ -23,3 +23,5 @@ never a peer).
 - Name other files from `DCL_ONE_ROOT`, never `../` chains.
 - Keep external code's license and lock beside it.
 - Add every new path to an `ownership.json` area.
+- Exception: `library/ui/apps/<app>/` holds UI used by a single app
+  ([shared UI library ADR](2026-10-30-shared-ui-library.md)).
