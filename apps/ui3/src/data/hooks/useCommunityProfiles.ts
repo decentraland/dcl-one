@@ -13,7 +13,14 @@ export async function fetchCommunityProfiles(addresses: string[], opts: RequestO
   for (let i = 0; i < addresses.length; i += 100) {
     const batch = await sendJSON<unknown[]>("/lambdas/profiles", { ...opts, body: { ids: addresses.slice(i, i + 100) } });
     for (const envelope of batch ?? []) {
-      for (const avatar of parseProfileEnvelope(envelope).avatars) {
+      // One unreadable profile must not cost the rest of its batch their names.
+      let avatars;
+      try {
+        avatars = parseProfileEnvelope(envelope).avatars;
+      } catch {
+        continue;
+      }
+      for (const avatar of avatars) {
         const address = asAddress(avatar.ethAddress) ?? asAddress(avatar.userId);
         if (address) profiles[address] = { name: memberName(avatar.name ?? ""), picture: profileFaceUrl(avatar), claimed: avatar.hasClaimedName };
       }
