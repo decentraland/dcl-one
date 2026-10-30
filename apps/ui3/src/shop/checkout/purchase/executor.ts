@@ -174,7 +174,7 @@ async function runCreditsGroup(deps: CheckoutDeps, group: CartGroup, lines: Reso
     guard.submitFinished(creditId);
     if (isRevertedTxError(e) && txHash) {
       guard.reverted(txHash);
-      const failure: GroupFailure = { kind: "reverted", message: "The transaction failed on-chain. Nothing was bought and your Credits were returned." };
+      const failure: GroupFailure = { kind: "reverted", message: "The transaction failed on-chain and nothing was bought. The Credits held for it are released once the authorization expires and that is confirmed on chain." };
       dispatchSafe(store, keyId, { type: "failed", failure });
       return { status: "failed", failure, released: await release(deps, [creditId]) };
     }

@@ -7,7 +7,8 @@ use alloy_primitives::{U256, keccak256};
 use catalyst::shop::policy::{
     Authoritative, CartLine, Facts, GroupTotal, LineRefusal, MAX_CREDIT_LINES_PER_GROUP,
     MissingFact, PartitionError, Quote, Reason, Refusal, SettlementGroup, WalletGuidance,
-    eligibility, guard_credit_spend, guard_group_credit_spend, guard_method, partition, quote,
+    credit_cap, eligibility, guard_credit_spend, guard_group_credit_spend, guard_method, partition,
+    quote,
 };
 use catalyst::shop::types::{
     AssetId, AssetKind, ChainId, ContractRef, ContractRole, CreditSizing, CustomEffect, EvmAddress,
@@ -1564,6 +1565,114 @@ fn the_partition_and_the_use_credits_guard_agree_for_every_group_shape() {
             );
         }
     }
+}
+
+/// A group with a USD-pegged line is sized at the feed its marketplace
+/// settles that line at; a MANA-priced line keeps its quoted cents at the
+/// quote rate. The cents debited never change.
+#[test]
+fn a_usd_pegged_line_is_sized_at_the_settlement_feed_and_a_mana_line_at_the_quote_rate() {
+    let b = book();
+    let order_with = |received: TradeAsset| {
+        derive(Facts {
+            offer: Offer::Trade {
+                trade: SignedTrade {
+                    received: vec![received],
+                    ..creator_order_trade(&b)
+                },
+                coupon: None,
+            },
+            ..creator_order_facts(&b, web3(&b), ItemKind::Wearable)
+        })
+    };
+    let usd = |cents: u64| TradeAsset {
+        asset_type: TradeAssetType::UsdPeggedMana,
+        contract: b.mana,
+        value: n(cents) * n(10).pow(n(16)),
+    };
+    let mana = |milli: u64| TradeAsset {
+        asset_type: TradeAssetType::Erc20,
+        contract: b.mana,
+        value: n(milli) * n(10).pow(n(15)),
+    };
+    let wei = |milli: u64| ManaWei::new(n(milli) * n(10).pow(n(15)));
+    let feed = |usd_per_mana: &str| ManaUsdRate::parse_usd_per_mana(usd_per_mana).unwrap();
+
+    // USD 1 + 10 MANA, quote rate 0.50, feed 1.00.
+    let mixed = [order_with(usd(100)), order_with(mana(10_000))];
+    let cents: Vec<_> = mixed
+        .iter()
+        .map(|line| quote(line, Credits, Some(&rate())))
+        .collect();
+    assert_eq!(
+        cents,
+        vec![
+            Ok(Quote::Credits {
+                quoted: UsdCents::new(100)
+            }),
+            Ok(Quote::Credits {
+                quoted: UsdCents::new(500)
+            }),
+        ],
+        "600 cents quoted either way"
+    );
+    let at_feed = sizing(100).with_settlement_rate(feed("1"));
+    assert_eq!(
+        credit_cap(&mixed, &at_feed),
+        Ok(wei(11_220)),
+        "1 MANA at the feed + 10 MANA at the quote rate, times the 2% buffer"
+    );
+    assert_eq!(
+        credit_cap(&mixed, &sizing(100)),
+        Ok(sizing(100).cap(UsdCents::new(600)).unwrap()),
+        "without a feed: the 600 cents at the quote rate, as before"
+    );
+    assert_eq!(sizing(100).cap(UsdCents::new(600)), Some(wei(12_240)));
+    let signed = |value| SettlementOperation::AuthorizeCredit {
+        chain_id: ChainId::POLYGON,
+        value,
+        sizing: at_feed,
+    };
+    assert_eq!(
+        guard_group_credit_spend(&mixed, &signed(wei(11_220))),
+        Ok(())
+    );
+    let over = wei(11_220).checked_add(ManaWei::new(n(1))).unwrap();
+    assert_eq!(
+        guard_group_credit_spend(&mixed, &signed(over)),
+        Err(Refusal::CreditValueTooLarge {
+            value: over,
+            cap: wei(11_220)
+        }),
+        "the guard checks the same need the sizing signed"
+    );
+
+    // Diverging rates: quote 0.50, feed 0.45. The feed's conversion floors
+    // as the contract's does; the buffer floors after it.
+    let pegged = [order_with(usd(100))];
+    assert_eq!(
+        credit_cap(&pegged, &sizing(100).with_settlement_rate(feed("0.45"))),
+        Ok(ManaWei::new(n(2_266_666_666_666_666_666))),
+        "1e36 / 0.45e18 = 2.222... MANA, times 1.02"
+    );
+    assert_eq!(
+        credit_cap(&pegged, &sizing(100)),
+        Ok(wei(2_040)),
+        "the quote rate alone would sign 2.04 MANA, short of the 2.22 the feed settles"
+    );
+    assert_eq!(
+        credit_cap(&pegged, &sizing(150).with_settlement_rate(feed("0.45"))),
+        Ok(ManaWei::new(n(3_399_999_999_999_999_999))),
+        "an explicit headroom applies to the need, flooring"
+    );
+    assert_eq!(
+        sizing(100)
+            .with_settlement_rate(feed("0.45"))
+            .recorded_rate(),
+        feed("0.45"),
+        "the credit records the rate its USD-pegged lines were sized at"
+    );
+    assert_eq!(sizing(100).recorded_rate(), rate());
 }
 
 #[test]

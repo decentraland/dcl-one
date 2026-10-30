@@ -23,10 +23,10 @@ use std::collections::HashMap;
 use serde::Serialize;
 
 use super::types::{
-    AssetId, AssetKind, ChainId, ContractRef, ContractRole, CustomEffect, EvmAddress, ExternalCall,
-    ItemKind, ItemRecord, Lookup, ManaUsdRate, ManaWei, Offer, PaymentMethod, SaleKind, Session,
-    SettlementCall, SettlementGroupKey, SettlementOperation, SignedTrade, TokenRecord, TokenRef,
-    TradeAsset, TradeAssetType, TradeCoupon, UsdCents,
+    AssetId, AssetKind, ChainId, ContractRef, ContractRole, CreditSizing, CustomEffect, EvmAddress,
+    ExternalCall, ItemKind, ItemRecord, Lookup, ManaUsdRate, ManaWei, Offer, PaymentMethod,
+    SaleKind, Session, SettlementCall, SettlementGroupKey, SettlementOperation, SignedTrade,
+    TokenRecord, TokenRef, TradeAsset, TradeAssetType, TradeCoupon, UsdCents,
 };
 
 /// Upstream `MAX_LINES_PER_GROUP` (credits-server `authorize-usd-credit-batch.ts`).
@@ -645,6 +645,73 @@ fn credits_quote(line: &Authoritative, rate: Option<&ManaUsdRate>) -> Result<Usd
     }
 }
 
+/// Whether the line's price is set in USD (a USD-pegged trade), which the
+/// marketplace converts to MANA at its own feed when the trade settles.
+pub fn prices_in_usd(line: &Authoritative) -> bool {
+    matches!(offer_price(&line.offer), Ok((OfferPrice::Usd(_), _)))
+}
+
+/// The most a credit for `lines` may sign, from the lines alone: the one
+/// function both the sizing and [`guard_group_credit_spend`] use.
+///
+/// Without a settlement rate it is the group's quoted cents at the quote
+/// rate, buffered and with headroom, as before. With one (the group holds a
+/// USD-pegged line), the need is summed in MANA instead, so no cents total
+/// is converted back at a single rate: each USD-pegged line is the MANA its
+/// USD amount converts to at the settlement rate, flooring as the contract
+/// does, after its coupon (rounded up, [`ManaWei::discounted`]); the
+/// MANA-priced lines keep their quoted cents at the quote rate, converted
+/// together. The buffer and headroom then apply to that need. The cap is the
+/// computed need times buffer and headroom: with two rates in a group, it is
+/// not a bound on the excess over the cents debited.
+pub fn credit_cap(lines: &[Authoritative], sizing: &CreditSizing) -> Result<ManaWei, Refusal> {
+    let Some(asset) = lines.first().map(|line| line.asset) else {
+        return Err(Refusal::EmptyGroup);
+    };
+    let overflow = Refusal::AmountOverflow { asset };
+    let quote_rate = sizing.rate();
+    let Some(settlement_rate) = sizing.settlement_rate() else {
+        let mut quoted = UsdCents::ZERO;
+        for line in lines {
+            let cents = credits_quote(line, Some(&quote_rate))?;
+            quoted = quoted
+                .checked_add(cents)
+                .ok_or(Refusal::AmountOverflow { asset: line.asset })?;
+        }
+        return sizing.cap(quoted).ok_or(overflow);
+    };
+    let mut usd_pegged = ManaWei::ZERO;
+    let mut mana_priced_cents = UsdCents::ZERO;
+    for line in lines {
+        if prices_in_usd(line) {
+            let mana = mana_quote(line, Some(&settlement_rate))?;
+            usd_pegged = usd_pegged
+                .checked_add(mana)
+                .ok_or(Refusal::AmountOverflow { asset: line.asset })?;
+        } else {
+            let cents = credits_quote(line, Some(&quote_rate))?;
+            mana_priced_cents = mana_priced_cents
+                .checked_add(cents)
+                .ok_or(Refusal::AmountOverflow { asset: line.asset })?;
+        }
+    }
+    let mana_priced = if mana_priced_cents.get() > 0 {
+        ManaWei::from_usd_cents(
+            mana_priced_cents,
+            quote_rate.rate(),
+            quote_rate.decimals(),
+            0,
+        )
+        .ok_or(overflow.clone())?
+    } else {
+        ManaWei::ZERO
+    };
+    let need = usd_pegged
+        .checked_add(mana_priced)
+        .ok_or(overflow.clone())?;
+    sizing.cap_for_need(need).ok_or(overflow)
+}
+
 fn mana_quote(line: &Authoritative, rate: Option<&ManaUsdRate>) -> Result<ManaWei, Refusal> {
     let asset = line.asset;
     let (price, discount) = offer_price(&line.offer)?;
@@ -1068,16 +1135,7 @@ pub fn guard_group_credit_spend(
                     got: key.chain_id,
                 });
             }
-            let mut quoted = UsdCents::ZERO;
-            for line in lines {
-                let cents = credits_quote(line, Some(&sizing.rate()))?;
-                quoted = quoted
-                    .checked_add(cents)
-                    .ok_or(Refusal::AmountOverflow { asset: line.asset })?;
-            }
-            let cap = sizing.cap(quoted).ok_or(Refusal::AmountOverflow {
-                asset: lines[0].asset,
-            })?;
+            let cap = credit_cap(lines, sizing)?;
             if *value > cap {
                 return Err(Refusal::CreditValueTooLarge { value: *value, cap });
             }

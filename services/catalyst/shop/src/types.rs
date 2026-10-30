@@ -516,6 +516,16 @@ impl ManaWei {
         Some(Self(self.0.checked_mul(kept)?.div_ceil(U256::from(PPM))))
     }
 
+    /// The amount plus `buffer_bps`, flooring (the buffer step of
+    /// [`Self::from_usd_cents`], for a need already in MANA).
+    pub fn buffered(self, buffer_bps: u32) -> Option<Self> {
+        Some(Self(
+            self.0
+                .checked_mul(U256::from(BPS + u64::from(buffer_bps)))?
+                / U256::from(BPS),
+        ))
+    }
+
     /// Upstream `applyCapHeadroom`: the signed spend cap is `quoted * pct / 100`,
     /// flooring (the operator percentage is already a whole number here).
     pub fn with_cap_headroom(self, headroom_pct: u32) -> Option<Self> {
@@ -850,9 +860,16 @@ pub enum CustomEffect {
 /// headroom (upstream credits-server `oracle.usdCentsToManaWei` and
 /// `applyCapHeadroom`). Every point of headroom is value the buyer can still
 /// spend in a direct `useCredits` after the purchase (docs/shop/CONTRACTS.md).
+///
+/// Two rates can take part. `rate` prices the quote in cents (the polled
+/// snapshot) and sizes every MANA-priced line. `settlement_rate`, when set,
+/// is the answer of the feed the group's marketplace converts a USD-pegged
+/// trade with when it settles, and sizes those lines alone
+/// (`policy::credit_cap`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CreditSizing {
     rate: ManaUsdRate,
+    settlement_rate: Option<ManaUsdRate>,
     buffer_bps: u32,
     headroom_pct: u32,
 }
@@ -868,9 +885,18 @@ impl CreditSizing {
             && (100..=Self::MAX_HEADROOM_PCT).contains(&headroom_pct);
         ok.then_some(Self {
             rate,
+            settlement_rate: None,
             buffer_bps,
             headroom_pct,
         })
+    }
+
+    /// The same sizing with the rate a USD-pegged line settles at.
+    pub fn with_settlement_rate(self, settlement_rate: ManaUsdRate) -> Self {
+        Self {
+            settlement_rate: Some(settlement_rate),
+            ..self
+        }
     }
 
     /// The largest value a credit for `quoted` may sign: the MANA the quote
@@ -885,8 +911,26 @@ impl CreditSizing {
         .with_cap_headroom(self.headroom_pct)
     }
 
+    /// The largest value a credit for a need already in MANA may sign: the
+    /// need plus the buffer, times the headroom, each step flooring as
+    /// [`Self::cap`] does.
+    pub fn cap_for_need(self, need: ManaWei) -> Option<ManaWei> {
+        need.buffered(self.buffer_bps)?
+            .with_cap_headroom(self.headroom_pct)
+    }
+
     pub fn rate(self) -> ManaUsdRate {
         self.rate
+    }
+
+    pub fn settlement_rate(self) -> Option<ManaUsdRate> {
+        self.settlement_rate
+    }
+
+    /// The rate a credit records for pricing a later remainder: the one its
+    /// USD-pegged lines were sized at, else the quote's.
+    pub fn recorded_rate(self) -> ManaUsdRate {
+        self.settlement_rate.unwrap_or(self.rate)
     }
 }
 

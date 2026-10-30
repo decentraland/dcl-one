@@ -761,7 +761,7 @@ pub async fn authorize_group(
             .checked_add(d.charged)
             .ok_or_else(|| ApiError::bad_request("the group total overflows"))?;
     }
-    let sizing = CreditSizing::new(
+    let mut sizing = CreditSizing::new(
         rate,
         settings.credit_buffer_bps,
         settings.credit_cap_headroom_pct,
@@ -771,25 +771,51 @@ pub async fn authorize_group(
             "CREDITS_CAP_HEADROOM_PCT or CREDITS_ORACLE_BUFFER_BPS out of range".to_string(),
         )
     })?;
-    let value = sizing
-        .cap(quoted_total)
-        .ok_or_else(|| ApiError::bad_request("the group total overflows"))?;
     let authoritative: Vec<Authoritative> = derived.iter().map(|d| d.line.clone()).collect();
-    policy::guard_group_credit_spend(
-        &authoritative,
-        &SettlementOperation::AuthorizeCredit {
-            chain_id,
-            value,
-            sizing,
-        },
-    )
-    .map_err(|refusal| {
+    let policy_refusal = |refusal: Refusal| {
         let index = match &refusal {
             Refusal::MixedGroup => derived.len().saturating_sub(1),
             _ => 0,
         };
         AuthorizeError::Policy { index, refusal }
-    })?;
+    };
+    let guard = |value: ManaWei, sizing: CreditSizing| {
+        policy::guard_group_credit_spend(
+            &authoritative,
+            &SettlementOperation::AuthorizeCredit {
+                chain_id,
+                value,
+                sizing,
+            },
+        )
+    };
+    // A USD-pegged line settles at its marketplace's own feed, so the credit
+    // is sized at that feed, read now. The group's every other rule is
+    // checked first (a zero value passes the cap), so a refusal is never
+    // hidden behind an unavailable feed.
+    if let Some(venue) = authoritative
+        .iter()
+        .find(|line| policy::prices_in_usd(line))
+        .and_then(|line| line.venue(PaymentMethod::Credits))
+    {
+        guard(ManaWei::ZERO, sizing).map_err(policy_refusal)?;
+        let reading = state
+            .feed
+            .read(venue.chain_id.0, venue.contract.address())
+            .await
+            .map_err(|why| AuthorizeError::Unavailable {
+                source: super::feed::SOURCE,
+                configure: super::feed::CONFIGURE,
+                message: format!(
+                    "a credit for a USD-pegged trade is sized at its marketplace's MANA/USD feed, which cannot be used now: {why}"
+                ),
+            })?;
+        tracing::info!(marketplace = %venue.contract.address(), aggregator = %reading.aggregator, block = reading.block, updated_at = reading.updated_at_s, rate = %reading.rate.rate(), "sizing a USD-pegged credit group at its marketplace's feed");
+        sizing = sizing.with_settlement_rate(reading.rate);
+    }
+    let value = policy::credit_cap(&authoritative, &sizing).map_err(policy_refusal)?;
+    guard(value, sizing).map_err(policy_refusal)?;
+    let recorded_rate = sizing.recorded_rate();
 
     let salt = B256::from_slice(
         &getrandom_32().ok_or_else(|| ApiError::Internal("CSPRNG unavailable".into()))?,
@@ -819,8 +845,8 @@ pub async fn authorize_group(
         quoted_cents: quoted_total.get(),
         charged_cents: charged_total.get(),
         amount_wei: &value.get().to_string(),
-        oracle_rate: &rate.rate().to_string(),
-        oracle_decimals: rate.decimals() as i16,
+        oracle_rate: &recorded_rate.rate().to_string(),
+        oracle_decimals: recorded_rate.decimals() as i16,
         source,
         expires_at,
         lines: &records,
@@ -871,7 +897,8 @@ pub async fn authorize_group(
                 identity,
                 row.amount_wei.clone(),
                 row.usd_cents,
-                row.oracle_rate.unwrap_or_else(|| rate.rate().to_string()),
+                row.oracle_rate
+                    .unwrap_or_else(|| recorded_rate.rate().to_string()),
             ),
             lines,
         )
@@ -881,7 +908,7 @@ pub async fn authorize_group(
                 identity,
                 value.get().to_string(),
                 charged_total.get(),
-                rate.rate().to_string(),
+                recorded_rate.rate().to_string(),
             ),
             records.clone(),
         )
