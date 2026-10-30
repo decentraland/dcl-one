@@ -162,7 +162,11 @@ pub(crate) fn transcode_ktx2(bytes: &[u8]) -> Result<Vec<u8>, ImageProcessError>
 
 const KTX2_MAGIC: &[u8] = b"\xABKTX 20\xBB\r\n\x1A\n";
 
-fn bc7_dds(width: u32, height: u32, compressed_data: Vec<u8>) -> Result<Vec<u8>, ImageProcessError> {
+fn bc7_dds(
+    width: u32,
+    height: u32,
+    compressed_data: Vec<u8>,
+) -> Result<Vec<u8>, ImageProcessError> {
     let Ok(mut dds) = Dds::new_dxgi(ddsfile::NewDxgiParams {
         height,
         width,
@@ -284,7 +288,8 @@ fn process_gltf(raw_bytes: &[u8], expect_repair: bool) -> Result<Vec<u8>, GltfPr
         basisu_textures += 1;
     }
     root.extensions_used.retain(|e| e != "KHR_texture_basisu");
-    root.extensions_required.retain(|e| e != "KHR_texture_basisu");
+    root.extensions_required
+        .retain(|e| e != "KHR_texture_basisu");
 
     if expect_repair && draco_views.is_empty() && basisu_textures == 0 {
         // the gltf failed to load for some reason other than draco compression or basisu
