@@ -135,8 +135,8 @@ values to pass arbitrary colours or palette values from props.
   components before creating a new one, and put components shared by multiple
   apps or the Bevy HUD there. Until then, reuse the surface's existing
   components.
-- Keep feature-specific components and their styles with the feature; see
-  [App-specific UI](#app-specific-ui).
+- Put components and styles used by one app only in `library/ui/apps/<app>/`;
+  see [App-specific UI](#app-specific-ui).
 
 ### Responsive, themes and portals
 
@@ -187,9 +187,11 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 
 ## App-specific UI
 
-App-specific UI is used by one app only: its pages, layouts, app chrome and
-feature components. It lives in that app, next to the feature that uses it,
-and not in `library/ui`.
+App-specific UI is used by one app only: its layouts, app chrome and feature
+components, with their styles. It lives in `library/ui/apps/<app>/`, apart from
+the shared foundations and components. The app itself, under `apps/<app>`,
+keeps its pages, routes and data wiring and imports its UI from there. Until
+`library/ui` is implemented, app-specific UI stays where it is in the app.
 
 Until `library/ui` is implemented, Sites already imports `apps/ui3` source
 through the `@ui/*` alias (`apps/sites/tsconfig.json`), so an `apps/ui3`
@@ -205,9 +207,10 @@ it in every app that imports it.
 - Use shared tokens rather than hardcoded values or values copied from another
   app.
 - Each app keeps its own global entry point for its resets and base rules.
-- Once `library/ui` is implemented, when a second app or the Bevy HUD needs the
-  same component or foundation, move it there, update its consumers and remove
-  the app's copy.
+- When a second app or the Bevy HUD needs the same component or foundation,
+  move it from `library/ui/apps/<app>/` (or from the app, until `library/ui` is
+  implemented) to the shared `components/` or `foundations/`, update its
+  consumers and remove the old copy.
 
 ## Shared UI: `library/ui`
 
@@ -247,6 +250,8 @@ library/ui/
       Button.module.css
       Button.test.tsx
       Button.figma.ts   Figma mapping, read by the tooling only
+  apps/
+    <app>/              app-specific UI: components and styles used by one app
   index.ts              public exports: components and their prop types
   figma/                Node-only Figma MCP server and CLI, config, snapshots
 ```
@@ -256,6 +261,9 @@ library/ui/
 - **Components:** use React and colocated CSS Modules, export public components
   from `index.ts`, and declare React and React DOM as peer dependencies. Each
   consumer bundles the shared source it imports.
+- **App-specific UI:** keep components used by a single app in
+  `apps/<app>/`, built from the shared foundations and components; only that
+  app imports them. See [App-specific UI](#app-specific-ui).
 - **Figma tooling:** keep the MCP server and CLI in `figma/` and outside browser
   exports. Component mappings connect Figma nodes to shared components.
 

@@ -12,7 +12,8 @@ supports consistent use across deliverables.
 ## Decision
 
 Place shared UI foundations, components and their Figma tooling in `library/ui`.
-Keep feature-specific UI with its feature. The shared component styling
+Place UI used by a single app in `library/ui/apps/<app>/`; the app keeps its
+pages, routes and data wiring. The shared component styling
 standard is CSS Modules. The Figma tooling is separate from browser imports.
 
 ## Consequences
