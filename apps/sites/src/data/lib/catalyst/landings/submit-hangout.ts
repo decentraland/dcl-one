@@ -4,6 +4,7 @@ import { apiOkOf } from "../envelope";
 import { EventRecordSchema } from "../generated-schemas/events";
 import type { AuthIdentity } from "../../auth/types";
 import { signedFetch } from "../../auth/signer";
+import { validFeaturedUrn } from "./hangout-options";
 
 const HANGOUT_BOUNDS = {
   nameMax: 150,
@@ -35,6 +36,9 @@ export type HangoutDraft = {
   details: string;
   imagePreviewUrl: string | null;
   verticalImagePreviewUrl: string | null;
+  featuredItem?: string;
+  scheduleIds?: string[];
+  joinUrl?: string;
 };
 
 const RECURRENCE_FREQUENCIES: Record<string, string> = {
@@ -62,6 +66,9 @@ export function emptyDraft(): HangoutDraft {
     details: "",
     imagePreviewUrl: null,
     verticalImagePreviewUrl: null,
+    featuredItem: "",
+    scheduleIds: [],
+    joinUrl: "",
   };
 }
 
@@ -72,7 +79,8 @@ function toIso(date: string, time: string): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof EventRecordSchema>) {
+export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof EventRecordSchema>, signer?: string, privileged = false) {
+  const own = Boolean(signer && original?.user?.toLowerCase() === signer.toLowerCase());
   let start = toIso(draft.startDate, draft.startTime);
   if (start && original?.start_at && new Date(original.start_at).toISOString().slice(0, 16) === start.slice(0, 16)) start = original.start_at;
   const frequency = RECURRENCE_FREQUENCIES[draft.recurrence] ?? null;
@@ -100,10 +108,12 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
     recurrent_count: draft.recurrent ? draft.recurrentCount ?? null : null,
     recurrent_until: until,
     categories: original?.categories[0] === draft.category ? original.categories : draft.category ? [draft.category] : [],
-    community_id: draft.communityId.trim() || null,
+    ...(!original || (own && (draft.communityId || null) !== original.community_id) ? { community_id: draft.communityId.trim() || null } : {}),
     image: draft.imagePreviewUrl,
     image_vertical: draft.verticalImagePreviewUrl,
-    ...(!original ? { contact: draft.contact.trim() || null, details: draft.details.trim() || null } : {}),
+    ...(!original || own ? { contact: draft.contact.trim() || null, details: draft.details.trim() || null } : {}),
+    featured_item: draft.featuredItem?.trim() || null,
+    ...(privileged ? { schedules: draft.scheduleIds ?? original?.schedules ?? [], url: draft.joinUrl?.trim() || null } : {}),
   };
 }
 
@@ -123,18 +133,21 @@ export function eventToDraft(event: EditableHangout): HangoutDraft {
     recurrence: Object.entries(RECURRENCE_FREQUENCIES).find(([, frequency]) => frequency === event.recurrent_frequency)?.[0] ?? event.recurrent_frequency ?? "every_week",
     recurrentUntil: event.recurrent_until?.slice(0, 10) ?? "", recurrentCount: event.recurrent_count, category: event.categories[0] ?? "", communityId: event.community_id ?? "",
     imagePreviewUrl: event.image, verticalImagePreviewUrl: event.image_vertical,
+    contact: event.contact ?? "", details: event.details ?? "", featuredItem: event.featured_item ?? "", scheduleIds: event.schedules, joinUrl: event.url ?? "",
   };
 }
 
-export function buildHangoutSubmit(identitySource: () => AuthIdentity | null, original?: EditableHangout): SubmitFn {
+export function buildHangoutSubmit(identitySource: () => AuthIdentity | null, original?: EditableHangout, privilegedSource: () => boolean = () => false): SubmitFn {
   return async ({ draft, signal }) => {
     const identity = identitySource();
     if (!identity) throw new Error("Sign in to submit a hangout.");
+    const privileged = privilegedSource();
+    if (original && original.user?.toLowerCase() !== identity.signer.toLowerCase() && !privileged) throw new Error("You don't have permission to edit this hangout.");
     for (const step of ["details", "location", "schedule"]) {
       if (!isStepValid(step, draft)) throw new Error("Complete the hangout details, location and schedule before submitting.");
     }
     const path = original ? `/events/api/events/${encodeURIComponent(original.id)}` : "/events/api/events";
-    const response = await postJSON(path, toCreateEventBody(draft, original), { identity, method: original ? "PATCH" : "POST", signal });
+    const response = await postJSON(path, toCreateEventBody(draft, original, identity.signer, privileged), { identity, method: original ? "PATCH" : "POST", signal });
     return apiOkOf(SubmitResultSchema).parse(response).data;
   };
 }
@@ -165,6 +178,7 @@ function validateStep(step: string, draft: HangoutDraft): DraftIssues {
       issues.name = `Name must be ${HANGOUT_BOUNDS.nameMax} characters or fewer`;
     if (draft.description.length > HANGOUT_BOUNDS.descriptionMax)
       issues.description = `Description must be ${HANGOUT_BOUNDS.descriptionMax} characters or fewer`;
+    if (draft.featuredItem?.trim() && !validFeaturedUrn(draft.featuredItem.trim())) issues.featuredItem = "Choose a valid wearable, emote or collection.";
   }
   if (step === "location") {
     if (draft.location === "world") {

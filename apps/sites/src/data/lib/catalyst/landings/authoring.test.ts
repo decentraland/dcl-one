@@ -65,12 +65,48 @@ describe("when submitting a hangout", () => {
       expect(postJSON).toHaveBeenCalledWith("/events/api/events/existing-event", expect.objectContaining({ recurrent_frequency: "MONTHLY", recurrent_interval: 2, recurrent_weekday_mask: 2, recurrent_month_mask: 4, recurrent_setpos: -1, recurrent_count: 8, categories: ["music", "social"] }), expect.objectContaining({ method: "PATCH" }));
     });
 
-    it("should omit private contact and moderator details from an edit", async () => {
-      draft.contact = "different@example.com";
-      draft.details = "Replacement";
+    it("should save the owner's private contact and clear private notes explicitly", async () => {
+      draft.contact = "owner@example.test";
+      draft.details = "";
       await submit({ draft });
-      expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("contact");
-      expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("details");
+      expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ contact: "owner@example.test", details: null }), expect.any(Object));
+    });
+
+    it("should omit an unchanged community association on unrelated owner edits", async () => {
+      await submit({ draft });
+      expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("community_id");
+    });
+
+    it("should preserve privileged fields by omitting them for an ordinary owner", async () => {
+      draft.scheduleIds = ["some-schedule"];
+      draft.joinUrl = "https://example.test/join";
+      await submit({ draft });
+      expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("schedules");
+      expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
+    });
+
+    describe("and an authorized editor manages another creator's event", () => {
+      beforeEach(() => {
+        original.user = "0x3333333333333333333333333333333333333333";
+        draft.contact = "private@example.test"; draft.details = "Hidden"; draft.communityId = "different-community";
+        draft.scheduleIds = ["campaign"]; draft.joinUrl = "";
+        submit = buildHangoutSubmit(() => identity, original, () => true);
+      });
+      it("should omit the owner's private fields and community while assigning campaigns", async () => {
+        await submit({ draft });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("contact");
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("details");
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("community_id");
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toMatchObject({ schedules: ["campaign"], url: null });
+      });
+    });
+
+    describe("and another account lacks edit permissions", () => {
+      beforeEach(() => { original.user = "0x3333333333333333333333333333333333333333"; });
+      it("should reject the edit without sending a write", async () => {
+        await expect(submit({ draft })).rejects.toThrow("permission to edit");
+        expect(postJSON).not.toHaveBeenCalled();
+      });
     });
 
     it("should use the recurrence count in the submitted draft", async () => {
