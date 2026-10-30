@@ -136,6 +136,72 @@ fn state_over(
     ))
 }
 
+#[tokio::test]
+async fn estate_membership_uses_only_the_configured_fresh_publication_on_the_callers_connection() {
+    let Some(db) = ScratchDb::create().await else {
+        return;
+    };
+    seed_rights(&db.pool).await;
+    let state = state_over(db.pool.clone(), Settings::for_tests(), None);
+    let mut conn = db.pool.acquire().await.unwrap();
+    assert!(state.estate_at(&mut conn, 2, 2).await.unwrap().is_none());
+    sqlx::query("INSERT INTO land_authz.index_cursor (network,land_registry,estate_registry,last_block,folded_block,folded_at,full_replay_started) VALUES ($1,$2,$3,1,1,timezone('UTC',now()),true)")
+        .bind(NETWORK_MAINNET).bind(LAND).bind(ESTATE).execute(&mut *conn).await.unwrap();
+    assert_eq!(
+        state
+            .estate_at(&mut conn, 2, 2)
+            .await
+            .unwrap()
+            .unwrap()
+            .estate_id
+            .as_deref(),
+        Some("500")
+    );
+    assert!(
+        state
+            .estate_at(&mut conn, 1, 1)
+            .await
+            .unwrap()
+            .unwrap()
+            .estate_id
+            .is_none()
+    );
+    sqlx::query("DELETE FROM land_authz.estate_land WHERE land_token_id=$1::numeric")
+        .bind(land_token(2, 2))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    assert!(
+        state
+            .estate_at(&mut conn, 2, 2)
+            .await
+            .unwrap()
+            .unwrap()
+            .estate_id
+            .is_none()
+    );
+    for assignment in [
+        "folded_at=timezone('UTC',now())-interval '31 minutes'",
+        "last_block=2",
+        "full_replay_started=false",
+        "land_registry='other'",
+    ] {
+        sqlx::query("UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now()),last_block=1,full_replay_started=true,land_registry=$1").bind(LAND).execute(&mut *conn).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE land_authz.index_cursor SET {assignment}"
+        )))
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+        assert!(
+            state.estate_at(&mut conn, 2, 2).await.unwrap().is_none(),
+            "{assignment}"
+        );
+    }
+    drop(conn);
+    db.drop().await;
+}
+
 async fn job_ctx() -> (Jobs, JobContext) {
     let jobs = Jobs::new();
     let (tx, rx) = tokio::sync::oneshot::channel();

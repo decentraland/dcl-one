@@ -270,6 +270,12 @@ pub struct Decision {
     pub flags: ParcelPermissionFlags,
 }
 
+/// A published parcel-membership answer. `None` inside this answer means the
+/// parcel belongs to no estate; absence of an answer means the index is unready.
+pub struct EstateMembership {
+    pub estate_id: Option<String>,
+}
+
 /// Why no decision could be made: the caller refuses the write (never
 /// grants), and a route answers the unavailable envelope.
 #[derive(Debug, thiserror::Error)]
@@ -313,6 +319,36 @@ impl LandAuthzState {
     /// The cursor row when the local index may answer on the database clock.
     pub async fn ready(&self) -> Option<Cursor> {
         indexer::ready_cursor(&self.pool, &self.settings.network).await
+    }
+
+    /// One indexed coordinate lookup on the caller's connection, including the
+    /// publication check in the same SQL snapshot on the database clock (as
+    /// `ready`). Event edits already hold a connection and must not acquire
+    /// another from a potentially full pool.
+    pub async fn estate_at(
+        &self,
+        conn: &mut sqlx::PgConnection,
+        x: i32,
+        y: i32,
+    ) -> Result<Option<EstateMembership>, sqlx::Error> {
+        let answer: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT el.estate_token_id::text FROM land_authz.index_cursor c \
+             LEFT JOIN land_authz.token_right p ON p.token_address=c.land_registry AND p.x=$4 AND p.y=$5 \
+             LEFT JOIN land_authz.estate_land el ON el.land_token_id=p.token_id \
+             WHERE c.network=$1 AND c.land_registry=$2 AND c.estate_registry=$3 \
+               AND c.full_replay_started AND c.folded_block=c.last_block \
+               AND c.folded_at <= timezone('UTC', now()) \
+               AND c.folded_at >= timezone('UTC', now()) - make_interval(secs => $6)",
+        )
+        .bind(&self.settings.network)
+        .bind(&self.settings.land_registry)
+        .bind(&self.settings.estate_registry)
+        .bind(x)
+        .bind(y)
+        .bind(indexer::READY_WINDOW.num_seconds() as f64)
+        .fetch_optional(conn)
+        .await?;
+        Ok(answer.map(|(estate_id,)| EstateMembership { estate_id }))
     }
 
     /// The marketplace reader, when one with a subgraph URL is attached.

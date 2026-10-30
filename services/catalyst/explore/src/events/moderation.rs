@@ -856,6 +856,18 @@ pub async fn create_as(
     creator: &str,
     signer: &str,
 ) -> Result<String, ApiError> {
+    create_as_with_places(pool, body, creator, signer, None).await
+}
+
+/// The HTTP authoring path attaches the shared native LAND reader. Internal
+/// callers without that authority retain the known catalogue-only enrichment.
+pub async fn create_as_with_places(
+    pool: &PgPool,
+    body: &CreateEvent,
+    creator: &str,
+    signer: &str,
+    places: Option<&crate::places::PlacesComponent>,
+) -> Result<String, ApiError> {
     let operator = signer;
     let now = Utc::now();
     let start_at = validate_create(body, now)?;
@@ -875,7 +887,7 @@ pub async fn create_as(
     doc["id"] = json!(id);
     if let Some(raw) = doc.as_object_mut() {
         let mut conn = pool.acquire().await?;
-        super::metadata::enrich(&mut conn, raw).await?;
+        super::metadata::enrich(&mut conn, raw, places).await?;
     }
     if creator != ADMIN_CREATOR {
         if let Some(community) = body.community_id.as_deref() {
