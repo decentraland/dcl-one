@@ -38,7 +38,9 @@ document defines the new standards for One.
 ### Scope
 
 - Applies to every current and future web app under `apps/` and to
-  `rendering/bevy-explorer/source/react-web`.
+  `rendering/bevy-explorer/source/react-web`. The Explorer HUD keeps its own
+  design primitives and tokens until the shared library is integrated; see
+  [Explorer HUD transition](#explorer-hud-transition).
 - Required for all new component styles and for existing styles when they are
   migrated. Existing global stylesheets do not have to be migrated all at once.
 
@@ -85,7 +87,9 @@ portals.
 
 ### Global CSS boundary
 
-Shared foundations and components belong in `library/ui`. Global stylesheets
+Shared foundations and components belong in `library/ui` once it is
+implemented; until then each surface keeps its existing ones (see
+[Shared UI](#shared-ui-libraryui)). Global stylesheets
 contain only token definitions, font faces, resets, and application-wide base
 and accessibility rules. Each app keeps its own global entry point and loads
 the shared foundations it needs.
@@ -125,8 +129,10 @@ values to pass arbitrary colours or palette values from props.
 
 ### Composition
 
-- Reuse shared components from `library/ui` before creating a new component.
-- Put components shared by multiple apps or the Bevy HUD in `library/ui`.
+- Once `library/ui` is implemented and adopted by a surface, reuse its shared
+  components before creating a new one, and put components shared by multiple
+  apps or the Bevy HUD there. Until then, reuse the surface's existing
+  components.
 - Keep feature-specific components and their styles with the feature; see
   [App-specific UI](#app-specific-ui).
 
@@ -168,6 +174,9 @@ migration. Do not rewrite unrelated components or tokens in the same change.
   portals and server-rendered layouts where applicable.
 - Compare visual behavior before and after a change; unit tests alone do not
   prove visual parity.
+- `make check` and CI run `tooling/ui_standards.py`, which flags new CSS-in-JS
+  imports and new plain stylesheets next to components in changed files. It is
+  a best-effort check: a pass does not prove the change follows this standard.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
 
@@ -179,21 +188,25 @@ and not in `library/ui`.
 
 - Follow the same CSS Modules, accessibility, migration and verification rules
   as shared UI.
-- Compose it from shared components and foundations in `library/ui`. Do not
+- Compose it from shared components and foundations: those in `library/ui`
+  once the app has adopted it, the app's existing ones until then. Do not
   restyle a shared component's internals from the app; when the app needs a
   different look, add or extend a variant on the shared component.
 - Use shared tokens rather than hardcoded values or values copied from another
   app.
 - Each app keeps its own global entry point for its resets and base rules.
-- When a second app or the Bevy HUD needs the same component or foundation,
-  move it to `library/ui`, update its consumers and remove the app's copy.
+- Once `library/ui` is implemented, when a second app or the Bevy HUD needs the
+  same component or foundation, move it there, update its consumers and remove
+  the app's copy.
 
 ## Shared UI: `library/ui`
 
 The structure and integration below define the target for the shared UI. Its
 foundations, runtime components and consumer integration still need to be
 implemented; the component template is available now. Keep each surface's
-existing tokens and components until its integration has been reviewed.
+existing tokens and components until its integration has been reviewed. The
+decision is recorded in the
+[shared UI library ADR](adr/2026-10-30-shared-ui-library.md).
 
 `library/ui` is the home of the shared UI foundation:
 
@@ -282,11 +295,10 @@ source:
 import { Button } from '<shared-ui>'
 ```
 
-`<shared-ui>` is a placeholder; the shared library's import name remains to
-be selected. Each consumer resolves it consistently in TypeScript and its
-build, allows access to shared sources and
-deduplicates React and React DOM. Assets must work in every supported target,
-including native CEF.
+`<shared-ui>` is a placeholder; the shared library's import name remains to be
+selected. Each consumer resolves it consistently in TypeScript and its build,
+allows access to shared sources and deduplicates React and React DOM. Assets
+must work in every supported target, including native CEF.
 
 Build inputs, dependency resolution, HUD provenance and CI selection must
 include the shared sources so that changes invalidate the affected artifacts.

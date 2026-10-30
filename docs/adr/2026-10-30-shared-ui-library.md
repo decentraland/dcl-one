@@ -22,6 +22,7 @@ after their integrations are reviewed and implemented. This change establishes
 the standard and template; it does not migrate consumers. The
 [Explorer HUD transition](../ui-standards.md#explorer-hud-transition) keeps the
 current source guidance in effect until that integration is ready. Migration is
-incremental, and replaced implementations are removed after consumers move. The library's integration must account for independent builds,
+incremental, and replaced implementations are removed after consumers
+move. The library's integration must account for independent builds,
 asset resolution and artifact provenance. Existing behavior and applicable
 surface themes must be preserved during migration.
