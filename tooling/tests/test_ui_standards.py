@@ -16,8 +16,10 @@ class UiStandardsTest(unittest.TestCase):
         self.assertTrue(ui_standards.is_ui_source('apps/future-web/src/Button.mjs'))
         self.assertTrue(ui_standards.is_ui_source('library/ui/components/Button.tsx'))
         self.assertTrue(ui_standards.is_ui_source('rendering/bevy-explorer/source/react-web/src/Button.tsx'))
-        self.assertFalse(ui_standards.is_ui_source('apps/dcl-scene-cli/tests/scene.ts'))
-        self.assertFalse(ui_standards.is_ui_source('apps/bevy-explorer/build.ts'))
+        self.assertTrue(ui_standards.is_ui_source('apps/dcl-scene-cli/src/start/deploy_page.js'))
+        self.assertFalse(ui_standards.is_ui_source('apps/dcl-scene-cli/scripts/golden-runtime.mjs'))
+        self.assertFalse(ui_standards.is_ui_source('apps/dcl-scene-cli/src/templates/main.ts'))
+        self.assertFalse(ui_standards.is_ui_source('apps/dcl-scene-cli/testdata/golden/ui/src/index.tsx'))
         self.assertFalse(ui_standards.is_ui_source('rendering/bevy-explorer/source/src/file.ts'))
         self.assertFalse(ui_standards.is_ui_source('services/catalyst/src/main.rs'))
 
@@ -32,12 +34,38 @@ class UiStandardsTest(unittest.TestCase):
             "// import styled from 'styled-components'\nconst x = \"import styled from 'styled-components'\""))
         self.assertFalse(ui_standards.forbidden_imports("import styles from './Button.module.css'"))
 
+    def test_forbidden_import_forms(self):
+        for source in ("import styled from '@mui/material/styles/styled'",
+                       "import styled from '@mui/system/styled'",
+                       "import createStyled from '@emotion/styled/base'",
+                       "const lazy = import('styled-components')",
+                       "require('styled-components')",
+                       "import 'styled-components'",
+                       "export { default } from 'styled-components'"):
+            with self.subTest(source=source):
+                self.assertTrue(ui_standards.forbidden_imports(source))
+
+    def test_strings_and_comments_are_not_imports(self):
+        self.assertTrue(ui_standards.forbidden_imports(
+            "const icons = import.meta.glob('./icons/*.svg')\nimport styled from 'styled-components'\n/** doc */"))
+        self.assertFalse(ui_standards.forbidden_imports(
+            "import x from './a'\nconst s = \"y from 'styled-components'\""))
+        self.assertFalse(ui_standards.forbidden_imports("export function styled() { return '@mui/system' }"))
+        self.assertFalse(ui_standards.forbidden_imports("const url = 'https://example.invalid/styled-components'"))
+
+    def test_mentions_css_in_js(self):
+        self.assertTrue(ui_standards.mentions_css_in_js('  styled,'))
+        self.assertTrue(ui_standards.mentions_css_in_js("} from 'styled-components'"))
+        self.assertFalse(ui_standards.mentions_css_in_js('  Box,'))
+
     def test_component_stylesheets(self):
         self.assertTrue(ui_standards.is_component_stylesheet('apps/sites/src/Button.css', {'apps/sites/src/Button.tsx'}))
         self.assertTrue(ui_standards.is_component_stylesheet('apps/sites/src/botón.css', {'apps/sites/src/Botón.tsx'}))
         self.assertTrue(ui_standards.is_component_stylesheet('apps/sites/src/Old.css', {'apps/sites/src/Old.jsx'}))
         self.assertFalse(ui_standards.is_component_stylesheet('apps/sites/src/Button.module.css', {'apps/sites/src/Button.tsx'}))
         self.assertFalse(ui_standards.is_component_stylesheet('apps/sites/src/global.css', {'apps/sites/src/Button.tsx'}))
+        self.assertFalse(ui_standards.is_component_stylesheet('apps/sites/src/App.css', {'apps/sites/src/App.tsx'}))
+        self.assertFalse(ui_standards.is_component_stylesheet('apps/sites/src/main.css', {'apps/sites/src/main.tsx'}))
 
     def test_added_lines_keep_lines_starting_with_plus(self):
         diff = '--- a/x.ts\n+++ b/x.ts\n@@ -0,0 +1,2 @@\n+++i\n+const a = 1\n'
@@ -87,6 +115,27 @@ class UiStandardsIntegrationTest(unittest.TestCase):
         self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Chat.css: new component styles must use .module.css'])
         self.commit('rename')
         self.assertEqual(ui_standards.check(base), ['apps/sites/src/Chat.css: new component styles must use .module.css'])
+
+    def test_moving_an_existing_plain_stylesheet_passes(self):
+        (self.path / 'Button.tsx').write_text('export const Button = () => null\n')
+        (self.path / 'Button.css').write_text('.root {}\n')
+        self.git('add', '.')
+        self.commit('legacy')
+        self.git('mv', 'apps/sites/src', 'apps/sites/moved')
+        self.assertEqual(ui_standards.check('HEAD'), [])
+
+    def test_added_line_inside_existing_multi_line_import_is_checked(self):
+        component = self.path / 'Panel.tsx'
+        component.write_text("import {\n  Box,\n} from '@mui/material'\n")
+        self.git('add', '.')
+        self.commit('panel')
+        component.write_text("import {\n  Box,\n  styled,\n} from '@mui/material'\n")
+        self.assertEqual(ui_standards.check('HEAD'), ['apps/sites/src/Panel.tsx: new CSS-in-JS imports are not allowed'])
+
+    def test_missing_origin_main_warns(self):
+        with patch('sys.stderr') as stderr:
+            self.assertEqual(ui_standards.default_base(), 'HEAD')
+        self.assertIn('origin/main is not available', ''.join(call.args[0] for call in stderr.write.call_args_list))
 
     def test_staged_snapshot_does_not_read_unstaged_or_untracked_files(self):
         component = self.path / 'Button.tsx'
