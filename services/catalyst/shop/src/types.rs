@@ -392,11 +392,12 @@ const BPS: u64 = 10_000;
 const PPM: u64 = 1_000_000;
 
 /// The MANA/USD reference rate, USD per MANA scaled by `10^decimals`, never
-/// taken from a client. The credits authorize path builds it from the price
-/// module's polled snapshot ([`Self::parse_usd_per_mana`]), not from the
-/// marketplace's `manaUsdAggregator` that converts a USD-pegged trade when it
-/// settles, so the two can differ; settlement rebuilds the rate a credit was
-/// signed with from its row.
+/// taken from a client. The credits authorize path prices quotes in cents
+/// from the price module's polled snapshot ([`Self::parse_usd_per_mana`]);
+/// for a group with a USD-pegged trade it also reads the answer of that
+/// marketplace's own `manaUsdAggregator` (`credits::feed`), which sizes
+/// those lines, since the two can differ. Settlement rebuilds the rate a
+/// credit recorded from its row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ManaUsdRate {
     rate: U256,

@@ -3,20 +3,30 @@
 //! trade settles, read for every authorization (never cached, never the
 //! globally configured aggregator, never the polled snapshot as a fallback).
 //!
-//! One read is coherent: the endpoint's chain id is checked, a block is
-//! pinned, and the marketplace's `manaUsdAggregator()` and
+//! One read is coherent: the endpoint's chain id is checked, the latest
+//! block's hash is taken, and the marketplace's `manaUsdAggregator()` and
 //! `manaUsdAggregatorTolerance()` and the aggregator's `decimals()` and
-//! `latestRoundData()` are all read at that block. Any failure, a zero
-//! aggregator, a non-positive answer, a round newer than the block or the
-//! clock, or one older than the contract's tolerance or
-//! `CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS` refuses the authorization before
+//! `latestRoundData()` are all read at that hash with `requireCanonical`
+//! (EIP-1898), so a reorg between the calls fails the read instead of
+//! mixing two states. The endpoint must support EIP-1898 block hashes in
+//! `eth_call`; one that does not is refused, never read at a number or at
+//! `latest`.
+//!
+//! Freshness follows the marketplace's own check (`AggregatorHelper`:
+//! `updatedAt < block.timestamp - tolerance` reverts, so a tolerance of 0
+//! demands a round from that very block, and a tolerance above the block's
+//! timestamp makes the subtraction revert), judged at the read block, and
+//! separately `CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS` against this node's
+//! clock. Any failure, a zero aggregator, a non-positive answer or a round
+//! newer than the block or the clock refuses the authorization before
 //! anything is signed or reserved. [`READ_DEADLINE`] bounds the whole read,
-//! response bodies included.
+//! response bodies included. A move of the feed after the read (during the
+//! credit's TTL) is outside what this read can see.
 
 use std::sync::Arc;
 use std::time::Duration;
 
-use alloy_primitives::Address;
+use alloy_primitives::{Address, B256, U256};
 use alloy_sol_types::{SolCall, sol};
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -47,6 +57,7 @@ pub struct FeedReading {
     pub tolerance_secs: u64,
     pub updated_at_s: i64,
     pub block: u64,
+    pub block_hash: B256,
 }
 
 #[async_trait]
@@ -91,10 +102,13 @@ impl ChainFeed {
         &self,
         to: Address,
         data: Vec<u8>,
-        block: &str,
+        block_hash: B256,
         what: &str,
     ) -> Result<Vec<u8>, String> {
-        let params = json!([{ "to": format!("{to:#x}"), "data": format!("0x{}", hex::encode(data)) }, block]);
+        let params = json!([
+            { "to": format!("{to:#x}"), "data": format!("0x{}", hex::encode(data)) },
+            { "blockHash": format!("{block_hash:#x}"), "requireCanonical": true },
+        ]);
         let out = self
             .chain
             .rpc()
@@ -132,15 +146,15 @@ impl ChainFeed {
                     redact(&e.to_string())
                 )
             })?;
-        let (block, block_time) =
-            block_number_and_time(&head).ok_or("the latest block has no number or timestamp")?;
-        let tag = format!("{block:#x}");
+        let (block, block_hash, block_time) =
+            block_header(&head).ok_or("the latest block has no number, hash or timestamp")?;
+        let tag = block_hash;
 
         let aggregator = self
             .call_at(
                 marketplace,
                 manaUsdAggregatorCall {}.abi_encode(),
-                &tag,
+                tag,
                 "manaUsdAggregator()",
             )
             .await?;
@@ -155,22 +169,29 @@ impl ChainFeed {
             .call_at(
                 marketplace,
                 manaUsdAggregatorToleranceCall {}.abi_encode(),
-                &tag,
+                tag,
                 "manaUsdAggregatorTolerance()",
             )
             .await?;
         let tolerance = manaUsdAggregatorToleranceCall::abi_decode_returns(&tolerance)
             .map_err(|_| "manaUsdAggregatorTolerance() is not a uint256".to_string())?;
+        // The contract computes `block.timestamp - tolerance`: a tolerance
+        // above the timestamp reverts there, so it is refused here.
+        if tolerance > U256::from(u64::try_from(block_time).unwrap_or(0)) {
+            return Err(format!(
+                "manaUsdAggregatorTolerance() is {tolerance}, above block {block}'s timestamp; the marketplace's check would revert"
+            ));
+        }
         let tolerance_secs = u64::try_from(tolerance).unwrap_or(u64::MAX);
 
         let decimals = self
-            .call_at(aggregator, decimalsCall {}.abi_encode(), &tag, "decimals()")
+            .call_at(aggregator, decimalsCall {}.abi_encode(), tag, "decimals()")
             .await?;
         let round = self
             .call_at(
                 aggregator,
                 latestRoundDataCall {}.abi_encode(),
-                &tag,
+                tag,
                 "latestRoundData()",
             )
             .await?;
@@ -184,14 +205,18 @@ impl ChainFeed {
                 "the MANA/USD round is dated {updated_at_s}, after block {block} ({block_time}) or this node's clock"
             ));
         }
-        let limit = match tolerance_secs {
-            0 => self.max_age_secs,
-            t => t.min(self.max_age_secs),
-        };
-        let age = now_s.max(block_time) - updated_at_s;
-        if age > i64::try_from(limit).unwrap_or(i64::MAX) {
+        // The marketplace's check at the read block: 0 tolerance demands a
+        // round from that block.
+        let oldest_for_contract = block_time - tolerance_secs as i64;
+        if updated_at_s < oldest_for_contract {
             return Err(format!(
-                "the MANA/USD round is {age}s old, past the {limit}s the marketplace's tolerance ({tolerance_secs}s) and CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS ({}s) allow",
+                "the MANA/USD round ({updated_at_s}) is older than block {block}'s timestamp ({block_time}) minus the marketplace's tolerance ({tolerance_secs}s); the marketplace would revert"
+            ));
+        }
+        let age = now_s - updated_at_s;
+        if age > i64::try_from(self.max_age_secs).unwrap_or(i64::MAX) {
+            return Err(format!(
+                "the MANA/USD round is {age}s old, past CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS ({}s)",
                 self.max_age_secs
             ));
         }
@@ -201,6 +226,7 @@ impl ChainFeed {
             tolerance_secs,
             updated_at_s,
             block,
+            block_hash,
         })
     }
 }
@@ -227,10 +253,15 @@ fn quantity(hex_text: &str) -> Option<u64> {
     u64::from_str_radix(hex_text.strip_prefix("0x")?, 16).ok()
 }
 
-fn block_number_and_time(block: &Value) -> Option<(u64, i64)> {
+fn block_header(block: &Value) -> Option<(u64, B256, i64)> {
     let number = quantity(block.get("number")?.as_str()?)?;
+    let hash_text = block.get("hash")?.as_str()?.strip_prefix("0x")?;
+    if hash_text.len() != 64 {
+        return None;
+    }
+    let hash = B256::from_slice(&hex::decode(hash_text).ok()?);
     let time = i64::try_from(quantity(block.get("timestamp")?.as_str()?)?).ok()?;
-    Some((number, time))
+    Some((number, hash, time))
 }
 
 fn redact(message: &str) -> String {
@@ -248,8 +279,9 @@ fn redact(message: &str) -> String {
 mod tests {
     use super::*;
     use crate::http::Outbound;
-    use alloy_primitives::{I256, U256};
+    use alloy_primitives::I256;
     use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn rate_18(usd_per_mana: &str) -> Option<ManaUsdRate> {
         ManaUsdRate::parse_usd_per_mana(usd_per_mana)
@@ -261,15 +293,22 @@ mod tests {
         block: u64,
         block_time: i64,
         aggregator: Address,
-        tolerance: u64,
+        tolerance: U256,
         answer: I256,
         decimals: u8,
         updated_at: u64,
         stall: bool,
+        /// Whether `eth_call` takes an EIP-1898 block object.
+        eip1898: bool,
+        /// After this many eth_calls the read block stops being canonical
+        /// (another block of the same height replaces it).
+        reorg_after: Option<usize>,
     }
 
     const MARKETPLACE: Address = Address::new([0x54; 20]);
     const AGGREGATOR: Address = Address::new([0xa1; 20]);
+    const OTHER_AGGREGATOR: Address = Address::new([0xb2; 20]);
+    const HASH_A: B256 = B256::new([0xaa; 32]);
 
     fn chain(now: i64) -> Chain {
         Chain {
@@ -277,12 +316,14 @@ mod tests {
             block: 0x1234,
             block_time: now,
             aggregator: AGGREGATOR,
-            tolerance: 3_600,
+            tolerance: U256::from(3_600),
             // 0.45 USD/MANA at 8 decimals.
             answer: I256::try_from(45_000_000i64).unwrap(),
             decimals: 8,
             updated_at: (now - 30) as u64,
             stall: false,
+            eip1898: true,
+            reorg_after: None,
         }
     }
 
@@ -290,39 +331,70 @@ mod tests {
         hex::encode(v.to_be_bytes::<32>())
     }
 
-    /// A JSON-RPC endpoint answering from `c`, recording the block tag of
-    /// every eth_call.
-    async fn serve(c: Chain) -> (String, Arc<Mutex<Vec<String>>>) {
-        let tags = Arc::new(Mutex::new(Vec::new()));
-        let seen = tags.clone();
+    /// A JSON-RPC endpoint answering from `c`, recording the block parameter
+    /// of every eth_call. Block `HASH_A` is the latest; once it is reorged
+    /// out, a call that requires it canonical fails, and one that does not
+    /// would read the replacing block, whose marketplace names another
+    /// aggregator.
+    async fn serve(c: Chain) -> (String, Arc<Mutex<Vec<Value>>>) {
+        let blocks = Arc::new(Mutex::new(Vec::new()));
+        let seen = blocks.clone();
+        let calls = Arc::new(AtomicUsize::new(0));
         let app = axum::Router::new().route(
             "/",
             axum::routing::post(move |axum::Json(req): axum::Json<Value>| {
                 let c = c.clone();
                 let seen = seen.clone();
+                let calls = calls.clone();
                 async move {
                     if c.stall {
                         tokio::time::sleep(Duration::from_secs(30)).await;
                     }
                     let id = req.get("id").cloned().unwrap_or(json!(1));
+                    let fail = |message: &str| {
+                        axum::Json(json!({ "jsonrpc": "2.0", "id": id.clone(), "error": { "code": -32000, "message": message } }))
+                    };
                     let result = match req["method"].as_str() {
                         Some("eth_chainId") => json!(format!("{:#x}", c.chain_id)),
                         Some("eth_getBlockByNumber") => json!({
                             "number": format!("{:#x}", c.block),
+                            "hash": format!("{HASH_A:#x}"),
                             "timestamp": format!("{:#x}", c.block_time),
                         }),
                         Some("eth_call") => {
-                            seen.lock().unwrap().push(req["params"][1].as_str().unwrap_or("").to_string());
+                            let block = req["params"][1].clone();
+                            seen.lock().unwrap().push(block.clone());
+                            let n = calls.fetch_add(1, Ordering::SeqCst);
+                            let reorged = c.reorg_after.is_some_and(|after| n >= after);
+                            let aggregator = if block.is_object() {
+                                if !c.eip1898 {
+                                    return fail("invalid argument 1: hex string without 0x prefix");
+                                }
+                                if block["blockHash"] != json!(format!("{HASH_A:#x}")) {
+                                    return fail("header not found");
+                                }
+                                if reorged && block["requireCanonical"] == json!(true) {
+                                    return fail("block hash is not canonical");
+                                }
+                                if reorged { OTHER_AGGREGATOR } else { c.aggregator }
+                            } else if reorged {
+                                OTHER_AGGREGATOR
+                            } else {
+                                c.aggregator
+                            };
                             let to = req["params"][0]["to"].as_str().unwrap_or("").to_string();
                             let data = req["params"][0]["data"].as_str().unwrap_or("").to_string();
                             let sel = |s: [u8; 4]| data.starts_with(&format!("0x{}", hex::encode(s)));
-                            let out = if to == format!("{MARKETPLACE:#x}") && sel(manaUsdAggregatorCall::SELECTOR) {
-                                format!("{:0>64}", hex::encode(c.aggregator))
-                            } else if to == format!("{MARKETPLACE:#x}") && sel(manaUsdAggregatorToleranceCall::SELECTOR) {
-                                word(U256::from(c.tolerance))
-                            } else if to == format!("{:#x}", c.aggregator) && sel(decimalsCall::SELECTOR) {
+                            let on_marketplace = to == format!("{MARKETPLACE:#x}");
+                            let on_feed = to == format!("{:#x}", c.aggregator)
+                                || to == format!("{OTHER_AGGREGATOR:#x}");
+                            let out = if on_marketplace && sel(manaUsdAggregatorCall::SELECTOR) {
+                                format!("{:0>64}", hex::encode(aggregator))
+                            } else if on_marketplace && sel(manaUsdAggregatorToleranceCall::SELECTOR) {
+                                word(c.tolerance)
+                            } else if on_feed && sel(decimalsCall::SELECTOR) {
                                 word(U256::from(c.decimals))
-                            } else if to == format!("{:#x}", c.aggregator) && sel(latestRoundDataCall::SELECTOR) {
+                            } else if on_feed && sel(latestRoundDataCall::SELECTOR) {
                                 format!(
                                     "{}{}{}{}{}",
                                     word(U256::from(1)),
@@ -332,7 +404,7 @@ mod tests {
                                     word(U256::from(1)),
                                 )
                             } else {
-                                return axum::Json(json!({ "jsonrpc": "2.0", "id": id, "error": { "code": 3, "message": "execution reverted" } }));
+                                return fail("execution reverted");
                             };
                             json!(format!("0x{out}"))
                         }
@@ -345,51 +417,149 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        (format!("http://{addr}/"), tags)
+        (format!("http://{addr}/"), blocks)
     }
 
-    async fn feed(c: Chain, max_age_secs: u64) -> (ChainFeed, Arc<Mutex<Vec<String>>>) {
-        let (url, tags) = serve(c).await;
+    async fn feed(c: Chain, max_age_secs: u64) -> (ChainFeed, Arc<Mutex<Vec<Value>>>) {
+        let (url, blocks) = serve(c).await;
         let component = Arc::new(ChainComponent::new(
             Outbound::for_tests(),
             &url,
             Duration::from_secs(30),
         ));
-        (ChainFeed::new(component, max_age_secs), tags)
+        (ChainFeed::new(component, max_age_secs), blocks)
     }
 
     #[tokio::test]
-    async fn the_read_comes_from_the_marketplace_feed_at_one_pinned_block() {
+    async fn the_read_comes_from_the_marketplace_feed_at_one_canonical_block_hash() {
         let now = chrono::Utc::now().timestamp();
-        let (f, tags) = feed(chain(now), 3_600).await;
+        let (f, blocks) = feed(chain(now), 3_600).await;
         let got = f.read(137, MARKETPLACE).await.unwrap();
         assert_eq!(got.aggregator, AGGREGATOR);
         assert_eq!(got.tolerance_secs, 3_600);
-        assert_eq!(got.block, 0x1234);
+        assert_eq!((got.block, got.block_hash), (0x1234, HASH_A));
         assert_eq!(
             got.rate,
             rate_18("0.45").unwrap(),
             "8 decimals normalized to 18"
         );
-        let tags = tags.lock().unwrap().clone();
-        assert_eq!(tags.len(), 4, "aggregator, tolerance, decimals, round");
+        let blocks = blocks.lock().unwrap().clone();
+        assert_eq!(blocks.len(), 4, "aggregator, tolerance, decimals, round");
+        let pinned = json!({ "blockHash": format!("{HASH_A:#x}"), "requireCanonical": true });
         assert!(
-            tags.iter().all(|t| t == "0x1234"),
-            "every call at the pinned block: {tags:?}"
+            blocks.iter().all(|b| *b == pinned),
+            "every call at the canonical hash: {blocks:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_reorg_between_the_calls_refuses_instead_of_mixing_two_blocks() {
+        let now = chrono::Utc::now().timestamp();
+        for after in 1..4 {
+            let (f, _) = feed(
+                Chain {
+                    reorg_after: Some(after),
+                    ..chain(now)
+                },
+                3_600,
+            )
+            .await;
+            let err = f.read(137, MARKETPLACE).await.unwrap_err();
+            assert!(
+                err.contains("not canonical"),
+                "reorg after {after} calls: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_without_block_hash_calls_is_refused() {
+        let now = chrono::Utc::now().timestamp();
+        let (f, blocks) = feed(
+            Chain {
+                eip1898: false,
+                ..chain(now)
+            },
+            3_600,
+        )
+        .await;
+        assert!(f.read(137, MARKETPLACE).await.is_err());
+        let blocks = blocks.lock().unwrap().clone();
+        assert!(
+            blocks.iter().all(Value::is_object),
+            "no fallback to a number or latest: {blocks:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn freshness_follows_the_marketplaces_check_and_the_local_limit() {
+        let now = chrono::Utc::now().timestamp();
+        let at = |tolerance: u64, updated_at: i64| Chain {
+            tolerance: U256::from(tolerance),
+            updated_at: updated_at as u64,
+            ..chain(now)
+        };
+        let cases: Vec<(&str, Chain, u64, bool)> = vec![
+            (
+                "tolerance 0, a round 30s old",
+                at(0, now - 30),
+                3_600,
+                false,
+            ),
+            (
+                "tolerance 0, a round of the block itself",
+                at(0, now),
+                3_600,
+                true,
+            ),
+            ("exactly at the tolerance", at(30, now - 30), 3_600, true),
+            (
+                "one second past the tolerance",
+                at(30, now - 31),
+                3_600,
+                false,
+            ),
+            (
+                "within the tolerance, past the local limit",
+                at(3_600, now - 30),
+                10,
+                false,
+            ),
+            (
+                "a tolerance above the block's timestamp",
+                Chain {
+                    tolerance: U256::from(now as u64 + 1),
+                    ..chain(now)
+                },
+                3_600,
+                false,
+            ),
+            (
+                "an unrepresentable tolerance",
+                Chain {
+                    tolerance: U256::MAX,
+                    ..chain(now)
+                },
+                3_600,
+                false,
+            ),
+        ];
+        for (what, c, max_age, ok) in cases {
+            let (f, _) = feed(c, max_age).await;
+            assert_eq!(f.read(137, MARKETPLACE).await.is_ok(), ok, "{what}");
+        }
     }
 
     #[tokio::test]
     async fn every_unusable_read_is_refused() {
         let now = chrono::Utc::now().timestamp();
-        let cases: Vec<(&str, Chain, u64)> = vec![
+        let cases: Vec<(&str, Chain)> = vec![
             (
                 "another chain",
                 Chain {
                     chain_id: 1,
                     ..chain(now)
                 },
-                3_600,
             ),
             (
                 "no aggregator",
@@ -397,7 +567,6 @@ mod tests {
                     aggregator: Address::ZERO,
                     ..chain(now)
                 },
-                3_600,
             ),
             (
                 "a zero answer",
@@ -405,7 +574,6 @@ mod tests {
                     answer: I256::ZERO,
                     ..chain(now)
                 },
-                3_600,
             ),
             (
                 "a negative answer",
@@ -413,7 +581,6 @@ mod tests {
                     answer: I256::try_from(-1i64).unwrap(),
                     ..chain(now)
                 },
-                3_600,
             ),
             (
                 "more than 18 decimals",
@@ -421,7 +588,6 @@ mod tests {
                     decimals: 19,
                     ..chain(now)
                 },
-                3_600,
             ),
             (
                 "a round after the block",
@@ -429,7 +595,6 @@ mod tests {
                     updated_at: (now + 5) as u64,
                     ..chain(now)
                 },
-                3_600,
             ),
             (
                 "a round from the future",
@@ -438,45 +603,15 @@ mod tests {
                     block_time: now + 600,
                     ..chain(now)
                 },
-                3_600,
-            ),
-            (
-                "older than the marketplace's tolerance",
-                Chain {
-                    tolerance: 20,
-                    ..chain(now)
-                },
-                3_600,
-            ),
-            ("older than the local limit", chain(now), 10),
-            (
-                "no tolerance and older than the local limit",
-                Chain {
-                    tolerance: 0,
-                    ..chain(now)
-                },
-                10,
             ),
         ];
-        for (what, c, max_age) in cases {
-            let (f, _) = feed(c, max_age).await;
+        for (what, c) in cases {
+            let (f, _) = feed(c, 3_600).await;
             assert!(
                 f.read(137, MARKETPLACE).await.is_err(),
                 "{what} must be refused"
             );
         }
-        let (f, _) = feed(
-            Chain {
-                tolerance: 0,
-                ..chain(now)
-            },
-            3_600,
-        )
-        .await;
-        assert!(
-            f.read(137, MARKETPLACE).await.is_ok(),
-            "no tolerance leaves the local limit"
-        );
     }
 
     #[tokio::test]

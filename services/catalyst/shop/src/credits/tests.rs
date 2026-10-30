@@ -2626,6 +2626,7 @@ impl super::feed::MarketplaceFeed for FakeFeed {
             tolerance_secs: 3_600,
             updated_at_s: chrono::Utc::now().timestamp(),
             block: 1,
+            block_hash: alloy_primitives::B256::ZERO,
         })
     }
 }
