@@ -116,9 +116,10 @@ The same package serves the multiplayer-server: the CLI passes `--orchestrated` 
 `resolveBinary()` for orchestrators that spawn the engine directly — replacing the
 Dockerfile's build-from-source stage with an `npm install`.
 
-Verified locally on darwin-arm64: both packages `npm pack`ed, installed into a clean
-project, and `./node_modules/.bin/bevy-headless-server --realm=http://localhost:8100`
-booted the scene as SERVER and exited 0.
+To validate a platform package, pack it and the launcher with `npm pack`, install both
+in a clean project, and run `./node_modules/.bin/bevy-headless-server --realm=<preview-url>`
+against a test scene. Verify the scene starts as SERVER and exits cleanly; record the
+platform, package versions, command and observed result in the task report.
 
 The SDK side is one file on the js-sdk-toolchain `auth-server` branch
 (`commands/start/hammurabi-server.ts`): a `DCL_SERVER_ENGINE=bevy|hammurabi` switch that

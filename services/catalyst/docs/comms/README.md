@@ -27,7 +27,7 @@ context explicitly; implementation alone never establishes acceptance.
    and transition dates, and records the user's verdict where required. Update
    public ownership guidance and ADRs when an accepted architectural choice changes.
 4. Report verified outcomes, unresolved decisions and checks not run. Keep working
-   reports in `.agent-work/`; commit them only when the user explicitly asks.
+   reports in root `.agent-work/`; commit them only when the user explicitly asks.
 
 ## Report schemas
 

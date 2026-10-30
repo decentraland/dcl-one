@@ -20,6 +20,9 @@ notifications read). Tier 2 proves the guest-reachable calls actually work end t
 
 ## Requirements
 
+These are reference procedures for an authorized workspace that supplies the omitted
+Playwright configs, specs and baselines. They cannot run from this public checkout alone.
+
 - **A real GPU.** The engine uses WebGPU + `SharedArrayBuffer`; it cannot run headless.
   Tests run headed (`headless: false`).
 - A local engine build in `../deploy/web` (the `pkg/` wasm).
@@ -27,13 +30,16 @@ notifications read). Tier 2 proves the guest-reachable calls actually work end t
 
 ## Run
 
+Run these commands only after the test workspace supplies `playwright.config.ts` and
+the engine specs. Check the supplied config at its pin for the server and URL settings below.
+
 ```bash
 # from react-web/
 npx playwright install chromium      # once
 npm run test:e2e
 ```
 
-`playwright.config.ts` starts both servers automatically (Vite dev on :5173 + the
+In that test workspace, the supplied `playwright.config.ts` must start both servers automatically (Vite dev on :5173 + the
 bridge scene on :8100, with `BRIDGE_SCENE_PREVIEW=0` so Vite doesn't also start its
 own) and reuses them if already running. To point at an already-running app, set
 `E2E_URL=http://localhost:5173`.
@@ -46,7 +52,7 @@ npm run test:e2e -- --list
 
 ## What it covers
 
-One test per domain, in `engine.spec.ts` (boots the world once, serial):
+Expected coverage for the optional `engine.spec.ts` (one world boot, serial tests):
 
 | Domain | Driven by | Asserts (bridge) |
 |---|---|---|
@@ -73,11 +79,11 @@ deterministically.
 
 ## Sibling tier 1.5 — visual regression (no engine)
 
-`visual.spec.ts` (separate config: `../playwright.visual.config.ts`) screenshots **every DOM
+When supplied, `visual.spec.ts` (separate config: `../playwright.visual.config.ts`) screenshots **every DOM
 domain** in mock mode (`?mock=1`) — headless, no GPU, deterministic — and diffs against committed
 baselines in `visual.spec.ts-snapshots/`. This is the fast "did the UI change?" gate; the engine
-suite here is the slow "does it round-trip?" gate. `playwright.config.ts` ignores `visual.spec.ts`,
-so `npm run test:e2e` only runs the engine tests.
+suite is the slow "does it round-trip?" gate. The supplied `playwright.config.ts` must exclude
+`visual.spec.ts` so `npm run test:e2e` selects only the engine tests. Neither config is in this checkout.
 
 ```bash
 npm run test:visual            # check
@@ -106,7 +112,7 @@ pointing at it (`e2e/gate.ts`).
 
 ## Editor gates (real engine, same config)
 
-Five specs drive the scene editor package inside this page with real clicks. They need a built
+The optional `editor.gate.spec.ts` drives the scene editor package with real clicks. It needs a built
 engine in `deploy/web/engine/pkg` (`make web` from repository-root `apps/bevy-explorer`),
 the TS bindings (`sh scripts/gen-ts-bindings.sh` from `rendering/bevy-explorer/source`), and a dcl-editor checkout whose package speaks host contract v1.1 or later (`mountHome`):
 
@@ -124,14 +130,14 @@ page at that no-slash entry with the bundled bridge scene (no `?bridgePort`), an
 `GATE_EDITOR_BASE=<url>/` is where the pinned package is served from (README "Releasing the
 editor"). The servers are then yours to start.
 
-Besides Vite and the bridge scene, the config starts two servers out of that checkout (Node 24,
-no build): its project storage service, over a directory that starts empty
+Besides Vite and the bridge scene, the supplied config starts the project storage service
+out of that checkout (Node 24, no build), over a directory that starts empty
 (`.vite/gate-projects-<service port>`). The page is
 pointed at the service with `?editor-projects=` (`e2e/gate.ts`).
 
 ### Running gates side by side
 
-Every port a gate run takes comes from `e2e/ports.ts`; all four must be free, and none is ever
+In the supplied gate suite, ports come from `e2e/ports.ts`; all three below must be free, and none is ever
 reused:
 
 | Variable | Default | Serves |

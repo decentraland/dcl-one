@@ -69,6 +69,8 @@ from being an allow. The scene promise still gets answered, with a denial.
 
 ## Reporting
 
-Do not file a public issue or open a PR that describes a security problem. Announce it on Slack
-and coordinate the fix out of sight. The fix lands under a neutral title with no reproduction in
-the description, and test fixtures should not read as exploits.
+Do not disclose a security problem in a public issue or PR. Use the private reporting
+channel in Decentraland's [published security policy](https://github.com/decentraland/governance/blob/master/SECURITY.md),
+including the affected revision, impact and reproduction details. Coordinate publication
+of the fix and any reproduction with the maintainers; keep private findings out of public
+PR descriptions until disclosure is agreed.

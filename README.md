@@ -30,10 +30,10 @@ approves merges. Start specialist sessions in `services/catalyst/`.
 | --- | --- | --- |
 | [Main session][roles] | Coordinate delivery | Plan, dispatch, combine reviews, record decisions, reconcile evidence |
 | [Implementer][roles] | Deliver a work package | Code and tests in a worktree; report architecture changes |
-| [`comms-architect`][arch] | Simple, coherent architecture | Validate designs; propose decisions |
-| [`comms-ci-engineer`][ci] | Trustworthy gates | Build checks; review installed gates; propose CI record updates in reports |
+| [`comms-architect`][arch] | Simple, coherent architecture | Validate pinned source and tracked designs; report proposed decisions |
+| [`comms-ci-engineer`][ci] | Trustworthy gates | Build checks; review installed gates; report proposed CI updates |
 | [Code reviewer][roles] | Correctness | Fresh-context PR review |
-| [`divergence-analyst`][div] | Compatibility | Compare with the existing stack per client version; propose conformance checks |
+| [`divergence-analyst`][div] | Compatibility | Compare pinned source per client version; report findings and proposed conformance checks |
 | [`comms-security-reviewer`][roles] | Exploitable comms behavior | Review identity, tokens, admission, bans, rate limits |
 
 [roles]: services/catalyst/docs/comms/implementation-pipeline.md#roles

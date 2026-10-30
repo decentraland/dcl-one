@@ -175,7 +175,8 @@ Run through this on every diff (it encodes `AGENTS.md`):
       changes ran the §4 checklist.
 - [ ] **Both projects typecheck** (`npm run typecheck` + `cd bridge-scene && npm run build`), and the
       bridge scene lints clean (`npm run lint` there).
-- [ ] **No secrets / `.env`** staged; commit follows `CLAUDE.md` (imperative, no AI attribution).
+- [ ] **No secrets / `.env` or working reports** staged; review the staged paths under the
+      repository-root `AGENTS.md` rules. Use an imperative commit subject without AI attribution.
 
 - [ ] **Input routing** — follows the §7 contracts (no hand-rolled Escape/hotkey handlers).
 - [ ] **No native popups** — no `<select>`, no `<input type="date|time|color">`, no

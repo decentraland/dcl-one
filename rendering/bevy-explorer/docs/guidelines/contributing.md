@@ -49,12 +49,12 @@ understand the change in one sitting.
   diff in an hour.
 - Screenshots before and after for rendering changes. There is no visual regression suite for
   the 3D side.
-- No test plan section, no narrative of the work.
+- Follow the repository PR template, including its test instructions and checks run; omit a chronological work narrative.
 
 ## Before pushing
 
 - Merge main first. CI tests the merge, not the branch.
-- `cargo fmt --all`, `cargo clippy --all -- -D warnings`, `cargo test --all`. Clippy warnings
+- `cargo fmt --all`, `cargo clippy --locked -- -D warnings`, `cargo test --all`. Clippy warnings
   are errors in CI.
 - The wasm build, only if the change has platform-sensitive code: `#[cfg]` branches,
   threading, atomics, blocking calls, timers, filesystem or network access, wasm-specific deps.

@@ -18,12 +18,18 @@ Role definitions: [`.claude/agents/`](../../.claude/agents/). Reporting workflow
 
 ## Stages
 
+This is the delivery process to apply to each work package. The CI role's tier names and
+budgets are proposed check-design targets, not evidence that those tiers are installed.
+Identify actual required checks from workflows and repository rules at the target revision.
+A proposed tier becomes a gate only after its checks and enforcement are configured; report
+unimplemented coverage separately instead of claiming that a nonexistent gate passed.
+
 1. **Design.** The main session updates the design doc; the architect and `divergence-analyst` run design-stage; the CI engineer plans `planned` checks. Gate: every decision the stage depends on is decided, no open `blocking` request, no open Critical divergence.
-2. **Work breakdown.** Each package names the components, channels and abstractions it touches; parallel packages share no component; a channel has its schema and fixtures before either side starts. A CI `build` run sets up the required tier first. Gate: no `blocking` request; the required tier is green on the default branch.
+2. **Work breakdown.** Each package names the components, channels and abstractions it touches; parallel packages share no component; a channel has its schema and fixtures before either side starts. A CI `build` run proposes and implements any missing checks needed for the package. Gate: no `blocking` request; the installed required checks selected for this package pass on the default branch. State any proposed tier or check that is not installed.
 3. **Implement.** One implementer per package. A reported deviation goes to an architect `design` run. Gate: the report lists the tests run, passing, and its `architecture` block.
 4. **Review.** In parallel, each in fresh context: code reviewer, architect (when a trigger below applies), CI `gate` run, `divergence-analyst`, and `comms-security-reviewer` when the diff touches identity, tokens, admission, bans, relayed messages, rate limits or subjects.
 5. **Fix loop.** The main session merges reports into one fix list; reviewers re-check at the new head. After 3 rounds, the user decides.
-6. **Merge.** The user merges when the merge gate holds; the merge queue re-runs the required tier.
+6. **Merge.** The user merges when the merge gate holds; if a merge queue is configured, its installed required checks run on the merge candidate.
 7. **Audit.** After every third merged package and before each release, the architect checks drift and complexity, the CI engineer tier times, flakes and advisories. Each finding becomes a change request, a doc edit or a `planned` check.
 8. **Release.** A CI `release` run (SBOM, signatures, image scan, migration safety, rollback); the user approves the rollout.
 
@@ -36,7 +42,7 @@ between crates or services. The main session checks the diff itself, not only th
 
 ## Merge gate
 
-- The CI verdict is `pass` for the head sha: every required check ran and passed, none the diff should trigger is missing, every flake is recorded.
+- The CI verdict is `pass` for the head sha: every installed required check selected by the diff ran and passed, none is missing and every flake is recorded. List proposed but unimplemented checks separately; their absence is a coverage gap, not proof of a regression in an installed gate.
 - No open `blocking` change request; every `should` request is `done` or `declined` with a reason.
 - Every decision the package relies on is `accepted`.
 - No open Critical or High divergence without the user's decision; every changed client-facing API is `compatible` for each caller and its conformance check passes.

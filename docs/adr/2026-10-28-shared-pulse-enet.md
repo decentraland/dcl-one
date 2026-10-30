@@ -2,7 +2,6 @@
 
 - Status: Accepted
 - Date: 2026-10-28
-- Related architecture decisions: decision-54, decision-56
 
 ## Context
 
@@ -62,9 +61,9 @@ complete pristine file set with `tooling/enet-provenance.py`, without checking
 out or executing fetched code. The wrapper retains local patched-byte/reverse
 replay checks and the unfiltered vendor runtime, preceded by locked
 all-features/all-targets compilation. The imported workflow does not establish
-additional CI coverage. Local public 41-file comparison and integrated vendor
-compilation are evidenced at the scopes recorded in the compatibility record;
-required final-head/default-branch enforcement and full native-client CI remain
-separate gates.
+additional CI coverage. Verify the public-source comparison and integrated vendor
+compilation at the target revision and include commands, pins and results in the task
+report. Required final-head/default-branch enforcement and full native-client CI need
+their own current evidence; this ADR does not claim those checks passed.
 
 Preserve the unassigned ownership entry for `library/vendor/rusty_enet/**`. Concrete maintenance ownership and required-review governance need a separate user decision; this ADR authorizes no CODEOWNERS or branch-protection change. Record that decision in the task report.

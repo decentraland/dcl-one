@@ -1,6 +1,6 @@
 # Crate distribution review: method
 
-Review what each crate owns, whether the split is adequate and what to change. Read the target revision and current architecture records before judging it. Return proposed per-area records using the fields below; the main session reconciles them under the [reporting workflow](../../comms/README.md). Working reports stay in root `.agent-work/`.
+Review what each crate owns, whether the split is adequate and what to change. Read the target revision and tracked architecture guidance before judging it; use prior review records only when supplied for the task. Return proposed per-area records using the fields below; the main session reconciles them under the [reporting workflow](../../comms/README.md). Working reports stay in root `.agent-work/`.
 
 - **Pin:** resolve the target revision before reading; never reuse a historical review's verdict without checking it.
 - **Paths:** relative to `services/catalyst/` unless explicitly repository-root paths.
@@ -35,7 +35,7 @@ From the root `AGENTS.md`, `README.md`, `DATABASE.md` and the comms decisions:
 
 ## What to judge
 
-Per module (roughly each directory or large file under `src/`): **job** (one line); **upstream** Decentraland service it replaces (from the current compatibility/readiness records and crate docs); **fit**; **proposed home** (`stays` or crate::module).
+Per module (roughly each directory or large file under `src/`): **job** (one line); **upstream** Decentraland service it replaces (identify it from pinned Decentraland source and the tracked crate docs; mark an unproved mapping unknown); **fit**; **proposed home** (`stays` or crate::module).
 
 Fit is one of: `Fits`; `Misplaced` (belongs to another area or crate); `Duplicated` (same job elsewhere); `Oversized` (several jobs to split inside the crate); `Retiring` (replaced by catalyst-comms or going away); `Thin` (too small for its own crate or module: merge); `Unclear` (overlapping or undocumented job).
 

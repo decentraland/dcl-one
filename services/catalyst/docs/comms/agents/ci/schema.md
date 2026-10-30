@@ -1,6 +1,6 @@
 # CI records: schema
 
-These fields describe CI reports and proposed record updates. The main session reconciles them per [the reporting workflow](../../README.md). Working reports stay in `.agent-work/`. Validate the field and status requirements before returning the report.
+These fields describe CI reports and proposed record updates. The main session reconciles them per [the reporting workflow](../../README.md). Working reports stay in root `.agent-work/`. Validate the field and status requirements before returning the report.
 
 **General rules**
 - Dates are `YYYY-MM-DD`. Text fields may carry `` `code` `` spans.

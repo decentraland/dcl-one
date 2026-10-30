@@ -313,8 +313,9 @@ native and web, with no flag; the headless build has none. The CSV writer
 - Which backends expose timestamp queries is in the [platform guide](platforms.md#gpu-timestamps).
 
 **Tests.** The unit tests cover the sample arithmetic, the slot ring and the publisher. Two test
-files need a GPU, so their tests are `#[ignore]`d and CI skips them: the platform GPU timestamp fixture (when supplied by the authorized test workspace)
-(an empty pass writes its timestamp) and the GPU frame-time fixture (when supplied by the authorized test workspace) (a known compute workload
+files under `crates/perf_output/tests/` need a GPU, so their tests are `#[ignore]`d and CI
+skips them: `gpu_timestamps.rs` (an empty pass writes its timestamp) and
+`gpu_frame_time.rs` (a known compute workload
 reads its own time, a 50 ms stall in the render world is not counted, and a device without
 timestamp queries logs its one line and registers nothing). Run them per backend, from
 `rendering/bevy-explorer/source`:
