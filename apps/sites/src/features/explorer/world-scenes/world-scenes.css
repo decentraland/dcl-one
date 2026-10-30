@@ -1,0 +1,8 @@
+.world-scenes { padding-top: 16px; border-top: 1px solid var(--fill-4); }
+.world-scenes h3 { margin: 0 0 12px; }
+.world-scenes ul { list-style: none; padding: 0; margin: 0; }
+.world-scenes li, .world-scenes nav { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 8px 0; }
+.world-scenes li > a:first-child { flex: 1; min-width: 140px; }
+.world-scenes a { color: inherit; }
+.world-scenes button { padding: 6px 12px; cursor: pointer; }
+.world-scenes :focus-visible { outline: 2px solid #ff2d55; outline-offset: 3px; }

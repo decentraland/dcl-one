@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { redirect } from "react-router";
+import { redirect, useNavigate } from "react-router";
 
 import type { PlaceViewer } from "@ui/data/catalyst/places";
 import PlaceDetail from "@ui/explorer/pages/PlaceDetail";
@@ -14,7 +14,9 @@ import { loadPlace } from "@/data/lib/catalyst/places/index.server";
 import { loadPlaceViewer, savePlaceFavorite, savePlaceLike } from "@/data/lib/catalyst/places/interactions";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { pageLoaderWith } from "@/core/lib/telemetry/page-loader";
-import JumpIn from "@/features/explorer/jump-in/JumpIn";
+import WorldScenes from "@/features/explorer/world-scenes/WorldScenes";
+import { sceneTravelHref } from "@/data/lib/catalyst/places/world-scenes";
+import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/places_.$id";
 
@@ -79,6 +81,7 @@ function usePlaceViewer(signer: AuthIdentity | null, placeId: string | undefined
 export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
   const { place, sid, unavailable } = loaderData;
   const { identity, isConnected } = useAuth();
+  const navigate = useNavigate();
   const signer = isConnected ? identity : null;
   const viewer = usePlaceViewer(signer, place?.id);
 
@@ -98,7 +101,7 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
   return (
     <main className="place-detail-route">
       <PlaceDetail
-        key={place?.id}
+        key={`${place?.id}:${signer?.signer ?? "guest"}`}
         place={
           place
             ? {
@@ -106,7 +109,7 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
                 title: place.title ?? "",
                 image: place.image ?? undefined,
                 creator: place.contact_name ?? place.owner ?? "Decentraland",
-                views: place.user_count ?? 0,
+                views: place.user_count ?? null,
                 approval: Math.round((place.like_rate ?? 0) * 100),
                 description: place.description ?? "",
                 coords: place.base_position ?? "",
@@ -123,28 +126,16 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
               }
             : undefined
         }
+        onClose={() => navigate("/places")}
+        jumpHref={place ? sceneTravelHref(place.world ? place.world_name : null, place.base_position) : undefined}
+        onJumpIn={() => { if (place) track("jump_in_started", { place_id: place.id }, { sid, story: "jump-in" }); }}
+        detailSlot={place?.world && place.world_name ? <WorldScenes worldName={place.world_name} selectedId={place.id} /> : undefined}
         notFound={!place}
         viewer={viewer}
         onLike={(id, like) => (signer ? savePlaceLike(signer, id, like) : signInFirst())}
         onFavorite={(id, favorite) => (signer ? savePlaceFavorite(signer, id, favorite) : signInFirst())}
       />
 
-      {place && (
-        <JumpIn
-          place={{
-            id: place.id,
-            title: place.title ?? "",
-            base_position: place.base_position,
-            world: place.world,
-            world_name: place.world_name,
-          }}
-          trackCtx={{
-            sid,
-            story: "jump-in",
-            variant: "base",
-          }}
-        />
-      )}
     </main>
   );
 }
