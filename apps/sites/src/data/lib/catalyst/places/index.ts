@@ -13,7 +13,7 @@ export type PlaceCardProps = {
   id: string;
   title: string;
   image?: string;
-  players: number;
+  players: number | null;
   rating: number;
   coords: string;
   live: boolean;
@@ -27,9 +27,9 @@ export function mapPlace(p: Place): PlaceCardProps {
     id: p.id,
     title: p.title ?? "",
     image: p.image ?? undefined,
-    players,
+    players: p.user_count,
     rating: Math.round((p.like_rate ?? 0) * 100),
-    coords: p.base_position,
+    coords: p.world ? p.world_name ?? "" : p.base_position,
     live: players > 0,
     featured: p.highlighted,
     creator: p.contact_name ?? p.owner ?? "",

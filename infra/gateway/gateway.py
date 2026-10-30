@@ -133,7 +133,10 @@ def render(table, cfg, mime):
     for path in ("/admin", "/server"):
         locations += pair(path, "sites" if path in prefixes else "apis", True)
     for row in table["node"]:
-        locations += pair(row["path"], "apis", True)
+        # The query-based places social cards own only their exact endpoints;
+        # /places/place/<position> and /places/world/<name> are Sites pages.
+        locations += (location("= " + row["path"], proxy("apis"))
+                      if row.get("exact") else pair(row["path"], "apis", True))
     for row in table["aliases"]:
         rewrite = row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")
         # These aliases belong to APIs. Re-selecting a location after the

@@ -1,12 +1,23 @@
 .pl { min-height: 100%; padding: var(--ui-page-pad); display: flex; flex-direction: column; }
+.pl__head { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-bottom: 24px; }
+.pl__title { margin: 0; font-size: 32px; font-weight: 700; }
+.pl__pill { appearance: none; border: 1px solid var(--ui-border-strong); border-radius: 999px; background: var(--ui-panel); color: var(--ui-text); padding: 8px 14px; font: inherit; font-size: 13px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+.pl__pill:hover { background: var(--ui-hover); }
+.pl__pill.is-active { background: #ff2d55; border-color: #ff2d55; color: #fff; }
+.pl__pill:focus-visible { outline: 2px solid var(--ui-text); outline-offset: 3px; }
+.pl__pill:disabled { opacity: .5; cursor: default; }
 .pl__sections, .pl__cats { display: flex; align-items: center; gap: 6px; }
 .pl__cats { min-width: 0; overflow-x: auto; scrollbar-width: thin; }
 /* The section tabs never shrink or scroll: when the header runs out of room the
    search and sort wrap under them (the header is a wrapping flex row). */
-.pl__sections { flex: 0 0 auto; }
+.pl__sections { flex: 0 0 auto; margin-bottom: 16px; }
+.pl__destinationlink { display: block; color: inherit; text-decoration: none; }
+.pl__destinationlink:focus-visible { outline: 2px solid var(--ui-text); outline-offset: 3px; border-radius: var(--ui-radius); }
+.pl__loadmore { display: flex; justify-content: center; padding: 24px 0; }
+.pl__empty { color: var(--ui-muted); padding: 8px 0; }
 .pl__actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-left: auto; }
 .pl__search { width: clamp(180px, 18vw, 260px); }
-.pl__search .search { width: 100%; }
+.pl__search .search { width: 100%; box-sizing: border-box; }
 .pl__sort { width: 160px; }
 .pl__cats { padding-bottom: 20px; }
 .pl__pillicon { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; }

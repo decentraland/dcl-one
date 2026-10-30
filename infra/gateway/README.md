@@ -2,6 +2,8 @@
 
 Nginx public entry for APIs and Sites (routing source).
 
+The exact `/places/place?position=...` and `/places/world?name=...` endpoints stay backend social cards; `/places/place/<position>`, `/places/world/<name>` and their `.data` requests go to Sites, and the JSON catalogue stays under `/places/api`.
+
 ```sh
 nix build .#image-gateway --out-link .cache/gateway-image
 docker load --input .cache/gateway-image
