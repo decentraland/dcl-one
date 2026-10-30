@@ -1,6 +1,7 @@
 import { z } from "zod";
 
-import { getJSON } from "../client";
+import { getJSON, postJSON } from "../client";
+import type { AuthIdentity } from "../../auth/types";
 import type { GetOptions } from "../client";
 import { apiOkOf, okDataTotalOf } from "../envelope";
 import { ScheduleRecordSchema } from "../generated-schemas/events";
@@ -181,6 +182,22 @@ const SubmitResultSchema = z.object({
 });
 export type SubmitResult = z.infer<typeof SubmitResultSchema>;
 
+export function buildScheduleSubmit(identitySource: () => AuthIdentity | null): SubmitFn {
+  return async ({ draft, scheduleId, signal }) => {
+    const identity = identitySource();
+    if (!identity) throw new Error("Sign in to manage schedules.");
+    if (!isStepValid("basics", draft) || !isStepValid("dates", draft)) throw new Error("Complete the schedule name and dates before saving.");
+    const body = {
+      name: draft.name.trim(), description: draft.description.trim() || null, image: draft.imageUrl.trim() || null,
+      theme: draft.theme || null, background: draft.background.filter((color) => color.trim()), active: draft.active,
+      active_since: `${draft.activeSinceDate}T00:00:00.000Z`, active_until: `${draft.activeUntilDate}T23:59:59.000Z`,
+    };
+    const path = scheduleId ? `/events/api/schedules/${encodeURIComponent(scheduleId)}` : "/events/api/schedules";
+    const raw = await postJSON(path, body, { identity, method: scheduleId ? "PATCH" : "POST", signal });
+    return apiOkOf(SubmitResultSchema).parse(raw).data;
+  };
+}
+
 export async function simulateSubmitSchedule(
   draft: ScheduleDraft,
   opts: { scheduleId?: string; signal?: AbortSignal; delayMs?: number } = {},
@@ -214,3 +231,9 @@ type Assert<T extends true> = T;
 
 export type _DriftSchedule = Assert<AssignableTo<RsSchedule, Schedule>>;
 
+
+export type SubmitFn = (args: {
+  draft: ScheduleDraft;
+  scheduleId?: string;
+  signal?: AbortSignal;
+}) => Promise<SubmitResult>;

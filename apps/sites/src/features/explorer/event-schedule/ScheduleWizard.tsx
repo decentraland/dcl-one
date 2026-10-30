@@ -46,6 +46,8 @@ type ScheduleWizardProps = {
   initialStep?: string;
   submit?: SubmitFn;
   track?: TrackFn;
+  signedIn?: boolean;
+  onSignIn?: () => void;
 };
 
 export default function ScheduleWizard({
@@ -60,6 +62,8 @@ export default function ScheduleWizard({
   initialStep,
   submit,
   track,
+  signedIn = false,
+  onSignIn,
 }: ScheduleWizardProps) {
   const [searchParams] = useSearchParams();
 
@@ -68,7 +72,6 @@ export default function ScheduleWizard({
 
   return (
     <ScheduleWizardInner
-      key={stateId}
       stateId={stateId}
       trackCtx={trackCtx}
       schedules={schedules}
@@ -80,6 +83,8 @@ export default function ScheduleWizard({
       draft={draft}
       submit={submit}
       track={track}
+      signedIn={signedIn}
+      onSignIn={onSignIn}
     />
   );
 }
@@ -96,6 +101,8 @@ type InnerProps = {
   draft?: ScheduleDraft;
   submit?: SubmitFn;
   track?: TrackFn;
+  signedIn: boolean;
+  onSignIn?: () => void;
 };
 
 function ScheduleWizardInner({
@@ -110,6 +117,8 @@ function ScheduleWizardInner({
   draft,
   submit,
   track,
+  signedIn,
+  onSignIn,
 }: InnerProps) {
   const [, setSearchParams] = useSearchParams();
 
@@ -126,6 +135,10 @@ function ScheduleWizardInner({
   const step = stateToSlug(value);
   const d = state.context.draft;
   const emitTrack: TrackFn = track ?? state.context.track;
+  const needsSignIn = Boolean(onSignIn) && !signedIn;
+  useEffect(() => {
+    if (signedIn && state.matches("authGate")) send({ type: "SIGN_IN" });
+  }, [signedIn, state, send]);
 
   const lastStep = useRef<string | null>(null);
   useEffect(() => {
@@ -144,7 +157,7 @@ function ScheduleWizardInner({
 
   useListView(emitTrack, state.context.trackCtx, schedules.length, source);
 
-  const isForm = value === "basics" || value === "dates" || value === "review";
+  const isForm = !needsSignIn && (value === "basics" || value === "dates" || value === "review");
   const formStepIndex = FORM_ORDER.indexOf(value);
   const canAdvanceForm = isStepValid(value, d);
 
@@ -221,18 +234,18 @@ function ScheduleWizardInner({
       />
 
       <div className="event-schedule__controls" role="group" aria-label="Schedule wizard">
-        {value === "authGate" && (
+        {(value === "authGate" || needsSignIn) && (
           <>
             <p className="event-schedule__hint">
-              Creating a schedule requires moderator access. Admin auth is simulated here.
+              Sign in to manage schedules. Moderator access is required.
             </p>
             <div className="event-schedule__nav">
               <button
                 type="button"
                 className="event-schedule__btn event-schedule__btn--primary"
-                onClick={() => send({ type: "SIGN_IN" })}
+                onClick={() => onSignIn ? onSignIn() : send({ type: "SIGN_IN" })}
               >
-                Continue as moderator (simulated)
+                Sign in to continue
               </button>
             </div>
           </>
@@ -278,13 +291,13 @@ function ScheduleWizardInner({
 
         {value === "submitting" && (
           <p className="event-schedule__status" role="status">
-            {scheduleId ? "Saving schedule" : "Creating schedule"}&#x2026; (simulated moderator commit)
+            {scheduleId ? "Saving schedule" : "Creating schedule"}&#x2026;
           </p>
         )}
 
         {value === "created" && (
           <p className="event-schedule__status" role="status">
-            Schedule {scheduleId ? "saved" : "created"} (simulated). Id:{" "}
+            Schedule {scheduleId ? "saved" : "created"}. Id:{" "}
             {state.context.result?.id ?? "\u{2014}"}
           </p>
         )}
@@ -362,6 +375,10 @@ function StepFields({
             value={draft.description}
             onChange={(e) => onEdit({ description: e.target.value })}
           />
+        </label>
+        <label className="event-schedule__fieldlabel">
+          Cover image URL
+          <input className="event-schedule__field" type="url" value={draft.imageUrl} onChange={(event) => onEdit({ imageUrl: event.target.value })} />
         </label>
         <label className="event-schedule__fieldlabel">
           Theme

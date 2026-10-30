@@ -9,14 +9,12 @@ import {
   simulateSubmitHangout,
   type HangoutDraft,
   type SubmitResult,
+  type SubmitFn,
 } from "@/data/lib/catalyst/landings/submit-hangout";
 
 export type { TrackFn };
 
-export type SubmitFn = (args: {
-  draft: HangoutDraft;
-  signal?: AbortSignal;
-}) => Promise<SubmitResult>;
+export type { SubmitFn } from "@/data/lib/catalyst/landings/submit-hangout";
 
 type HangoutInput = {
   trackCtx: TrackContext;
@@ -132,7 +130,7 @@ export const hangoutMachine = setup({
     trackSubmitted: ({ context }) =>
       context.track(
         HANGOUT_EVENTS.submitted,
-        { event_id: context.result?.id, approved: context.result?.approved, stub: true },
+        { event_id: context.result?.id, approved: context.result?.approved, stub: context.submit === simulateSubmit },
         context.trackCtx,
       ),
   },

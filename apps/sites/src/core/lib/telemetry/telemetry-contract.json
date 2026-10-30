@@ -2839,7 +2839,7 @@
           "optional": true
         },
         "stub": {
-          "kind": "unknown",
+          "kind": "boolean",
           "optional": false
         }
       }
@@ -3093,7 +3093,7 @@
           "optional": true
         },
         "stub": {
-          "kind": "unknown",
+          "kind": "boolean",
           "optional": false
         }
       }
