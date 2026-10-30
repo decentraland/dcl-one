@@ -1,0 +1,14 @@
+.event-management { max-width: 1180px; margin: 0 auto; padding: 24px; }
+.event-management__nav, .event-management__pager { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 20px 0; }
+.event-management__nav a, .event-management li a { color: inherit; text-decoration: underline; }
+.event-management label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.event-management input, .event-management textarea { padding: 8px; border: 1px solid #888; border-radius: 6px; font: inherit; }
+.event-management button { padding: 8px 16px; border: 1px solid #888; border-radius: 999px; margin: 4px; cursor: pointer; font: inherit; }
+.event-management button:disabled { opacity: .5; cursor: default; }
+.event-management ul { list-style: none; padding: 0; }
+.event-management li { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 16px; border-bottom: 1px solid #888; padding: 20px 0; overflow-wrap: anywhere; }
+.event-management li img { object-fit: cover; border-radius: 8px; }
+.event-management li > div { flex: 1; min-width: min(300px, 100%); }
+.event-management li a { display: inline-block; margin: 8px 16px 8px 0; }
+.event-management__editor { border: 1px solid #888; border-radius: 12px; padding: 20px; margin-top: 24px; }
+.event-management :focus-visible, .event-management__nav :focus-visible { outline: 2px solid #ff2d55; outline-offset: 3px; }

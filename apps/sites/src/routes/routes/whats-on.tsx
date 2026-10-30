@@ -17,6 +17,7 @@ import {
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
+import EventManagement, { EventDiscoveryNavigation } from "@/features/explorer/event-management/EventManagement";
 
 import type { Route } from "./+types/whats-on";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
@@ -107,6 +108,8 @@ export async function loader({ request }: Route.LoaderArgs) {
 
 export default function WhatsOn({ loaderData }: Route.ComponentProps) {
   const d = loaderData;
+  const [searchParams] = useSearchParams();
+  if (searchParams.get("tab") === "my") return <EventManagement mode="mine" />;
 
   return (
     <WhatsOnFeed
@@ -173,6 +176,7 @@ function WhatsOnFeed({
 
   return (
     <LdWhatsOnPage
+      navigationSlot={<EventDiscoveryNavigation />}
       liveNow={liveCards}
       upcoming={upcomingCards}
       allDays={allDays}

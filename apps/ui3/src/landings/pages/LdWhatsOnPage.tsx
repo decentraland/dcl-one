@@ -28,6 +28,7 @@ type LdWhatsOnPageProps = {
     e: MouseEvent<HTMLAnchorElement>,
   ) => void;
   promoSlot?: ReactNode;
+  navigationSlot?: ReactNode;
 };
 
 export default function LdWhatsOnPage({
@@ -41,6 +42,7 @@ export default function LdWhatsOnPage({
   eventLinks = [],
   onEventLinkClick = undefined,
   promoSlot = undefined,
+  navigationSlot = undefined,
 }: LdWhatsOnPageProps) {
   return (
     <div className="whatson-route">
@@ -50,6 +52,8 @@ export default function LdWhatsOnPage({
         allDays={allDays}
         dayLabels={dayLabels}
         filterBar={
+          <>
+          {navigationSlot}
           <div className="whatson-route__cats" role="tablist" aria-label="Event filters">
             {filters.map((f) => (
               <CategoryPill
@@ -60,6 +64,7 @@ export default function LdWhatsOnPage({
               />
             ))}
           </div>
+          </>
         }
       />
 
