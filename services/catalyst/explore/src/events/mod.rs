@@ -189,6 +189,7 @@ pub struct EventListFilters {
     pub highlighted: Option<bool>,
     pub creator: Option<String>,
     pub world: Option<bool>,
+    pub recurrent: Option<bool>,
     pub world_names: Vec<String>,
     pub positions: Vec<(i32, i32)>,
     pub estate_id: Option<String>,
@@ -349,6 +350,11 @@ impl EventsComponent {
         match f.world {
             Some(true) => sql.push_str(" AND COALESCE((raw->>'world')::boolean, false) IS TRUE"),
             Some(false) => sql.push_str(" AND COALESCE((raw->>'world')::boolean, false) IS FALSE"),
+            None => {}
+        }
+        match f.recurrent {
+            Some(true) => sql.push_str(" AND recurrent IS TRUE"),
+            Some(false) => sql.push_str(" AND recurrent IS FALSE"),
             None => {}
         }
         if !f.world_names.is_empty() {

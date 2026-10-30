@@ -99,6 +99,21 @@
             }
           },
           {
+            "name": "recurrent",
+            "in": "query",
+            "required": false,
+            "description": "Filter recurring or one-off events before pagination.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "1",
+                "0"
+              ]
+            }
+          },
+          {
             "name": "world_names",
             "in": "query",
             "required": false,
@@ -490,6 +505,21 @@
             "required": false,
             "schema": {
               "type": "string"
+            }
+          },
+          {
+            "name": "recurrent",
+            "in": "query",
+            "required": false,
+            "description": "Filter recurring or one-off events before pagination.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "1",
+                "0"
+              ]
             }
           }
         ],
@@ -2004,6 +2034,21 @@
             }
           },
           {
+            "name": "recurrent",
+            "in": "query",
+            "required": false,
+            "description": "Filter recurring or one-off events before pagination.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "true",
+                "false",
+                "1",
+                "0"
+              ]
+            }
+          },
+          {
             "name": "world_names",
             "in": "query",
             "required": false,
@@ -3342,13 +3387,15 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Native uploaded poster URL returned by POST /api/poster; configured same-origin URLs normalize to local paths. Unchanged server-provided images remain valid when editing."
           },
           "image_vertical": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Native uploaded poster URL returned by POST /api/poster-vertical; configured same-origin URLs normalize to local paths. Unchanged server-provided images remain valid when editing."
           },
           "name": {
             "type": "string"
@@ -3902,6 +3949,14 @@
           "y": {
             "type": "integer",
             "format": "int32"
+          },
+          "contact": {
+            "type": "string",
+            "description": "Private organizer field, present only for the authenticated event owner."
+          },
+          "details": {
+            "type": "string",
+            "description": "Private organizer field, present only for the authenticated event owner."
           }
         }
       },
@@ -4158,13 +4213,15 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Native uploaded poster URL returned by POST /api/poster; configured same-origin URLs normalize to local paths. Unchanged server-provided images remain valid when editing."
           },
           "image_vertical": {
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Native uploaded poster URL returned by POST /api/poster-vertical; configured same-origin URLs normalize to local paths. Unchanged server-provided images remain valid when editing."
           },
           "name": {
             "type": [

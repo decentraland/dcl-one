@@ -892,7 +892,13 @@ pub fn sanitize_asset_url(url: &str) -> Result<String, String> {
     if trimmed.chars().count() > MAX_EVENT_URL_LEN {
         return Err("image must be at most 2048 characters".into());
     }
-    if let Some(hash) = trimmed.strip_prefix("/poster/") {
+    if trimmed == "/assets/event-default.webp" {
+        return Ok(trimmed.to_owned());
+    }
+    if let Some(hash) = ["/poster/", "/poster-vertical/", "/content/contents/"]
+        .iter()
+        .find_map(|prefix| trimmed.strip_prefix(prefix))
+    {
         if !hash.is_empty()
             && hash
                 .bytes()

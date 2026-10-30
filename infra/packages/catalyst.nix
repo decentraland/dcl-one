@@ -13,6 +13,8 @@ let
       (backend + /Cargo.lock)
       (backend + /src)
       (root + /schemas)
+      # Embedded by the events fallback-image route.
+      (root + /apps/ui3/public/assets/event-default.webp)
       (root + /apps/dcl-scene-cli/Cargo.toml)
       (root + /apps/dcl-scene-cli/src/main.rs)
       (root + /library)

@@ -13,12 +13,98 @@ use bytes::Bytes;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::SharedState;
 use crate::shared::errors::ApiError;
+use crate::{Settings, SharedState};
 
 pub const MAX_POSTER_BYTES: usize = 500 * 1024;
+pub const DEFAULT_EVENT_IMAGE: &str = "/assets/event-default.webp";
 const POSTER_FILE_TYPES: [&str; 4] = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const POSTER_VERTICAL_FILE_TYPES: [&str; 3] = ["image/jpeg", "image/png", "image/webp"];
+
+/// Absolute upload links must name a configured deployment origin; stored
+/// URLs use the canonical local path so content is always served here.
+pub(super) fn normalize_image_input(image: &str, settings: &Settings) -> Result<String, ApiError> {
+    let image = image.trim();
+    let path = if image.starts_with('/') && !image.starts_with("//") {
+        image.to_owned()
+    } else {
+        let url = url::Url::parse(image)
+            .map_err(|_| ApiError::bad_request("Upload the image through the poster endpoint"))?;
+        let own_origin = [&settings.events_base_url, &settings.content_public_url]
+            .iter()
+            .any(|base| url::Url::parse(base).is_ok_and(|base| base.origin() == url.origin()));
+        if !own_origin
+            || !matches!(url.scheme(), "http" | "https")
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err(ApiError::bad_request(
+                "Image must come from this deployment's poster upload endpoint",
+            ));
+        }
+        url.path().to_owned()
+    };
+    if path == DEFAULT_EVENT_IMAGE || poster_key(&path).is_some() {
+        Ok(path)
+    } else {
+        Err(ApiError::bad_request(
+            "Upload the image through the poster endpoint",
+        ))
+    }
+}
+
+fn poster_key(image: &str) -> Option<(&'static str, &str)> {
+    for kind in ["poster", "poster-vertical"] {
+        if let Some(file) = image.strip_prefix(&format!("/{kind}/")) {
+            return crate::api::posters::valid_file(file).then_some((kind, file));
+        }
+    }
+    None
+}
+
+/// Uploads enter this index only after their bytes land in the blob store.
+pub(super) async fn validate_upload<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    image: &str,
+) -> Result<(), ApiError> {
+    if image == DEFAULT_EVENT_IMAGE {
+        return Ok(());
+    }
+    let (kind, file) = poster_key(image)
+        .ok_or_else(|| ApiError::bad_request("Upload the image through the poster endpoint"))?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM explore.poster WHERE kind=$1 AND file=$2 AND origin='local')",
+    )
+    .bind(kind)
+    .bind(file)
+    .fetch_one(executor)
+    .await?;
+    if !exists {
+        return Err(ApiError::bad_request("Poster upload not found"));
+    }
+    Ok(())
+}
+
+/// Bundled first-party fallback, independent of the optional upstream mirror.
+/// Source: events@770e43f8baaf47844bf4ff5768e5493a380508bc,
+/// public/images/event-default.jpg (its encoded format is WebP).
+pub async fn default_image() -> axum::response::Response {
+    use axum::response::IntoResponse;
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "image/webp"),
+            (axum::http::header::CACHE_CONTROL, "public, max-age=86400"),
+        ],
+        include_bytes!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/apps/ui3/public/assets/event-default.webp"
+        ))
+        .as_slice(),
+    )
+        .into_response()
+}
 
 fn extension(mime: &str) -> &'static str {
     match mime {
