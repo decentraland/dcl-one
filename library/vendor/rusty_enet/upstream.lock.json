@@ -11,7 +11,7 @@
   "normalization": "Exact upstream and patched file bytes. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted repository-relative paths. No Git metadata or Cargo cache marker is imported.",
   "manifests": {
     "upstream-files.sha256": "7bce19bf15feb754a84a36ffd7e17f1d2a540cda764a2f7179b69021c3394fca",
-    "checksums.sha256": "218049fad236d75292ce6bab6bae5bc1808f8dcc542b1afcf3540e25cb4d1fef"
+    "checksums.sha256": "744f5eff4e0bfa81946cb527a7b617d9f37e85e29f47da4963ae2682e8a8fcc4"
   },
   "patches": [
     {
@@ -50,6 +50,14 @@
         "Preserve queued Connect and Disconnect lifecycle dispatch after nonterminal aggregate receive reports",
         "Retain existing terminal payload handling, receive policy and queue accounting",
         "Exercise same-pass disconnect, lifecycle staging, timeout and native peer-slot reuse"
+      ]
+    },
+    {
+      "path": "patches/0005-deterministic-oversized-receive-test.patch",
+      "sha256": "42c26625c9703107c428a12e36050980a4e1530df01b7a65891034c85fb5bf3e",
+      "changes": [
+        "Inject the oversized fragment through the existing receive-parser fixture to avoid a nonblocking UDP delivery race",
+        "Preserve packet-size event, zero-allocation and queued-byte assertions"
       ]
     }
   ],
