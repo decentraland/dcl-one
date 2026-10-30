@@ -72,9 +72,9 @@ Export the component and its public prop types from `library/ui/index.ts`.
 The mapping is used by the Figma tooling and is not imported by browser code.
 The template is not a production component. Replace the Figma mapping
 placeholder with the actual component's node and properties when its tooling
-contract is established. The sample test is a smoke test; configure test globals,
-React Testing Library, jest-dom matchers and CSS Module handling, and add the
-component-specific interaction and accessibility tests before use.
+contract is established. The sample test is a smoke test; configure React
+Testing Library, jest-dom matchers and CSS Module handling for the package, and
+add the component-specific interaction and accessibility tests before use.
 
 ### Design tokens
 
@@ -120,7 +120,9 @@ progress, position or a computed size. Pass them as a narrowly scoped custom
 property and let the module consume it; fixed appearance stays in the module.
 
 ```tsx
-<div className={styles.track} style={{ '--progress': `${pct}%` } as React.CSSProperties} />
+import type { CSSProperties } from 'react'
+
+<div className={styles.track} style={{ '--progress': `${pct}%` } as CSSProperties} />
 ```
 
 Shared components expose runtime geometry through typed props mapped to custom
@@ -174,9 +176,12 @@ migration. Do not rewrite unrelated components or tokens in the same change.
   portals and server-rendered layouts where applicable.
 - Compare visual behavior before and after a change; unit tests alone do not
   prove visual parity.
-- `make check` and CI run `tooling/ui_standards.py`, which flags new CSS-in-JS
-  imports and new plain stylesheets next to components in changed files. It is
-  a best-effort check: a pass does not prove the change follows this standard.
+- `make check` and CI run `tooling/ui_standards.py` on changed files. It flags
+  new CSS-in-JS imports, and a new plain `.css` file with the same name as a
+  component next to it (entry stylesheets such as `App.css` and moved existing
+  stylesheets are not flagged). It skips the scene SDK toolchain's
+  `apps/dcl-scene-cli/scripts/`, `src/templates/` and `testdata/`. It is a
+  best-effort check: a pass does not prove the change follows this standard.
 - Report checks that could not run or failed. Documentation-only changes need
   link, structure and content checks, not an application build.
 
@@ -185,6 +190,11 @@ migration. Do not rewrite unrelated components or tokens in the same change.
 App-specific UI is used by one app only: its pages, layouts, app chrome and
 feature components. It lives in that app, next to the feature that uses it,
 and not in `library/ui`.
+
+Until `library/ui` exists, Sites already imports `apps/ui3` source through
+the `@ui/*` alias (`apps/sites/tsconfig.json`), so an `apps/ui3` component
+that Sites imports is used by more than one app. Verify a change to it in every
+app that imports it.
 
 - Follow the same CSS Modules, accessibility, migration and verification rules
   as shared UI.
