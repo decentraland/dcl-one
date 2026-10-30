@@ -9,15 +9,38 @@ export interface Console {
   close(): Promise<void>
 }
 
+/** The credential a line carries: `/login_identity`'s payload, an AuthIdentity (an ephemeral
+ *  private key and a signed delegation that stays valid for days). */
+export function secretOf(line: string): string | undefined {
+  return /^\s*\/?login_identity\s+(\S+)/.exec(line)?.[1]
+}
+
+/** `text` with the line's credential replaced wherever it appears: a reply, an error or a timeout
+ *  may quote the line. */
+export function redact(line: string, text: string): string {
+  const secret = secretOf(line)
+  return secret === undefined ? text : text.split(secret).join('<redacted>')
+}
+
+/** The line as it may be logged. */
+export function redactLine(line: string): string {
+  return redact(line, line)
+}
+
+/** A command the client answered `Err`. The line and the output are kept redacted: this error
+ *  reaches the test runner's output, the JUnit report, the scenario's command log and the PR's
+ *  status comment. */
 export class ConsoleError extends Error {
   readonly line: string
   readonly output: string
 
   constructor(line: string, output: string) {
-    super(`\`${line}\` failed: ${output}`)
+    const safeLine = redactLine(line)
+    const safeOutput = redact(line, output)
+    super(`\`${safeLine}\` failed: ${safeOutput}`)
     this.name = 'ConsoleError'
-    this.line = line
-    this.output = output
+    this.line = safeLine
+    this.output = safeOutput
   }
 }
 

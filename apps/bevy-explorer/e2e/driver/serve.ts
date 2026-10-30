@@ -5,6 +5,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { stat } from 'node:fs/promises'
 import { createReadStream } from 'node:fs'
 import path from 'node:path'
+import { pipeline } from 'node:stream'
 
 export const WEB_APP_HEADERS: Record<string, string> = {
   'cross-origin-opener-policy': 'same-origin',
@@ -93,7 +94,9 @@ async function serveFile(root: string, request: IncomingMessage, response: Serve
     response.end()
     return
   }
-  createReadStream(file).pipe(response)
+  // A read that fails (the file gone since the stat, unreadable) or a client that goes away ends
+  // both streams, where `pipe` would leave the descriptor open and the error uncaught.
+  pipeline(createReadStream(file), response, () => {})
 }
 
 /** Serve `root` on `http://127.0.0.1:<port>/` (port 0 picks a free one). */

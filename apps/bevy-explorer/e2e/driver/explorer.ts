@@ -1,7 +1,7 @@
 // The typed API specs use. Every method is one console command (or a command and the wait that
 // makes its effect observable), with the reply parsed as rendering/bevy-explorer/docs/guidelines/
 // running.md ("Test commands") describes it. Specs never see which transport carries the line.
-import { type Console, ConsoleError } from './console.ts'
+import { type Console, ConsoleError, redact, redactLine } from './console.ts'
 import { type AuthIdentity, encodeIdentity } from './identity.ts'
 import { type Selector, describeSelector, selectorArg, toSelectorObject } from './selectors.ts'
 import { until } from './wait.ts'
@@ -147,10 +147,13 @@ export type MouseButton = 'left' | 'right' | 'middle'
 const DEFAULT_HUD_TIMEOUT_MS = 10_000
 const DEFAULT_ARRIVAL_TIMEOUT_MS = 180_000
 
-/** The line as it may be logged: a `/login_identity` payload is a credential. */
-export function redactLine(line: string): string {
-  const match = /^(\/login_identity)\s+\S+(.*)$/.exec(line)
-  return match ? `${match[1]} <redacted>${match[2]}` : line
+/** The error as it may be rethrown: a transport's own error (a timeout, a closed driver) can
+ *  quote the line, and the test runner prints the message and the stack. */
+function scrubbed(line: string, error: unknown): unknown {
+  if (!(error instanceof Error)) return error
+  error.message = redact(line, error.message)
+  if (error.stack !== undefined) error.stack = redact(line, error.stack)
+  return error
 }
 
 export class Explorer {
@@ -182,8 +185,9 @@ export class Explorer {
       return reply
     } catch (error) {
       record.ms = Date.now() - startedAt
-      record.error = error instanceof Error ? error.message : String(error)
-      throw error
+      const safe = scrubbed(line, error)
+      record.error = redact(line, safe instanceof Error ? safe.message : String(safe))
+      throw safe
     } finally {
       for (const listener of this.#listeners) listener(record)
     }

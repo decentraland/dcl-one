@@ -47,6 +47,8 @@ class ResolveTests(unittest.TestCase):
             f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?branch=main': self.main_runs,
             f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?head_sha={SHA_OLD}': {'workflow_runs': [run(10, SHA_OLD, 'push')]},
             f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?head_sha={SHA_PR}': {'workflow_runs': []},
+            f'repos/{REPO}/pulls/194/files': [{'filename': 'services/catalyst/src/main.rs'}, {'filename': 'apps/bevy-explorer/e2e/specs/chat.test.ts'}],
+            f'repos/{REPO}/pulls/195/files': [{'filename': 'services/catalyst/src/main.rs'}, {'filename': 'apps/sites/package.json'}],
         })
         inputs.bench.api = self.api
 
@@ -63,13 +65,30 @@ class ResolveTests(unittest.TestCase):
         self.assertEqual(result['web_run_id'], '30')
         self.assertEqual(result['pr'], '194')
 
-    def test_a_pull_request_run_without_a_web_app_takes_mains_newest(self):
+    def test_a_pull_request_run_without_a_web_app_takes_mains_newest_when_the_suite_changed(self):
         result = inputs.resolve('workflow_run', self.workflow_run(31, SHA_PR, 'pull_request', pulls=(194,)), REPO)
         self.assertEqual(result['run'], True)
         self.assertEqual(result['sha'], SHA_PR)
         self.assertEqual(result['web_artifact'], f'bevy-explorer-web-{SHA_MAIN}')
         self.assertEqual(result['web_run_id'], '20')
         self.assertIn('no web input changed', result['reason'])
+        self.assertIn(f'repos/{REPO}/pulls/194/files?per_page=100&page=1', self.api.calls)
+
+    def test_a_pull_request_that_changes_neither_the_web_app_nor_the_suite_is_skipped(self):
+        result = inputs.resolve('workflow_run', self.workflow_run(31, SHA_PR, 'pull_request', pulls=(195,)), REPO)
+        self.assertEqual(result['run'], False)
+        self.assertIn('neither', result['reason'])
+        self.assertNotIn(f'repos/{REPO}/actions/workflows/bevy-explorer-ci.yml/runs?branch=main', self.api.calls)
+
+    def test_changes_suite_reads_every_page_of_files(self):
+        pages = {
+            f'repos/{REPO}/pulls/7/files?per_page=100&page=1': [{'filename': f'services/catalyst/src/{index}.rs'} for index in range(100)],
+            f'repos/{REPO}/pulls/7/files?per_page=100&page=2': [{'filename': 'tooling/bevy-e2e-report.py'}],
+        }
+        inputs.bench.api = lambda path, raw=False: pages[path]
+        self.assertEqual(inputs.changes_suite(REPO, 7), True)
+        pages[f'repos/{REPO}/pulls/7/files?per_page=100&page=2'] = [{'filename': 'tooling/bevy-ci.py'}]
+        self.assertEqual(inputs.changes_suite(REPO, 7), False)
 
     def test_a_main_push_run_tests_its_own_and_skips_without_one(self):
         result = inputs.resolve('workflow_run', self.workflow_run(20, SHA_MAIN, 'push'), REPO)

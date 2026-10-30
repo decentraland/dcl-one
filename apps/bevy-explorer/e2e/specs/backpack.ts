@@ -450,3 +450,158 @@ export async function equipFirstUnequippedHair(explorer: Explorer): Promise<{ na
   const cards = await showCategory(explorer, 'Hair')
   return equipFirstUnequipped(explorer, cards)
 }
+
+// --- restoring --------------------------------------------------------------------------------
+// The zone account is shared by every scenario and run: what a scenario equips, it puts back
+// (`ScenarioContext.restore`). The HUD names cards, never urns, so what the avatar wore is found
+// as the card that offers UNEQUIP before anything is pressed.
+
+export interface HairPick {
+  /** The first card of the Hair page that offers EQUIP. */
+  card: Card
+  /** The card that offers UNEQUIP: the hair the avatar wears, when it wears one. */
+  equipped: Card | undefined
+  start: LookStart
+}
+
+/** Filter to Hair and pick, among the first page, the first card to equip and the one the avatar
+ *  wears. Nothing is pressed. A worn hair that is not on the first page is an error here, before
+ *  any change: the scenario could not put it back. */
+export async function pickHair(explorer: Explorer): Promise<HairPick> {
+  const cards = await showCategory(explorer, 'Hair')
+  const start = await startLook(explorer)
+  let card: Card | undefined
+  let equipped: Card | undefined
+  for (const candidate of cards.slice(0, PAGE_SIZE)) {
+    if (card && equipped) break
+    const { action } = await hoverCard(explorer, candidate)
+    if (action?.label === 'EQUIP' && !card) card = candidate
+    if (action?.label === 'UNEQUIP' && !equipped) equipped = candidate
+  }
+  if (!card) throw new Error(`Every loaded card is equipped or cannot be equipped: ${cards.map((c) => c.name).join(', ')}`)
+  if (!equipped && renderedUrn(start.before, 'hair') !== undefined) {
+    throw new Error(`the hair the avatar wears (${renderedUrn(start.before, 'hair')}) is not on the first page of Hair, so the scenario could not put it back`)
+  }
+  return { card, equipped, start }
+}
+
+/** Press EQUIP on a card and wait for it to flip to UNEQUIP. The Backpack stays open: the look is
+ *  only a draft until it closes (`commitBackpack`). */
+export async function equipCard(explorer: Explorer, card: Card): Promise<Control> {
+  const { control, action } = await hoverCard(explorer, card)
+  if (!action || action.label !== 'EQUIP') throw new Error(`"${card.name}" offers ${action?.label ?? 'no button'}, not EQUIP`)
+  await explorer.hud.click(action.selector)
+  await waitForAction(explorer, control, 'UNEQUIP', EQUIP_TIMEOUT_MS)
+  return control
+}
+
+/** Put the hair back as `pickHair` found it: the picked card off, the worn one on, the look
+ *  committed. A look that already is the original (the equip never committed) changes nothing. */
+export async function restoreHair(explorer: Explorer, pick: HairPick): Promise<void> {
+  await closePage(explorer, 'backpack')
+  const version = await explorer.profileVersion()
+  await openBackpack(explorer, 'wearables')
+  const cards = await showCategory(explorer, 'Hair')
+  const byName = (name: string): Card => {
+    const found = cards.find((candidate) => normalize(candidate.name) === normalize(name))
+    if (!found) throw new Error(`the Hair page no longer lists "${name}", so the hair cannot be put back`)
+    return found
+  }
+  let changed = false
+  const picked = await hoverCard(explorer, byName(pick.card.name))
+  if (picked.action?.label === 'UNEQUIP') {
+    await explorer.hud.click(picked.action.selector)
+    await waitForAction(explorer, picked.control, 'EQUIP', EQUIP_TIMEOUT_MS)
+    changed = true
+  }
+  if (pick.equipped) {
+    const worn = await hoverCard(explorer, byName(pick.equipped.name))
+    if (worn.action?.label === 'EQUIP') {
+      await explorer.hud.click(worn.action.selector)
+      await waitForAction(explorer, worn.control, 'UNEQUIP', EQUIP_TIMEOUT_MS)
+      changed = true
+    }
+  }
+  await closePage(explorer, 'backpack')
+  if (changed) {
+    await until(() => explorer.profileVersion(), (current) => current > version, {
+      timeoutMs: COMMIT_TIMEOUT_MS,
+      what: 'the profile version to grow after the hair was put back'
+    })
+  }
+}
+
+export interface EmoteSlotsRecord {
+  /** The ten slots as the HUD showed them. */
+  slots: EmoteSlot[]
+  /** `selected.emotes` as the engine had them. */
+  selected: string[]
+}
+
+/** The ten slots as the HUD shows them (the Emotes tab open) and as the engine selects them. */
+export async function recordEmoteSlots(explorer: Explorer): Promise<EmoteSlotsRecord> {
+  return { slots: await emoteSlots(explorer), selected: [...(await explorer.myAvatar()).selected.emotes] }
+}
+
+/** Empty a slot with its own Unequip button, when it holds an emote. */
+export async function unequipEmoteSlot(explorer: Explorer, slot: number): Promise<void> {
+  const current = await selectEmoteSlot(explorer, slot)
+  if (!current.unequip) return
+  await explorer.hud.click(current.unequip)
+  await until(async () => (await emoteSlot(explorer, slot)).emote, (emote) => emote === 'None', {
+    timeoutMs: EQUIP_TIMEOUT_MS,
+    intervalMs: 250,
+    what: `emote slot ${slot} to read empty after its Unequip`
+  })
+}
+
+/** Empty every slot with its own Unequip button, as Unity's Emotes.UnequipAll does. */
+export async function unequipAllEmotes(explorer: Explorer): Promise<void> {
+  for (const slot of [0, 1, 2, 3, 4, 5, 6, 7, 8, 9]) await unequipEmoteSlot(explorer, slot)
+}
+
+/** Make `slot` the target, press EQUIP on the card and wait for the slot to be named after it.
+ *  Returns the card as read before the pointer arrived, so the caller can wait on its buttons. */
+export async function equipEmoteIntoSlot(explorer: Explorer, slot: number, card: Card): Promise<Control> {
+  await selectEmoteSlot(explorer, slot)
+  const { control, action } = await hoverCard(explorer, card)
+  if (!action || action.label !== 'EQUIP') throw new Error(`"${card.name}" offers ${action?.label ?? 'no button'}, not EQUIP`)
+  await explorer.hud.click(action.selector)
+  await until(async () => (await emoteSlot(explorer, slot)).emote, (emote) => normalize(emote) === normalize(card.name), {
+    timeoutMs: EQUIP_TIMEOUT_MS,
+    intervalMs: 250,
+    what: `emote slot ${slot} to be named "${card.name}"`
+  })
+  return control
+}
+
+/** Put the slots back as `recordEmoteSlots` found them: each slot that differs is emptied and,
+ *  when it held an emote, refilled from the card of that name (searched for), then the look is
+ *  committed and the engine read until it selects the emotes it did. */
+export async function restoreEmoteSlots(explorer: Explorer, record: EmoteSlotsRecord): Promise<void> {
+  await closePage(explorer, 'backpack')
+  await openBackpack(explorer, 'emotes')
+  const current = await emoteSlots(explorer)
+  const stale = record.slots.filter((slot) => normalize(slot.emote) !== normalize(current.find((now) => now.slot === slot.slot)?.emote ?? 'None'))
+  for (const slot of stale) {
+    await unequipEmoteSlot(explorer, slot.slot)
+    if (slot.emote === 'None') continue
+    await searchFor(explorer, slot.emote)
+    const card = await until(
+      async () => (await emoteCards(explorer)).find((candidate) => normalize(candidate.name) === normalize(slot.emote)),
+      (found) => found !== undefined,
+      { timeoutMs: 40_000, intervalMs: 500, what: `the emote grid to list "${slot.emote}" for slot ${slot.slot}` }
+    )
+    await equipEmoteIntoSlot(explorer, slot.slot, card!)
+    await searchFor(explorer, '')
+    await waitForCards(explorer, emoteCards)
+  }
+  await closePage(explorer, 'backpack')
+  if (stale.length === 0) return
+  await waitForPlayer(
+    explorer,
+    (avatar) => record.selected.every((urn, index) => sameUrn(urn ?? '', avatar.selected.emotes[index] ?? '')),
+    COMMIT_TIMEOUT_MS,
+    'the engine to select the emotes it did before the scenario'
+  )
+}

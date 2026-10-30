@@ -28,6 +28,7 @@
 //   CANCEL), and an empty bio restores as empty, not as Unity's "No intro." text.
 // - Equipped items: the heading renders only with at least one tile, and `/avatar_state` confirms
 //   the avatar selects wearables; the tiles themselves cannot be counted.
+// The rename and bio scenarios put the name and the bio back afterwards, whatever the outcome.
 import assert from 'node:assert/strict'
 import { spec, until, type Explorer, type Selector } from '../driver/index.ts'
 
@@ -129,11 +130,19 @@ scenario('the own passport shows its header controls and its About and Equipped 
 
 scenario(
   'renaming through Edit Username updates the profile name, keeps the address and can be reverted',
-  async ({ explorer }) => {
+  async ({ explorer, restore }) => {
     await openOwnPassport(explorer)
     const original = await explorer.userData()
     const originalName = baseOf(original.name)
     const baseName = NAME_PATTERN.test(originalName) ? originalName : BASE_NAME
+    // The baseline name is the one put back: a name the editor refuses cannot be (README).
+    restore(async () => {
+      if (baseOf((await explorer.userData()).name) === baseName) return
+      await explorer.escape()
+      await openOwnPassport(explorer)
+      await renameUser(explorer, baseName)
+      await closePassport(explorer)
+    })
     if (baseName !== originalName) await renameUser(explorer, baseName)
     assert.equal(baseOf((await explorer.userData()).name), baseName, 'the profile should carry the baseline name')
 
@@ -152,9 +161,15 @@ scenario(
 
 scenario(
   'the bio can be edited, persists across closing and reopening the passport, and can be restored',
-  async ({ explorer }) => {
+  async ({ explorer, restore }) => {
     await openOwnPassport(explorer)
     const originalBio = await readBio(explorer)
+    restore(async () => {
+      await explorer.escape()
+      await openOwnPassport(explorer)
+      if ((await readBio(explorer)).trim() !== originalBio.trim()) await saveBio(explorer, originalBio)
+      await closePassport(explorer)
+    })
     // A bio left over from an interrupted run would make the edit a no-op, which SAVE refuses.
     const newBio = originalBio.trim() === BIO ? `${BIO} 2` : BIO
     await saveBio(explorer, newBio)

@@ -4,8 +4,9 @@
     python3 tooling/bevy-e2e-report.py <junit.xml> <run url> [<label>]
 
 Reads the JUnit report `node --test` writes (a `testcase` with a `failure` failed; one with a
-`skipped` whose message says `todo` is a recorded gap; a plain `skipped` was skipped) and prints
-Markdown: a badge, the counts and the failing scenarios. A missing report is a failure to say so.
+`<skipped type="todo">` is a recorded gap; one with `<skipped type="skipped">` was skipped) and
+prints Markdown: a badge, the counts and the failing scenarios. A missing report is a failure to
+say so.
 """
 import sys
 import xml.etree.ElementTree as ElementTree
@@ -20,7 +21,7 @@ def outcome(case):
         return 'failed'
     skipped = case.find('skipped')
     if skipped is not None:
-        return 'todo' if 'todo' in (skipped.get('message') or '').lower() else 'skipped'
+        return 'todo' if skipped.get('type') == 'todo' else 'skipped'
     return 'passed'
 
 

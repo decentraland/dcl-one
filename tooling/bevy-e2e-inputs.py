@@ -8,7 +8,8 @@ or empty).
 
 - `workflow_run` of Bevy Explorer / CI: a successful run of this repository, a push to main or a
   pull request from this repository. Its own web app when it built one; a pull request run that
-  built none (the PR changes no web input) takes main's newest, so the PR's specs still run.
+  built none (the PR changes no web input) takes main's newest when the PR changes the suite, its
+  workflow or its tooling, so the PR's specs still run; a PR that changes neither is skipped.
 - `schedule`: main's newest web app and the commit that built it.
 - `workflow_dispatch`: `inputs.sha`'s CI run and web app, else main's newest.
 """
@@ -23,8 +24,24 @@ bench = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(bench)
 
 
+# What the workflow's `pull_request` trigger lists: the suite, the workflow and its tooling.
+SUITE_PATHS = ('apps/bevy-explorer/e2e/', '.github/workflows/bevy-explorer-e2e.yml', 'tooling/bevy-e2e-', 'tooling/tests/test_bevy_e2e_')
+
+
 def skip(reason):
     return {'run': False, 'reason': reason, 'sha': '', 'web_artifact': '', 'web_run_id': '', 'pr': ''}
+
+
+def changes_suite(repo, pr):
+    """Whether the pull request changes a file under SUITE_PATHS (its files, a page at a time)."""
+    page = 1
+    while True:
+        files = bench.api(f'repos/{repo}/pulls/{pr}/files?per_page=100&page={page}')
+        if any(entry['filename'].startswith(SUITE_PATHS) for entry in files):
+            return True
+        if len(files) < 100:
+            return False
+        page += 1
 
 
 def chosen(sha, artifact, run_id, pr, reason):
@@ -69,6 +86,8 @@ def resolve(event_name, event, repo):
             return chosen(sha, web, trigger['id'], pr, f"{where} at {sha}: the web app CI run {trigger['id']} built")
         if trigger['event'] == 'push':
             return skip(f"main's CI run {trigger['id']} built no web app")
+        if not changes_suite(repo, pr):
+            return skip(f"#{pr} changes neither the explorer's web app nor the suite")
         main = newest_main(repo)
         if not main:
             return skip(f"#{pr} changes no web input and no main run still has a web app")

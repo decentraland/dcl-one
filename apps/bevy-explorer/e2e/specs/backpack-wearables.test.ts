@@ -9,23 +9,26 @@
 // no such flag, and an equip only edits the Backpack's draft look, which the engine takes when the
 // Backpack closes. So the assertion moves to the engine: the card flips from EQUIP to UNEQUIP, and
 // after the close the profile version grows and `/avatar_state` selects a wearable it did not
-// before. The hover buttons are found by position over the card (backpack.ts).
+// before. The hover buttons are found by position over the card (backpack.ts). The hair the
+// avatar wore is put back afterwards, whatever the outcome.
 //
 // Port, TestSearchWearable: Unity clicks the first loaded tile and reads the info panel's name. The
 // Bevy detail panel's name is not addressable, so the first card's own name is read; the card is
 // still clicked and must read selected. Port, TestWearablesPagination: an account with one page of
-// wearables has no pager; the scenario then asserts that the grid holds at most one page and says so.
+// wearables has no pager; the scenario is then skipped with that reason, which the report counts
+// apart from a pass.
 import assert from 'node:assert/strict'
 import { spec, until } from '../driver/index.ts'
 import {
   EQUIP_TIMEOUT_MS,
-  PAGE_SIZE,
   commitBackpack,
-  equipFirstUnequippedHair,
+  equipCard,
   flipPage,
   gained,
   openBackpack,
   pagerVisible,
+  pickHair,
+  restoreHair,
   sameCards,
   searchFor,
   stableFirstCard,
@@ -42,17 +45,20 @@ const SEARCH_TERM = 'Punk'
 
 scenario(
   'an unequipped hair from the grid is equipped and the engine selects it',
-  async ({ explorer }) => {
+  async ({ explorer, restore }) => {
     await openBackpack(explorer, 'wearables')
-    const { name, start } = await equipFirstUnequippedHair(explorer)
-    await commitBackpack(explorer, start, `equipping "${name}"`)
+    const pick = await pickHair(explorer)
+    restore(() => restoreHair(explorer, pick))
+    const { card, start } = pick
+    await equipCard(explorer, card)
+    await commitBackpack(explorer, start, `equipping "${card.name}"`)
     const after = await waitForPlayer(
       explorer,
       (avatar) => gained(start.before.selected.wearables, avatar.selected.wearables).length > 0,
       EQUIP_TIMEOUT_MS,
-      `the avatar to select a wearable it did not before ("${name}")`
+      `the avatar to select a wearable it did not before ("${card.name}")`
     )
-    assert.ok(gained(start.before.selected.wearables, after.selected.wearables).length > 0, `Grid item "${name}" should be equipped after pressing its EQUIP button`)
+    assert.ok(gained(start.before.selected.wearables, after.selected.wearables).length > 0, `Grid item "${card.name}" should be equipped after pressing its EQUIP button`)
   },
   { timeoutMs: 300_000 }
 )
@@ -84,9 +90,8 @@ scenario(
     await openBackpack(explorer, 'wearables')
     if (!(await pagerVisible(explorer))) {
       const cards = await wearableCards(explorer)
-      assert.ok(cards.length <= PAGE_SIZE, `without a pager the grid holds at most ${PAGE_SIZE} items, not ${cards.length}`)
-      t.diagnostic(`the account has one page of wearables (${cards.length} items): only the pager's absence is asserted`)
       await closePage(explorer, 'backpack')
+      t.skip(`the account has one page of wearables (${cards.length} items), so there is no pager to exercise`)
       return
     }
     const first = await stableFirstCard(explorer, wearableCards)

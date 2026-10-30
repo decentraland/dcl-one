@@ -9,10 +9,11 @@
 //
 // Partial:
 // - TestMinimapHudPresence reads the place name and the "x, y" label; both are spans with no role,
-//   so the HUD matcher cannot reach them. The coordinates are checked where the label takes them
-//   from, the player's position in `/world_state` (parcel = floor(x / 16), floor(z / 16)); the place
-//   name is not checked. The map render is the `Open map` button. The compass "N" is aria-hidden
-//   and cannot be addressed, so it is not checked.
+//   so the HUD matcher cannot reach them, and neither is checked. What is checked is the widget
+//   expanded: the map render (the `Open map` button, actionable), its zoom and settings controls,
+//   and that the player has a position for it to centre on (`/world_state`); the parcel that
+//   position is in (floor(x / 16), floor(z / 16)) is reported as a diagnostic, not asserted. The
+//   compass "N" is aria-hidden and cannot be addressed, so it is not checked.
 //
 // The HUD remembers whether the minimap is open per realm type and opens it collapsed in a World,
 // so each scenario reads the state first, expands the minimap when it needs the map, and puts it
@@ -29,6 +30,12 @@ const PARCEL_METERS = 16
 const COLLAPSE: Selector = { name: 'Collapse minimap', role: 'button' }
 const EXPAND: Selector = { name: 'Expand minimap', role: 'button' }
 const OPEN_MAP: Selector = { name: 'Open map', role: 'button' }
+/** The widget's other controls, shown only while it is expanded. */
+const WIDGET_CONTROLS = [
+  { name: 'Zoom in', role: 'button' },
+  { name: 'Zoom out', role: 'button' },
+  { name: 'Minimap settings', role: 'button' }
+] satisfies Selector[]
 
 /** Click once the control is one a user could click, as explorer-automation's Click waits for it. */
 async function press(explorer: Explorer, selector: Selector): Promise<void> {
@@ -56,14 +63,16 @@ async function setExpanded(explorer: Explorer, wanted: boolean): Promise<void> {
   await explorer.hud.wait(wanted ? COLLAPSE : EXPAND, { timeoutMs: CONTROL_TIMEOUT_MS })
 }
 
-scenario('the minimap shows the map circle and the parcel the player stands on', async ({ explorer }) => {
+scenario('the minimap shows the map circle and the parcel the player stands on', async ({ explorer, t }) => {
   const wasExpanded = await isExpanded(explorer)
   await setExpanded(explorer, true)
-  await explorer.hud.wait(OPEN_MAP, { timeoutMs: CONTROL_TIMEOUT_MS })
+  await explorer.hud.wait(OPEN_MAP, { state: 'actionable', timeoutMs: CONTROL_TIMEOUT_MS })
+  for (const control of WIDGET_CONTROLS) {
+    assert.ok(await explorer.hud.isVisible(control), `the expanded minimap should show its ${control.name} control`)
+  }
   const { position } = await explorer.worldState()
-  assert.ok(position, 'the player should have a position')
-  const parcel = `${Math.floor(position[0] / PARCEL_METERS)}, ${Math.floor(position[2] / PARCEL_METERS)}`
-  assert.match(parcel, /^-?\d+, ?-?\d+$/, `the player's parcel should read "x, y": ${parcel}`)
+  assert.ok(position, 'the player should have a position for the minimap to centre on')
+  t.diagnostic(`the parcel label is not addressable; the player stands in ${Math.floor(position[0] / PARCEL_METERS)}, ${Math.floor(position[2] / PARCEL_METERS)}`)
   await setExpanded(explorer, wasExpanded)
 })
 

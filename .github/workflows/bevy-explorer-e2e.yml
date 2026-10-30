@@ -3,12 +3,21 @@
 # through-the-console.md). The suite's own checks (typecheck, the driver's tests against the
 # runner's Chrome, the tooling tests) run on pull requests that touch it. The scenarios run against
 # the web app a Bevy Explorer / CI run built, which tooling/bevy-e2e-inputs.py picks: after each
-# such run (a push to main, or a pull request of this repository), nightly against main's newest,
-# and by hand. They need a Windows runner with a GPU, named by the BEVY_E2E_WINDOWS_RUNNER
-# repository variable (explorer-automation's `win-gpu-t4-explorer`; an org admin enables it for
-# this repository), and the zone accounts in the `e2e` environment (DCL_E2E_ACCOUNT_KEYS,
-# comma-separated private keys, one per worker). Until the variable is set the scenarios job is
-# skipped; the Inputs job's summary says what would have run.
+# such run (a push to main, or a pull request of this repository that changes the explorer's web
+# app or the suite), nightly against main's newest, and by hand. They need a Windows runner with a
+# GPU, named by the BEVY_E2E_WINDOWS_RUNNER repository variable (explorer-automation's
+# `win-gpu-t4-explorer`; an org admin enables it for this repository), and the zone accounts in
+# the `e2e` environment (DCL_E2E_ACCOUNT_KEYS, comma-separated private keys, one per worker).
+# Until the variable is set the scenarios job is skipped; the Inputs job's summary says what would
+# have run.
+#
+# A `workflow_run` runs in main's context, so a pull request's run checks out and runs that pull
+# request's code (the suite, the scenes' build, dcl-scene-cli's build scripts) with main's
+# permissions. The job therefore holds no write permission, the accounts secret reaches only the
+# two steps that run scenarios, a pull request's run saves no cache, and the status comment is
+# written by a separate job that holds no secret and runs only this file's commit's tooling and
+# action. The `e2e` environment's required reviewers, a repository setting, are what holds a pull
+# request's scenarios until a maintainer approves the deployment: set them.
 #
 # GitHub starts `workflow_run`, `schedule` and `workflow_dispatch` only from the workflow file on
 # the default branch: until this file is on main, only the pull request checks run.
@@ -41,9 +50,13 @@ name: Bevy Explorer / E2E
         type: boolean
         default: false
 permissions: {}
+# One run per branch of one repository and CI trigger: a fork's branch named like ours never
+# cancels a run, and neither does the CI run of a pull request that has just closed (its
+# `pull_requests` is empty, and Inputs skips it): only a newer run of an open pull request, or of
+# main, supersedes the one in progress.
 concurrency:
-  group: bevy-explorer-e2e-${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_branch || github.ref }}
-  cancel-in-progress: true
+  group: bevy-explorer-e2e-${{ github.event_name == 'workflow_run' && format('{0}-{1}-{2}', github.event.workflow_run.event, github.event.workflow_run.head_repository.full_name, github.event.workflow_run.head_branch) || format('{0}-{1}', github.event_name, github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_run' || github.event.workflow_run.event == 'push' || toJSON(github.event.workflow_run.pull_requests) != '[]' }}
 jobs:
   checks:
     name: Suite checks
@@ -119,16 +132,13 @@ jobs:
     permissions:
       contents: read
       actions: read
-      pull-requests: write
     defaults:
       run:
         shell: bash
         working-directory: apps/bevy-explorer/e2e
     env:
-      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       GROUP: ${{ github.event.inputs.group || 'both' }}
       DCL_E2E_WEB_APP: ${{ github.workspace }}/web-app
-      DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
       DCL_E2E_BASE_DOMAIN: ${{ vars.DCL_E2E_BASE_DOMAIN || 'decentraland.zone' }}
       DCL_E2E_REALM: ${{ vars.DCL_E2E_REALM || 'https://peer.decentraland.zone' }}
       DCL_E2E_WORKER: '0'
@@ -153,13 +163,18 @@ jobs:
           github-token: ${{ github.token }}
       - name: Install the suite
         run: npm ci
+      # The accounts secret is on the two scenario steps alone: never in the environment of the
+      # install, the builds, or the report.
       - name: InWorld scenarios
         id: inworld
         if: env.GROUP != 'visual'
         continue-on-error: true
         timeout-minutes: 60
+        env:
+          DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
         run: npm run e2e -- --inworld
-      # The visual scenes are built with dcl-scene-cli and served from the runner.
+      # The visual scenes are built with dcl-scene-cli and served from the runner. A pull
+      # request's run restores the cache and saves none: only main's code writes it.
       - uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # master 2026-10-16
         if: env.GROUP != 'inworld'
         with:
@@ -169,6 +184,7 @@ jobs:
         with:
           workspaces: apps/dcl-scene-cli
           key: e2e-scene-cli
+          save-if: ${{ needs.inputs.outputs.pr == '' }}
       - name: Build dcl-scene-cli
         if: env.GROUP != 'inworld'
         working-directory: apps/dcl-scene-cli
@@ -184,6 +200,7 @@ jobs:
         continue-on-error: true
         timeout-minutes: 30
         env:
+          DCL_E2E_ACCOUNT_KEYS: ${{ secrets.DCL_E2E_ACCOUNT_KEYS }}
           DCL_E2E_RECORD: ${{ github.event.inputs.record == 'true' && '1' || '' }}
         run: npm run e2e -- --visual
       - name: Upload the report
@@ -202,30 +219,60 @@ jobs:
           path: apps/bevy-explorer/e2e/references/*.png
           if-no-files-found: warn
           retention-days: 30
+      - name: Fail when a group failed
+        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure'
+        run: |
+          echo "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}"
+          exit 1
+  # The pull request's status comment, from the report the scenarios uploaded. This job holds no
+  # secret and runs only this file's commit's tooling and action, never the pull request's: the
+  # report is data to it (the JUnit files `node --test` wrote).
+  comment:
+    name: Status comment
+    needs: [inputs, scenarios]
+    if: always() && needs.inputs.outputs.run == 'true' && needs.inputs.outputs.pr != '' && needs.scenarios.result != 'skipped'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    env:
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      GROUP: ${{ github.event.inputs.group || 'both' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            tooling
+            .github/actions/bevy-explorer-ci-status
+          sparse-checkout-cone-mode: false
+      # A run that wrote no report uploaded nothing: the sections then say so.
+      - name: Download the report
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bevy-explorer-e2e-report-${{ needs.inputs.outputs.sha }}
+          path: report
       - name: Write the InWorld section
-        if: always() && needs.inputs.outputs.pr != '' && env.GROUP != 'visual'
-        working-directory: ${{ github.workspace }}
-        run: python3 tooling/bevy-e2e-report.py apps/bevy-explorer/e2e/report/junit-inworld.xml "$RUN_URL" InWorld > inworld.md
+        if: env.GROUP != 'visual'
+        run: python3 tooling/bevy-e2e-report.py report/junit-inworld.xml "$RUN_URL" InWorld > inworld.md
       - uses: ./.github/actions/bevy-explorer-ci-status
-        if: always() && needs.inputs.outputs.pr != '' && env.GROUP != 'visual'
+        if: env.GROUP != 'visual'
         with:
           pr-number: ${{ needs.inputs.outputs.pr }}
           section: inworld
           github-token: ${{ github.token }}
           body-file: inworld.md
       - name: Write the Visual section
-        if: always() && needs.inputs.outputs.pr != '' && env.GROUP != 'inworld'
-        working-directory: ${{ github.workspace }}
-        run: python3 tooling/bevy-e2e-report.py apps/bevy-explorer/e2e/report/junit-visual.xml "$RUN_URL" Visual > visual.md
+        if: env.GROUP != 'inworld'
+        run: python3 tooling/bevy-e2e-report.py report/junit-visual.xml "$RUN_URL" Visual > visual.md
       - uses: ./.github/actions/bevy-explorer-ci-status
-        if: always() && needs.inputs.outputs.pr != '' && env.GROUP != 'inworld'
+        if: env.GROUP != 'inworld'
         with:
           pr-number: ${{ needs.inputs.outputs.pr }}
           section: automation
           github-token: ${{ github.token }}
           body-file: visual.md
-      - name: Fail when a group failed
-        if: steps.inworld.outcome == 'failure' || steps.visual.outcome == 'failure'
-        run: |
-          echo "InWorld: ${{ steps.inworld.outcome }}; Visual: ${{ steps.visual.outcome }}"
-          exit 1

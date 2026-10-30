@@ -15,17 +15,20 @@
 // categories, as Unity's CI account does.
 //
 // Partial, TestEquipBaseWearableAndVerifyVisibility: the card's equip is a draft until the Backpack
-// closes (backpack.ts), so the engine is read after the close.
+// closes (backpack.ts), so the engine is read after the close. The hair the avatar wore is put
+// back afterwards, whatever the outcome.
 import assert from 'node:assert/strict'
 import { spec } from '../driver/index.ts'
 import {
   EQUIP_TIMEOUT_MS,
   THUMBNAIL_TIMEOUT_MS,
   commitBackpack,
-  equipFirstUnequippedHair,
+  equipCard,
   gained,
   openBackpack,
+  pickHair,
   renderedUrn,
+  restoreHair,
   sameUrn,
   waitForPlayer
 } from './backpack.ts'
@@ -69,9 +72,13 @@ scenario(
 
 scenario(
   'equipping a base hair is selected by the engine and rendered in the Hair category',
-  async ({ explorer }) => {
+  async ({ explorer, restore }) => {
     await openBackpack(explorer, 'wearables')
-    const { name, start } = await equipFirstUnequippedHair(explorer)
+    const pick = await pickHair(explorer)
+    restore(() => restoreHair(explorer, pick))
+    const { start } = pick
+    const name = pick.card.name
+    await equipCard(explorer, pick.card)
     await commitBackpack(explorer, start, `equipping "${name}"`)
     const selected = await waitForPlayer(
       explorer,

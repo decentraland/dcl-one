@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { describe, test } from 'node:test'
-import { ConsoleError, FakeConsole } from '../driver/console.ts'
-import { type CommandRecord, Explorer, type WorldState, redactLine } from '../driver/explorer.ts'
+import { ConsoleError, FakeConsole, redactLine } from '../driver/console.ts'
+import { type CommandRecord, Explorer, type WorldState } from '../driver/explorer.ts'
 import { enterWorld } from '../driver/session.ts'
 
 function world(overrides: Partial<WorldState> = {}): string {
@@ -89,6 +89,47 @@ describe('Explorer', () => {
   test('redactLine leaves other lines alone', () => {
     assert.equal(redactLine('/hud_click Backpack'), '/hud_click Backpack')
     assert.equal(redactLine('/login_identity abc'), '/login_identity <redacted>')
+  })
+
+  test('a failed login keeps its payload out of the error, the record and the stack', async () => {
+    const payload = 'eyJlcGhlbWVyYWwiOiJzZWNyZXQifQ=='
+    const fake = new FakeConsole({
+      login_identity: (line) => {
+        throw new ConsoleError(line, `could not decode the identity ${payload}: bad padding`)
+      }
+    })
+    const explorer = new Explorer(fake)
+    const records: CommandRecord[] = []
+    explorer.onCommand((record) => records.push(record))
+    await assert.rejects(explorer.loginIdentity(payload, { guest: true }), (error: unknown) => {
+      assert.ok(error instanceof ConsoleError)
+      assert.equal(error.message, '`/login_identity <redacted> --guest` failed: could not decode the identity <redacted>: bad padding')
+      assert.equal(error.line, '/login_identity <redacted> --guest')
+      assert.doesNotMatch(error.stack ?? '', /eyJlcGhl/)
+      return true
+    })
+    assert.equal(records[0]!.line, '/login_identity <redacted> --guest')
+    assert.equal(records[0]!.error, '`/login_identity <redacted> --guest` failed: could not decode the identity <redacted>: bad padding')
+    assert.deepEqual(fake.lines, [`/login_identity ${payload} --guest`])
+  })
+
+  test("a transport's own error that quotes the line is scrubbed before it is rethrown", async () => {
+    const payload = 'c2VjcmV0LWtleQ=='
+    const fake = new FakeConsole({
+      login_identity: (line) => {
+        throw new Error(`${line} did not finish within 5 ms`)
+      }
+    })
+    const explorer = new Explorer(fake)
+    const records: CommandRecord[] = []
+    explorer.onCommand((record) => records.push(record))
+    await assert.rejects(explorer.run(`/login_identity ${payload}`), (error: unknown) => {
+      assert.ok(error instanceof Error)
+      assert.equal(error.message, '/login_identity <redacted> did not finish within 5 ms')
+      assert.doesNotMatch(error.stack ?? '', /c2VjcmV0/)
+      return true
+    })
+    assert.equal(records[0]!.error, '/login_identity <redacted> did not finish within 5 ms')
   })
 
   test('a failed command is recorded with its error and rethrown', async () => {

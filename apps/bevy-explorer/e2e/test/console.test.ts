@@ -46,3 +46,18 @@ describe('FakeConsole', () => {
     await assert.rejects(fake.run('/teleport 1 2'), /failed to set location/)
   })
 })
+
+describe('ConsoleError', () => {
+  test('keeps a login payload out of its line, its output and its message', () => {
+    const error = new ConsoleError('/login_identity eyJhIjoxfQ== --name tester', 'the identity eyJhIjoxfQ== is not base64 JSON')
+    assert.equal(error.line, '/login_identity <redacted> --name tester')
+    assert.equal(error.output, 'the identity <redacted> is not base64 JSON')
+    assert.equal(error.message, '`/login_identity <redacted> --name tester` failed: the identity <redacted> is not base64 JSON')
+  })
+
+  test('leaves every other line as it is', () => {
+    const error = new ConsoleError('/teleport 1 2', 'failed to set location')
+    assert.equal(error.line, '/teleport 1 2')
+    assert.equal(error.message, '`/teleport 1 2` failed: failed to set location')
+  })
+})

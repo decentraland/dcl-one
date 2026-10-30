@@ -6,6 +6,7 @@ _spec = importlib.util.spec_from_file_location('bevy_e2e_report', Path(__file__)
 report = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(report)
 
+# As Node 24's junit reporter writes it: a `todo` and a `skip` are both `skipped`, told apart by `type`.
 JUNIT = '''<?xml version="1.0" encoding="utf-8"?>
 <testsuites>
   <testsuite name="shortcuts" tests="3" failures="1" skipped="1">
@@ -14,11 +15,11 @@ JUNIT = '''<?xml version="1.0" encoding="utf-8"?>
       <failure type="AssertionError" message="map should be open after KeyM&#10;more">stack</failure>
     </testcase>
     <testcase name="X opens Events" classname="shortcuts" time="0">
-      <skipped message="todo: the Bevy HUD binds no key to Events"/>
+      <skipped type="todo" message="the Bevy HUD binds no key to Events"/>
     </testcase>
   </testsuite>
   <testsuite name="camera" tests="1">
-    <testcase name="takes a photo" classname="camera" time="0"><skipped message="no camera"/></testcase>
+    <testcase name="takes a photo" classname="camera" time="0"><skipped type="skipped" message="no camera"/></testcase>
   </testsuite>
 </testsuites>
 '''

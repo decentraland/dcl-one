@@ -78,9 +78,17 @@ export async function closeSessions(): Promise<void> {
   if (webServer) {
     const server = webServer
     webServer = undefined
-    await (await server).close()
+    try {
+      await (await server).close()
+    } catch {
+      // a server that never came up
+    }
   }
 }
+
+/** How long a boot may take, the sum of its waits: the web transport's `ready` (300 s), the
+ *  sign-in command (120 s) and `enterWorld` (300 s). A scenario's own budget starts after it. */
+export const BOOT_ALLOWANCE_MS = 720_000
 
 async function boot(options: OpenOptions, target: Target): Promise<Session> {
   const realm = options.realm ?? target.realm
@@ -122,7 +130,12 @@ async function boot(options: OpenOptions, target: Target): Promise<Session> {
 }
 
 function serveApp(target: Target): Promise<StaticServer> {
-  webServer ??= serveWebApp(target.webApp, target.ports.web)
+  // A server that fails to come up (the port in use) is not kept: the next boot tries again, and
+  // `closeSessions` has nothing to close.
+  webServer ??= serveWebApp(target.webApp, target.ports.web).catch((error: unknown) => {
+    webServer = undefined
+    throw error
+  })
   return webServer
 }
 
