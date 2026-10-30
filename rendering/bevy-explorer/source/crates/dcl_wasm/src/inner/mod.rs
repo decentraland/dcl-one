@@ -286,6 +286,16 @@ pub fn op_set_elapsed(state: &WorkerContext, elapsed: f64) {
 }
 
 #[wasm_bindgen]
+pub fn op_begin_tick(state: &WorkerContext) -> f64 {
+    dcl_js::begin_tick(&mut *state.state.borrow_mut())
+}
+
+#[wasm_bindgen]
+pub fn op_end_start(state: &WorkerContext) {
+    dcl_js::end_start(&mut *state.state.borrow_mut())
+}
+
+#[wasm_bindgen]
 pub fn op_continue_running(state: &WorkerContext) -> bool {
     !state.state.borrow().borrow::<KillFlag>().killed()
 }
