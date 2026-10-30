@@ -23,6 +23,7 @@ guessing. The first standard defined here is styling.
 - [Shared UI: `library/ui`](#shared-ui-libraryui)
   - [Structure](#structure)
   - [Foundations](#foundations)
+  - [Explorer HUD transition](#explorer-hud-transition)
   - [Integration](#integration)
 
 ## Relation to the contributor guides
@@ -69,7 +70,9 @@ Export the component and its public prop types from `library/ui/index.ts`.
 The mapping is used by the Figma tooling and is not imported by browser code.
 The template is not a production component. Replace the Figma mapping
 placeholder with the actual component's node and properties when its tooling
-contract is established.
+contract is established. The sample test is a smoke test; configure test globals,
+React Testing Library, jest-dom matchers and CSS Module handling, and add the
+component-specific interaction and accessibility tests before use.
 
 ### Design tokens
 
@@ -129,7 +132,8 @@ values to pass arbitrary colours or palette values from props.
 
 ### Responsive, themes and portals
 
-- Use the breakpoint definitions in `library/ui` foundations. CSS custom
+- Use the breakpoint definitions in `library/ui` foundations once implemented
+  and adopted; retain each surface's breakpoints until then. CSS custom
   properties cannot be used directly in media conditions.
 - Select themes through the shared semantic token mechanism. The supported
   themes and the selection mechanism's details remain to be defined.
@@ -186,6 +190,11 @@ and not in `library/ui`.
 
 ## Shared UI: `library/ui`
 
+The structure and integration below define the target for the shared UI. Its
+foundations, runtime components and consumer integration still need to be
+implemented; the component template is available now. Keep each surface's
+existing tokens and components until its integration has been reviewed.
+
 `library/ui` is the home of the shared UI foundation:
 
 - design foundations and tokens shared across surfaces;
@@ -214,7 +223,7 @@ library/ui/
       Button.tsx
       Button.module.css
       Button.test.tsx
-      Button.figma.ts   Code Connect mapping, read by the Figma tooling only
+      Button.figma.ts   Figma mapping, read by the tooling only
   index.ts              public exports: components and their prop types
   figma/                Node-only Figma MCP server and CLI, config, snapshots
 ```
@@ -257,6 +266,13 @@ before it becomes a shared foundation.
 Review theme and surface mappings before replacing existing values. Preserve
 runtime state such as HUD viewport scaling in the consumer.
 
+### Explorer HUD transition
+
+The Explorer HUD's existing `src/design/` primitives and local tokens remain in
+use under its own guide (`rendering/bevy-explorer/source/react-web/AGENTS.md`)
+until the shared library integration is reviewed and implemented. A future
+migration must preserve HUD behavior.
+
 ### Integration
 
 Each consumer keeps its own independent build and imports the shared code as
@@ -266,8 +282,9 @@ source:
 import { Button } from '<shared-ui>'
 ```
 
-`<shared-ui>` is the shared library's import name. Each consumer resolves it
-consistently in TypeScript and its build, allows access to shared sources and
+`<shared-ui>` is a placeholder; the shared library's import name remains to
+be selected. Each consumer resolves it consistently in TypeScript and its
+build, allows access to shared sources and
 deduplicates React and React DOM. Assets must work in every supported target,
 including native CEF.
 
