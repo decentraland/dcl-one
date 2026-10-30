@@ -37,6 +37,7 @@ impl Plugin for TransformAndParentPlugin {
             PostUpdate,
             (
                 PostUpdateSets::EarlyTransformPropagate,
+                PostUpdateSets::EarlyBillboard,
                 PostUpdateSets::ColliderUpdate,
                 PostUpdateSets::PlayerUpdate,
                 PostUpdateSets::CameraUpdate,
