@@ -38,7 +38,8 @@ document defines the new standards for One.
 ### Scope
 
 - Applies to every current and future web app under `apps/` and to
-  `rendering/bevy-explorer/source/react-web`. The Explorer HUD keeps its own
+  `rendering/bevy-explorer/source/react-web`. The Explorer HUD, in both
+  `react-web` and its Sites adaptation `apps/ui3/src/play`, keeps its own
   design primitives and tokens until the shared library is integrated; see
   [Explorer HUD transition](#explorer-hud-transition).
 - Required for all new component styles and for existing styles when they are
@@ -230,9 +231,11 @@ decision is recorded in the
 
 The Figma MCP integration is Node-only tooling and is never imported by browser
 code; the shared runtime is foundations and components, with React as a peer
-dependency. "Bevy HUD" here means the React DOM HUD in
-`rendering/bevy-explorer/source/react-web`; sharing components with it does
-not extend to Rust Bevy widgets or SDK scene UI.
+dependency. "Bevy HUD" here means the Explorer's React DOM HUD: its source in
+`rendering/bevy-explorer/source/react-web` and its Sites adaptation in
+`apps/ui3/src/play` (see [Explorer HUD transition](#explorer-hud-transition)).
+Sharing components with it does not extend to Rust Bevy widgets or SDK scene
+UI.
 
 ### Structure
 
@@ -299,10 +302,19 @@ runtime state such as HUD viewport scaling in the consumer.
 
 ### Explorer HUD transition
 
-The Explorer HUD's existing `src/design/` primitives and local tokens remain in
-use under its own guide (`rendering/bevy-explorer/source/react-web/AGENTS.md`)
-until the shared library integration is reviewed and implemented. A future
-migration must preserve HUD behavior.
+The Explorer HUD ships from two copies:
+
+- `rendering/bevy-explorer/source/react-web/src` is the source the Explorer
+  workflows build for the CDN and the native CEF app, and the input
+  `tooling/play-artifact.py` hashes for the HUD artifact;
+- `apps/ui3/src/play` is its adaptation for Sites, served under `/play`, with
+  its own compiler profile (`apps/ui3/tsconfig.play.json`).
+
+Both carry the same `design/` primitives and `styles/tokens.css`. In both, the
+existing primitives and local tokens remain in use, under
+`rendering/bevy-explorer/source/react-web/AGENTS.md`, until the shared library
+integration is reviewed and implemented. A future migration must preserve HUD
+behavior in both.
 
 ### Integration
 
