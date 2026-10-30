@@ -151,6 +151,6 @@ try {
   await log.close(); await browserLog.close();
   await fs.writeFile(path.join(output,'fixture-requests.json'),JSON.stringify(requests,null,2));
   await save();
-  await fs.rm(temporary, { recursive: true, force: true });
+  await fs.rm(temporary, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
 }
 if (manifest.errors.length || manifest.browserErrors?.length || !manifest.stages.length || manifest.stages.some(stage => stage.status !== 'passed')) process.exitCode = 1;
