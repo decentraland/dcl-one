@@ -28,7 +28,7 @@ concurrency:
 jobs:
   journeys:
     if: inputs.run_id == ''
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 40
     env:
       CARGO_PROFILE_DEV_DEBUG: '0'
@@ -110,7 +110,7 @@ jobs:
         github.event.pull_request.head.repo.full_name == github.repository &&
         needs.journeys.result != 'skipped') ||
        (github.event_name == 'workflow_dispatch' && inputs.run_id != ''))
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       actions: read
