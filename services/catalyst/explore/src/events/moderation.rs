@@ -1033,6 +1033,18 @@ pub async fn create_as(
     signer: &str,
     settings: &crate::Settings,
 ) -> Result<String, ApiError> {
+    create_as_with_places(pool, body, creator, signer, settings, None).await
+}
+
+/// Authoring with native LAND enrichment when the shared reader is available.
+pub async fn create_as_with_places(
+    pool: &PgPool,
+    body: &CreateEvent,
+    creator: &str,
+    signer: &str,
+    settings: &crate::Settings,
+    places: Option<&crate::places::PlacesComponent>,
+) -> Result<String, ApiError> {
     let mut body = body.clone();
     for (image, kind) in [
         (&mut body.image, "poster"),
@@ -1059,7 +1071,7 @@ pub async fn create_as(
     doc["id"] = json!(id);
     if let Some(raw) = doc.as_object_mut() {
         let mut conn = pool.acquire().await?;
-        super::metadata::enrich(&mut conn, raw, None, true).await?;
+        super::metadata::enrich(&mut conn, raw, None, true, places).await?;
     }
     if creator != ADMIN_CREATOR {
         if let Some(community) = body.community_id.as_deref() {
