@@ -167,7 +167,24 @@ export interface BackpackState {
   deleteOutfit: (slot: number) => void
   /** Equip a saved outfit (applies its body shape, colors and wearables). */
   equipOutfit: (slot: number) => void
+  /** The randomize bar's state for this Backpack session. */
+  outfitHistory: OutfitHistory
+  /** Put a random look from the owned and base wearables on (keeps body shape and colors). */
+  randomizeOutfit: () => void
+  /** Go back to the look before the last randomize, undo or redo. */
+  undoOutfit: () => void
+  /** Go forward to the look the last undo left. */
+  redoOutfit: () => void
 }
+
+export interface OutfitHistory {
+  canUndo: boolean
+  canRedo: boolean
+  /** A roll is loading; the bar stays locked until it lands. */
+  rolling: boolean
+}
+
+const NO_OUTFIT_HISTORY: OutfitHistory = { canUndo: false, canRedo: false, rolling: false }
 
 export interface CommunitiesState {
   list: Community[]
@@ -959,6 +976,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   const catalogItemsRef = useRef<Wearable[]>([])
   useEffect(() => { catalogItemsRef.current = catalogItems }, [catalogItems])
   const [outfits, setOutfits] = useState<OutfitsMetadata>({ outfits: [], namesForExtraSlots: [] })
+  const [outfitHistory, setOutfitHistory] = useState<OutfitHistory>(NO_OUTFIT_HISTORY)
   const [backpackOpen, setBackpackOpen] = useState(false)
   const [communities, setCommunities] = useState<Community[]>([])
   const [communitiesOpen, setCommunitiesOpen] = useState(false)
@@ -1302,6 +1320,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'outfits':
           setOutfits(msg.metadata)
+          break
+        case 'outfitHistory':
+          setOutfitHistory({ canUndo: msg.canUndo, canRedo: msg.canRedo, rolling: msg.rolling })
           break
         case 'communities':
           setCommunities(msg.communities)
@@ -2341,9 +2362,14 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
   }, [send])
   // Closing the Backpack (its own toggle, or another page opening) deploys its look in one go, as
   // Unity does; the bridge skips it when nothing changed.
+  // The randomize history only covers one Backpack session.
   const backpackWasOpen = useRef(false)
   useEffect(() => {
-    if (backpackWasOpen.current && !backpackOpen) driverRef.current?.send({ kind: 'commitAvatar' })
+    if (backpackWasOpen.current && !backpackOpen) {
+      driverRef.current?.send({ kind: 'commitAvatar' })
+      driverRef.current?.send({ kind: 'resetOutfitHistory' })
+      setOutfitHistory(NO_OUTFIT_HISTORY)
+    }
     backpackWasOpen.current = backpackOpen
   }, [backpackOpen])
   const setAvatarColor = useCallback((target: AvatarColorTarget, hex: string) => {
@@ -2376,6 +2402,16 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     // items off the loaded catalog page), which becomes the authoritative equipped set — so no
     // client-side rebuild here (that dropped off-page items and later un-equipped them).
     driverRef.current?.send({ kind: 'equipOutfit', slot })
+  }, [])
+  // The bridge re-emits the full `wearables` set after each step, like equipOutfit.
+  const randomizeOutfit = useCallback(() => {
+    driverRef.current?.send({ kind: 'randomizeOutfit' })
+  }, [])
+  const undoOutfit = useCallback(() => {
+    driverRef.current?.send({ kind: 'undoOutfit' })
+  }, [])
+  const redoOutfit = useCallback(() => {
+    driverRef.current?.send({ kind: 'redoOutfit' })
   }, [])
   const createCommunity = useCallback(
     (input: { name: string; description: string; privacy: 'public' | 'private'; discoverable: boolean }) => {
@@ -3221,7 +3257,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       list: catalogItems, total: catalogTotal, loading: catalogLoading, query: queryCatalog,
       equipped: equippedWearables, open: backpackOpen, toggle: toggleBackpack, bodyShape, colors: avatarColors, setColor: setAvatarColor, equip: equipWearables, saveError, retrySave, revertSave, preview: previewWearables, focus: focusPreview, forceRender, setForceRender,
       outfits: outfits.outfits, outfitSlots: ownedNames.length > 0 ? 10 : 5,
-      saveOutfit, deleteOutfit, equipOutfit
+      saveOutfit, deleteOutfit, equipOutfit,
+      outfitHistory, randomizeOutfit, undoOutfit, redoOutfit
     },
     communities: { list: communities, open: communitiesOpen, toggle: toggleCommunities, create: createCommunity, join: joinCommunity, requestToJoin: requestToJoinCommunity, cancelRequest: cancelJoinRequest, leave: leaveCommunity, error: communityError, detail: communityDetail, loadDetail: loadCommunityDetail },
     map: mapSlice,

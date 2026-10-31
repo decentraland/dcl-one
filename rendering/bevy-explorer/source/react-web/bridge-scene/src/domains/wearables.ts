@@ -39,6 +39,11 @@ function accumulateTokens(elements: CatalogElement[]): void {
   }
 }
 
+/** The urn the look deploys for an item seen in a fetched page or the equipped set. */
+export function deployableUrn(urn: string): string {
+  return tokenUrnByItem.get(urn) ?? urn
+}
+
 export type CatalogPageParams = {
   /** 0-based page. */
   page: number
@@ -49,6 +54,10 @@ export type CatalogPageParams = {
   direction?: 'asc' | 'desc'
   collectiblesOnly?: boolean
   smartOnly?: boolean
+  /** Overrides the collection types `collectiblesOnly` picks. */
+  collectionTypes?: string[]
+  /** Several categories at once; `category` narrows to one. */
+  categories?: string[]
 }
 
 // Server-side-paginated owned-wearables fetch (one page). Filters/sort are applied by the catalyst
@@ -57,10 +66,11 @@ export async function fetchWearablesPage(address: string, p: CatalogPageParams):
   const baseUrl = await catalystBase()
   let url = `${baseUrl}/explorer/${address}/wearables?pageNum=${p.page + 1}&pageSize=${p.pageSize}&includeEntities=true`
   if (p.category != null && p.category !== 'all') url += `&category=${p.category}`
+  for (const c of p.categories ?? []) url += `&category=${c}`
   if (p.search != null && p.search !== '') url += `&name=${encodeURIComponent(p.search)}`
   if (p.orderBy != null) url += `&orderBy=${p.orderBy}&direction=${p.direction === 'asc' ? 'ASC' : 'DESC'}`
   // Explicit collection types (matches unity/bevy-ui-scene): collectibles-only drops base wearables.
-  const collectionTypes = p.collectiblesOnly ? ['on-chain', 'third-party'] : ['base-wearable', 'on-chain', 'third-party']
+  const collectionTypes = p.collectionTypes ?? (p.collectiblesOnly ? ['on-chain', 'third-party'] : ['base-wearable', 'on-chain', 'third-party'])
   for (const t of collectionTypes) url += `&collectionType=${t}`
   if (p.smartOnly === true) url += '&isSmartWearable=true'
 
@@ -173,7 +183,7 @@ export function registerWearables(ctx: Ctx): void {
   ctx.on('equip', async (msg) => {
     // The equipped set carries the body shape, but it's the avatar base, not a wearable.
     const { bodyShape, wearables } = splitBodyShape(msg.urns)
-    const tokenUrns = wearables.map((u) => tokenUrnByItem.get(u) ?? u)
+    const tokenUrns = wearables.map(deployableUrn)
     const before = currentLook()
     const newShape = bodyShape != null && bodyShape !== before?.bodyShape
     editLook(bodyShape != null ? { bodyShape, wearables: tokenUrns } : { wearables: tokenUrns })
