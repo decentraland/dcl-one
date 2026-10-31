@@ -136,7 +136,7 @@ export default function EventScheduleRoute({ loaderData }: Route.ComponentProps)
         dayLabels={d.dayLabels}
         scheduleId={d.scheduleId ?? undefined}
         draft={d.draft ?? undefined}
-        submit={buildScheduleSubmit(getIdentity)}
+        submit={buildScheduleSubmit(getIdentity, d.schedules.find((schedule) => schedule.id === d.scheduleId))}
         signedIn={auth.isConnected}
         onSignIn={openSignIn}
       />

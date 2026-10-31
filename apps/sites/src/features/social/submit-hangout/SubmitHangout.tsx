@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { useMachine } from "@xstate/react";
 import { Link, useSearchParams } from "react-router";
 
-import { SitesChromeMaybe } from "@ui/web/frames/SitesChrome";
 
 import type { TrackContext } from "@/core/lib/telemetry/track";
 import { isStepValid, type HangoutDraft } from "@/data/lib/catalyst/landings/submit-hangout";
@@ -19,7 +18,7 @@ import {
 } from "./machine";
 
 export type CategoryOption = { name: string; label: string };
-type UploadFn = (file: File, vertical: boolean) => Promise<string>;
+type UploadFn = (file: File, vertical: boolean, signal?: AbortSignal) => Promise<string>;
 
 type SubmitHangoutProps = {
   trackCtx: TrackContext;
@@ -121,17 +120,22 @@ function SubmitHangoutInner({
   const needsSignIn = Boolean(onSignIn) && !signedIn;
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const uploadController = useRef<AbortController | null>(null);
+  useEffect(() => () => uploadController.current?.abort(), []);
   async function uploadImage(file: File, vertical: boolean) {
     if (!upload) return;
+    uploadController.current?.abort();
+    const controller = new AbortController();
+    uploadController.current = controller;
     setUploading(true);
     setUploadError(null);
     try {
-      const url = await upload(file, vertical);
-      send({ type: "EDIT", patch: vertical ? { verticalImagePreviewUrl: url } : { imagePreviewUrl: url } });
+      const url = await upload(file, vertical, controller.signal);
+      if (!controller.signal.aborted) send({ type: "EDIT", patch: vertical ? { verticalImagePreviewUrl: url } : { imagePreviewUrl: url } });
     } catch (error) {
-      setUploadError(error instanceof Error ? error.message : "Could not upload the image.");
+      if (!controller.signal.aborted) setUploadError(error instanceof Error ? error.message : "Could not upload the image.");
     } finally {
-      setUploading(false);
+      if (!controller.signal.aborted) setUploading(false);
     }
   }
   useEffect(() => {
@@ -158,7 +162,6 @@ function SubmitHangoutInner({
   const canAdvanceForm = !uploading && (value === "cover" || isStepValid(value, d));
 
   return (
-    <SitesChromeMaybe active="whatson">
     <div className="submit-hangout" data-step={step} data-state={value}>
       <header className="submit-hangout__header">
         <Link to="/whats-on">Back to What&apos;s On</Link>
@@ -191,13 +194,13 @@ function SubmitHangoutInner({
             {uploadError && <p role="alert">{uploadError}</p>}
             {uploading && <p role="status">Uploading image…</p>}
             <div className="submit-hangout__nav">
-              <button
+              {value === "cover" ? <Link className="submit-hangout__btn" to="/whats-on">Back</Link> : <button
                 type="button"
                 className="submit-hangout__btn"
                 onClick={() => send({ type: "BACK" })}
               >
                 Back
-              </button>
+              </button>}
 
               {value === "review" ? (
                 <>
@@ -257,7 +260,6 @@ function SubmitHangoutInner({
         )}
       </div>
     </div>
-    </SitesChromeMaybe>
   );
 }
 
@@ -477,7 +479,7 @@ function StepFields({
               className="submit-hangout__field"
               type="date"
               value={draft.recurrentUntil}
-              onChange={(e) => onEdit({ recurrentUntil: e.target.value })}
+              onChange={(e) => onEdit({ recurrentUntil: e.target.value, recurrentCount: null })}
             />
           </label>
         )}

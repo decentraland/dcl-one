@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createActor, waitFor } from "xstate";
 import { getShortestPaths } from "@xstate/graph";
-import { settle } from "../../test-utils/fake-clock";
 
 import {
   scheduleMachine,
@@ -12,13 +11,11 @@ import {
   resolveScheduleSnapshot,
   slugToState,
   stateToSlug,
-  simulateSubmit,
   type SubmitFn,
   type TrackFn,
 } from "./machine";
 import {
   emptyDraft,
-  toUpsertBody,
   validateStep,
   isStepValid,
   type ScheduleDraft,
@@ -222,28 +219,4 @@ describe("schedule draft model", () => {
     expect(isStepValid("dates", validDraft())).toBe(true);
   });
 
-  it("toUpsertBody derives epoch-ms timestamps, omits schedule_id on create and carries it on edit", () => {
-    const body = toUpsertBody(validDraft());
-    expect(body.schedule_id).toBeUndefined();
-    expect(body.name).toBe("Summer Sounds 2026");
-    expect(typeof body.active_since).toBe("number");
-    expect(body.active_until).toBeGreaterThan(body.active_since);
-    expect(body.background).toEqual(["#00D6CE", "#0B6E99"]);
-    expect(typeof body.signed_at).toBe("number");
-    expect(toUpsertBody(validDraft(), "sample-mvfw-2026").schedule_id).toBe("sample-mvfw-2026");
-  });
-});
-
-describe("simulateSubmit", () => {
-  it("mints an id on create, preserves the id on edit, and rejects a nameless draft", async () => {
-    vi.useFakeTimers();
-    const created = await settle(simulateSubmit({ draft: validDraft() }));
-    expect(created.id).toBeTruthy();
-    expect(created.active).toBe(true);
-    const edited = await settle(
-      simulateSubmit({ draft: validDraft(), scheduleId: "sample-pride-2026" }),
-    );
-    expect(edited.id).toBe("sample-pride-2026");
-    await settle(expect(simulateSubmit({ draft: emptyDraft() })).rejects.toThrow(/name/));
-  });
 });

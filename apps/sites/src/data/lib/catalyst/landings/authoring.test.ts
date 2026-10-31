@@ -3,8 +3,8 @@ vi.mock("../client", async (original) => ({ ...await original<typeof import("../
 vi.mock("../../auth/signer", () => ({ signedFetch: vi.fn() }));
 import { postJSON } from "../client";
 import { signedFetch } from "../../auth/signer";
-import { buildHangoutSubmit, emptyDraft as emptyHangout, eventToDraft, uploadHangoutPoster, type EditableHangout, type HangoutDraft } from "./submit-hangout";
-import { buildScheduleSubmit, emptyDraft as emptySchedule, type ScheduleDraft } from "./schedules";
+import { buildHangoutSubmit, deleteHangout, emptyDraft as emptyHangout, eventToDraft, uploadHangoutPoster, type EditableHangout, type HangoutDraft } from "./submit-hangout";
+import { buildScheduleSubmit, emptyDraft as emptySchedule, scheduleToDraft, type Schedule, type ScheduleDraft } from "./schedules";
 import type { AuthIdentity } from "../../auth/types";
 
 describe("when submitting a hangout", () => {
@@ -79,6 +79,27 @@ describe("when submitting a hangout", () => {
       expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ recurrent_count: 5 }), expect.any(Object));
     });
 
+    describe("and the owner selects an end date", () => {
+      beforeEach(() => { draft.recurrentUntil = "2099-07-01"; });
+      it("should clear the old count instead of sending both recurrence endings", async () => {
+        await submit({ draft });
+        expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ recurrent_count: null, recurrent_until: "2099-07-01T23:59:59.000Z" }), expect.any(Object));
+      });
+    });
+
+    it("should omit an unchanged community from unrelated edits", async () => {
+      await submit({ draft });
+      expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("community_id");
+    });
+
+    describe("and the owner detaches the community", () => {
+      beforeEach(() => { draft.communityId = ""; });
+      it("should explicitly clear the community", async () => {
+        await submit({ draft });
+        expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ community_id: null }), expect.any(Object));
+      });
+    });
+
     describe("and the series repeats yearly", () => {
       beforeEach(() => { original.recurrent_frequency = "YEARLY"; draft = eventToDraft(original); });
       it("should preserve the yearly frequency on an unrelated edit", async () => {
@@ -125,6 +146,26 @@ describe("when saving a moderator schedule", () => {
     vi.mocked(postJSON).mockRejectedValueOnce(new Error("Moderator access required"));
     await expect(submit({ draft })).rejects.toThrow("Moderator access required");
   });
+
+  describe("and editing a schedule with precise times", () => {
+    let original: Schedule;
+    beforeEach(() => {
+      original = { id: "saved-schedule", name: "Festival", description: null, image: null, theme: null, background: [], active: true, active_since: "2099-06-01T12:34:56.789Z", active_until: "2099-06-03T16:45:12.345Z" , created_at: null, updated_at: null };
+      draft = scheduleToDraft(original);
+      submit = buildScheduleSubmit(() => identity, original);
+    });
+    it("should retain both times while editing an unrelated field", async () => {
+      await submit({ draft, scheduleId: original.id });
+      expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ active_since: original.active_since, active_until: original.active_until }), expect.any(Object));
+    });
+    describe("and only the last day changes", () => {
+      beforeEach(() => { draft.activeUntilDate = "2099-06-04"; });
+      it("should retain the start time and use the new end day", async () => {
+        await submit({ draft, scheduleId: original.id });
+        expect(postJSON).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ active_since: original.active_since, active_until: "2099-06-04T23:59:59.000Z" }), expect.any(Object));
+      });
+    });
+  });
 });
 
 describe("when uploading event covers", () => {
@@ -141,7 +182,7 @@ describe("when uploading event covers", () => {
 
   it("should send multipart image data using the signed poster endpoint", async () => {
     await uploadHangoutPoster(identity, file, false);
-    expect(signedFetch).toHaveBeenCalledWith(identity, expect.stringContaining("/events/api/poster"), { method: "POST", body: expect.any(FormData) });
+    expect(signedFetch).toHaveBeenCalledWith(identity, expect.stringContaining("/events/api/poster"), { method: "POST", body: expect.any(FormData), signal: undefined });
   });
 
   it("should accept the server bare poster response and return its reachable URL", async () => {
@@ -154,11 +195,42 @@ describe("when uploading event covers", () => {
     expect(signedFetch).not.toHaveBeenCalled();
   });
 
+  describe("and the server rejects the upload", () => {
+    let response: Response;
+    let controller: AbortController;
+    beforeEach(() => {
+      response = new Response(JSON.stringify({ message: "File size limit has been reached" }), { status: 413 });
+      controller = new AbortController();
+      vi.mocked(signedFetch).mockResolvedValueOnce(response);
+    });
+    it("should consume the error body and show the server message", async () => {
+      await expect(uploadHangoutPoster(identity, file, false, controller.signal)).rejects.toThrow("File size limit has been reached");
+      expect(response.bodyUsed).toBe(true);
+    });
+    it("should forward the caller's abort signal", async () => {
+      await expect(uploadHangoutPoster(identity, file, false, controller.signal)).rejects.toThrow();
+      expect(signedFetch).toHaveBeenCalledWith(identity, expect.any(String), expect.objectContaining({ signal: controller.signal }));
+    });
+  });
+
   describe("and the browser uses a relative catalyst base", () => {
     beforeEach(() => vi.stubGlobal("window", { __CATALYST_BASE__: "", location: { origin: "https://discovery.example" } }));
     afterEach(() => vi.unstubAllGlobals());
     it("should resolve the uploaded poster to the browser origin", async () => {
       await expect(uploadHangoutPoster(identity, file, false)).resolves.toBe("https://discovery.example/poster/cover.png");
     });
+  });
+});
+
+describe("when deleting a hangout", () => {
+  let identity: AuthIdentity;
+  beforeEach(() => {
+    identity = { signer: "0x1111111111111111111111111111111111111111", ephemeral: { address: "0x2222222222222222222222222222222222222222", privateKey: "0x01" }, expiration: "2099-01-01T00:00:00Z", authChain: [] };
+    vi.mocked(postJSON).mockResolvedValueOnce({ ok: true });
+  });
+  afterEach(() => vi.resetAllMocks());
+  it("should sign a DELETE request with an encoded event id", async () => {
+    await deleteHangout(identity, "event/one");
+    expect(postJSON).toHaveBeenCalledWith("/events/api/events/event%2Fone", undefined, { identity, method: "DELETE", signal: undefined });
   });
 });

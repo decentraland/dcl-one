@@ -6,7 +6,6 @@ import { track as defaultTrack, type TrackContext, type TrackFn } from "@/core/l
 import {
   emptyDraft,
   isStepValid,
-  simulateSubmitHangout,
   type HangoutDraft,
   type SubmitResult,
   type SubmitFn,
@@ -86,8 +85,7 @@ export const FORM_ORDER: HangoutStateId[] = [
   "review",
 ];
 
-export const simulateSubmit: SubmitFn = ({ draft, signal }) =>
-  simulateSubmitHangout(draft, { signal });
+const missingSubmit: SubmitFn = async () => { throw new Error("Hangout submission is unavailable."); };
 
 export const hangoutMachine = setup({
   types: {
@@ -130,7 +128,7 @@ export const hangoutMachine = setup({
     trackSubmitted: ({ context }) =>
       context.track(
         HANGOUT_EVENTS.submitted,
-        { event_id: context.result?.id, approved: context.result?.approved, stub: context.submit === simulateSubmit },
+        { event_id: context.result?.id, approved: context.result?.approved, stub: false },
         context.trackCtx,
       ),
   },
@@ -139,7 +137,7 @@ export const hangoutMachine = setup({
   context: ({ input }) => ({
     trackCtx: input.trackCtx,
     draft: input.draft ?? emptyDraft(),
-    submit: input.submit ?? simulateSubmit,
+    submit: input.submit ?? missingSubmit,
     track: input.track ?? defaultTrack,
   }),
   initial: "signinGate",
@@ -253,7 +251,7 @@ export function resolveHangoutSnapshot(args: {
   const context: HangoutContext = {
     trackCtx,
     draft: draft ?? emptyDraft(),
-    submit: submit ?? simulateSubmit,
+    submit: submit ?? missingSubmit,
     track: track ?? defaultTrack,
   };
   return hangoutMachine.resolveState({ value: step, context });

@@ -3,10 +3,10 @@ import { useNavigate } from "react-router";
 import LdSubmitHangoutView from "@ui/landings/pages/LdSubmitHangoutView";
 
 import { fetchEventCategories, type EventCategory } from "@/data/lib/catalyst/places/events";
-import { buildHangoutSubmit, emptyDraft, eventToDraft, loadEditableHangout, uploadHangoutPoster, type EditableHangout } from "@/data/lib/catalyst/landings/submit-hangout";
+import { buildHangoutSubmit, deleteHangout, emptyDraft, eventToDraft, loadEditableHangout, uploadHangoutPoster, type EditableHangout } from "@/data/lib/catalyst/landings/submit-hangout";
 import { useAuth } from "@/data/lib/auth/context";
 import { getIdentity } from "@/data/lib/auth/session";
-import { postJSON } from "@/data/lib/catalyst/client";
+import { SitesChromeMaybe } from "@ui/web/frames/SitesChrome";
 import { openSignIn } from "@/features/components/auth/signin-store";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
@@ -100,7 +100,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
     setDeleting(true);
     setDeleteError(null);
     try {
-      await postJSON(`/events/api/events/${encodeURIComponent(original.id)}`, undefined, { identity, method: "DELETE" });
+      await deleteHangout(identity, original.id);
       navigate("/whats-on");
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Could not delete this hangout.");
@@ -110,6 +110,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
   }
 
   return (
+    <SitesChromeMaybe active="whatson">
     <LdSubmitHangoutView>
       {waiting ? <p role="status">Loading your hangout…</p> : error ? <p role="alert">{error}</p> : <SubmitHangout
         key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}
@@ -125,14 +126,15 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
         submit={buildHangoutSubmit(getIdentity, original)}
         signedIn={auth.isConnected}
         onSignIn={openSignIn}
-        upload={(file, vertical) => {
+        upload={(file, vertical, signal) => {
           const identity = getIdentity();
           if (!identity) return Promise.reject(new Error("Sign in to upload an image."));
-          return uploadHangoutPoster(identity, file, vertical);
+          return uploadHangoutPoster(identity, file, vertical, signal);
         }}
       />}
       {original && <button type="button" disabled={deleting} onClick={() => { void removeHangout(); }}>{deleting ? "Deleting…" : "Delete hangout"}</button>}
       {deleteError && <p role="alert">{deleteError}</p>}
     </LdSubmitHangoutView>
+    </SitesChromeMaybe>
   );
 }
