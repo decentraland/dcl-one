@@ -34,14 +34,16 @@ export function treeHash(dir: string): string {
   return h.digest("hex");
 }
 
-export function prepareReference(force = false): { dist: string; stamp: Record<string, unknown> } {
+export type ReferenceStamp = { repository: string; revision: string; date: string; buildEnv: Record<string, string>; node: string; builtAt: string; lockSha256: string; distSha256: string };
+
+export function prepareReference(force = false): { dist: string; stamp: ReferenceStamp } {
   const pin = referencePin();
   const dir = referenceDir(pin);
   const src = join(dir, "src");
   const dist = referenceDist(pin);
   const stampFile = join(dir, "build.json");
   if (!force && existsSync(stampFile) && existsSync(dist)) {
-    const stamp = JSON.parse(readFileSync(stampFile, "utf8"));
+    const stamp = JSON.parse(readFileSync(stampFile, "utf8")) as ReferenceStamp;
     const same = stamp.revision === pin.revision && JSON.stringify(stamp.buildEnv) === JSON.stringify(pin.buildEnv) && stamp.node === process.version;
     if (same && stamp.distSha256 === treeHash(dist)) return { dist, stamp };
   }
@@ -50,9 +52,9 @@ export function prepareReference(force = false): { dist: string; stamp: Record<s
   const repo = process.env.SHOP_PARITY_REFERENCE_REPO || pin.repository;
   run("git", ["init", "-q"], src);
   try {
-    run("git", ["fetch", "-q", "--depth", "1", "--no-tags", repo, pin.revision], src);
+    run("git", ["fetch", "-q", "--depth", "1", "--no-tags", "--", repo, pin.revision], src);
   } catch {
-    run("git", ["fetch", "-q", "--no-tags", repo, "+refs/heads/*:refs/remotes/origin/*"], src);
+    run("git", ["fetch", "-q", "--no-tags", "--", repo, "+refs/heads/*:refs/remotes/origin/*"], src);
   }
   run("git", ["-c", "advice.detachedHead=false", "checkout", "-q", pin.revision], src);
   const head = run("git", ["rev-parse", "HEAD"], src);
@@ -68,7 +70,7 @@ export function prepareReference(force = false): { dist: string; stamp: Record<s
   const buildEnv: NodeJS.ProcessEnv = { ...env, ...pin.buildEnv };
   run(process.execPath, ["node_modules/vite/bin/vite.js", "build", "--logLevel", "warn"], app, buildEnv);
 
-  const stamp = {
+  const stamp: ReferenceStamp = {
     repository: pin.repository,
     revision: pin.revision,
     date: pin.date,

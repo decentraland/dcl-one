@@ -7,17 +7,18 @@
 //   node gate.mts --promote      # capture every page and add the identical ones to the gate
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { capture, dclOneIdentity, defaultSet } from "./capture.mts";
+import { capture, defaultSet } from "./capture.mts";
+import { isCommitted } from "./lib/build.mts";
 import { GATE_FILE, STATE } from "./lib/paths.mts";
-import { isIdentical } from "./lib/run.mts";
+import { isIdentical } from "./lib/verdict.mts";
 
 type Gate = { recording: string; pixelTolerance: number; pages: Record<string, string> };
 
 const gate: Gate = existsSync(GATE_FILE) ? (JSON.parse(readFileSync(GATE_FILE, "utf8")) as Gate) : { recording: defaultSet(), pixelTolerance: 0, pages: {} };
 const promote = process.argv.includes("--promote");
-// A page is marked identical against a commit; uncommitted sources have none.
-if (promote && dclOneIdentity().endsWith("+uncommitted")) {
-  console.error("gate: commit or stash the changes in apps/ui3 and apps/sites before promoting");
+// A page is marked identical against a commit: the build's sources and this tool's declarations both.
+if (promote && !isCommitted()) {
+  console.error("gate: commit or stash every change (and move apps/sites' gitignored .env files aside) before promoting");
   process.exit(1);
 }
 const gated = Object.keys(gate.pages);
@@ -30,7 +31,7 @@ if (!promote && gated.length === 0) {
 
 const pages = promote ? undefined : [...new Set(gated.map((g) => g.split("@")[0]!))];
 const viewports = promote ? undefined : [...new Set(gated.map((g) => g.split("@")[1]!))].join(",");
-const results = await capture({ set: gate.recording, pages, viewports, out, build: process.argv.includes("--build"), strict: true, quiet: true });
+const results = await capture({ set: gate.recording, pages, viewports, out, build: process.argv.includes("--build"), quiet: true });
 
 if (promote) {
   const today = new Date().toISOString().slice(0, 10);

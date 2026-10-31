@@ -109,6 +109,18 @@ export function decodePng(buf: Buffer): Rgba {
   return { width, height, data: out };
 }
 
+/**
+ * Paste one viewport tile, taken at scroll offset `top`, into the page image below the rows already
+ * filled (a scroll clamped at the bottom overlaps the previous tile). Returns the rows now filled.
+ */
+export function pasteTile(out: Rgba, filled: number, top: number, shot: Rgba): number {
+  const { width, height } = out;
+  for (let row = Math.max(0, filled - top); row < shot.height && top + row < height; row++) {
+    out.data.set(shot.data.subarray(row * shot.width * 4, row * shot.width * 4 + width * 4), (top + row) * width * 4);
+  }
+  return Math.max(filled, Math.min(height, top + shot.height));
+}
+
 /** Intrinsic size of a PNG, JPEG, GIF or WebP, read from its header; null when unknown. */
 export function imageSize(buf: Buffer): { width: number; height: number } | null {
   if (buf.length > 24 && buf.subarray(0, 8).equals(SIGNATURE)) return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };

@@ -15,6 +15,7 @@ import { pixelDiff, type Band } from "./pixeldiff.mts";
 import type { Miss, Recording } from "./recording.mts";
 import { startReplay, startSites, startStatic } from "./servers.mts";
 import { compareStructure, coverByRegions, line, type StructDiff } from "./structure.mts";
+import { classifyMiss, classifyUnknown, isIdentical } from "./verdict.mts";
 
 export const SEED = 7;
 
@@ -36,7 +37,12 @@ export type PageResult = {
   unknown: { side: Side; request: string; expected?: string }[];
 };
 
-export type Servers = { origins: Record<Side, string>; close(): Promise<void> };
+export type Servers = {
+  origins: Record<Side, string>;
+  /** Hosts dcl-one's server-side render was refused since the last call, once its queued renders end. */
+  ssrBlocked(): Promise<string[]>;
+  close(): Promise<void>;
+};
 
 /** `now` (epoch ms) fixes the server-side render's clock where the browser's is; its randomness is seeded as the browser's. */
 export async function startServers(recording: Recording, now?: number): Promise<Servers> {
@@ -52,34 +58,15 @@ export async function startServers(recording: Recording, now?: number): Promise<
   }
   return {
     origins: { reference: `http://127.0.0.1:${PORTS.reference()}`, "dcl-one": `http://127.0.0.1:${PORTS.sites()}` },
+    async ssrBlocked() {
+      const r = await fetch(`http://127.0.0.1:${PORTS.sites()}/__shop-parity/blocked`, { signal: AbortSignal.timeout(60_000) });
+      return (await r.json()) as string[];
+    },
     async close() {
       sites?.kill();
       await Promise.all(servers.map((s) => new Promise((r) => s.close(() => r(null)))));
     },
   };
-}
-
-/**
- * Pixel-identical (outside masks and deliberate regions), no unexpected structural difference, and no
- * request left unanswered (by the recording, or to a host the harness does not know) unless the page
- * declares it: two sides missing the same data render the same empty state, which compares nothing.
- */
-export function isIdentical(r: Pick<PageResult, "pixels" | "structure" | "sides" | "misses" | "unknown">, tolerance = 0): boolean {
-  if (r.sides.reference.error || r.sides["dcl-one"].error) return false;
-  return r.pixels.diff <= tolerance && r.structure.every((d) => d.expected) && (r.misses ?? []).every((m) => m.expected) && (r.unknown ?? []).every((u) => u.expected);
-}
-
-/** A miss with the page's rule attached when one of its `unrecorded` entries covers it. */
-export function classifyMiss(m: Miss, spec: Pick<PageSpec, "unrecorded">): Miss & { expected?: string } {
-  const text = `${m.method} ${m.service} ${m.path} ${m.request === undefined ? "" : JSON.stringify(m.request)}`;
-  const rule = spec.unrecorded?.find((u) => u.match.test(text));
-  return rule ? { ...m, expected: rule.why } : m;
-}
-
-/** A request to an unknown host (`GET host/path`), with the page's rule attached when one covers it. */
-export function classifyUnknown(side: Side, request: string, spec: Pick<PageSpec, "unrecorded">): PageResult["unknown"][number] {
-  const rule = spec.unrecorded?.find((u) => u.match.test(request));
-  return rule ? { side, request, expected: rule.why } : { side, request };
 }
 
 export async function comparePage(
@@ -102,6 +89,8 @@ export async function comparePage(
       onPage: opts.onPage ? (p) => opts.onPage!(side, p) : undefined,
     });
   }
+  // Asked after dcl-one's context is closed and its last render has ended, so no host lands on the next page.
+  const ssrBlocked = await servers.ssrBlocked();
   const dir = join(opts.out, `${spec.id}@${vp.name}`);
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "reference.png"), caps.reference.png);
@@ -127,6 +116,8 @@ export async function comparePage(
       { url: caps[s].url, error: caps[s].error, console: caps[s].console, blocked: [...new Set(caps[s].log.blocked)], unknown: [...new Set(caps[s].log.unknown)], height: caps[s].collected.height },
     ]),
   ) as PageResult["sides"];
+  // The server-side render is cut off from the network like the browser: a host it tried counts as unknown.
+  for (const host of new Set(ssrBlocked)) sides["dcl-one"].unknown.push(`SSR ${host}`);
   const result: PageResult = {
     page: spec.id,
     title: spec.title,
@@ -172,8 +163,11 @@ export async function runAll(recording: Recording, specs: PageSpec[], viewports:
       }
     }
   } finally {
-    await browser?.close();
-    await servers.close();
+    try {
+      await browser?.close();
+    } finally {
+      await servers.close();
+    }
   }
   return { results, executable };
 }

@@ -90,24 +90,36 @@ export function placeholderFor(recording: Recording, url: URL): Buffer {
   return placeholderPng(seed, size?.width, size?.height);
 }
 
-/** The node as sites sees it: every request answered from the recording, pictures by placeholder. */
+/**
+ * A request a browser made: every current browser names the requesting site, and the sites preview
+ * strips these headers when it relays.
+ */
+export function fromBrowser(headers: IncomingMessage["headers"]): boolean {
+  return headers["sec-fetch-site"] !== undefined || headers.origin !== undefined;
+}
+
+/**
+ * The node as sites sees it: every request answered from the recording, pictures by placeholder. Only
+ * the sites preview reads it, server to server, so it answers no browser: while recording, a website
+ * open in the developer's browser could otherwise make it read production and write the recording.
+ */
 export function startReplay(recording: Recording, port: number): Promise<Server> {
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
       const method = (req.method ?? "GET").toUpperCase();
-      if (method === "OPTIONS") {
-        res.writeHead(204, { "access-control-allow-origin": "*", "access-control-allow-headers": "*", "access-control-allow-methods": "*" });
-        return res.end();
+      if (fromBrowser(req.headers) || !["GET", "HEAD", "POST"].includes(method)) {
+        res.writeHead(403, { "content-type": "text/plain" });
+        return res.end("the parity replay answers the sites preview only");
       }
       if (isContentImage(url) && OWN_IMAGE_MOUNTS.test(url.pathname)) {
-        res.writeHead(200, { "content-type": "image/png", "access-control-allow-origin": "*" });
+        res.writeHead(200, { "content-type": "image/png" });
         return res.end(placeholderFor(recording, url));
       }
       const { service, path } = fromNodePath(method, url.pathname);
       const body = await readBody(req);
       const answer = await recording.answer({ method, service, path, search: url.search, body, headers: req.headers as Record<string, string>, side: "dcl-one" });
-      res.writeHead(answer.status, { "content-type": answer.contentType, "access-control-allow-origin": "*" });
+      res.writeHead(answer.status, { "content-type": answer.contentType });
       res.end(answer.body);
     } catch (err) {
       res.writeHead(502, { "content-type": "text/plain" });

@@ -1,11 +1,12 @@
 // Serve the built apps/sites tree in production mode on a loopback origin, with every API mount the
-// browser reads proxied to one upstream (the capture's replay).
+// browser reads proxied to one upstream (the capture's replay). The process connects to loopback only.
 //
 //   node sites-preview.mts --base http://127.0.0.1:<port> --upstream http://127.0.0.1:<port>
 import { createRequire } from "node:module";
 import { request } from "node:http";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { guardLoopback } from "./lib/guard.mts";
 import { SITES } from "./lib/paths.mts";
 
 // Every path production routes off the sites app, so a page's read reaches the replay (and is listed as a
@@ -32,7 +33,15 @@ if (now) {
     get: (target, key, receiver) => (key === "now" ? () => now : Reflect.get(target, key, receiver)),
   });
 }
-// The same seeded sequence the browser gets (lib/browser.mts), restarted for every request as the browser's
+// The server-side render must not read the network: its loaders follow CATALYST_URL to the replay, and
+// a module that names a production host of its own is refused here and listed in the run.
+const blocked: string[] = [];
+guardLoopback((to) => {
+  blocked.push(to);
+  console.error(`sites preview: blocked a server-side connection to ${to}`);
+});
+
+// The same seeded sequence the browser gets (lib/browser.mts), restarted for every render as the browser's
 // is for every page, so a server-side shuffle does not depend on what rendered before it.
 const seed = Number(process.env.SHOP_PARITY_SEED);
 let reseed = () => {};
@@ -61,16 +70,29 @@ const build = await import(pathToFileURL(resolve(SITES, "build/server/index.js")
 
 const app = express();
 app.disable("x-powered-by");
-app.use(compression());
-app.use((_incoming: unknown, _outgoing: unknown, next: () => void) => {
-  reseed();
+// Another site open in the developer's browser must not drive the preview: while recording, its renders
+// and relays read production through the replay and write the recording. The harness's own pages are
+// same-origin, and its navigations carry no site.
+app.use((incoming: any, outgoing: any, next: () => void) => {
+  const site = incoming.headers["sec-fetch-site"];
+  const origin = incoming.headers.origin;
+  if ((site !== undefined && site !== "same-origin" && site !== "none") || (origin !== undefined && origin !== base.origin)) return outgoing.status(403).end();
   next();
+});
+app.use(compression());
+// One render at a time, each from a fresh seed: two renders sharing Math.random would interleave draws.
+let rendering = Promise.resolve();
+// The hosts refused since the last call, once every render queued before it has ended (lib/run.mts).
+app.get("/__shop-parity/blocked", (_incoming: unknown, outgoing: any) => {
+  void rendering.then(() => outgoing.json(blocked.splice(0)));
 });
 app.use((incoming: any, outgoing: any, next: () => void) => {
   if (!MOUNTS.some((m) => incoming.path === `/${m}` || incoming.path.startsWith(`/${m}/`))) return next();
   // From the path only: an absolute-form request line must not make the preview relay to another host.
   const target = new URL(incoming.originalUrl.startsWith("/") ? incoming.originalUrl : "/", upstream);
-  const req = request(target, { method: incoming.method, headers: { ...incoming.headers, host: target.host, "accept-encoding": "identity" } }, (res) => {
+  // The replay answers no browser (lib/servers.mts fromBrowser): what names the page's site stays here.
+  const headers = Object.fromEntries(Object.entries(incoming.headers).filter(([k]) => !/^(origin|referer|cookie|sec-fetch-.*)$/.test(k)));
+  const req = request(target, { method: incoming.method, headers: { ...headers, host: target.host, "accept-encoding": "identity" } }, (res) => {
     outgoing.status(res.statusCode ?? 502);
     for (const [key, value] of Object.entries(res.headers)) if (value && !["transfer-encoding", "connection"].includes(key)) outgoing.setHeader(key, value);
     res.on("error", () => outgoing.destroy());
@@ -84,7 +106,17 @@ app.use((incoming: any, outgoing: any, next: () => void) => {
 app.use("/assets", express.static(resolve(SITES, "build/client/assets"), { immutable: true, maxAge: "1y" }));
 app.use(express.static(resolve(SITES, "build/client")));
 app.use(express.static(resolve(SITES, "public"), { maxAge: "1h" }));
-app.all("/{*splat}", createRequestHandler({ build, mode: "production" }));
+const render = createRequestHandler({ build, mode: "production" });
+app.all("/{*splat}", (incoming: unknown, outgoing: unknown, next: (err?: unknown) => void) => {
+  // The handler settles once the response is written, or at once for a client already gone; an aborted
+  // render's loaders are done drawing by then too.
+  rendering = rendering
+    .then(async () => {
+      reseed();
+      await render(incoming, outgoing, next);
+    })
+    .catch(next);
+});
 const fail = (error: Error) => {
   console.error(`sites preview failed: ${error.message}`);
   process.exit(1);

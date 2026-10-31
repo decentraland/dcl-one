@@ -1,14 +1,20 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
+import { deflateSync } from "node:zlib";
+import { assertFreshBuild, dclOneIdentity, isCommitted, stampFile } from "./build.mts";
 import type { Collected, Node } from "./collect.mts";
-import { decodePng, encodePng, imageSize, placeholderPng, type Rgba } from "./png.mts";
+import { guardLoopback } from "./guard.mts";
+import { referencePin } from "./paths.mts";
+import { decodePng, encodePng, imageSize, pasteTile, placeholderPng, type Rgba } from "./png.mts";
 import { pixelDiff } from "./pixeldiff.mts";
-import { Recording } from "./recording.mts";
-import { classifyMiss, classifyUnknown, isIdentical } from "./run.mts";
-import { imageSeed } from "./servers.mts";
+import { fillMisses, Recording } from "./recording.mts";
+import { classifyMiss, classifyUnknown, isIdentical } from "./verdict.mts";
+import { fromBrowser, imageSeed } from "./servers.mts";
 import { canonicalQuery, fromNodePath, fromShopApi } from "./services.mts";
 import { compareStructure, coverByRegions, line } from "./structure.mts";
 
@@ -26,6 +32,57 @@ describe("png", () => {
     assert.deepEqual(imageSize(png), { width: 7, height: 5 });
     assert.deepEqual(decodePng(png), img);
     assert.deepEqual(imageSize(placeholderPng("seed", 4000, 1000)), { width: 1024, height: 256 });
+  });
+  it("undoes each of the row filters 1 to 4, in RGB and RGBA", () => {
+    for (const channels of [3, 4]) {
+      const w = 5, h = 4, stride = w * channels;
+      const px = Uint8Array.from({ length: stride * h }, (_, i) => (i * 37 + (i >> 3) * 11) & 0xff);
+      for (const filter of [1, 2, 3, 4]) {
+        const raw = Buffer.alloc((stride + 1) * h);
+        for (let y = 0; y < h; y++) {
+          raw[y * (stride + 1)] = filter;
+          for (let x = 0; x < stride; x++) {
+            const a = x >= channels ? px[y * stride + x - channels]! : 0;
+            const b = y > 0 ? px[(y - 1) * stride + x]! : 0;
+            const c = x >= channels && y > 0 ? px[(y - 1) * stride + x - channels]! : 0;
+            const p = a + b - c;
+            const pred = filter === 1 ? a : filter === 2 ? b : filter === 3 ? (a + b) >> 1 : Math.abs(p - a) <= Math.abs(p - b) && Math.abs(p - a) <= Math.abs(p - c) ? a : Math.abs(p - b) <= Math.abs(p - c) ? b : c;
+            raw[y * (stride + 1) + 1 + x] = (px[y * stride + x]! - pred) & 0xff;
+          }
+        }
+        const chunk = (type: string, data: Buffer) => {
+          const head = Buffer.alloc(8);
+          head.writeUInt32BE(data.length, 0);
+          head.write(type, 4, "ascii");
+          return Buffer.concat([head, data, Buffer.alloc(4)]);
+        };
+        const ihdr = Buffer.alloc(13);
+        ihdr.writeUInt32BE(w, 0);
+        ihdr.writeUInt32BE(h, 4);
+        ihdr[8] = 8;
+        ihdr[9] = channels === 4 ? 6 : 2;
+        const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+        const got = decodePng(png);
+        for (let i = 0; i < w * h; i++) {
+          const want = channels === 4 ? [...px.subarray(i * 4, i * 4 + 4)] : [...px.subarray(i * 3, i * 3 + 3), 255];
+          assert.deepEqual([...got.data.subarray(i * 4, i * 4 + 4)], want, `filter ${filter}, ${channels} channels, pixel ${i}`);
+        }
+      }
+    }
+  });
+  it("stitches tiles by their real scroll offset, keeping the rows a clamped last tile overlaps", () => {
+    // A 250-row page seen through a 100-row viewport: the third scroll clamps at 150, not 200.
+    const out: Rgba = { width: 1, height: 250, data: new Uint8Array(250 * 4) };
+    const tile = (top: number, mark?: number): Rgba => ({ width: 1, height: 100, data: Uint8Array.from({ length: 400 }, (_, i) => mark ?? (top + (i >> 2)) % 256) });
+    let filled = pasteTile(out, 0, 0, tile(0));
+    filled = pasteTile(out, filled, 100, tile(100));
+    // Rows 150–199 were filled by the second tile; only the third tile's last 50 rows are new.
+    const third = tile(150);
+    third.data.fill(255, 0, 50 * 4);
+    filled = pasteTile(out, filled, 150, third);
+    assert.equal(filled, 250);
+    for (let row = 0; row < 250; row++) assert.equal(out.data[row * 4], row % 256, `row ${row}`);
+    assert.equal(pasteTile(out, filled, 150, tile(150, 9)), 250);
   });
   it("paints the same placeholder for the same seed and another for another", () => {
     assert.deepEqual(placeholderPng("a", 32, 16), placeholderPng("a", 32, 16));
@@ -69,7 +126,7 @@ describe("services", () => {
 
 describe("isIdentical", () => {
   const clean = { pixels: { diff: 0 }, structure: [], sides: { reference: {}, "dcl-one": {} } } as unknown as Parameters<typeof isIdentical>[0];
-  const miss = { service: "peer", method: "POST", path: "/content/entities/active", query: "", side: "dcl-one", request: { pointers: ["urn:decentraland:off-chain:base-avatars:basemale"] } } as const;
+  const miss = { key: "k", service: "peer", method: "POST", path: "/content/entities/active", query: "", side: "dcl-one", request: { pointers: ["urn:decentraland:off-chain:base-avatars:basemale"] } } as const;
   it("refuses a page with a request the recording could not answer unless the page declares it", () => {
     assert.equal(isIdentical({ ...clean, misses: [] }), true);
     assert.equal(isIdentical({ ...clean, misses: [miss] }), false);
@@ -165,6 +222,171 @@ describe("Recording batched lookups", () => {
       assert.equal(rec.misses.length, 1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("fillMisses", () => {
+  it("keeps what it filled when one read fails, and sends a non-JSON body as it was", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "parity-"));
+    const realFetch = globalThis.fetch;
+    const sent: { url: string; body?: string; type?: string }[] = [];
+    globalThis.fetch = (async (url: string, init?: RequestInit) => {
+      const headers = init?.headers as Record<string, string> | undefined;
+      sent.push({ url, body: init?.body ? Buffer.from(init.body as Uint8Array).toString() : undefined, type: headers?.["content-type"] });
+      if (url.includes("/fails")) throw new Error("offline");
+      return new Response('{"ok":true}', { headers: { "content-type": "application/json" } });
+    }) as typeof fetch;
+    try {
+      const replay = new Recording(dir);
+      await replay.answer({ method: "GET", service: "peer", path: "/fails", search: "", side: "t" });
+      const form = Buffer.from("a=1&b=2");
+      await replay.answer({ method: "POST", service: "peer", path: "/form", search: "", body: form, headers: { "content-type": "application/x-www-form-urlencoded" }, side: "t" });
+      const { filled, failed } = await fillMisses(replay, new Recording(dir, { live: true }), () => {});
+      assert.equal(filled, 1);
+      assert.equal(failed.length, 1);
+      assert.match(failed[0]!, /GET peer \/fails/);
+      const post = sent.find((s) => s.url.endsWith("/form"))!;
+      assert.equal(post.body, "a=1&b=2");
+      assert.equal(post.type, "application/x-www-form-urlencoded");
+      // Saved, under the key the replay missed on.
+      const saved = new Recording(dir);
+      const again = await saved.answer({ method: "POST", service: "peer", path: "/form", search: "", body: form, side: "t" });
+      assert.equal(again.status, 200);
+      assert.equal(saved.misses.length, 0);
+    } finally {
+      globalThis.fetch = realFetch;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("build identity", () => {
+  const git = (root: string, ...args: string[]) => {
+    const r = spawnSync("git", ["-c", "user.name=parity", "-c", "user.email=parity@example.com", "-c", "commit.gpgsign=false", ...args], { cwd: root, encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    return r.stdout.trim();
+  };
+  const put = (root: string, file: string, text: string) => {
+    mkdirSync(join(root, file, ".."), { recursive: true });
+    writeFileSync(join(root, file), text);
+  };
+
+  it("names every uncommitted state that can reach the build, and only those", () => {
+    const root = mkdtempSync(join(tmpdir(), "parity-git-"));
+    try {
+      git(root, "init", "-q");
+      put(root, ".gitignore", ".env\n.env.local\nbuild/\n");
+      put(root, "apps/sites/src/a.ts", "a");
+      put(root, "apps/sites/vite.config.ts", "v1");
+      put(root, "tooling/shop-parity/pages.mts", "p1");
+      git(root, "add", ".");
+      git(root, "commit", "-q", "-m", "init");
+      const head = git(root, "rev-parse", "--short=12", "HEAD");
+      assert.equal(dclOneIdentity(root), head);
+      assert.ok(isCommitted(root));
+
+      put(root, "apps/sites/vite.config.ts", "v2");
+      const first = dclOneIdentity(root);
+      assert.match(first, new RegExp(`^${head}\\+[0-9a-f]{12}$`));
+      put(root, "apps/sites/vite.config.ts", "v3");
+      assert.notEqual(dclOneIdentity(root), first, "another uncommitted state");
+      put(root, "apps/sites/vite.config.ts", "v1");
+      assert.equal(dclOneIdentity(root), head);
+
+      put(root, "library/catalyst-api/new.ts", "n");
+      assert.notEqual(dclOneIdentity(root), head, "an untracked file outside apps/");
+      rmSync(join(root, "library"), { recursive: true });
+
+      for (const env of [".env", ".env.local"]) {
+        put(root, `apps/sites/${env}`, "VITE_X=1");
+        const withEnv = dclOneIdentity(root);
+        assert.notEqual(withEnv, head, `a gitignored ${env} Vite reads`);
+        put(root, `apps/sites/${env}`, "VITE_X=2");
+        assert.notEqual(dclOneIdentity(root), withEnv, `another value in ${env}`);
+        assert.ok(!isCommitted(root));
+        rmSync(join(root, `apps/sites/${env}`));
+      }
+
+      // An untracked repository inside the tree is listed as a directory and counts by its own state.
+      const nested = join(root, "vendor/nested");
+      put(root, "vendor/nested/x.ts", "x1");
+      git(nested, "init", "-q");
+      git(nested, "add", ".");
+      git(nested, "commit", "-q", "-m", "n");
+      const withNested = dclOneIdentity(root);
+      assert.notEqual(withNested, head);
+      put(root, "vendor/nested/x.ts", "x2");
+      assert.notEqual(dclOneIdentity(root), withNested);
+      rmSync(join(root, "vendor"), { recursive: true });
+      assert.equal(dclOneIdentity(root), head);
+
+      put(root, "tooling/shop-parity/pages.mts", "p2");
+      assert.equal(dclOneIdentity(root), head, "the harness is not a build input");
+      assert.ok(!isCommitted(root), "but a promotion needs it committed");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a build stamped with other sources or another Node", () => {
+    const sites = mkdtempSync(join(tmpdir(), "parity-sites-"));
+    try {
+      assert.throws(() => assertFreshBuild("abc", sites), /not one this tool built/);
+      mkdirSync(join(sites, "build"));
+      writeFileSync(stampFile(sites), JSON.stringify({ sources: "abc+111111111111", node: process.version }));
+      assert.throws(() => assertFreshBuild("abc+222222222222", sites), /is of abc\+111111111111, the sources are at abc\+222222222222/);
+      assertFreshBuild("abc+111111111111", sites);
+      writeFileSync(stampFile(sites), JSON.stringify({ sources: "abc", node: "v0.0.0" }));
+      assert.throws(() => assertFreshBuild("abc", sites), /built by Node v0\.0\.0/);
+    } finally {
+      rmSync(sites, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("referencePin", () => {
+  const pin = { repository: "https://github.com/decentraland/shop.git", revision: "3a322cf97490b6ae4ffcfac1fbe9946d5e3a6279", date: "2026-10-30", app: "app", buildEnv: { VITE_DCL_DEFAULT_ENV: "prod" } };
+  const read = (over: Record<string, unknown>) => {
+    const dir = mkdtempSync(join(tmpdir(), "parity-pin-"));
+    try {
+      writeFileSync(join(dir, "reference.json"), JSON.stringify({ ...pin, ...over }));
+      return referencePin(join(dir, "reference.json"));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+  it("accepts the committed pin and refuses what would reach git or rmSync unchecked", () => {
+    assert.deepEqual(read({}), pin);
+    assert.throws(() => read({ revision: "main" }), /40-hex/);
+    assert.throws(() => read({ revision: "../../x" }), /40-hex/);
+    assert.throws(() => read({ repository: "--upload-pack=x" }), /repository/);
+    assert.throws(() => read({ app: "../outside" }), /relative path/);
+    assert.throws(() => read({ buildEnv: { NODE_OPTIONS: "--require x" } }), /VITE_/);
+  });
+});
+
+describe("network guards", () => {
+  it("tells a browser's request from the preview's server-side one", () => {
+    assert.ok(fromBrowser({ "sec-fetch-site": "cross-site", "sec-fetch-mode": "no-cors" }));
+    assert.ok(fromBrowser({ origin: "https://example.com" }));
+    // What Node's fetch sends: no site, no origin.
+    assert.ok(!fromBrowser({ "sec-fetch-mode": "cors", accept: "*/*", "user-agent": "node" }));
+  });
+
+  it("lets loopback through and refuses any other host", async () => {
+    const server = createServer((_req, res) => res.end("ok"));
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    const port = (server.address() as { port: number }).port;
+    const blocked: string[] = [];
+    const lift = guardLoopback((to) => blocked.push(to));
+    try {
+      assert.equal(await (await fetch(`http://127.0.0.1:${port}/`)).text(), "ok");
+      await assert.rejects(fetch("http://example.invalid/"));
+      assert.deepEqual(blocked, ["example.invalid:80"]);
+    } finally {
+      lift();
+      server.close();
     }
   });
 });

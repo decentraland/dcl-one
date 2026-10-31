@@ -1,11 +1,11 @@
 // Capture one page on one side: settle, run the page's interactions, read the structure, and take
 // the page as a user scrolls it (viewport tiles stitched by their real scroll offset, so fixed
 // backgrounds and sticky bars are painted as they are seen, not stretched by a full-page grab).
-import type { Browser, Page } from "playwright-core";
+import type { Browser, BrowserContext, Page } from "playwright-core";
 import { pagePath, type PageSpec, type Side } from "../pages.mts";
 import { sideContext, type Viewport } from "./browser.mts";
 import { collectInPage, type Box, type Collected } from "./collect.mts";
-import { decodePng, encodePng, type Rgba } from "./png.mts";
+import { decodePng, encodePng, pasteTile, type Rgba } from "./png.mts";
 import type { Recording } from "./recording.mts";
 import { routeSide, type SideLog } from "./route.mts";
 
@@ -106,7 +106,7 @@ async function hideBars(page: Page, vh: number, hide: boolean): Promise<void> {
 
 async function tiles(page: Page, vp: Viewport, cap?: number): Promise<Rgba> {
   const height = await docHeight(page, cap);
-  const out = new Uint8Array(vp.width * height * 4);
+  const out: Rgba = { width: vp.width, height, data: new Uint8Array(vp.width * height * 4) };
   let filled = 0;
   for (let y = 0; filled < height; y += vp.height) {
     await page.evaluate((top: number) => window.scrollTo(0, top), y);
@@ -114,27 +114,37 @@ async function tiles(page: Page, vp: Viewport, cap?: number): Promise<Rgba> {
     await page.waitForTimeout(150);
     const real = await page.evaluate(() => Math.round(window.scrollY));
     const shot = decodePng(await page.screenshot({ animations: "disabled", caret: "hide", scale: "css" }));
-    for (let row = Math.max(0, filled - real); row < shot.height && real + row < height; row++) {
-      out.set(shot.data.subarray(row * shot.width * 4, row * shot.width * 4 + vp.width * 4), (real + row) * vp.width * 4);
-    }
-    const next = Math.min(height, real + shot.height);
+    const next = pasteTile(out, filled, real, shot);
     if (next <= filled) break;
     if (filled === 0) await hideBars(page, vp.height, true);
     filled = next;
   }
   await hideBars(page, vp.height, false);
   await page.evaluate(() => window.scrollTo(0, 0));
-  return { width: vp.width, height: filled, data: out.subarray(0, vp.width * filled * 4) };
+  return { width: vp.width, height: filled, data: out.data.subarray(0, vp.width * filled * 4) };
 }
+
+type CaptureOptions = { origin: string; recording: Recording; now: number; seed: number; targets: Record<string, string>; onPage?: (page: Page) => Promise<void> };
 
 export async function captureSide(
   browser: Browser,
   spec: PageSpec,
   vp: Viewport,
   side: Side,
-  opts: { origin: string; recording: Recording; now: number; seed: number; targets: Record<string, string>; onPage?: (page: Page) => Promise<void> },
+  opts: CaptureOptions,
 ): Promise<SideCapture> {
   const context = await sideContext(browser, vp, { now: opts.now, seed: opts.seed });
+  try {
+    return await captureIn(context, spec, vp, side, opts);
+  } finally {
+    await context.close();
+  }
+}
+
+async function captureIn(context: BrowserContext, spec: PageSpec, vp: Viewport, side: Side, opts: CaptureOptions): Promise<SideCapture> {
+  const keys = spec.keys.map((k) => ({ name: k.name, selector: typeof k.selector === "string" ? k.selector : k.selector[side], max: k.max ?? 1 }));
+  const masks = (spec.masks ?? []).flatMap((m) => m.selector[side]);
+  const regions = (spec.regions ?? []).flatMap((r) => r.selector[side]);
   const log = await routeSide(context, opts.recording, side, opts.origin);
   const page = await context.newPage();
   const consoleLines: string[] = [];
@@ -142,9 +152,6 @@ export async function captureSide(
     if (m.type() === "error" || m.type() === "warning") consoleLines.push(`${m.type()}: ${m.text().slice(0, 300)}`);
   });
   page.on("pageerror", (e) => consoleLines.push(`pageerror: ${String(e).slice(0, 300)}`));
-  const keys = spec.keys.map((k) => ({ name: k.name, selector: typeof k.selector === "string" ? k.selector : k.selector[side], max: k.max ?? 1 }));
-  const masks = (spec.masks ?? []).flatMap((m) => m.selector[side]);
-  const regions = (spec.regions ?? []).flatMap((r) => r.selector[side]);
   try {
     await page.goto(new URL(pagePath(spec, opts.targets), opts.origin).href, { waitUntil: "load" });
     if (spec.setup) {
@@ -187,7 +194,5 @@ export async function captureSide(
       log,
       error: String(err).split("\n")[0],
     };
-  } finally {
-    await context.close();
   }
 }

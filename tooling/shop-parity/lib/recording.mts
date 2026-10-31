@@ -46,8 +46,6 @@ export function canonicalJson(v: unknown): string {
   return JSON.stringify(v);
 }
 
-/** Google Fonts serves files by user agent; refetching uses the headless shell's own. */
-
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
 
 export function entryKey(method: string, service: Service, path: string, query: string, request?: unknown): string {
@@ -118,13 +116,15 @@ const BATCHED: Batched[] = [
   },
 ];
 
-export type Miss = { service: Service; method: string; path: string; query: string; side: string; request?: unknown };
+export type Miss = { key: string; service: Service; method: string; path: string; query: string; side: string; request?: unknown };
 
 export class Recording {
   readonly dir: string;
   readonly entries = new Map<string, Entry>();
   manifest: Manifest | null = null;
   readonly misses: Miss[] = [];
+  /** The bytes a missed POST carried, by entry key, so record.mts --fill can send them as they were. */
+  readonly missBodies = new Map<string, { body: Buffer; contentType?: string }>();
   readonly hits = new Map<string, Set<string>>();
   /** Intrinsic size of each content picture, by imageSeed; the replay paints placeholders this size. */
   readonly images = new Map<string, { width: number; height: number }>();
@@ -225,7 +225,7 @@ export class Recording {
         entry = this.store({ key, method: "POST", service: "rpc", path, query: "", request, status: 200, contentType: "application/json" }, result);
       }
       if (!entry) {
-        this.misses.push({ service: "rpc", method: "POST", path, query: "", side, request });
+        this.misses.push({ key, service: "rpc", method: "POST", path, query: "", side, request });
         out.push({ jsonrpc: "2.0", id: call.id ?? null, error: { code: -32000, message: "not recorded" } });
         continue;
       }
@@ -298,10 +298,42 @@ export class Recording {
       return { status: 200, contentType: "image/png", body: placeholderPng(req.path, size.width, size.height) };
     }
     if (!entry) {
-      this.misses.push({ service: req.service, method, path: req.path, query, side: req.side, ...(request === undefined ? {} : { request }) });
+      this.misses.push({ key, service: req.service, method, path: req.path, query, side: req.side, ...(request === undefined ? {} : { request }) });
+      if (request !== undefined && req.body?.length) this.missBodies.set(key, { body: req.body, contentType: req.headers?.["content-type"] });
       return { status: 404, contentType: "application/json", body: Buffer.from(JSON.stringify({ ok: false, error: "not in the parity recording", key })) };
     }
     this.note(key, req.side);
     return { status: entry.status, contentType: entry.contentType, body: this.body(entry) };
   }
+}
+
+/**
+ * Read each request a replay could not answer once from production into `live`, sending a POST's
+ * body as it was. One failed read does not stop the rest, and what was read is saved either way.
+ */
+export async function fillMisses(replay: Recording, live: Recording, log: (line: string) => void = console.log): Promise<{ filled: number; failed: string[] }> {
+  const seen = new Set<string>();
+  const failed: string[] = [];
+  let filled = 0;
+  try {
+    for (const m of replay.misses) {
+      if (m.service === "node" || m.service === "offers" || seen.has(m.key)) continue;
+      seen.add(m.key);
+      const sent = m.service === "rpc" ? { body: Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 1, ...(m.request as object) })), contentType: "application/json" } : replay.missBodies.get(m.key);
+      if (m.request !== undefined && !sent) {
+        failed.push(`${m.method} ${m.service} ${m.path}: its body was not kept`);
+        continue;
+      }
+      try {
+        const answer = await live.answer({ method: m.method, service: m.service, path: m.path, search: m.query, body: sent?.body, headers: { "content-type": sent?.contentType ?? "application/json", accept: "application/json" }, side: "fill" });
+        log(`filled ${m.method} ${m.service} ${m.path} -> ${answer.status}`);
+        filled++;
+      } catch (err) {
+        failed.push(`${m.method} ${m.service} ${m.path}: ${String(err)}`);
+      }
+    }
+  } finally {
+    live.save();
+  }
+  return { filled, failed };
 }

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { PAGES, type PageSpec } from "./pages.mts";
 import { offerSynthesizer } from "./lib/offers.mts";
 import { RECORDINGS, referencePin, ROOT, STATE } from "./lib/paths.mts";
-import { Recording } from "./lib/recording.mts";
+import { fillMisses, Recording } from "./lib/recording.mts";
 import { runAll, selectViewports } from "./lib/run.mts";
 import { prepareReference } from "./reference.mts";
 
@@ -28,18 +28,11 @@ if (process.argv.includes("--fill")) {
   const replay = new Recording(dir);
   if (!replay.manifest) throw new Error(`no recording ${set} under ${RECORDINGS}`);
   await runAll(replay, specs, selectViewports(arg("--viewports")), { now: Date.parse(replay.manifest.recordedAt), targets: replay.manifest.targets, out: join(STATE, "fill-run", set) });
-  const live = new Recording(dir, { live: true });
-  const seen = new Set<string>();
-  for (const m of replay.misses) {
-    if (m.service === "node" || m.service === "offers") continue;
-    const key = `${m.method} ${m.service} ${m.path}?${m.query} ${JSON.stringify(m.request)}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    const body = m.service === "rpc" ? Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 1, ...(m.request as object) })) : m.request === undefined ? undefined : Buffer.from(JSON.stringify(m.request));
-    const answer = await live.answer({ method: m.method, service: m.service, path: m.path, search: m.query, body, headers: { "content-type": "application/json", accept: "application/json" }, side: "fill" });
-    console.log(`filled ${m.method} ${m.service} ${m.path} -> ${answer.status}`);
+  const { failed } = await fillMisses(replay, new Recording(dir, { live: true }));
+  if (failed.length) {
+    console.error(`could not fill ${failed.length} request(s); what was filled is saved:\n${failed.map((f) => `  ${f}`).join("\n")}`);
+    process.exitCode = 1;
   }
-  live.save();
 } else {
   prepareReference();
   const live = new Recording(dir, { live: true });

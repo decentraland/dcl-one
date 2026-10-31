@@ -19,15 +19,20 @@ node inspect.mts item desktop dcl-one 'document.title'   # evaluate in one side'
 pnpm test && pnpm typecheck
 ```
 
-Node 24+, with `apps/ui3` and `apps/sites` installed (`pnpm install` in each). `--build` stamps
-`apps/sites/build` with the sources it was built from (the commit, `+uncommitted` when `apps/ui3/src`
-or `apps/sites/src` differ from it); without `--build`, a run refuses a build whose stamp is not the
-current sources. The gate also refuses uncommitted sources it did not just build, and promotes only
-from a commit. `--pages overview,items` and `--viewports desktop`
-narrow a run. `CHROMIUM_BIN` picks the browser; both sides always use the same one. The three
-loopback servers listen on 5176–5178 (`SHOP_PARITY_PORT_BASE` moves them) and answer from the
-recording only through the harness's own browser routing; a page opened on them in another browser
-calls the real services and is not what is compared.
+Node 24+, with `apps/ui3` and `apps/sites` installed (`pnpm install` in each). `--build` builds
+`apps/sites` with an allowlisted environment, so none of the developer's `VITE_*` or deploy variables
+is baked into the bundle, and stamps the build with what it was built from: the commit, a hash of
+every uncommitted change that can reach the build (edits and untracked files anywhere in the
+repository but this tool, and `apps/sites`' gitignored `.env*` files), and the Node version. Without `--build`, a
+run refuses a build whose stamp is not the current sources. `gate.mts --promote` runs only on a fully
+committed tree, this tool included. `--pages overview,items` and `--viewports desktop` narrow a run.
+`CHROMIUM_BIN` picks the browser; both sides always use the same one. `pnpm test` needs no install.
+
+The three loopback servers listen on 5176–5178 (`SHOP_PARITY_PORT_BASE` moves them). The replay
+answers the sites preview only, server to server, and refuses any request a browser makes; the
+preview refuses any request another site makes. So a website open elsewhere cannot make a recording
+read production. A page opened on the preview or the reference in another browser calls the real
+services and is not what is compared.
 
 ## What a run does
 
@@ -38,10 +43,13 @@ calls the real services and is not what is compared.
   the browser read it too. `/shop-api` paths map to upstream routes through
   `apps/ui3/src/shop/api/endpoints.ts`. Content pictures are deterministic placeholders of the
   recorded shape (at most 1024 px a side), telemetry is answered empty, WebSockets are closed, and
-  nothing reaches the network. Clock, time zone, locale, `Math.random` and scale are fixed per
-  context, the clock and `Math.random` of the server-side render too, and transitions are turned off
-  before anything is measured. The sites preview and the reference build get an allowlisted
-  environment, so a developer's own variables reach neither.
+  nothing reaches the network. The sites preview may connect to loopback only: a server-side module
+  that names a production host of its own is refused, and the host is listed with the page as one
+  the harness does not know. Clock, time zone, locale, `Math.random` and scale are fixed per context,
+  the clock and `Math.random` of the server-side render too (one render at a time, each from the
+  seed), and transitions are turned off before anything is measured. The reference build, the sites
+  build and the sites preview get an allowlisted environment, so a developer's own variables reach
+  none of them.
 - **Structure.** Key elements per page (`pages.mts`), every `data-testid` element the two sides share
   and every visible text run are paired and compared: box (±1px, measured inside the nearest paired
   ancestor so a shift is reported where it starts), font family, size, weight, line height, letter
@@ -69,6 +77,9 @@ approve one: each names the rule or code behind it.
 node record.mts --set <date>           # read the answers once from production
 node record.mts --set <date> --fill    # replay, read what the replay could not answer, once
 ```
+
+`--fill` sends each missed request as the page sent it, body included, and saves what it read even
+when one read fails; the failures are listed and the exit code is 1.
 
 Recording drives both UIs against the production services (public reads only) and keeps their
 answers in `state/shop-parity/recordings/<set>/`. They are real public data (profiles, listings,
