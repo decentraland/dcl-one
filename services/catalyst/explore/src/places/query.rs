@@ -137,11 +137,7 @@ pub(super) fn build_where_from(
     start: usize,
     scene_projection: bool,
 ) -> (String, Vec<Bind>) {
-    let mut clauses: Vec<String> = vec![if f.include_opted_out {
-        "(disabled IS FALSE OR raw->>'disabled_reason' = 'opt_out')".to_string()
-    } else {
-        "disabled IS FALSE".to_string()
-    }];
+    let mut clauses: Vec<String> = vec!["disabled IS FALSE".to_string()];
     clauses.extend(own_rows_sql().map(String::from));
     let mut binds: Vec<Bind> = Vec::new();
     let mut idx = start;
@@ -199,17 +195,32 @@ pub(super) fn build_where_from(
     let mut names_clause = None;
     if !f.names.is_empty() {
         names_clause = Some(format!("lower(world_name) = ANY(${idx})"));
+        if f.include_opted_out {
+            clauses[0] = format!(
+                "(disabled IS FALSE OR (lower(world_name) = ANY(${idx}) AND COALESCE((SELECT COALESCE(reason, '') FROM explore.place_moderation m WHERE m.place_id = id AND m.disabled IS NOT NULL), raw->>'disabled_reason') = 'opt_out'))"
+            );
+        }
         binds.push(Bind::TextArray(
             f.names.iter().map(|n| n.to_lowercase()).collect(),
         ));
         idx += 1;
     }
     if !f.partial_names.is_empty() {
-        let clause = format!("lower(world_name) LIKE ANY(${idx})");
+        let clause = format!(
+            "EXISTS (SELECT 1 FROM unnest(${idx}::text[]) AS names(pattern) WHERE lower(world_name) LIKE names.pattern ESCAPE E'\\\\')"
+        );
         binds.push(Bind::TextArray(
             f.partial_names
                 .iter()
-                .map(|name| format!("%{}%", name.to_lowercase()))
+                .map(|name| {
+                    format!(
+                        "%{}%",
+                        name.to_lowercase()
+                            .replace('\\', "\\\\")
+                            .replace('%', "\\%")
+                            .replace('_', "\\_")
+                    )
+                })
                 .collect(),
         ));
         idx += 1;
@@ -225,7 +236,8 @@ pub(super) fn build_where_from(
         (None, None) => {}
     }
     if let Some(owner) = &f.owner {
-        let mut owner_clause = format!("LOWER(COALESCE(raw->>'owner', creator_address)) = ${idx}");
+        let mut owner_clause =
+            format!("(world IS TRUE AND LOWER(COALESCE(raw->>'owner', creator_address)) = ${idx})");
         binds.push(Bind::Text(owner.to_lowercase()));
         idx += 1;
         if !f.operated_positions.is_empty() {

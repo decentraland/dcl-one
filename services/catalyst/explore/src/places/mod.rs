@@ -131,9 +131,8 @@ impl PlacesComponent {
         let _ = self.land_authz.set(land);
     }
 
-    /// The direct update-operator parcels used by the legacy lands-permissions
-    /// route. A stale/uninitialized index does not supply permissions; the
-    /// catalogue's independent owner leg still matches its known owned rows.
+    /// Indexed LAND owner and direct update-operator parcels. An unavailable index
+    /// never turns creator-authored catalogue metadata into ownership authority.
     pub async fn operated_positions(&self, owner: &str) -> Result<Vec<String>, ApiError> {
         let Some(land) = self.land_authz.get() else {
             return Ok(vec![]);
@@ -141,13 +140,61 @@ impl PlacesComponent {
         if land.ready().await.is_none() {
             return Ok(vec![]);
         }
-        Ok(land
-            .store()
-            .parcels_with_update_operator(owner)
-            .await?
+        let store = land.store();
+        let mut parcels = store.parcels_owned_by(owner, 100_000).await?;
+        parcels.extend(store.parcels_with_update_operator(owner).await?);
+        let mut positions: Vec<String> = parcels
             .into_iter()
             .map(|p| format!("{},{}", p.x, p.y))
-            .collect())
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        Ok(positions)
+    }
+
+    /// Authorization for attaching a catalogue place to a community. Genesis ownership
+    /// comes from the fresh LAND authority (or its trusted fallback), never scene metadata.
+    pub async fn owns_places(&self, place_ids: &[String], owner: &str) -> Result<bool, ApiError> {
+        let keys: Vec<String> = place_ids.iter().map(|id| id.to_lowercase()).collect();
+        let rows: Vec<(String, bool, String, Option<String>)> = sqlx::query_as(
+            "SELECT CASE WHEN id = ANY($1) THEN id ELSE lower(world_name) END, \
+             world, base_position, lower(COALESCE(raw->>'owner', creator_address)) FROM explore.place_indexed \
+             WHERE id = ANY($1) OR lower(world_name) = ANY($1)"
+        ).bind(&keys).fetch_all(&self.pool).await?;
+        let mut owned = std::collections::HashSet::new();
+        let mut parcels = Vec::new();
+        let mut parcel_keys = Vec::new();
+        for (key, world, base, world_owner) in rows {
+            if world {
+                if world_owner
+                    .as_deref()
+                    .is_some_and(|value| value.eq_ignore_ascii_case(owner))
+                {
+                    owned.insert(key);
+                }
+            } else if let Some((x, y)) = base
+                .split_once(',')
+                .and_then(|(x, y)| Some((x.parse::<i32>().ok()?, y.parse::<i32>().ok()?)))
+            {
+                parcels.push((x, y));
+                parcel_keys.push(key);
+            }
+        }
+        if !parcels.is_empty() {
+            let land = self
+                .land_authz
+                .get()
+                .ok_or_else(|| ApiError::http(503, "LAND ownership unavailable"))?;
+            let rights = crate::land_authz::can_deploy_batch(land, &parcels, owner)
+                .await
+                .map_err(|_| ApiError::http(503, "LAND ownership unavailable"))?;
+            for (key, right) in parcel_keys.into_iter().zip(rights) {
+                if right.flags.owner {
+                    owned.insert(key);
+                }
+            }
+        }
+        Ok(keys.iter().all(|key| owned.contains(key)))
     }
 
     /// One statement per page: rows plus the windowed total, falling back to a COUNT

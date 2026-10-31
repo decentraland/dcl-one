@@ -101,6 +101,17 @@ pub async fn get_place_list(
 }
 
 pub const MAX_BATCH_ITEMS: usize = 100;
+const MAX_WORLD_NAMES: usize = 1000;
+const MAX_WORLD_NAME_BYTES: usize = 255;
+
+fn validate_world_names(names: &[String]) -> Result<(), ApiError> {
+    if names.len() > MAX_WORLD_NAMES || names.iter().any(|name| name.len() > MAX_WORLD_NAME_BYTES) {
+        return Err(ApiError::bad_request(
+            "names accepts at most 1000 entries of 255 bytes each",
+        ));
+    }
+    Ok(())
+}
 
 fn ids_body(ids: serde_json::Value) -> Result<Vec<String>, ApiError> {
     let ids = ids
@@ -395,10 +406,12 @@ pub async fn get_world_list(
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0)
         .max(0);
+    let names = get_all("names");
+    validate_world_names(&names)?;
     let mut filters = PlaceListFilters {
         limit,
         offset,
-        partial_names: get_all("names"),
+        partial_names: names,
         categories: get_all("categories"),
         search: get("search"),
         order_by: PlaceOrderBy::parse(Some(get("order_by").as_deref().unwrap_or("most_active"))),
@@ -527,9 +540,9 @@ mod tests {
 
     #[tokio::test]
     async fn owner_pointer_opt_out_and_world_names_keep_their_independent_meanings() {
-        let Some(pool) = crate::db::scratch::pool(4).await else {
-            return;
-        };
+        let pool = crate::db::scratch::pool(4)
+            .await
+            .expect("scratch database required");
         let token = uuid::Uuid::new_v4().simple().to_string();
         let owner = format!("0x{token}00000000");
         let owned = uuid::Uuid::new_v4().to_string();
@@ -559,10 +572,49 @@ mod tests {
                 .bind(id).bind(pointer).bind(&token).bind(disabled).bind(raw).execute(&pool).await.unwrap();
         }
         let state = Arc::new(crate::ExploreState::new(
-            pool,
+            pool.clone(),
             crate::Settings::for_tests(),
             None,
         ));
+        let body = response(state.clone(), &format!("/api/places?owner={owner}")).await;
+        assert_eq!(body["total"], 0, "raw owner is not LAND authority");
+        assert!(
+            state
+                .places
+                .owns_places(&[owned.clone()], &owner)
+                .await
+                .is_err()
+        );
+        let settings = crate::land_authz::Settings::for_tests();
+        sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at) VALUES ($1, $2, $3, 100, 100, timezone('UTC', now())) ON CONFLICT (network) DO UPDATE SET folded_at = EXCLUDED.folded_at, folded_block = 100, last_block = 100")
+            .bind(&settings.network).bind(&settings.land_registry).bind(&settings.estate_registry).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) VALUES ($1, 340282366920938463463374607431768211458, 1, 2, $2, 100, 0), ($1, 1020847100762815390390123822295304634372, 3, 4, $2, 100, 0) ON CONFLICT (token_address, token_id) DO UPDATE SET owner = EXCLUDED.owner")
+            .bind(&settings.land_registry).bind(&owner).execute(&pool).await.unwrap();
+        state
+            .places
+            .set_land_authz(Arc::new(crate::land_authz::LandAuthzState::new(
+                pool.clone(),
+                crate::http::Outbound::new(Default::default()).unwrap(),
+                settings,
+                None,
+            )));
+        assert!(
+            state
+                .places
+                .owns_places(&[owned.clone()], &owner)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !state
+                .places
+                .owns_places(
+                    &[owned.clone()],
+                    "0xffffffffffffffffffffffffffffffffffffffff"
+                )
+                .await
+                .unwrap()
+        );
         let body = response(state.clone(), &format!("/api/places?owner={owner}")).await;
         assert_eq!(body["data"].as_array().unwrap().len(), 1);
         assert_eq!(body["data"][0]["id"], owned);
@@ -577,15 +629,79 @@ mod tests {
             &format!("/api/places?owner={owner}&positions=3,4&include_opted_out=true"),
         )
         .await;
-        assert_eq!(body["data"][0]["id"], opted_out);
+        assert_eq!(body["total"], 0, "opt-out inclusion requires names");
         let body = response(state.clone(), &format!("/api/destinations?owner={owner}")).await;
         assert_eq!(body["data"].as_array().unwrap().len(), 2);
         let body = response(state.clone(), &format!("/api/worlds?names={token}")).await;
         assert_eq!(body["data"][0]["id"], world);
         let body = response(state.clone(), &format!("/api/destinations?names={token}")).await;
         assert_eq!(body["data"][0]["id"], world);
+        let body = response(state.clone(), "/api/worlds?names=%25").await;
+        assert_eq!(body["total"], 0, "percent is literal, not a wildcard");
+        let body = response(state.clone(), "/api/worlds?names=%5F").await;
+        assert_eq!(body["total"], 0, "underscore is literal, not a wildcard");
         let body = response(state, &format!("/api/destinations?world_names={token}")).await;
         assert_eq!(body["total"], 0);
+    }
+
+    #[test]
+    fn world_name_patterns_are_bounded() {
+        assert!(validate_world_names(&vec!["name".into(); 1000]).is_ok());
+        assert!(validate_world_names(&vec!["name".into(); 1001]).is_err());
+        assert!(validate_world_names(&["x".repeat(255)]).is_ok());
+        assert!(validate_world_names(&["x".repeat(256)]).is_err());
+    }
+
+    #[tokio::test]
+    async fn scoped_opt_out_cannot_override_operator_moderation() {
+        let pool = crate::db::scratch::pool(2)
+            .await
+            .expect("scratch database required");
+        let id = uuid::Uuid::new_v4().to_string();
+        let name = format!("{id}.dcl.eth");
+        sqlx::query("INSERT INTO explore.place (id, base_position, disabled, raw) VALUES ($1, '0,0', true, $2)")
+            .bind(&id).bind(json!({"world":true,"world_name":name,"disabled_reason":"opt_out"})).execute(&pool).await.unwrap();
+        let places = super::super::PlacesComponent::new(pool.clone(), "/content");
+        let filters = PlaceListFilters {
+            names: vec![name],
+            include_opted_out: true,
+            ..Default::default()
+        };
+        assert_eq!(places.list_page(&filters).await.unwrap().1, 1);
+        super::super::moderation::apply(
+            &pool,
+            super::super::moderation::Target::World(&id),
+            &super::super::moderation::Decision::Disabled {
+                disabled: true,
+                reason: Some("policy".into()),
+            },
+            "operator",
+        )
+        .await
+        .unwrap();
+        assert_eq!(places.list_page(&filters).await.unwrap().1, 0);
+        sqlx::query("UPDATE explore.place_moderation SET reason = NULL WHERE place_id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            places.list_page(&filters).await.unwrap().1,
+            0,
+            "an operator disable without a reason also overrides opt-out"
+        );
+        assert_eq!(
+            places
+                .list_page(&PlaceListFilters {
+                    ids: vec![id],
+                    include_opted_out: true,
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .1,
+            0
+        );
     }
 
     fn pairs(kvs: &[(&str, &str)]) -> Vec<(String, String)> {
