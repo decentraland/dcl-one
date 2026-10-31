@@ -21,6 +21,7 @@
       - infra/packages/**
       - infra/containers/**
       - services/catalyst/**
+      - apps/dcl-scene-cli/Cargo.toml
       - schemas/**
       - library/**
       - apps/sites/**
@@ -50,6 +51,7 @@
       - infra/packages/**
       - infra/containers/**
       - services/catalyst/**
+      - apps/dcl-scene-cli/Cargo.toml
       - schemas/**
       - library/**
       - apps/sites/**

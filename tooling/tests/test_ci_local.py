@@ -59,6 +59,8 @@ class CiLocalTest(unittest.TestCase):
                              section.group(1).split('    paths:\n', 1)[1].splitlines()
                              if line.strip().startswith('- ')]
                     self.assertIn('.cargo/**', paths)
+                    self.assertTrue(ci.triggered(workflow, {'apps/dcl-scene-cli/Cargo.toml'}, event=event))
+                    self.assertFalse(ci.triggered(workflow, {'apps/dcl-scene-cli/src/main.rs'}, event=event))
 
     def test_bevy_selection_changes_run_their_guards_locally_and_in_ci(self):
         for name in ('tooling/bevy-ci.py', 'tooling/tests/test_bevy_ci.py', 'tooling/tests/test_bevy_protoc.py'):
