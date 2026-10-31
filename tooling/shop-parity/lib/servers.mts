@@ -102,13 +102,15 @@ export function fromBrowser(headers: IncomingMessage["headers"]): boolean {
  * The node as sites sees it: every request answered from the recording, pictures by placeholder. Only
  * the sites preview reads it, server to server, so it answers no browser: while recording, a website
  * open in the developer's browser could otherwise make it read production and write the recording.
+ * The preview names the replay by its loopback address, so any other Host is refused too: a page on
+ * a name rebound to 127.0.0.1 already sends Sec-Fetch-Site, so this is a second lock, not the only one.
  */
 export function startReplay(recording: Recording, port: number): Promise<Server> {
   const server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
       const method = (req.method ?? "GET").toUpperCase();
-      if (fromBrowser(req.headers) || !["GET", "HEAD", "POST"].includes(method)) {
+      if (req.headers.host !== `127.0.0.1:${port}` || fromBrowser(req.headers) || !["GET", "HEAD", "POST"].includes(method)) {
         res.writeHead(403, { "content-type": "text/plain" });
         return res.end("the parity replay answers the sites preview only");
       }

@@ -6,7 +6,7 @@ import { createRequire } from "node:module";
 import { request } from "node:http";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { guardLoopback } from "./lib/guard.mts";
+import { foreignRequest, guardLoopback } from "./lib/guard.mts";
 import { SITES } from "./lib/paths.mts";
 
 // Every path production routes off the sites app, so a page's read reaches the replay (and is listed as a
@@ -72,11 +72,9 @@ const app = express();
 app.disable("x-powered-by");
 // Another site open in the developer's browser must not drive the preview: while recording, its renders
 // and relays read production through the replay and write the recording. The harness's own pages are
-// same-origin, and its navigations carry no site.
+// same-origin, and its navigations carry no site (lib/guard.mts foreignRequest).
 app.use((incoming: any, outgoing: any, next: () => void) => {
-  const site = incoming.headers["sec-fetch-site"];
-  const origin = incoming.headers.origin;
-  if ((site !== undefined && site !== "same-origin" && site !== "none") || (origin !== undefined && origin !== base.origin)) return outgoing.status(403).end();
+  if (foreignRequest(incoming.headers, base)) return outgoing.status(403).end();
   next();
 });
 app.use(compression());
