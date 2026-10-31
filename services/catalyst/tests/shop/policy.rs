@@ -1568,19 +1568,20 @@ fn the_partition_and_the_use_credits_guard_agree_for_every_group_shape() {
 }
 
 /// A group with a USD-pegged line is sized at the feed its marketplace
-/// settles that line at; a MANA-priced line keeps its quoted cents at the
-/// quote rate. The cents debited never change.
+/// settles that line at, bounded by the cap its quote allowed before; a
+/// MANA-priced line keeps its quoted cents at the quote rate. The cents
+/// debited never change.
 #[test]
-fn a_usd_pegged_line_is_sized_at_the_settlement_feed_and_a_mana_line_at_the_quote_rate() {
+fn a_usd_pegged_line_is_sized_at_the_settlement_feed_within_the_reference_cap() {
     let b = book();
-    let order_with = |received: TradeAsset| {
+    let order_with = |received: TradeAsset, coupon: Option<TradeCoupon>| {
         derive(Facts {
             offer: Offer::Trade {
                 trade: SignedTrade {
                     received: vec![received],
                     ..creator_order_trade(&b)
                 },
-                coupon: None,
+                coupon,
             },
             ..creator_order_facts(&b, web3(&b), ItemKind::Wearable)
         })
@@ -1596,10 +1597,15 @@ fn a_usd_pegged_line_is_sized_at_the_settlement_feed_and_a_mana_line_at_the_quot
         value: n(milli) * n(10).pow(n(15)),
     };
     let wei = |milli: u64| ManaWei::new(n(milli) * n(10).pow(n(15)));
+    let exact = |v: u64| ManaWei::new(n(v));
     let feed = |usd_per_mana: &str| ManaUsdRate::parse_usd_per_mana(usd_per_mana).unwrap();
+    let at = |headroom: u32, usd_per_mana: &str| {
+        sizing(headroom).with_settlement_rate(feed(usd_per_mana))
+    };
 
-    // USD 1 + 10 MANA, quote rate 0.50, feed 1.00.
-    let mixed = [order_with(usd(100)), order_with(mana(10_000))];
+    // USD 1 + 10 MANA, quote rate 0.50, feed 1.00: 600 cents quoted, need
+    // 1 + 10 MANA, cap 11.22, under the 12.24 the quote allowed.
+    let mixed = [order_with(usd(100), None), order_with(mana(10_000), None)];
     let cents: Vec<_> = mixed
         .iter()
         .map(|line| quote(line, Credits, Some(&rate())))
@@ -1616,62 +1622,95 @@ fn a_usd_pegged_line_is_sized_at_the_settlement_feed_and_a_mana_line_at_the_quot
         ],
         "600 cents quoted either way"
     );
-    let at_feed = sizing(100).with_settlement_rate(feed("1"));
-    assert_eq!(
-        credit_cap(&mixed, &at_feed),
-        Ok(wei(11_220)),
-        "1 MANA at the feed + 10 MANA at the quote rate, times the 2% buffer"
-    );
+    assert_eq!(credit_cap(&mixed, &at(100, "1")), Ok(wei(11_220)));
     assert_eq!(
         credit_cap(&mixed, &sizing(100)),
-        Ok(sizing(100).cap(UsdCents::new(600)).unwrap()),
+        Ok(wei(12_240)),
         "without a feed: the 600 cents at the quote rate, as before"
     );
-    assert_eq!(sizing(100).cap(UsdCents::new(600)), Some(wei(12_240)));
-    let signed = |value| SettlementOperation::AuthorizeCredit {
+    let signed = |value, sizing| SettlementOperation::AuthorizeCredit {
         chain_id: ChainId::POLYGON,
         value,
-        sizing: at_feed,
+        sizing,
     };
     assert_eq!(
-        guard_group_credit_spend(&mixed, &signed(wei(11_220))),
+        guard_group_credit_spend(&mixed, &signed(wei(11_220), at(100, "1"))),
         Ok(())
     );
     let over = wei(11_220).checked_add(ManaWei::new(n(1))).unwrap();
     assert_eq!(
-        guard_group_credit_spend(&mixed, &signed(over)),
+        guard_group_credit_spend(&mixed, &signed(over, at(100, "1"))),
         Err(Refusal::CreditValueTooLarge {
             value: over,
             cap: wei(11_220)
         }),
-        "the guard checks the same need the sizing signed"
+        "the guard checks the same bound the sizing signed"
     );
 
-    // Diverging rates: quote 0.50, feed 0.45. The feed's conversion floors
-    // as the contract's does; the buffer floors after it.
-    let pegged = [order_with(usd(100))];
+    // $1 alone, quote 0.50: the reference cap is 2.04 MANA.
+    let pegged = [order_with(usd(100), None)];
+    assert_eq!(credit_cap(&pegged, &sizing(100)), Ok(wei(2_040)));
+    // A feed a little below the quote: the need (2.0202) fits, and the
+    // buffered need (2.0606) is held to the reference.
     assert_eq!(
-        credit_cap(&pegged, &sizing(100).with_settlement_rate(feed("0.45"))),
-        Ok(ManaWei::new(n(2_266_666_666_666_666_666))),
-        "1e36 / 0.45e18 = 2.222... MANA, times 1.02"
-    );
-    assert_eq!(
-        credit_cap(&pegged, &sizing(100)),
+        credit_cap(&pegged, &at(100, "0.495")),
         Ok(wei(2_040)),
-        "the quote rate alone would sign 2.04 MANA, short of the 2.22 the feed settles"
+        "the feed spends part of the margin, never more than the reference"
+    );
+    // Further below: the need itself (2.2222) is above the reference.
+    assert_eq!(
+        credit_cap(&pegged, &at(100, "0.45")),
+        Err(Refusal::SettlementNeedAboveReference {
+            need: exact(2_222_222_222_222_222_222),
+            reference: wei(2_040),
+        }),
+        "a credit already short at the feed is not signed"
     );
     assert_eq!(
-        credit_cap(&pegged, &sizing(150).with_settlement_rate(feed("0.45"))),
-        Ok(ManaWei::new(n(3_399_999_999_999_999_999))),
-        "an explicit headroom applies to the need, flooring"
+        guard_group_credit_spend(&pegged, &signed(wei(2_040), at(100, "0.45"))),
+        Err(Refusal::SettlementNeedAboveReference {
+            need: exact(2_222_222_222_222_222_222),
+            reference: wei(2_040),
+        }),
+        "the guard refuses it too"
     );
+    // A feed above the quote: a smaller cap (1.8181 * 1.02, flooring).
     assert_eq!(
-        sizing(100)
-            .with_settlement_rate(feed("0.45"))
-            .recorded_rate(),
-        feed("0.45"),
-        "the credit records the rate its USD-pegged lines were sized at"
+        credit_cap(&pegged, &at(100, "0.55")),
+        Ok(exact(1_854_545_454_545_454_544))
     );
+    // An explicit headroom of 150 lifts the reference (3.06) and the
+    // buffered need (3.3999) is held to it.
+    assert_eq!(credit_cap(&pegged, &at(150, "0.45")), Ok(wei(3_060)));
+    // A feed answering almost nothing cannot lift the credit past the quote.
+    assert!(matches!(
+        credit_cap(
+            &pegged,
+            &sizing(100).with_settlement_rate(ManaUsdRate::new(n(1), 18).unwrap())
+        ),
+        Err(Refusal::SettlementNeedAboveReference { .. })
+    ));
+
+    // A coupon applies to the USD amount before the conversion, as the
+    // contract does: $1.01 at 33.3333% off, feed 0.60, no buffer. Converting
+    // first and discounting after would give one wei more.
+    let couponed = [order_with(
+        usd(101),
+        Some(TradeCoupon {
+            discount_ppm: 333_333,
+            ..coupon()
+        }),
+    )];
+    let unbuffered = CreditSizing::new(rate(), 0, 100)
+        .unwrap()
+        .with_settlement_rate(feed("0.6"));
+    assert_eq!(
+        credit_cap(&couponed, &unbuffered),
+        Ok(exact(1_122_222_783_333_333_333)),
+        "floor((1.01e18 - floor(1.01e18 * 333333 / 1e6)) * 1e18 / 0.6e18)"
+    );
+
+    assert_eq!(at(100, "0.45").recorded_rate(), feed("0.45"));
     assert_eq!(sizing(100).recorded_rate(), rate());
 }
 

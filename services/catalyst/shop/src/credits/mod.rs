@@ -396,6 +396,14 @@ impl Settings {
                 crate::types::CreditSizing::MAX_HEADROOM_PCT
             );
         }
+        if raw.credits_usd_pegged_feed_max_age_secs == 0
+            || raw.credits_usd_pegged_feed_max_age_secs > i64::MAX as u64
+        {
+            anyhow::bail!(
+                "CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS must be between 1 and {}: 0 refuses every USD-pegged credit, and a larger value cannot be compared with a timestamp",
+                i64::MAX
+            );
+        }
         if raw.credit_buffer_bps > crate::types::CreditSizing::MAX_BUFFER_BPS {
             anyhow::bail!(
                 "CREDITS_ORACLE_BUFFER_BPS must be at most {}",

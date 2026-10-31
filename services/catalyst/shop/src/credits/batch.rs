@@ -343,6 +343,8 @@ pub fn refusal_code(r: &Refusal) -> &'static str {
         Refusal::GroupTooLarge { .. } | Refusal::EmptyGroup => "group_size",
         Refusal::NegativeDebit { .. } => "negative_debit",
         Refusal::CreditValueTooLarge { .. } => "credit_too_large",
+        Refusal::SettlementNeedAboveReference { .. } => "settlement_need_above_reference",
+        Refusal::UnlistedMarketplace { .. } => "unlisted_marketplace",
     }
 }
 
@@ -779,6 +781,18 @@ pub async fn authorize_group(
         };
         AuthorizeError::Policy { index, refusal }
     };
+    // A trade is only spent on a marketplace this node knows on its chain:
+    // the contract a trade row names is not taken on trust.
+    for (index, line) in authoritative.iter().enumerate() {
+        if let Offer::Trade { trade, .. } = line.offer()
+            && !listed_marketplace(trade.venue)
+        {
+            return Err(AuthorizeError::Policy {
+                index,
+                refusal: Refusal::UnlistedMarketplace { venue: trade.venue },
+            });
+        }
+    }
     let guard = |value: ManaWei, sizing: CreditSizing| {
         policy::guard_group_credit_spend(
             &authoritative,
@@ -799,6 +813,25 @@ pub async fn authorize_group(
         .and_then(|line| line.venue(PaymentMethod::Credits))
     {
         guard(ManaWei::ZERO, sizing).map_err(policy_refusal)?;
+        // A retry of an authorization already reserved answers from its row,
+        // without the feed; the reservation itself stays the race's arbiter.
+        if let Some(prior) = state
+            .credits
+            .authorization_for_key(idempotency_key, signer)
+            .await?
+        {
+            let (issued, lines) = replayed(
+                state,
+                &prior,
+                buyer,
+                manager,
+                chain_id,
+                None,
+                &rate.rate().to_string(),
+            )
+            .await?;
+            return credit_out(&wallet, issued, lines, single, signer, true);
+        }
         let reading = state
             .feed
             .read(venue.chain_id.0, venue.contract.address())
@@ -813,7 +846,16 @@ pub async fn authorize_group(
         tracing::info!(marketplace = %venue.contract.address(), aggregator = %reading.aggregator, block = reading.block, updated_at = reading.updated_at_s, rate = %reading.rate.rate(), "sizing a USD-pegged credit group at its marketplace's feed");
         sizing = sizing.with_settlement_rate(reading.rate);
     }
-    let value = policy::credit_cap(&authoritative, &sizing).map_err(policy_refusal)?;
+    let value = policy::credit_cap(&authoritative, &sizing).map_err(|refusal| match refusal {
+        Refusal::SettlementNeedAboveReference { need, reference } => AuthorizeError::Unavailable {
+            source: super::feed::SOURCE,
+            configure: super::feed::CONFIGURE,
+            message: format!(
+                "at the marketplace's MANA/USD feed this purchase needs {need} wei, above the {reference} wei its quote allows a credit to carry; try again later"
+            ),
+        },
+        refusal => policy_refusal(refusal),
+    })?;
     guard(value, sizing).map_err(policy_refusal)?;
     let recorded_rate = sizing.recorded_rate();
 
@@ -871,37 +913,16 @@ pub async fn authorize_group(
         }
     };
     let (issued, issued_lines) = if reserved.replayed {
-        let row = state
-            .credits
-            .get_authorization(&reserved.id)
-            .await?
-            .ok_or_else(|| ApiError::Internal("the replayed authorization vanished".into()))?;
-        let stored_manager = row
-            .contract
-            .as_deref()
-            .and_then(|c| Address::from_str(c).ok())
-            .unwrap_or(manager.address());
-        let identity = CreditIdentity {
-            sender: buyer.address(),
-            chain_id: row.chain_id.unwrap_or(chain_id.0 as i64) as u64,
-            manager: stored_manager,
-            value: u256(&row.amount_wei).unwrap_or(value.get()),
-            expires_at: row.expires_at.and_utc().timestamp() as u64,
-            salt: B256::from_str(&row.id).map_err(|_| {
-                ApiError::Internal("a replayed authorization has a non-bytes32 id".into())
-            })?,
-        };
-        let lines = state.credits.authorization_lines(&row.id).await?;
-        (
-            (
-                identity,
-                row.amount_wei.clone(),
-                row.usd_cents,
-                row.oracle_rate
-                    .unwrap_or_else(|| recorded_rate.rate().to_string()),
-            ),
-            lines,
+        replayed(
+            state,
+            &reserved.id,
+            buyer,
+            manager,
+            chain_id,
+            Some(value),
+            &recorded_rate.rate().to_string(),
         )
+        .await?
     } else {
         (
             (
@@ -913,11 +934,79 @@ pub async fn authorize_group(
             records.clone(),
         )
     };
+    credit_out(
+        &wallet,
+        issued,
+        issued_lines,
+        single,
+        signer,
+        reserved.replayed,
+    )
+}
+
+/// What a credit answers with: its identity, signed value, cents and rate.
+type Issued = (CreditIdentity, String, i64, String);
+
+/// A reserved authorization, answered from its row: the stored value, salt,
+/// expiry, rate and lines, never re-sized or re-reserved. `fallback_value`
+/// and `fallback_rate` stand in only for columns an older row lacks.
+async fn replayed(
+    state: &State,
+    id: &str,
+    buyer: EvmAddress,
+    manager: EvmAddress,
+    chain_id: ChainId,
+    fallback_value: Option<ManaWei>,
+    fallback_rate: &str,
+) -> Result<(Issued, Vec<GroupLine>), AuthorizeError> {
+    let row = state
+        .credits
+        .get_authorization(id)
+        .await?
+        .ok_or_else(|| ApiError::Internal("the replayed authorization vanished".into()))?;
+    let stored_manager = row
+        .contract
+        .as_deref()
+        .and_then(|c| Address::from_str(c).ok())
+        .unwrap_or(manager.address());
+    let value = u256(&row.amount_wei)
+        .or(fallback_value.map(ManaWei::get))
+        .ok_or_else(|| ApiError::Internal("a replayed authorization has no value".into()))?;
+    let identity = CreditIdentity {
+        sender: buyer.address(),
+        chain_id: row.chain_id.unwrap_or(chain_id.0 as i64) as u64,
+        manager: stored_manager,
+        value,
+        expires_at: row.expires_at.and_utc().timestamp() as u64,
+        salt: B256::from_str(&row.id).map_err(|_| {
+            ApiError::Internal("a replayed authorization has a non-bytes32 id".into())
+        })?,
+    };
+    let lines = state.credits.authorization_lines(&row.id).await?;
+    Ok((
+        (
+            identity,
+            row.amount_wei.clone(),
+            row.usd_cents,
+            row.oracle_rate.unwrap_or_else(|| fallback_rate.to_string()),
+        ),
+        lines,
+    ))
+}
+
+fn credit_out(
+    wallet: &TreasuryWallet,
+    issued: Issued,
+    issued_lines: Vec<GroupLine>,
+    single: bool,
+    signer: &str,
+    replayed: bool,
+) -> Result<AuthorizeCreditOut, AuthorizeError> {
     let (identity, amount, usd_cents, oracle_rate) = issued;
     let signature = wallet
         .sign_credit(&identity)
         .map_err(|e| ApiError::Internal(format!("credit signing failed: {e}")))?;
-    tracing::info!(address = %signer, salt = %bytes32_hex(identity.salt), usd_cents, value = %amount, lines = issued_lines.len(), replayed = reserved.replayed, "authorized a credit");
+    tracing::info!(address = %signer, salt = %bytes32_hex(identity.salt), usd_cents, value = %amount, lines = issued_lines.len(), replayed, "authorized a credit");
     Ok(AuthorizeCreditOut {
         credit: AuthorizedCreditOut {
             id: bytes32_hex(identity.salt),
@@ -943,6 +1032,13 @@ pub async fn authorize_group(
                 .collect()
         }),
     })
+}
+
+/// Whether `venue` is one of the off-chain marketplaces deployed on its chain.
+fn listed_marketplace(venue: ContractRef) -> bool {
+    crate::market::listings::offchain_marketplaces(venue.chain_id.0 as i64)
+        .iter()
+        .any(|m| EvmAddress::parse(m.address).is_ok_and(|a| a == venue.contract))
 }
 
 fn getrandom_32() -> Option<[u8; 32]> {
