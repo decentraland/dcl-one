@@ -2,10 +2,13 @@
 """Test the built gateway on an isolated Docker network, without application data."""
 import argparse
 import base64
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import http.client
 import json
+import os
+import re
 from pathlib import Path
 import socket
 import subprocess
@@ -80,6 +83,17 @@ def request(host, path, *, vhost="example.test", headers=None, method="GET", bod
     return result
 
 
+def burst(host, path, count, vhost="example.test"):
+    def one(_):
+        conn = http.client.HTTPConnection(host, 8080, timeout=10)
+        conn.request("GET", path, headers={"Host": vhost})
+        status = conn.getresponse().status
+        conn.close()
+        return status
+    with ThreadPoolExecutor(16) as pool:
+        return list(pool.map(one, range(count)))
+
+
 def websocket(host, path):
     with socket.create_connection((host, 8080), timeout=10) as conn:
         conn.sendall((f"GET {path} HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\n"
@@ -110,7 +124,7 @@ def wait_ready(host):
 
 def client(args):
     table = json.loads(Path(args.table).read_text())
-    public, admitted, untrusted, trusted, accel, late = args.targets
+    public, admitted, untrusted, trusted, accel, storage_trusted, late, rate_public, rate_trusted = args.targets
     for host in args.targets:
         wait_ready(host)
 
@@ -249,6 +263,37 @@ def client(args):
     print("Host aliases, signed paths, WebSocket echo, authorized file delivery and body caps passed.", flush=True)
     print("Gateway starts without upstreams and resolves them when they become available.", flush=True)
 
+    # These two fixtures use the production maps/geo/locations, with a
+    # one-minute refill and small bursts. No CI throughput assumption.
+    for target, expected in [(rate_public, 3), (rate_trusted, 6)]:
+        statuses = [request(target, "/world-storage/values/k")[0] for _ in range(8)]
+        assert statuses == [200] * expected + [429] * (8 - expected), (target, statuses)
+    # Fresh forwarded client address isolates the write bucket. The real geo
+    # sees the sanitized client IP, not the immediate trusted proxy address.
+    statuses = [request(rate_public, "/world-storage/values/k", method="PUT", body=b"{}",
+                        headers={"X-Forwarded-For": "198.51.100.77"})[0] for _ in range(4)]
+    assert statuses == [200, 200, 429, 429], statuses
+    print("Real-nginx storage read, write and trusted ceilings passed.", flush=True)
+
+
+def rate_fixture(args):
+    """Keep production routing and identity logic; shrink only test budgets."""
+    import gateway
+    wrapper = Path(args.rate_fixture).read_text()
+    nginx = re.search(r"--nginx ([^ \"']+)", wrapper)[1]
+    mime = re.search(r"--mime ([^ \"']+)", wrapper)[1]
+    text = gateway.render(json.loads(Path(args.table).read_text()), gateway.settings(os.environ), mime)
+    for zone, burst in [("storage", 2), ("storage_write", 1), ("storage_trusted", 5)]:
+        text, n = re.subn(rf"(zone={zone}:10m rate=)[0-9]+r/s", r"\g<1>1r/m", text)
+        assert n == 1, (zone, n)
+        text = re.sub(rf"(limit_req zone={zone} burst=)[0-9]+", rf"\g<1>{burst}", text)
+    folder = Path("/tmp/gateway")
+    folder.mkdir(mode=0o700, exist_ok=True)
+    conf = folder / "nginx.conf"
+    conf.write_text(text)
+    subprocess.run([nginx, "-p", str(folder), "-c", str(conf), "-t"], check=True)
+    os.execv(nginx, [nginx, "-p", str(folder), "-c", str(conf), "-g", "daemon off;"])
+
 
 def docker(*args, check=True):
     return subprocess.run(["docker", *args], check=check, text=True, capture_output=True, timeout=120)
@@ -287,8 +332,11 @@ def smoke(args):
                 ("trusted", {"GATEWAY_ADMIN_CIDRS": "198.51.100.7/32",
                              "GATEWAY_TRUSTED_PROXY_CIDRS": fixture_ip + "/32"}),
                 ("accel", {"GATEWAY_STORAGE_ROOT": "/content"}),
+                ("storage", {"GATEWAY_STORAGE_TRUSTED_CIDRS": fixture_ip + "/32"}),
                 ("late", {"GATEWAY_APIS_UPSTREAMS": token + "-late-upstreams:8081",
                           "GATEWAY_SITES_UPSTREAMS": token + "-late-upstreams:8082"}),
+                ("rate-public", {"GATEWAY_TRUSTED_PROXY_CIDRS": fixture_ip + "/32"}),
+                ("rate-trusted", {"GATEWAY_STORAGE_TRUSTED_CIDRS": fixture_ip + "/32"}),
             ]
             targets = []
             for name, extra in cases:
@@ -298,8 +346,13 @@ def smoke(args):
                 env = {"GATEWAY_DOMAIN": "example.test", "GATEWAY_APIS_UPSTREAMS": fixture + ":8081",
                        "GATEWAY_SITES_UPSTREAMS": fixture + ":8082", **extra}
                 env_args = [item for key, value in env.items() for item in ("-e", f"{key}={value}")]
-                docker("run", "-d", "--name", container, *common, *env_args, "-v", f"{storage}:/content:ro", image)
-            docker("exec", fixture, "python3", "/test/smoke.py", "--unresolved", targets[-1])
+                if name.startswith("rate-"):
+                    docker("run", "-d", "--name", container, *common, *env_args,
+                           "-v", f"{source}:/test:ro", "--entrypoint", "python3", image,
+                           "/test/smoke.py", "--rate-fixture", info["Config"]["Entrypoint"][0], "--table", table)
+                else:
+                    docker("run", "-d", "--name", container, *common, *env_args, "-v", f"{storage}:/content:ro", image)
+            docker("exec", fixture, "python3", "/test/smoke.py", "--unresolved", targets[6])
             late_fixture = token + "-late-upstreams"
             containers.append(late_fixture)
             docker("run", "-d", "--name", late_fixture, *common, "-v", f"{source}:/test:ro",
@@ -325,12 +378,15 @@ if __name__ == "__main__":
     parser.add_argument("--client", action="store_true")
     parser.add_argument("--unresolved")
     parser.add_argument("--table")
-    parser.add_argument("--targets", nargs=6)
+    parser.add_argument("--targets", nargs=9)
+    parser.add_argument("--rate-fixture")
     parser.add_argument("--image", default="foundation-gateway:nix")
     parser.add_argument("--revision")
     parser.add_argument("--arch", choices=("amd64", "arm64"))
     args = parser.parse_args()
-    if args.serve:
+    if args.rate_fixture:
+        rate_fixture(args)
+    elif args.serve:
         serve()
     elif args.client:
         client(args)

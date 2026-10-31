@@ -78,6 +78,7 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
         "sites": [upstream(value) for value in words(env.get("GATEWAY_SITES_UPSTREAMS", "sites:5212"))],
         "admins": networks(env.get("GATEWAY_ADMIN_CIDRS", "")),
         "trusted": networks(env.get("GATEWAY_TRUSTED_PROXY_CIDRS", "")),
+        "storage_trusted": networks(env.get("GATEWAY_STORAGE_TRUSTED_CIDRS", "")),
         "storage": storage.rstrip("/"),
     }
 
@@ -105,6 +106,7 @@ def render(table, cfg, mime):
     domain_names = " ".join(dict.fromkeys([cfg["domain"], "~^[a-z0-9-]+\\." + domain + "$", *cfg["hosts"]]))
     admin_geo = " ".join(f'{net} "admitted";' for net in cfg["admins"])
     trusted_geo = " ".join(f"{net} 1;" for net in cfg["trusted"])
+    storage_geo = " ".join(f"{net} 1;" for net in cfg["storage_trusted"])
     real_ip = "\n".join(f"set_real_ip_from {net};" for net in cfg["trusted"])
     blocked = "|".join(re.escape(path.lstrip("/")) for path in table["internal"])
     upstreams = ""
@@ -160,6 +162,12 @@ def render(table, cfg, mime):
     for path in ("/assets/", "/fonts/", "/errors/", "/template-bundles/"):
         locations += location("^~ " + path, proxy("sites"))
     locations += location("/content/", proxy("apis", "limit_req zone=content burst=1000 nodelay;"))
+    # Matched after host rewrites, so every storage host form shares this budget.
+    storage_limits = ("limit_req zone=storage burst=400 nodelay; "
+                      "limit_req zone=storage_write burst=60 nodelay; "
+                      "limit_req zone=storage_trusted burst=1000 nodelay;")
+    locations += location("= /world-storage", proxy("apis", storage_limits))
+    locations += location("^~ /world-storage/", proxy("apis", storage_limits))
     storage = 'return 404;'
     if cfg["storage"]:
         # A host rewrite also marks a request internal in nginx. Require an
@@ -250,8 +258,21 @@ http {{
         "~*^/telemetry/dash/admin(/|\\\\.|$)" 1;
     }}
     map "$operator_path:$admin_gate" $operator_denied {{ volatile; default 0; "1:" 1; }}
+    geo $storage_trusted {{ default 0; {storage_geo} }}
+    map $storage_trusted $storage_limit_key {{ 1 ""; default $binary_remote_addr; }}
+    map "$storage_trusted:$request_method" $storage_write_key {{
+        default $binary_remote_addr;
+        "~^1:" "";
+        "0:GET" "";
+        "0:HEAD" "";
+        "0:OPTIONS" "";
+    }}
+    map $storage_trusted $storage_trusted_key {{ 1 $binary_remote_addr; default ""; }}
+    limit_req_zone $storage_write_key zone=storage_write:10m rate=30r/s;
+    limit_req_zone $storage_trusted_key zone=storage_trusted:10m rate=1000r/s;
     limit_req_zone $binary_remote_addr zone=read:10m rate=30r/s;
     limit_req_zone $binary_remote_addr zone=content:10m rate=100r/s;
+    limit_req_zone $storage_limit_key zone=storage:10m rate=100r/s;
     limit_req_zone $binary_remote_addr zone=deploy:10m rate=2r/s;
     limit_req_status 429;
     proxy_http_version 1.1;
