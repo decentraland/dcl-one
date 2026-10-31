@@ -502,8 +502,8 @@ async fn the_usage_index_resumes_after_a_kill_folds_each_credit_once_and_gates_t
     assert_eq!(status, StatusCode::OK, "{v}");
     assert_eq!(v["credit"]["contract"], contract.as_str());
     assert_eq!(
-        v["maxCreditedValue"], "3060000000000000000",
-        "1.00 USD at 0.5 USD/MANA is 2 MANA; 1.02 buffer, 1.5 headroom"
+        v["maxCreditedValue"], "2040000000000000000",
+        "1.00 USD at 0.5 USD/MANA is 2 MANA; 1.02 buffer, no headroom"
     );
     let (status, _, v) = send(
         &lane,

@@ -391,9 +391,12 @@ const USD_WEI_PER_CENT: u64 = 10_000_000_000_000_000;
 const BPS: u64 = 10_000;
 const PPM: u64 = 1_000_000;
 
-/// The MANA/USD reference rate: the answer of the marketplace's
-/// `manaUsdAggregator` (USD per MANA scaled by `10^decimals`), read from the
-/// chain by the pricing entry, never from a client.
+/// The MANA/USD reference rate, USD per MANA scaled by `10^decimals`, never
+/// taken from a client. The credits authorize path builds it from the price
+/// module's polled snapshot ([`Self::parse_usd_per_mana`]), not from the
+/// marketplace's `manaUsdAggregator` that converts a USD-pegged trade when it
+/// settles, so the two can differ; settlement rebuilds the rate a credit was
+/// signed with from its row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ManaUsdRate {
     rate: U256,
