@@ -1,5 +1,6 @@
 pub mod engine;
 pub use engine::ImageProcessingPlugin;
+mod ktx2_loader;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::wasm_bindgen;
 
@@ -15,9 +16,10 @@ use bevy::{asset::AssetPath, prelude::*};
 #[derive(Clone, Copy)]
 pub enum ProcessingAssetType {
     Gltf,
-    // a gltf that failed to load, presumed draco-compressed; unlike `Gltf` the
-    // original asset never loaded, so on success it is reloaded in place
-    DracoGltf,
+    // a gltf that failed to load on an extension the loader lacks (draco geometry,
+    // basisu textures); unlike `Gltf` the original asset never loaded, so on
+    // success it is reloaded in place
+    UnloadableGltf,
     Image,
 }
 

@@ -37,6 +37,8 @@ block_compression = { version = "0.7", default-features = false, features = [
 ] }
 image = { workspace = true }
 ddsfile = "0.5.2"
+# KHR_texture_basisu textures: pure Rust, so the same transcoder runs on web
+basisu = "0.1"
 gltf = "1.4"
 gltf-json = { version = "1.4", features = ["extensions"] }
 draco-oxide-decoder = { workspace = true }

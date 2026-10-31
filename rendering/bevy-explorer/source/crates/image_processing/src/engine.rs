@@ -31,6 +31,7 @@ impl Plugin for ImageProcessingPlugin {
     fn build(&self, app: &mut App) {
         app.add_event::<AssetForProcessing>();
         app.add_systems(Update, (check_assets, pipe_events));
+        app.preregister_asset_loader::<crate::ktx2_loader::Ktx2Loader>(&["ktx2"]);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -51,6 +52,11 @@ impl Plugin for ImageProcessingPlugin {
         app.init_resource::<ImgReprocessStats>();
         app.init_resource::<DebugProcessingEnabled>();
         app.add_preview_console_command::<DebugProcessingCommand, _>(toggle_debug_processing);
+    }
+
+    fn finish(&self, app: &mut App) {
+        // after the renderer, which reports the compressed formats the gpu takes
+        app.init_asset_loader::<crate::ktx2_loader::Ktx2Loader>();
     }
 }
 
@@ -198,13 +204,18 @@ fn check_assets(
         }
     }
 
-    // a gltf that fails to load because it is draco-compressed (the loader
-    // rejects the extension by name, and spec-compliant draco files must list
-    // it in extensionsRequired) is run through the processor once, which
-    // decompresses and persists it. the processor independently verifies the
-    // extension against the actual bytes.
+    // a gltf that fails to load because it is draco-compressed or has basisu
+    // textures (the loader rejects the extension by name, and spec-compliant
+    // files without a fallback must list it in extensionsRequired) is run
+    // through the processor once, which decompresses or transcodes and persists
+    // it. the processor independently verifies the extension against the
+    // actual bytes.
     for ev in failed_gltfs.read() {
-        if !format!("{}", ev.error).contains("KHR_draco_mesh_compression") {
+        let error = ev.error.to_string();
+        if !["KHR_draco_mesh_compression", "KHR_texture_basisu"]
+            .iter()
+            .any(|extension| error.contains(extension))
+        {
             continue;
         }
         let asset_path = ev.path.clone();
@@ -224,7 +235,7 @@ fn check_assets(
         }
 
         stats.total += 1;
-        assets_to_process.push((ProcessingAssetType::DracoGltf, ipfs_path, asset_path));
+        assets_to_process.push((ProcessingAssetType::UnloadableGltf, ipfs_path, asset_path));
     }
 
     if task.is_none() && !assets_to_process.is_empty() {
@@ -355,7 +366,7 @@ fn pipe_events(
                     }
                     // the original never loaded, so a plain reload picks up the
                     // repaired cache bytes (no need for the image-swap below)
-                    ProcessingAssetType::DracoGltf => asset_server.reload(req.base_path),
+                    ProcessingAssetType::UnloadableGltf => asset_server.reload(req.base_path),
                     ProcessingAssetType::Image => asset_server.reload(req.base_path),
                 };
             }
