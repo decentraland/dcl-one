@@ -40,6 +40,7 @@ mod dynamic_nametag;
 pub mod emote_report;
 pub mod foot_ik;
 pub mod foreign_dynamics;
+pub mod ghost;
 pub mod head_ik;
 pub mod mask_material;
 pub mod material_cache;
@@ -86,6 +87,7 @@ use crate::{
     animate::{AvatarAnimPlayer, LOWER_BODY_BONES, LOWER_BODY_MASK_GROUP},
     dynamic_nametag::DynamicNametagPlugin,
     foot_ik::FootIkPlugin,
+    ghost::GhostAvatarPlugin,
     head_ik::HeadIkPlugin,
     material_cache::{bounds_bits, AvatarMaskKey, AvatarMatKey, BoundsBits},
     point_at_ik::PointAtIkPlugin,
@@ -124,6 +126,7 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(AvatarColliderPlugin);
         app.add_plugins(AvatarTexturePlugin);
         app.add_plugins(DynamicNametagPlugin);
+        app.add_plugins(GhostAvatarPlugin);
         app.add_plugins(FootIkPlugin);
         app.add_plugins(HeadIkPlugin);
         app.add_plugins(PointAtIkPlugin);

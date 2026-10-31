@@ -31,6 +31,23 @@ pub const SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG: u32 = 0x10000000;
 pub const SCENE_MATERIAL_OUTLINE_RED_MESH_TAG: u32 = 0x20000000;
 pub const SCENE_MATERIAL_OUTLINE_GREEN_MESH_TAG: u32 = 0x40000000;
 pub const SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG: u32 = 0x80000000;
+/// an avatar being revealed bottom-up from its ghost: the shaders discard fragments above the
+/// reveal height, carried in the tag's low 16 bits in millimetres (bound_material_effect.wgsl)
+pub const SCENE_MATERIAL_REVEAL_MESH_TAG: u32 = 0x00800000;
+pub const SCENE_MATERIAL_REVEAL_HEIGHT_MASK: u32 = 0x0000FFFF;
+
+/// `tag` with the reveal set to `height` metres above the mesh origin
+pub fn reveal_mesh_tag(tag: u32, height: f32) -> u32 {
+    let millimetres = (height.max(0.0) * 1000.0).round() as u32;
+    (tag & !SCENE_MATERIAL_REVEAL_HEIGHT_MASK)
+        | SCENE_MATERIAL_REVEAL_MESH_TAG
+        | millimetres.min(SCENE_MATERIAL_REVEAL_HEIGHT_MASK)
+}
+
+/// `tag` with no reveal
+pub fn unrevealed_mesh_tag(tag: u32) -> u32 {
+    tag & !(SCENE_MATERIAL_REVEAL_MESH_TAG | SCENE_MATERIAL_REVEAL_HEIGHT_MASK)
+}
 
 pub trait SceneMaterialExt {
     fn new_unbounded(mat: StandardMaterial) -> Self

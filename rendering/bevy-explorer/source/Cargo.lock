@@ -1416,6 +1416,7 @@ version = "0.1.0"
 dependencies = [
  "alloy-core",
  "anyhow",
+ "assets",
  "bevy",
  "bevy_console",
  "bevy_dui",
@@ -1429,6 +1430,7 @@ dependencies = [
  "dcl_types",
  "input_manager",
  "ipfs",
+ "naga_oil",
  "platform",
  "rapier3d-f64",
  "scene_material",

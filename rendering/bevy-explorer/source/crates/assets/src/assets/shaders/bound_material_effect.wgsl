@@ -3,6 +3,22 @@
     mesh_view_bindings::{view, globals},
     prepass_utils::{prepass_depth, prepass_normal},
     pbr_types,
+    mesh_functions,
+}
+
+// an avatar being revealed bottom-up from its ghost (avatar/src/ghost.rs): the tag's low 16 bits
+// are the reveal height above the mesh origin (the feet) in millimetres, and fragments above it
+// are discarded. mirrored by scene_material::SCENE_MATERIAL_REVEAL_MESH_TAG
+const REVEAL_MESH_TAG: u32 = 0x00800000u;
+const REVEAL_HEIGHT_MASK: u32 = 0x0000FFFFu;
+
+fn reveal_discard(mesh_tag: u32, world_y: f32, instance_index: u32) -> bool {
+    if (mesh_tag & REVEAL_MESH_TAG) == 0u {
+        return false;
+    }
+    let reveal_height = f32(mesh_tag & REVEAL_HEIGHT_MASK) * 0.001;
+    let feet_y = mesh_functions::get_world_from_local(instance_index)[3].y;
+    return world_y - feet_y > reveal_height;
 }
 
 #ifdef DEPTH_PREPASS
