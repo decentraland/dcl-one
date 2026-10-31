@@ -82,7 +82,6 @@ function rgba(hex: string, a: number) {
 // A live mint with supply left, sold by its creator for credits.
 function isBuyableFromCreator(item: CatalogItem): boolean {
   if (item.priceCredits <= 0) return false;
-  if (!item.tokenId && typeof item.available === "number" && item.available <= 0) return false;
   return item.hasPrimaryListing === true && (item.available ?? 0) > 0;
 }
 
@@ -161,7 +160,8 @@ function OutfitCard({ outfit, byKey, resolving }: { outfit: OutfitSummary; byKey
 export default function OverviewOutfitsRow() {
   const outfitsQ = useShopQuery(["overview-outfits"], (signal) => fetchOutfits(signal), { staleMs: 60_000 });
   const outfits = useMemo(() => orderOutfitsByRecency(outfitsQ.data ?? []), [outfitsQ.data]);
-  const ids = useMemo(() => Array.from(new Set(outfits.flatMap((o) => o.items.map(itemKey)))), [outfits]);
+  // From the feed's order, not the shuffled one, so the lookup's cache key is the same on every visit.
+  const ids = useMemo(() => Array.from(new Set((outfitsQ.data ?? []).flatMap((o) => o.items.map(itemKey)))).sort(), [outfitsQ.data]);
   const itemsQ = useShopQuery(ids.length ? ["overview-outfit-items", ...ids] : null, (signal) => fetchCatalogByIds(ids, { signal }), { staleMs: 60_000 });
   const byKey = useMemo(() => {
     const m = new Map<string, CatalogItem>();
