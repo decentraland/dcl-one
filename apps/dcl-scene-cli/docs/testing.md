@@ -48,7 +48,7 @@ such as `DCL_SCENE_CLI_LINKER_TIMEOUT_SECS` (default 600).
 `Scene CLI journeys` builds the PR base and proposed CLI and runs the same 42
 stages against both: launch targets, scene editor, storage scopes and transfers,
 publishing targets, wallet handoff, missing integrations, offline feedback and
-phone layouts. Local HTTP fixtures replace upstream services. Runtime credentials
+tablet layouts (768 × 1024). Local HTTP fixtures replace upstream services. Runtime credentials
 are removed from child processes; no wallet signatures or live uploads occur.
 
 ```sh

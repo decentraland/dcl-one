@@ -139,8 +139,8 @@ try {
   await stage('integrations', 'inspector', 'Inspector availability', '/inspector/');
   await stage('integrations', 'embedded-play', 'Embedded Play availability', '/play/');
   await stage('offline', 'preview-offline', 'Disconnected preview feedback', '/', () => evaluate("window.dispatchEvent(new Event('offline'))"));
-  await browser.size(390, 844);
-  for (const [key,route] of [['preview','/'],['scene','/scene'],['storage','/storage'],['target','/target'],['deploy','/deploy']]) await stage('phone', `phone-${key}`, `Phone: ${key}`, route, key === 'target' ? settled : undefined);
+  await browser.size(768, 1024);
+  for (const [key,route] of [['preview','/'],['scene','/scene'],['storage','/storage'],['target','/target'],['deploy','/deploy']]) await stage('tablet', `tablet-${key}`, `Tablet: ${key}`, route, key === 'target' ? settled : undefined);
 } catch (error) {
   manifest.errors.push(error.stack || error.message);
   console.error(error);
