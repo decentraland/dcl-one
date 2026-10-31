@@ -185,10 +185,11 @@ body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation
 
 .shop-chrome .shop-overview {
   max-width: 1760px;
-  padding: 0 var(--shop-gutter) 50px;
+  padding: 0 var(--shop-gutter) 80px;
   gap: 0;
 }
 .shop-chrome .shop-overview > * { margin-bottom: 50px; }
+.shop-chrome .shop-overview > .shop-rail:not(.shop-outfits-row, .shop-creators) { margin-bottom: 40px; }
 .shop-chrome .shop-overview > .shop-overview__hero {
   position: relative;
   display: flex;
@@ -287,4 +288,5 @@ body[data-shop-scrolled] .site-layout:has(.shop-chrome) .site-layout__navigation
     text-align: center;
   }
   .shop-chrome .shop-overview__hero h1 { font-size: 32px; }
+  .shop-chrome .shop-overview { padding-bottom: 56px; }
 }

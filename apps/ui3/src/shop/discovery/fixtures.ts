@@ -177,7 +177,8 @@ export function catalogRow(row: UnifiedListingRaw, onSale = true): RawCollection
     chainId: row.chainId,
     thumbnail: row.thumbnail,
     priceCredits: onSale ? row.priceCredits : 0,
-    price: onSale ? (row.manaWei ?? null) : null,
+    // A trade row carries its USD price in wei (one credit is $0.10); a store mint its MANA price.
+    price: onSale ? (row.manaWei ?? (row.tradeId && row.priceCredits > 0 ? String(BigInt(row.priceCredits) * 10n ** 17n) : null)) : null,
     tradeId: onSale ? row.tradeId : null,
     available: row.available,
     isOnSale: onSale,
