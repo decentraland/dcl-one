@@ -132,9 +132,12 @@ jobs:
         # Leave time to preserve diagnostics if scene execution stalls.
         timeout-minutes: 20
         env:
-          SCENE_PARCELS: ${{ inputs.suite == 'snapshots' && '52,-62;52,-64;52,-66' || '52,-52;52,-54;52,-56;52,-58;52,-60;52,-62;52,-64;52,-66;52,-68;54,-52;54,-54;54,-56;54,-58;54,-60' }}
+          SCENE_SUITE: ${{ inputs.suite || 'full' }}
+        # The suite file lists each scene and the assertions it currently allows to fail; the
+        # runner exits 0 only when every failure is listed.
         run: |
           set -o pipefail
+          SCENE_PARCELS="$(python3 ../../../tooling/bevy-ci.py scene-suite --suite "$SCENE_SUITE")"
           xvfb-run -s "-screen 0 320x240x24" target/release/decentra-bevy --realm https://decentraland.github.io/scene-explorer-tests/scene-explorer-tests --test_scenes "$SCENE_PARCELS" --no_fog --distance 1 --scene_log_to_console 2>&1 | tee scene-tests.log
           grep -Eq 'all tests passed!|all failures were allowed' scene-tests.log
       - name: Record graphical scene result
@@ -143,7 +146,7 @@ jobs:
           SCENE_OUTCOME: ${{ steps.scenes.outcome }}
           SCENE_SUITE: ${{ inputs.suite || 'full' }}
         run: |
-          printf 'Graphical scene tests (%s): **%s**. Only the full suite establishes graphical acceptance. See the scene-test log artifact.\n' "$SCENE_SUITE" "$SCENE_OUTCOME" >> "$GITHUB_STEP_SUMMARY"
+          python3 ../../../tooling/bevy-ci.py scene-summary --suite "$SCENE_SUITE" --outcome "$SCENE_OUTCOME" --log scene-tests.log >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
         with:

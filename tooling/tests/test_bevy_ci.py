@@ -286,6 +286,66 @@ class SelectionTest(unittest.TestCase):
         self.assertEqual(ci.scenes_plan('push', self.base, head)['sha'], head)
         self.assertTrue(ci.scenes_plan('push', '0' * 40, head)['scenes'])
 
+    def test_allowed_failure_list_changes_select_only_the_graphical_suite(self):
+        self.write('apps/bevy-explorer/scene-tests.txt', '52,-52\n')
+        selected = ci.select(self.base, self.commit())
+        self.assertTrue(selected['scenes'])
+        self.assertFalse(any(selected[lane] for lane in (*ci.LANES, 'native-matrix')))
+
+
+class SceneSuiteTest(unittest.TestCase):
+    SCENES = ['52,-52', '52,-54', '52,-56', '52,-58', '52,-60', '52,-62', '52,-64', '52,-66', '52,-68',
+              '54,-52', '54,-54', '54,-56', '54,-58', '54,-60']
+
+    def test_suite_file_lists_the_fourteen_scenes_and_the_snapshot_subset(self):
+        full = ci.scene_suite('full').split(';')
+        self.assertEqual([scene.split('/')[0] for scene in full], self.SCENES)
+        self.assertEqual([scene.split('/')[0] for scene in ci.scene_suite('snapshots').split(';')],
+                         list(ci.SNAPSHOT_SCENES))
+        names = [name for scene in full for name in scene.split('/')[1:]]
+        self.assertTrue(all(name == name.strip() and ';' not in name for name in names))
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_malformed_suite_lines_are_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ci, 'ROOT', Path(temporary)):
+            suite = Path(temporary) / ci.SCENE_SUITE
+            suite.parent.mkdir(parents=True)
+            for bad in ('52,-52/ trailing space ', '52,-52//', 'a,b', '52,-52/x;y'):
+                suite.write_text(f'# comment\n{bad}\n')
+                with self.assertRaises(ValueError, msg=bad):
+                    ci.scene_suite('full')
+            suite.write_text('52,-52/a: b\n52,-62\n')
+            self.assertEqual(ci.scene_suite('full'), '52,-52/a: b;52,-62')
+            self.assertEqual(ci.scene_suite('snapshots'), '52,-62')
+
+    def test_summary_reports_listed_unlisted_and_stale_failures(self):
+        log = ('INFO scene_runner::automatic_testing: test a: b: true [1 remaining]\n'
+               'INFO scene_runner::automatic_testing: test c: d: false [0 remaining]\n'
+               'INFO scene_runner::automatic_testing: test e: f: false [0 remaining]\n'
+               'INFO scene_runner::automatic_testing: some tests failed:\n [\n'
+               '    (\n        "[(52,-52) : c: d]",\n        "Error: image not found (it has been created)",\n'
+               '        true,\n    ),\n    (\n        "[(52,-62) : e: f]",\n'
+               '        "Error: method grey-diff was specified and greyPixelDiff similarity (0.97) is lower than threshold 0.9995",\n'
+               '        false,\n    ),\n]\n')
+        with tempfile.TemporaryDirectory() as temporary, patch.object(ci, 'ROOT', Path(temporary)):
+            suite = Path(temporary) / ci.SCENE_SUITE
+            suite.parent.mkdir(parents=True)
+            suite.write_text('52,-52/c: d/g: h\n52,-62\n')
+            text = ci.scene_summary('full', 'failure', log)
+            self.assertIn('1 assertions passed, 2 failed; 1 of them are listed', text)
+            self.assertIn('Not listed: (52,-62) e: f', text)
+            self.assertNotIn('remove them', text)
+            completed = log + 'INFO scene_runner::automatic_testing: all failures were allowed\n'
+            self.assertIn('Listed but passing, remove them: (52,-52) g: h', ci.scene_summary('full', 'success', completed))
+            self.assertIn('no assertion ran', ci.scene_summary('full', 'failure', ''))
+            self.assertIn('acceptance holds', ci.scene_summary('snapshots', 'success', 'INFO scene_runner::automatic_testing: test a: b: true [0 remaining]\nall tests passed!'))
+
+    def test_scenes_workflow_builds_its_suite_from_the_listed_file(self):
+        text = (Path(__file__).parents[2] / ci.SCENES_WORKFLOW).read_text()
+        self.assertIn('bevy-ci.py scene-suite --suite "$SCENE_SUITE"', text)
+        self.assertIn('bevy-ci.py scene-summary --suite "$SCENE_SUITE" --outcome "$SCENE_OUTCOME"', text)
+        self.assertNotIn('52,-52;', text)
+
 
 class PublicationTest(unittest.TestCase):
     def test_only_successful_same_repository_main_ci_is_trusted(self):
