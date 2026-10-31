@@ -57,7 +57,9 @@ use crate::shared::identity::{
 };
 
 // The access vocabulary `Policy` returns and reads lives in `comms::access`.
-pub use crate::comms::access::{Access, AccessGrant, AccessType, Ban, LandOperators, SceneRef};
+pub use crate::comms::access::{
+    Access, AccessGrant, AccessType, Ban, LandOperators, SceneBanKey, SceneRef, WorldStanding,
+};
 
 /// The permission-relevant columns of one `worlds.worlds` row.
 #[derive(Debug, Clone)]
@@ -272,6 +274,8 @@ pub struct Policy {
     /// legs once its fold is published, the marketplace reader's owner leg
     /// before that; `None` keeps the two readers above as the only sources.
     land_authz: Option<Arc<LandAuthzState>>,
+    /// The DAO name deny list a world join is refused by.
+    names: crate::core::names::NameDenyList,
 }
 
 impl Policy {
@@ -300,6 +304,7 @@ impl Policy {
             marketplace,
             land_operators: None,
             land_authz: None,
+            names: crate::core::names::NameDenyList::default(),
         }
     }
 
@@ -748,7 +753,7 @@ impl Policy {
         world: &WorldName,
         actor: &Address,
         secret: Option<&str>,
-        scene: Option<&SceneId>,
+        scene: Option<&SceneBanKey>,
         device_id: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Access, AuthorityNotEstablished> {
@@ -815,7 +820,7 @@ impl Policy {
     pub async fn is_banned(
         &self,
         actor: &Address,
-        scene: Option<&SceneId>,
+        scene: Option<&SceneBanKey>,
         device_id: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Option<Ban>, AuthorityNotEstablished> {
@@ -911,6 +916,53 @@ impl Policy {
         }
     }
 
+    /// Whether `world` may be joined at all (the old `isWorldValid`): known
+    /// here, not disabled by the operator and not a deny-listed name.
+    pub async fn world_standing(
+        &self,
+        world: &WorldName,
+    ) -> Result<WorldStanding, AuthorityNotEstablished> {
+        let row = self
+            .world(world)
+            .await
+            .map_err(|e| store_unavailable("worlds.worlds", &e))?;
+        Ok(match row {
+            None => WorldStanding::Unknown,
+            Some(row) if row.blocked_since.is_some() => WorldStanding::Disabled,
+            Some(_)
+                if !self
+                    .names
+                    .check_name_deny_list(&self.pool, world.key())
+                    .await =>
+            {
+                WorldStanding::DenyListed
+            }
+            Some(row) => WorldStanding::Open(row.access_type),
+        })
+    }
+
+    /// The known owner and every `deployment` grantee, scoped or world-wide.
+    pub async fn privileged_addresses(
+        &self,
+        world: &WorldName,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
+        let row = self
+            .world(world)
+            .await
+            .map_err(|e| store_unavailable("worlds.worlds", &e))?;
+        let mut out: BTreeSet<Address> =
+            self.known_owner(world, row.as_ref()).into_iter().collect();
+        let deployers: Vec<String> = sqlx::query_scalar(
+            "SELECT address FROM worlds.world_permissions WHERE world_name = $1 AND permission = 'deployment'",
+        )
+        .bind(world.key())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| store_unavailable("worlds.world_permissions", &e))?;
+        out.extend(deployers.iter().filter_map(|a| Address::parse(a).ok()));
+        Ok(out)
+    }
+
     /// The addresses a world's other permission surfaces protect from a scene
     /// ban: the known owner and every deployment/streaming grantee whose
     /// grant is world-wide or touches one of `parcels` (the old
@@ -951,14 +1003,11 @@ impl Policy {
 /// each answered by the inherent method of the same name.
 #[async_trait::async_trait]
 impl crate::comms::interfaces::AccessPolicy for Policy {
-    async fn access_type(
+    async fn world_standing(
         &self,
         world: &WorldName,
-    ) -> Result<Option<AccessType>, AuthorityNotEstablished> {
-        Policy::world(self, world)
-            .await
-            .map(|row| row.map(|row| row.access_type))
-            .map_err(|e| store_unavailable("worlds.worlds", &e))
+    ) -> Result<WorldStanding, AuthorityNotEstablished> {
+        Policy::world_standing(self, world).await
     }
 
     async fn world_owner(
@@ -983,7 +1032,7 @@ impl crate::comms::interfaces::AccessPolicy for Policy {
         world: &WorldName,
         actor: &Address,
         secret: Option<&str>,
-        scene: Option<&SceneId>,
+        scene: Option<&SceneBanKey>,
         device_id: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Access, AuthorityNotEstablished> {
@@ -1004,6 +1053,13 @@ impl crate::comms::interfaces::AccessPolicy for Policy {
         parcels: &ParcelSet,
     ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
         Policy::protected_addresses(self, world, parcels).await
+    }
+
+    async fn privileged_addresses(
+        &self,
+        world: &WorldName,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
+        Policy::privileged_addresses(self, world).await
     }
 }
 
@@ -1154,7 +1210,7 @@ mod tests {
             return;
         };
         let actor = wallet();
-        let scene = SceneId::parse("test-scene").unwrap();
+        let scene = SceneBanKey::scene(&SceneId::parse("test-scene").unwrap());
         let p = Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), None)
             .with_ban_status(Arc::new(StubBanStatus(Ok(Some(Ban::Platform)))));
         assert_eq!(
@@ -1519,7 +1575,7 @@ mod tests {
         )
         .await;
         seed_scene(&p, &world, "bafyS", &["0,0"]).await;
-        let scene = SceneId::parse("bafyS").unwrap();
+        let scene = SceneBanKey::scene(&SceneId::parse("bafyS").unwrap());
         assert_eq!(
             p.can_access(&world, &owner, None, Some(&scene), None, now())
                 .await
@@ -1885,5 +1941,79 @@ mod tests {
             .await
             .unwrap();
         assert!(protected.contains(&deployer));
+    }
+
+    #[tokio::test]
+    async fn world_standing_refuses_unknown_disabled_and_deny_listed_worlds() {
+        let Some(p) = scratch().await else { return };
+        let open = world_name();
+        let disabled = world_name();
+        let denied = world_name();
+        assert_eq!(
+            p.world_standing(&open).await.unwrap(),
+            WorldStanding::Unknown
+        );
+        for world in [&open, &disabled, &denied] {
+            seed_world(
+                &p,
+                world,
+                None,
+                AccessType::SharedSecret,
+                Some("$2b$04$hash"),
+            )
+            .await;
+        }
+        sqlx::query(
+            "UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = $1",
+        )
+        .bind(disabled.key())
+        .execute(p.pool())
+        .await
+        .unwrap();
+        let label = denied.label().to_string();
+        crate::explore::api::lists::set_local(
+            p.pool(),
+            crate::core::names::BANNED_NAMES_LIST,
+            &label,
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            p.world_standing(&open).await.unwrap(),
+            WorldStanding::Open(AccessType::SharedSecret)
+        );
+        assert_eq!(
+            p.world_standing(&disabled).await.unwrap(),
+            WorldStanding::Disabled
+        );
+        assert_eq!(
+            p.world_standing(&denied).await.unwrap(),
+            WorldStanding::DenyListed
+        );
+        crate::explore::api::lists::clear_local(
+            p.pool(),
+            crate::core::names::BANNED_NAMES_LIST,
+            &label,
+        )
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn privileged_addresses_are_the_owner_and_every_deployer() {
+        let Some(p) = scratch().await else { return };
+        let world = world_name();
+        let (owner, scoped, wide, streamer, visitor) =
+            (wallet(), wallet(), wallet(), wallet(), wallet());
+        seed_world(&p, &world, Some(&owner), AccessType::AllowList, None).await;
+        grant(&p, &world, Permission::Deployment, &scoped, &["4,4"]).await;
+        grant(&p, &world, Permission::Deployment, &wide, &[]).await;
+        grant(&p, &world, Permission::Streaming, &streamer, &[]).await;
+        grant(&p, &world, Permission::Access, &visitor, &[]).await;
+        assert_eq!(
+            p.privileged_addresses(&world).await.unwrap(),
+            BTreeSet::from([owner, scoped, wide])
+        );
     }
 }

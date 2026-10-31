@@ -173,7 +173,7 @@ mod tests {
         async fn ban(
             &self,
             _: &Address,
-            _: Option<&crate::world_identity::SceneId>,
+            _: Option<&crate::access::SceneBanKey>,
             _: Option<&str>,
             _: chrono::NaiveDateTime,
         ) -> Result<Option<crate::access::Ban>, AuthorityNotEstablished> {

@@ -71,6 +71,15 @@ impl SceneIdentity {
         self.deployment.as_ref().map(|d| &d.scene_id)
     }
 
+    /// The key the scene's bans live under (`comms::access::SceneBanKey`).
+    pub fn ban_key(&self) -> Option<crate::policy::SceneBanKey> {
+        let deployment = self.deployment.as_ref()?;
+        Some(match &self.key {
+            SceneKey::World(world) => crate::policy::SceneBanKey::world(world, deployment.base),
+            _ => crate::policy::SceneBanKey::scene(&deployment.scene_id),
+        })
+    }
+
     pub fn namespace(&self) -> Option<&SceneNamespace> {
         self.deployment.as_ref().and_then(|d| d.namespace.as_ref())
     }

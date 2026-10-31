@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use chrono::NaiveDateTime;
 
-use crate::access::{Access, AccessType, LandOperators, SceneRef};
+use crate::access::{Access, LandOperators, SceneRef, WorldStanding};
 use crate::rooms::{ActiveDeployment, ResolveError, ResolvedRoom, RoomRequest};
 use crate::shared::identity::{Address, AuthorityNotEstablished, PermissionDecision};
 use crate::world_identity::{Parcel, ParcelSet, SceneId, WorldName};
@@ -24,11 +24,12 @@ use crate::world_identity::{Parcel, ParcelSet, SceneId, WorldName};
 /// `Policy` method of the same name.
 #[async_trait::async_trait]
 pub trait AccessPolicy: Send + Sync {
-    /// The access setting of `world`, `None` when it is unknown.
-    async fn access_type(
+    /// Whether `world` is known, enabled and off the name deny list, and its
+    /// access setting when it is.
+    async fn world_standing(
         &self,
         world: &WorldName,
-    ) -> Result<Option<AccessType>, AuthorityNotEstablished>;
+    ) -> Result<WorldStanding, AuthorityNotEstablished>;
     /// The stored owner of a known world row, not a fresh chain ownership verdict.
     /// An unknown world or unset owner is `None`; failed reads remain unavailable.
     async fn world_owner(
@@ -46,7 +47,7 @@ pub trait AccessPolicy: Send + Sync {
         world: &WorldName,
         actor: &Address,
         secret: Option<&str>,
-        scene: Option<&SceneId>,
+        scene: Option<&crate::access::SceneBanKey>,
         device_id: Option<&str>,
         now: NaiveDateTime,
     ) -> Result<Access, AuthorityNotEstablished>;
@@ -61,6 +62,12 @@ pub trait AccessPolicy: Send + Sync {
         &self,
         world: &WorldName,
         parcels: &ParcelSet,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished>;
+    /// The owner and every `deployment` grantee of `world`, scoped or not:
+    /// the wallets an access change never evicts.
+    async fn privileged_addresses(
+        &self,
+        world: &WorldName,
     ) -> Result<BTreeSet<Address>, AuthorityNotEstablished>;
 }
 
@@ -89,6 +96,15 @@ pub trait SceneIdentity: Send + Sync {
         &self,
         world: &WorldName,
     ) -> Result<Option<ActiveDeployment>, ResolveError>;
+    /// A scene a redeploy recently replaced in `world`, so its scene comms
+    /// still mint for a bounded window; never an active deployment.
+    async fn replaced_world_scene(
+        &self,
+        _world: &WorldName,
+        _scene: &SceneId,
+    ) -> Result<Option<crate::rooms::ReplacedScene>, ResolveError> {
+        Ok(None)
+    }
 }
 
 /// Name ownership is supplied by Shop, which owns both its NFT index and
@@ -295,39 +311,41 @@ pub mod test_support {
     }
 
     /// An [`AccessPolicy`] that gives every question the answer its field
-    /// holds. The default is an unknown world, access allowed, not blocked, not
-    /// an admin, no LAND document and no protected wallet.
+    /// holds. The default is an open unrestricted world, access allowed, not
+    /// blocked, not an admin, no LAND document and no protected wallet.
     pub struct StubPolicy {
-        pub access_type: Result<Option<AccessType>, AuthorityNotEstablished>,
+        pub standing: Result<WorldStanding, AuthorityNotEstablished>,
         pub world_owner: Result<Option<Address>, AuthorityNotEstablished>,
         pub access: Result<Access, AuthorityNotEstablished>,
         pub blocked: Result<bool, AuthorityNotEstablished>,
         pub admin: PermissionDecision,
         pub land: Result<Option<Arc<Option<LandOperators>>>, AuthorityNotEstablished>,
         pub protected: Result<BTreeSet<Address>, AuthorityNotEstablished>,
+        pub privileged: Result<BTreeSet<Address>, AuthorityNotEstablished>,
     }
 
     impl Default for StubPolicy {
         fn default() -> Self {
             Self {
-                access_type: Ok(None),
+                standing: Ok(WorldStanding::Open(crate::access::AccessType::Unrestricted)),
                 world_owner: Ok(None),
                 access: Ok(Access::Allowed(AccessGrant::Unrestricted)),
                 blocked: Ok(false),
                 admin: PermissionDecision::refused("stub: not an admin"),
                 land: Ok(None),
                 protected: Ok(BTreeSet::new()),
+                privileged: Ok(BTreeSet::new()),
             }
         }
     }
 
     #[async_trait::async_trait]
     impl AccessPolicy for StubPolicy {
-        async fn access_type(
+        async fn world_standing(
             &self,
             _world: &WorldName,
-        ) -> Result<Option<AccessType>, AuthorityNotEstablished> {
-            self.access_type.as_ref().copied().map_err(copy)
+        ) -> Result<WorldStanding, AuthorityNotEstablished> {
+            self.standing.as_ref().copied().map_err(copy)
         }
 
         async fn world_owner(
@@ -349,7 +367,7 @@ pub mod test_support {
             _world: &WorldName,
             _actor: &Address,
             _secret: Option<&str>,
-            _scene: Option<&SceneId>,
+            _scene: Option<&crate::access::SceneBanKey>,
             _device_id: Option<&str>,
             _now: NaiveDateTime,
         ) -> Result<Access, AuthorityNotEstablished> {
@@ -373,6 +391,13 @@ pub mod test_support {
             _parcels: &ParcelSet,
         ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
             self.protected.as_ref().cloned().map_err(copy)
+        }
+
+        async fn privileged_addresses(
+            &self,
+            _world: &WorldName,
+        ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
+            self.privileged.as_ref().cloned().map_err(copy)
         }
     }
 

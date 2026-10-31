@@ -247,10 +247,12 @@ fn metadata_batch(mut rooms: Vec<String>, after: Option<&str>) -> (Vec<String>, 
     (batch, next)
 }
 
+/// The scene's moderation context and the key its bans live under (a
+/// world scene's `<world>:<base>`, not its entity id).
 async fn metadata_scene_context(
     state: &CommsState,
     room: &str,
-) -> Result<Option<PlaceContext>, ApiError> {
+) -> Result<Option<(PlaceContext, crate::access::SceneBanKey)>, ApiError> {
     use crate::rooms::{ParsedRoom, parse_room, resolve_room_name};
     let resolved = match parse_room(room) {
         Some(ParsedRoom::WorldScene(_)) => resolve_room_name(state.scenes.as_ref(), room)
@@ -327,7 +329,10 @@ async fn metadata_scene_context(
     if &deployment.scene_id != scene {
         return Ok(None);
     }
-    Ok(Some(PlaceContext {
+    let Some(ban_key) = resolved.ban_key() else {
+        return Ok(None);
+    };
+    let context = PlaceContext {
         place_id: scene.as_str().to_owned(),
         // Current policy is authoritative for the owner. A Places snapshot
         // cannot replace scene-keyed rows, owner or active parcel authority.
@@ -336,14 +341,15 @@ async fn metadata_scene_context(
         world_name: resolved.realm.world().map(|world| world.key().to_owned()),
         base_position: deployment.base.canonical(),
         positions: json!(deployment.parcels.canonical()),
-    }))
+    };
+    Ok(Some((context, ban_key)))
 }
 
 async fn room_metadata_fields(
     state: &CommsState,
     room: &str,
 ) -> Result<Option<serde_json::Map<String, Value>>, ApiError> {
-    let Some(context) = metadata_scene_context(state, room).await? else {
+    let Some((context, ban_key)) = metadata_scene_context(state, room).await? else {
         return Ok(None);
     };
     let mut admins = scene::try_get_extra_addresses(state, &info(&context)).await?;
@@ -363,7 +369,7 @@ async fn room_metadata_fields(
     let bans: Vec<String> = sqlx::query_scalar(
         "SELECT banned_address FROM social.scene_bans WHERE place_id = $1 ORDER BY banned_address",
     )
-    .bind(&context.place_id)
+    .bind(ban_key.as_str())
     .fetch_all(&state.pool)
     .await?;
     Ok(Some(
@@ -723,15 +729,20 @@ mod tests {
                 }),
                 ..Default::default()
             });
-            let context = metadata_scene_context(&state, &room)
+            let (context, ban_key) = metadata_scene_context(&state, &room)
                 .await
                 .unwrap()
                 .unwrap();
             assert_eq!(
                 context.place_id,
                 scene.as_str(),
-                "explicit admins/bans use original scene ID, never a Places UUID/world key"
+                "explicit admins use original scene ID, never a Places UUID/world key"
             );
+            let expected_ban_key = match &realm {
+                RealmId::World(world) => crate::access::SceneBanKey::world(world, base),
+                RealmId::Shared(_) => crate::access::SceneBanKey::scene(&scene),
+            };
+            assert_eq!(ban_key, expected_ban_key);
             assert_eq!(
                 context.owner_address, None,
                 "owner must come from current policy"
@@ -779,12 +790,18 @@ mod tests {
         struct FootprintPolicy(ParcelSet);
         #[async_trait::async_trait]
         impl AccessPolicy for FootprintPolicy {
-            async fn access_type(
+            async fn world_standing(
                 &self,
                 _: &WorldName,
-            ) -> Result<Option<crate::access::AccessType>, crate::AuthorityNotEstablished>
+            ) -> Result<crate::access::WorldStanding, crate::AuthorityNotEstablished> {
+                Ok(crate::access::WorldStanding::Unknown)
+            }
+            async fn privileged_addresses(
+                &self,
+                _: &WorldName,
+            ) -> Result<std::collections::BTreeSet<Address>, crate::AuthorityNotEstablished>
             {
-                Ok(None)
+                Ok(Default::default())
             }
             async fn world_owner(
                 &self,
@@ -808,7 +825,7 @@ mod tests {
                 world: &WorldName,
                 actor: &Address,
                 secret: Option<&str>,
-                scene: Option<&SceneId>,
+                scene: Option<&crate::access::SceneBanKey>,
                 device: Option<&str>,
                 now: NaiveDateTime,
             ) -> Result<crate::access::Access, crate::AuthorityNotEstablished> {
@@ -885,25 +902,34 @@ mod tests {
         };
         let (mut state, _, _) = setup(pool.clone()).await;
         let by = Address::parse("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
-        for (key, admin, banned) in [
+        let ban_key = crate::access::SceneBanKey::world(&first, base);
+        for (admin_key, ban_key, admin, banned) in [
             (
                 scene.as_str(),
+                ban_key.as_str(),
                 "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
             ),
             (
                 first.key(),
+                first.key(),
                 "0xdddddddddddddddddddddddddddddddddddddddd",
                 "0xffffffffffffffffffffffffffffffffffffffff",
+            ),
+            (
+                second.key(),
+                scene.as_str(),
+                "0x1111111111111111111111111111111111111111",
+                "0x2222222222222222222222222222222222222222",
             ),
         ] {
             state
                 .moderation
-                .add_admin(key, &Address::parse(admin).unwrap(), &by)
+                .add_admin(admin_key, &Address::parse(admin).unwrap(), &by)
                 .await
                 .unwrap();
             sqlx::query("INSERT INTO social.scene_bans (place_id,banned_address,banned_by) VALUES ($1,$2,$3)")
-                .bind(key).bind(banned).bind(by.as_str()).execute(&pool).await.unwrap();
+                .bind(ban_key).bind(banned).bind(by.as_str()).execute(&pool).await.unwrap();
         }
         state.policy = Arc::new(FootprintPolicy(parcels));
         state.scenes = Arc::new(StubScenes {

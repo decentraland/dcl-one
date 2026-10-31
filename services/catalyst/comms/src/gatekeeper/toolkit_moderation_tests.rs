@@ -417,11 +417,17 @@ struct ActorPolicy {
 
 #[async_trait::async_trait]
 impl AccessPolicy for ActorPolicy {
-    async fn access_type(
+    async fn world_standing(
         &self,
         _: &WorldName,
-    ) -> Result<Option<AccessType>, AuthorityNotEstablished> {
-        Ok(Some(AccessType::Unrestricted))
+    ) -> Result<crate::access::WorldStanding, AuthorityNotEstablished> {
+        Ok(crate::access::WorldStanding::Open(AccessType::Unrestricted))
+    }
+    async fn privileged_addresses(
+        &self,
+        _: &WorldName,
+    ) -> Result<BTreeSet<Address>, AuthorityNotEstablished> {
+        Ok(BTreeSet::new())
     }
     async fn world_owner(&self, _: &WorldName) -> Result<Option<Address>, AuthorityNotEstablished> {
         Ok(Some(Address::parse(&address_of(KEY)).unwrap()))
@@ -440,7 +446,7 @@ impl AccessPolicy for ActorPolicy {
         _: &WorldName,
         _: &Address,
         _: Option<&str>,
-        _: Option<&SceneId>,
+        _: Option<&crate::access::SceneBanKey>,
         _: Option<&str>,
         _: chrono::NaiveDateTime,
     ) -> Result<Access, AuthorityNotEstablished> {
@@ -506,7 +512,10 @@ async fn media_fixture() -> (
             data.requests.push((method.clone(),body.clone()));
             match method.as_str() {
                 "ListRooms" => {
-                    let room = body["names"][0].as_str().unwrap();
+                    // The full listing (replaced-scene rooms) holds no extra room here.
+                    let Some(room) = body["names"][0].as_str() else {
+                        return Json(json!({"rooms":[]})).into_response();
+                    };
                     Json(json!({"rooms":[{"name":room,"sid":"RM_toolkit","metadata":data.metadata.get(room).cloned().unwrap_or(json!({"presenters":["canary"]})).to_string()}]})).into_response()
                 }
                 "UpdateRoomMetadata" => {

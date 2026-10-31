@@ -478,6 +478,43 @@ pub async fn permission_records(
         .collect())
 }
 
+/// Deletes the scenes a deploy replaces (`ids`, or every overlapping one),
+/// keeping each in `worlds.replaced_world_scenes` so its scene comms still
+/// mint for `rooms::REPLACED_SCENE_RETENTION`; the world's expired rows go first.
+async fn replace_scenes(
+    tx: &mut sqlx::PgConnection,
+    world: &WorldName,
+    parcels: &[String],
+    ids: Option<&[&str]>,
+) -> Result<(), sqlx::Error> {
+    let now = chrono::Utc::now().naive_utc();
+    sqlx::query(
+        "DELETE FROM worlds.replaced_world_scenes WHERE world_name = $1 AND replaced_at <= $2",
+    )
+    .bind(world.key())
+    .bind(now - crate::rooms::REPLACED_SCENE_RETENTION)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query(
+        "WITH gone AS ( \
+           DELETE FROM worlds.world_scenes \
+            WHERE world_name = $1 AND parcels && $2::text[] \
+              AND ($3::text[] IS NULL OR entity_id = ANY($3::text[])) \
+           RETURNING world_name, entity_id, parcels, entity #>> '{metadata,scene,base}' AS base) \
+         INSERT INTO worlds.replaced_world_scenes (world_name, entity_id, parcels, declared_base, replaced_at) \
+         SELECT world_name, entity_id, parcels, base, $4 FROM gone \
+         ON CONFLICT (world_name, entity_id) DO UPDATE SET parcels = EXCLUDED.parcels, \
+           declared_base = EXCLUDED.declared_base, replaced_at = EXCLUDED.replaced_at",
+    )
+    .bind(world.key())
+    .bind(parcels)
+    .bind(ids)
+    .bind(now)
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
+}
+
 /// One transaction: upsert the world (owner from a proven `Deploy::Owner`,
 /// an operator disable kept, settings refreshed from the entity when the
 /// scene ends up the sole occupant), refuse (400) when an overlapping scene
@@ -624,22 +661,11 @@ pub async fn deploy_scene(
 
     match replacement {
         Deploy::Owner => {
-            sqlx::query(
-                "DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[]",
-            )
-            .bind(world.key())
-            .bind(&parcels)
-            .execute(&mut *tx)
-            .await?;
+            replace_scenes(&mut tx, world, &parcels, None).await?;
         }
         Deploy::Scoped(ids) => {
             let ids: Vec<&str> = ids.iter().map(SceneId::as_str).collect();
-            sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] AND entity_id = ANY($3::text[])")
-                .bind(world.key())
-                .bind(&parcels)
-                .bind(&ids)
-                .execute(&mut *tx)
-                .await?;
+            replace_scenes(&mut tx, world, &parcels, Some(&ids)).await?;
             let leftover: Option<String> =
                 sqlx::query_scalar("SELECT entity_id FROM worlds.world_scenes WHERE world_name = $1 AND parcels && $2::text[] LIMIT 1")
                     .bind(world.key())

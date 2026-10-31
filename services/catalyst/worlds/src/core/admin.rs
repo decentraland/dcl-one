@@ -16,8 +16,8 @@ use chrono::SecondsFormat;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::comms::world_identity::{Parcel, SceneId};
-use crate::policy::Ban;
+use crate::comms::world_identity::Parcel;
+use crate::policy::{Ban, SceneBanKey};
 use crate::rooms;
 use crate::shared::identity::Address;
 
@@ -353,13 +353,13 @@ pub async fn world_ban_status(
     let world = parse_world(&world_name)?;
     let address = parse_wallet(&q.address)?;
     let now = chrono::Utc::now().naive_utc();
-    let scene: Option<SceneId> = match q.parcel.as_deref() {
+    let scene: Option<SceneBanKey> = match q.parcel.as_deref() {
         Some(raw) => {
             let parcel = Parcel::parse(raw).map_err(|e| ApiError::bad_request(e.to_string()))?;
             rooms::world_scene_at(&state.pool, &world, parcel)
                 .await
                 .map_err(|e| ApiError::internal(format!("resolving the scene at {parcel}: {e}")))?
-                .map(|d| d.scene_id)
+                .map(|d| SceneBanKey::world(&world, d.base))
         }
         None => None,
     };

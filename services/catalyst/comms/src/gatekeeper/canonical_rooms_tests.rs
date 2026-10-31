@@ -738,6 +738,26 @@ async fn canonical_relay_world_rooms_keep_world_policy_deployment_bans_and_host_
         Ok(()),
         "shared scenes preserve their own authority path"
     );
+    for standing in [
+        crate::access::WorldStanding::Unknown,
+        crate::access::WorldStanding::Disabled,
+        crate::access::WorldStanding::DenyListed,
+    ] {
+        let invalid_world = CurrentRoomPolicy::new(
+            Arc::new(Catalogue),
+            Arc::new(StubPolicy {
+                standing: Ok(standing),
+                ..Default::default()
+            }),
+            Arc::new(StubBanStatus(Ok(None))),
+            None,
+        );
+        assert_eq!(
+            invalid_world.authorize(&allowed).await,
+            Err(DenialReason::NotAuthorized),
+            "{standing:?}"
+        );
+    }
     for ban in [crate::access::Ban::Platform, crate::access::Ban::Scene] {
         let banned = CurrentRoomPolicy::new(
             Arc::new(Catalogue),
@@ -1200,12 +1220,10 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
         state.scenes = Arc::new(RedeployCatalogue(removed.clone()));
         state.livekit.configured = true;
         state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
-        if access_changed {
-            state.policy = Arc::new(StubPolicy {
-                access: Ok(crate::access::Access::NotAllowed),
-                ..Default::default()
-            });
-        }
+        state.policy = Arc::new(StubPolicy {
+            access: Ok(crate::access::Access::NotAllowed),
+            ..Default::default()
+        });
         let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
         let state = Arc::new(state);
         // The live scene room was admitted and had a uniquely resolved owner
@@ -1269,5 +1287,88 @@ async fn canonical_world_revocation_reaches_a_connected_room_after_redeployment(
             "another world's shared prefix must remain isolated"
         );
         server.abort();
+    }
+}
+
+/// The old access-change handler: the owner and deployers stay, an
+/// admitted or undecided participant stays, on both revocation arms.
+#[tokio::test]
+async fn world_revocation_spares_privileged_admitted_and_undecided_participants() {
+    use super::super::RoomRevocation;
+    let connected = Address::parse(&address_of(KEY)).unwrap();
+    let unavailable = || {
+        crate::AuthorityNotEstablished::store_unavailable(
+            "worlds.worlds",
+            &sqlx::Error::PoolTimedOut,
+        )
+    };
+    let policy = |case: usize| match case {
+        0 => StubPolicy {
+            access: Ok(crate::access::Access::NotAllowed),
+            privileged: Ok([connected.clone()].into_iter().collect()),
+            ..Default::default()
+        },
+        1 => StubPolicy::default(),
+        2 => StubPolicy {
+            access: Err(unavailable()),
+            ..Default::default()
+        },
+        _ => StubPolicy {
+            access: Ok(crate::access::Access::NotAllowed),
+            privileged: Err(unavailable()),
+            ..Default::default()
+        },
+    };
+    for case in 0..4 {
+        for access_changed in [false, true] {
+            let requests = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+            let capture = requests.clone();
+            let fixture = axum::Router::new().route("/twirp/livekit.RoomService/{method}",axum::routing::post(move |Path(method):Path<String>| {
+                let capture=capture.clone(); async move {
+                    capture.lock().unwrap().push(method.clone());
+                    match method.as_str() {
+                        "ListRooms" => Json(serde_json::json!({"rooms":[{"name":"w1:d:mixed.dcl.ethSceneA","sid":"RM_a","metadata":"{}"}]})),
+                        "ListParticipants" => Json(serde_json::json!({"participants":[{"identity":address_of(KEY),"sid":"PA_connected","metadata":"{}"}]})),
+                        _ => Json(serde_json::json!({})),
+                    }
+                }
+            }));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let mut state = canonical_state();
+            state.livekit.configured = true;
+            state.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+            state.policy = Arc::new(policy(case));
+            let server = tokio::spawn(async move { axum::serve(listener, fixture).await.unwrap() });
+            let world = WorldName::parse("mixed.dcl.eth").unwrap();
+            Arc::new(state).revoke(if access_changed {
+                RoomRevocation::WorldAccess { world }
+            } else {
+                RoomRevocation::WorldAddress {
+                    world,
+                    address: connected.clone(),
+                }
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+            if access_changed && case < 3 {
+                assert!(
+                    requests
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .any(|m| m == "ListParticipants"),
+                    "case {case}: the roster was read"
+                );
+            }
+            assert!(
+                !requests
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|m| m == "RemoveParticipant"),
+                "case {case} access_changed={access_changed}: {:?}",
+                requests.lock().unwrap()
+            );
+            server.abort();
+        }
     }
 }

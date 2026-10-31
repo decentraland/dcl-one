@@ -38,8 +38,9 @@
 -- is `timestamp without time zone` holding UTC (the pool pins TimeZone=UTC);
 -- the current time is a bind parameter, never an index predicate. No FK
 -- crosses a schema: the scene admins and bans a world scene is moderated by
--- are `social.scene_admins`/`social.scene_bans` keyed by the scene entity id
--- (src/worlds/policy.rs reads them; comms owns their writes).
+-- are `social.scene_admins`, keyed by the scene entity id, and
+-- `social.scene_bans`, keyed by `<world>:<base parcel>` so a ban survives a
+-- redeploy (src/worlds/policy.rs reads them; comms owns their writes).
 --
 -- The federation listing mirror of 0005/0006 (peers' public /worlds listings,
 -- a different protocol from the upstream /index catalogue) is the
@@ -561,3 +562,27 @@ CREATE TABLE worlds.forward_outbox (
 CREATE INDEX forward_outbox_due_idx ON worlds.forward_outbox USING btree (target, next_attempt_at, id)
     WHERE status IN ('queued', 'sending');
 -- ==== end section: forwarding ====
+
+-- ==== section: replaced-scenes ====
+-- A world scene a deploy replaced, kept seven days so its scene comms still
+-- mint for the players in its room (the old service resolved undeployed
+-- scenes for scene comms; worlds::rooms::replaced_world_scene_base). The
+-- replacing deploy writes these rows in its own transaction from the rows it
+-- deletes and purges its world's expired ones; a world's removal cascades. The resolver
+-- derives the base from `parcels` and the declared base as for an active
+-- scene, and never treats a row here as an active deployment.
+CREATE TABLE worlds.replaced_world_scenes (
+    world_name text NOT NULL,
+    entity_id text NOT NULL,
+    parcels text[] NOT NULL,
+    declared_base text,
+    replaced_at timestamp without time zone NOT NULL,
+    CONSTRAINT replaced_world_scenes_pkey PRIMARY KEY (world_name, entity_id),
+    CONSTRAINT replaced_world_scenes_world_fk FOREIGN KEY (world_name)
+        REFERENCES worlds.worlds (name) ON DELETE CASCADE
+);
+
+-- The deploy's purge of its world's expired rows.
+CREATE INDEX replaced_world_scenes_replaced_at_idx
+    ON worlds.replaced_world_scenes (world_name, replaced_at);
+-- ==== end section: replaced-scenes ====

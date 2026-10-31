@@ -238,6 +238,46 @@ fn sfu(error: RoomServiceError) -> anyhow::Error {
     anyhow!("LiveKit request failed: {error:?}")
 }
 
+/// The `<world>:<base>` key of a world scene intent queued before step 0009,
+/// which names the scene's entity id (bans moved, queued intents did not).
+async fn legacy_world_ban_key(
+    state: &CommsState,
+    row: &Intent,
+) -> Result<Option<crate::access::SceneBanKey>> {
+    let Some(scene) = row
+        .place_id
+        .as_deref()
+        .and_then(|place| crate::world_identity::SceneId::parse(place).ok())
+    else {
+        return Ok(None);
+    };
+    let rooms = row.scope.as_array().map(Vec::as_slice).unwrap_or_default();
+    let Some(world) = rooms
+        .iter()
+        .filter_map(Value::as_str)
+        .filter_map(crate::rooms::decode_world_scene_room)
+        .find_map(|(world, room_scene)| (room_scene == scene).then_some(world))
+    else {
+        return Ok(None);
+    };
+    let unavailable = |error| anyhow!("scene identity unavailable: {error:?}");
+    let base = match state
+        .scenes
+        .world_scene(&world, &scene)
+        .await
+        .map_err(unavailable)?
+    {
+        Some(deployment) => Some(deployment.base),
+        None => state
+            .scenes
+            .replaced_world_scene(&world, &scene)
+            .await
+            .map_err(unavailable)?
+            .map(|replaced| replaced.base),
+    };
+    Ok(base.map(|base| crate::access::SceneBanKey::world(&world, base)))
+}
+
 async fn authorized(state: &CommsState, row: &Intent, actor: &Address) -> Result<bool> {
     match row.cause_kind.as_str() {
         "platform" => Ok(state
@@ -247,18 +287,34 @@ async fn authorized(state: &CommsState, row: &Intent, actor: &Address) -> Result
                 actor,
             )
             .await?),
-        "scene" => Ok(actor.as_str() == row.wallet
-            && state
+        "scene" => {
+            if actor.as_str() != row.wallet {
+                return Ok(false);
+            }
+            let place = row
+                .place_id
+                .as_deref()
+                .ok_or_else(|| anyhow!("missing place"))?;
+            let version = row
+                .scene_version
+                .ok_or_else(|| anyhow!("missing scene version"))?;
+            if state
                 .moderation
-                .scene_removal_applies(
-                    row.place_id
-                        .as_deref()
-                        .ok_or_else(|| anyhow!("missing place"))?,
-                    actor,
-                    row.scene_version
-                        .ok_or_else(|| anyhow!("missing scene version"))?,
-                )
-                .await?),
+                .scene_removal_applies(place, actor, version)
+                .await?
+            {
+                return Ok(true);
+            }
+            Ok(match legacy_world_ban_key(state, row).await? {
+                Some(key) => {
+                    state
+                        .moderation
+                        .scene_removal_applies(key.as_str(), actor, version)
+                        .await?
+                }
+                None => false,
+            })
+        }
         "block" => {
             if actor.as_str() == row.wallet {
                 state
@@ -1126,6 +1182,65 @@ mod tests {
             .unwrap();
         server.abort();
     }
+
+    #[tokio::test]
+    async fn a_scene_intent_queued_before_the_rekey_finds_the_world_ban() {
+        use crate::rooms::ActiveDeployment;
+        use crate::world_identity::{Parcel, RealmId, SceneId, SceneNamespace, WorldName};
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let (mut state, _, server) = sfu_fixture(pool.clone()).await;
+        let world = WorldName::parse(&format!("rekey-{}", Uuid::new_v4().simple())).unwrap();
+        let entity = SceneId::parse(&format!("bafy{}", Uuid::new_v4().simple())).unwrap();
+        let base = Parcel::parse("3,4").unwrap();
+        state.scenes = Arc::new(crate::interfaces::test_support::StubScenes {
+            scene: Ok(Some(ActiveDeployment {
+                title: None,
+                scene_id: entity.clone(),
+                parcels: [base].into_iter().collect(),
+                base,
+                namespace: SceneNamespace::new(&RealmId::World(world.clone()), base, None),
+                local: true,
+            })),
+            ..Default::default()
+        });
+        let banned = wallet();
+        // The ban as step 0009 left it: rekeyed, its version unchanged.
+        let ban_key = crate::access::SceneBanKey::world(&world, base);
+        let version: NaiveDateTime = sqlx::query_scalar("INSERT INTO social.scene_bans (place_id, banned_address, banned_by) VALUES ($1, $2, $2) RETURNING banned_at")
+            .bind(ban_key.as_str()).bind(banned.as_str()).fetch_one(&pool).await.unwrap();
+        let rooms = vec![crate::rooms::worlds_service_scene_room(&world, &entity)];
+        let mut tx = pool.begin().await.unwrap();
+        scene(&mut tx, entity.as_str(), banned.as_str(), version, &rooms)
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        let root_key = key(&["scene", entity.as_str(), banned.as_str()]);
+        let row = claim(&pool, Some(&[root_key.clone()]))
+            .await
+            .unwrap()
+            .pop()
+            .unwrap();
+        assert_eq!(
+            legacy_world_ban_key(&state, &row).await.unwrap(),
+            Some(ban_key.clone())
+        );
+        assert!(authorized(&state, &row, &banned).await.unwrap());
+        assert!(!authorized(&state, &row, &wallet()).await.unwrap());
+        sqlx::query("DELETE FROM social.livekit_removal_intents WHERE root_key=$1")
+            .bind(&root_key)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM social.scene_bans WHERE place_id=$1")
+            .bind(ban_key.as_str())
+            .execute(&pool)
+            .await
+            .unwrap();
+        server.abort();
+    }
+
     async fn platform_island_target(
         state: &CommsState,
         actor: &Address,

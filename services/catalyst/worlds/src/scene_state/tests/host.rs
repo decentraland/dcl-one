@@ -754,3 +754,28 @@ async fn a_shared_secret_world_reads_the_secret_from_the_signed_metadata() {
     );
     assert!(closed(&mut ws).await);
 }
+
+/// The old `isWorldValid`: a world the operator disabled admits no socket,
+/// and re-admission closes the ones it had.
+#[tokio::test]
+async fn a_disabled_world_refuses_and_closes_sockets() {
+    let Some(h) = host(false).await else { return };
+    let world = world_name();
+    seed_world(&h.state.pool, &world, None, AccessType::Unrestricted).await;
+    seed_scene(&h.state, &world, "bafyD1", "", None, "0,0", &["0,0"], false).await;
+    let addr = serve(h.state.clone()).await;
+    let (mut ws, _) = join(addr, &world, STRANGER_KEY, "{}")
+        .await
+        .expect("an open world admits");
+    sqlx::query("UPDATE worlds.worlds SET blocked_since = timezone('UTC', now()) WHERE name = $1")
+        .bind(world.key())
+        .execute(&h.state.pool)
+        .await
+        .unwrap();
+    assert_eq!(h.state.readmit_world(&world, false).await, 1);
+    assert!(closed(&mut ws).await);
+    assert!(
+        join(addr, &world, STRANGER_KEY, "{}").await.is_none(),
+        "a disabled world admits nobody"
+    );
+}

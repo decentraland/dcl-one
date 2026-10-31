@@ -1750,6 +1750,7 @@ async fn comms_states(
     })
     .context("ARCHIPELAGO_CONTROL_V4_AUDIENCE and NATS_URL configuration")?
     .with_max_users_per_world(config.worlds.max_users_per_world)
+    .with_shared_secret_max_attempts(config.worlds.shared_secret_max_attempts_per_minute)
     .with_room_authority_key(non_empty(&config.room_authority.pulse_room_authority_key).as_deref())?
     .with_room_event_sink(room_events);
     let gatekeeper = Arc::new(gatekeeper);

@@ -104,6 +104,11 @@ pub const NOT_STORE_KEYS: &[(&str, &str)] = &[
         "a forwarding record: worlds.world_scenes holds the reference, and a scene gone from \
          it is superseded, never sent",
     ),
+    (
+        "worlds.replaced_world_scenes.entity_id",
+        "a replaced scene's identity for its scene comms mint, which reads only the stored \
+         parcels and base: the entity file is garbage once world_scenes drops it",
+    ),
     ("explore.place_reports.entity_id", "a place id"),
     ("explore.user_favorites.entity_id", "a place id"),
     ("explore.user_likes.entity_id", "a place id"),

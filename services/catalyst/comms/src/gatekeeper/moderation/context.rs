@@ -34,8 +34,12 @@ fn resolution_error(error: ResolveError) -> ApiError {
 
 pub(super) struct Context<'a> {
     pub place: PlaceLookup<'a>,
+    /// Where this scene's bans live; stable across a world scene's redeploys.
+    pub ban_key: crate::access::SceneBanKey,
     pub rooms: Vec<String>,
     pub place_title: String,
+    /// The world and current scene a world-scene ban also reaches replaced rooms of.
+    pub world_scene: Option<(WorldName, SceneId)>,
 }
 
 impl<'a> Context<'a> {
@@ -168,6 +172,7 @@ impl<'a> Context<'a> {
                 .collect(),
             base_position: Some(current_deployment.base.canonical()),
         };
+        let ban_key = current.ban_key().ok_or_else(invalid)?;
         let mut rooms = Vec::new();
         if state.livekit.configured {
             if let Some(world) = realm.world() {
@@ -175,8 +180,13 @@ impl<'a> Context<'a> {
             }
             rooms.push(current.room);
         }
+        let world_scene = realm
+            .world()
+            .map(|world| (world.clone(), deployment.scene_id.clone()));
         Ok(Self {
+            world_scene,
             place: PlaceLookup::resolved(state, deployment.scene_id.as_str(), info),
+            ban_key,
             rooms,
             place_title: current_deployment
                 .title
@@ -185,6 +195,44 @@ impl<'a> Context<'a> {
                 .cloned()
                 .unwrap_or_else(|| format!("Place at {}", current_deployment.base.canonical())),
         })
+    }
+
+    /// The live rooms of scenes this world scene replaced (still mintable a
+    /// bounded window) that its ban reaches; best-effort, empty on a fault.
+    pub async fn replaced_scene_rooms(&self, state: &CommsState) -> Vec<String> {
+        let Some((world, current)) = self.world_scene.as_ref() else {
+            return Vec::new();
+        };
+        if !state.livekit.configured {
+            return Vec::new();
+        }
+        let rooms = match crate::gatekeeper::admission::scene::live_world_rooms(state, world).await
+        {
+            Ok(rooms) => rooms,
+            Err(error) => {
+                tracing::warn!(%error, world = %world, "replaced scene rooms not listed; kicking current rooms only");
+                return Vec::new();
+            }
+        };
+        let mut out = Vec::new();
+        for room in rooms {
+            let Some((_, scene)) = crate::rooms::decode_world_scene_room(&room) else {
+                continue;
+            };
+            if &scene == current || self.rooms.contains(&room) {
+                continue;
+            }
+            match state.scenes.replaced_world_scene(world, &scene).await {
+                Ok(Some(replaced)) if replaced.ban_keys(world).contains(&self.ban_key) => {
+                    out.push(room)
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    tracing::warn!(%error, room = %room, "replaced scene unresolved; not kicking from it")
+                }
+            }
+        }
+        out
     }
 
     pub fn check_selectors(&self, input: &Input) -> Result<(), ApiError> {

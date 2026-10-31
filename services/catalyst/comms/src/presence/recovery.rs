@@ -158,9 +158,27 @@ impl Presence {
                     }
                 }
 
-                // Refused relevant names make even otherwise valid inventory
+                // A replaced scene's room still decodes to its world and scene,
+                // so it is counted there instead of failing every world's read.
+                RoomClassification::RelevantRefused {
+                    room,
+                    reason: crate::rooms::RoomRefusal::Unresolved,
+                } if let Some((world, scene)) = crate::rooms::decode_world_scene_room(&room) => {
+                    tracing::debug!(%room, "occupancy counts a room without a current deployment");
+                    let classified = Classified {
+                        source,
+                        realm: world.key().to_owned(),
+                        is_world: true,
+                        scene: Some(scene.as_str().to_owned()),
+                    };
+                    if classified.selected(scope) {
+                        out.push(classified);
+                    }
+                }
+                // Other refused names make even otherwise valid inventory
                 // incomplete. Never drop them via the lossy event projection.
-                RoomClassification::RelevantRefused { .. } => {
+                RoomClassification::RelevantRefused { room, reason } => {
+                    tracing::warn!(%room, ?reason, "occupancy inventory holds an unresolvable room");
                     return Err(RecoveryFailure::Unresolved);
                 }
                 RoomClassification::Unrelated => {}

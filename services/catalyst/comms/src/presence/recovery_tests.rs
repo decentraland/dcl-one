@@ -655,6 +655,52 @@ async fn every_typed_relevant_refusal_preserves_complete_snapshot_and_source_tim
     server.abort();
 }
 
+/// A redeploy leaves its old scene room behind; it still decodes to its
+/// world and scene, so it counts there and blocks no other world.
+#[tokio::test]
+async fn a_replaced_scene_room_counts_for_its_world_without_failing_the_read() {
+    let (mut state, source, server) = fixture().await;
+    let stale = crate::rooms::worlds_service_scene_room(
+        &crate::world_identity::WorldName::parse("bar.dcl.eth").unwrap(),
+        &crate::world_identity::SceneId::parse("ReplacedScene").unwrap(),
+    );
+    source.rooms.lock().push((
+        stale.clone(),
+        "RM_stale".into(),
+        vec![("0xstale".into(), "PA_stale".into())],
+    ));
+    Arc::get_mut(&mut state).unwrap().scenes = Arc::new(Catalogue {
+        refusal: Some((stale.clone(), RoomRefusal::Unresolved)),
+        ..Default::default()
+    });
+    state.presence.recover_complete(&state).await.unwrap();
+    assert_eq!(
+        state
+            .presence
+            .admission_occupancy(&state, "foo.dcl.eth", false)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        state
+            .presence
+            .admission_occupancy(&state, "bar.dcl.eth", true)
+            .await
+            .unwrap(),
+        1
+    );
+    assert_eq!(
+        state
+            .presence
+            .admission_occupancy(&state, "bar.dcl.eth", false)
+            .await
+            .unwrap(),
+        0
+    );
+    server.abort();
+}
+
 #[tokio::test]
 async fn classifier_store_error_among_valid_rooms_is_not_empty_or_successful_observation() {
     let (mut state, source, server) = fixture().await;

@@ -599,6 +599,314 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_world_scene_ban_survives_a_redeploy_at_the_same_base() {
+        use axum::http::Request;
+        use tower::ServiceExt;
+        let Some(pool) = scratch().await else { return };
+        let state = state_with(pool.clone(), Settings::for_tests());
+        let world = format!("{}.dcl.eth", tag());
+        let (first, second) = (
+            format!("bafkreifirst{}", tag()),
+            format!("bafkreisecond{}", tag()),
+        );
+        seed_world_scene(&pool, &world, &first, &["10,20", "11,20"]).await;
+        let owner = Address::parse(&address_of(KEY)).unwrap();
+        sqlx::query("UPDATE worlds.worlds SET owner = $2 WHERE name = $1")
+            .bind(&world)
+            .bind(&owner)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let banned_key = catalyst::shared::test_keys::random_key();
+        let banned = Address::parse(&address_of(&banned_key)).unwrap();
+        let scene_meta = |scene: &str| {
+            serde_json::json!({ "signer": "decentraland-kernel-scene", "realmName": world, "sceneId": scene, "parcel": "10,20" }).to_string()
+        };
+        let target = serde_json::json!({ "banned_address": banned.as_str() }).to_string();
+        moderation::handlers::ban_user(
+            State(state.clone()),
+            at("/scene-bans"),
+            signed(KEY, "post", "/scene-bans", &scene_meta(&first)).await,
+            Query(Default::default()),
+            axum::body::Bytes::from(target.clone()),
+        )
+        .await
+        .map(|_| ())
+        .expect("the owner bans");
+        let stored: String =
+            sqlx::query_scalar("SELECT place_id FROM social.scene_bans WHERE banned_address = $1")
+                .bind(&banned)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(stored, format!("{world}:10,20"), "world + base parcel");
+
+        sqlx::query("DELETE FROM worlds.world_scenes WHERE world_name = $1")
+            .bind(&world)
+            .execute(&pool)
+            .await
+            .unwrap();
+        seed_world_scene(&pool, &world, &second, &["10,20"]).await;
+        // What the replacing deploy keeps of the old scene.
+        sqlx::query(
+            "INSERT INTO worlds.replaced_world_scenes (world_name, entity_id, parcels, declared_base, replaced_at) \
+             VALUES ($1, $2, ARRAY['10,20', '11,20'], NULL, timezone('UTC', now()))",
+        )
+        .bind(&world)
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mint_at = |key: String, scene: String| {
+            let app = admission::world_mint::router(state.clone());
+            let path = format!("/worlds/{world}/scenes/{scene}/comms");
+            async move {
+                let mut req = Request::post(&path)
+                    .body(axum::body::Body::empty())
+                    .unwrap();
+                req.headers_mut()
+                    .extend(signed(&key, "post", &path, "{}").await);
+                let resp = app.oneshot(req).await.unwrap();
+                let status = resp.status();
+                let body = axum::body::to_bytes(resp.into_body(), 1 << 20)
+                    .await
+                    .unwrap();
+                (status, String::from_utf8_lossy(&body).into_owned())
+            }
+        };
+        let mint = |key: String| mint_at(key, second.clone());
+        let (status, body) = mint(banned_key.clone()).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        assert!(body.contains("You are banned from world"), "{body}");
+        let (status, body) = mint_at(banned_key.clone(), first.clone()).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "the replaced scene's room keeps the ban: {body}"
+        );
+
+        moderation::handlers::unban_user(
+            State(state.clone()),
+            at("/scene-bans"),
+            signed(KEY, "delete", "/scene-bans", &scene_meta(&second)).await,
+            Query(Default::default()),
+            axum::body::Bytes::from(target),
+        )
+        .await
+        .map(|_| ())
+        .expect("the redeployed scene lifts the same ban");
+        state.presence.complete_empty_fixture();
+        let (status, body) = mint(banned_key.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        state.presence.complete_empty_fixture();
+        let (status, body) = mint_at(banned_key.clone(), first.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        let adapter: serde_json::Value = serde_json::from_str(&body).unwrap();
+        let claims = catalyst::shared::livekit::decode_jwt_payload(
+            adapter["fixedAdapter"]
+                .as_str()
+                .unwrap()
+                .split("access_token=")
+                .nth(1)
+                .unwrap(),
+        );
+        assert_eq!(
+            claims["video"]["room"],
+            catalyst::comms::rooms::worlds_service_scene_room(
+                &catalyst::comms::world_identity::WorldName::parse(&world).unwrap(),
+                &catalyst::comms::world_identity::SceneId::parse(&first).unwrap()
+            ),
+            "the replaced scene's own room"
+        );
+        sqlx::query("UPDATE worlds.replaced_world_scenes SET replaced_at = replaced_at - interval '8 days' WHERE entity_id = $1")
+            .bind(&first)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, body) = mint_at(banned_key, first.clone()).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "past the window: {body}");
+    }
+
+    /// A ban on the scene that replaced another reaches the replaced scene's
+    /// room: its mint is refused even though the base moved, and the banned
+    /// wallet is kicked from the replaced room as well as the current one;
+    /// the unban lifts the metadata ban from both.
+    #[tokio::test]
+    async fn a_ban_on_the_replacing_scene_reaches_the_replaced_scene_room() {
+        use axum::http::Request;
+        use catalyst::comms::world_identity::{SceneId, WorldName};
+        use tower::ServiceExt;
+        let Some(pool) = scratch().await else { return };
+        let removed = Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let metadata = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+            String,
+            String,
+        >::new()));
+        let world = format!("{}.dcl.eth", tag());
+        let (first, second, other) = (
+            format!("bafkreifirst{}", tag()),
+            format!("bafkreisecond{}", tag()),
+            format!("bafkreiother{}", tag()),
+        );
+        let world_name = WorldName::parse(&world).unwrap();
+        let room_of = |scene: &str| {
+            catalyst::comms::rooms::worlds_service_scene_room(
+                &world_name,
+                &SceneId::parse(scene).unwrap(),
+            )
+        };
+        let listed: Vec<String> = [&first, &second, &other]
+            .iter()
+            .map(|s| room_of(s))
+            .collect();
+        let capture = removed.clone();
+        let stored = metadata.clone();
+        let livekit = axum::Router::new().route(
+            "/twirp/livekit.RoomService/{method}",
+            axum::routing::post(
+                move |axum::extract::Path(method): axum::extract::Path<String>,
+                      Json(body): Json<serde_json::Value>| {
+                    let (capture, listed, stored) =
+                        (capture.clone(), listed.clone(), stored.clone());
+                    async move {
+                        match method.as_str() {
+                            "ListRooms" => {
+                                let names: Vec<String> = match body["names"].as_array() {
+                                    Some(names) if !names.is_empty() => names
+                                        .iter()
+                                        .filter_map(|n| n.as_str().map(str::to_owned))
+                                        .collect(),
+                                    _ => listed,
+                                };
+                                let stored = stored.lock().unwrap();
+                                let meta = |n: &String| stored.get(n).cloned().unwrap_or_else(|| "{}".to_owned());
+                                Json(serde_json::json!({"rooms": names.iter().map(|n| serde_json::json!({"name": n, "sid": format!("RM_{n}"), "metadata": meta(n)})).collect::<Vec<_>>()}))
+                            }
+                            "UpdateRoomMetadata" => {
+                                stored.lock().unwrap().insert(
+                                    body["room"].as_str().unwrap_or_default().to_owned(),
+                                    body["metadata"].as_str().unwrap_or_default().to_owned(),
+                                );
+                                Json(serde_json::json!({}))
+                            }
+                            "RemoveParticipant" => {
+                                capture.lock().unwrap().push((
+                                    body["room"].as_str().unwrap_or_default().to_owned(),
+                                    body["identity"].as_str().unwrap_or_default().to_owned(),
+                                ));
+                                Json(serde_json::json!({}))
+                            }
+                            _ => Json(serde_json::json!({})),
+                        }
+                    }
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut settings = Settings::for_tests();
+        settings.livekit.api_url = format!("http://{}", listener.local_addr().unwrap());
+        settings.livekit.configured = true;
+        let server = tokio::spawn(async move { axum::serve(listener, livekit).await.unwrap() });
+        let state = state_with(pool.clone(), settings);
+
+        // The redeploy moved the base: 10,20 (first) to 11,20 (second).
+        seed_world_scene(&pool, &world, &second, &["11,20"]).await;
+        seed_world_scene(&pool, &world, &other, &["50,50"]).await;
+        sqlx::query(
+            "INSERT INTO worlds.replaced_world_scenes (world_name, entity_id, parcels, declared_base, replaced_at) \
+             VALUES ($1, $2, ARRAY['10,20', '11,20'], NULL, timezone('UTC', now()))",
+        )
+        .bind(&world)
+        .bind(&first)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let owner = Address::parse(&address_of(KEY)).unwrap();
+        sqlx::query("UPDATE worlds.worlds SET owner = $2 WHERE name = $1")
+            .bind(&world)
+            .bind(&owner)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let banned_key = catalyst::shared::test_keys::random_key();
+        let banned = Address::parse(&address_of(&banned_key)).unwrap();
+        let scene_meta = serde_json::json!({ "signer": "decentraland-kernel-scene", "realmName": world, "sceneId": second, "parcel": "11,20" }).to_string();
+        moderation::handlers::ban_user(
+            State(state.clone()),
+            at("/scene-bans"),
+            signed(KEY, "post", "/scene-bans", &scene_meta).await,
+            Query(Default::default()),
+            axum::body::Bytes::from(
+                serde_json::json!({ "banned_address": banned.as_str() }).to_string(),
+            ),
+        )
+        .await
+        .map(|_| ())
+        .expect("the owner bans on the replacing scene");
+        let mut kicked: Vec<String> = removed
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, identity)| identity == banned.as_str())
+            .map(|(room, _)| room.clone())
+            .collect();
+        kicked.sort();
+        kicked.dedup();
+        let mut expected = vec![
+            catalyst::comms::rooms::worlds_service_world_room(&world_name),
+            room_of(&first),
+            room_of(&second),
+        ];
+        expected.sort();
+        assert_eq!(kicked, expected, "never the unrelated scene's room");
+
+        let path = format!("/worlds/{world}/scenes/{first}/comms");
+        let mut req = Request::post(&path)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        req.headers_mut()
+            .extend(signed(&banned_key, "post", &path, "{}").await);
+        let resp = admission::world_mint::router(state.clone())
+            .oneshot(req)
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "the successor's ban reaches the replaced room"
+        );
+        let banned_in = |room: String| {
+            metadata.lock().unwrap().get(&room).is_some_and(|m| {
+                serde_json::from_str::<serde_json::Value>(m).unwrap()["bannedAddresses"]
+                    .as_array()
+                    .is_some_and(|a| a.iter().any(|v| v == banned.as_str()))
+            })
+        };
+        assert!(
+            banned_in(room_of(&first)) && banned_in(room_of(&second)),
+            "the ban lists the address in both rooms"
+        );
+
+        moderation::handlers::unban_user(
+            State(state.clone()),
+            at("/scene-bans"),
+            signed(KEY, "delete", "/scene-bans", &scene_meta).await,
+            Query(Default::default()),
+            axum::body::Bytes::from(
+                serde_json::json!({ "banned_address": banned.as_str() }).to_string(),
+            ),
+        )
+        .await
+        .map(|_| ())
+        .expect("the owner unbans on the replacing scene");
+        assert!(
+            !banned_in(room_of(&first)) && !banned_in(room_of(&second)),
+            "the unban lifts it from the replaced room too"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn scene_admin_routes_write_the_relations_under_the_scene_signer_gate() {
         let Some(pool) = scratch().await else { return };
         let state = state_with(pool.clone(), Settings::for_tests());
@@ -721,7 +1029,7 @@ mod tests {
         assert!(
             state
                 .moderation
-                .is_scene_banned(&place_id, &banned)
+                .is_scene_banned(&format!("{world}:10,20"), &banned)
                 .await
                 .unwrap()
         );
@@ -780,7 +1088,7 @@ mod tests {
         assert!(
             !state
                 .moderation
-                .is_scene_banned(&place_id, &banned)
+                .is_scene_banned(&format!("{world}:10,20"), &banned)
                 .await
                 .unwrap()
         );
@@ -1163,7 +1471,9 @@ mod world_mint {
         let Some(pool) = catalyst::db::scratch::pool(4).await else {
             return;
         };
-        let state = Arc::new(mint_state(&pool, Arc::new(Presence::new())));
+        let state = Arc::new(
+            mint_state(&pool, Arc::new(Presence::new())).with_shared_secret_max_attempts(2),
+        );
         let app = Router::new()
             .merge(router(state.clone()))
             .nest("/worlds-content-server", router(state.clone()));
@@ -1218,6 +1528,48 @@ mod world_mint {
         )
         .await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+
+        let unknown = world();
+        let disabled = world();
+        sqlx::query(
+            "INSERT INTO worlds.worlds (name, blocked_since) VALUES ($1, timezone('UTC', now()))",
+        )
+        .bind(disabled.key())
+        .execute(&pool)
+        .await
+        .unwrap();
+        for invalid in [&unknown, &disabled] {
+            let (status, body, _) = post(
+                &app,
+                &visitor,
+                &format!("/worlds/{}/comms", invalid.display()),
+                "{}",
+            )
+            .await;
+            assert_eq!(
+                (status, body["message"].as_str()),
+                (
+                    StatusCode::NOT_FOUND,
+                    Some(
+                        format!("World \"{}\" is invalid or blocked.", invalid.display()).as_str()
+                    )
+                )
+            );
+            let (status, body, _) = post(
+                &app,
+                &visitor,
+                &format!("/get-comms-adapter/world-{}", invalid.display()),
+                handshake,
+            )
+            .await;
+            assert_eq!(
+                (status, body["message"].as_str()),
+                (
+                    StatusCode::NOT_FOUND,
+                    Some(format!("World \"{}\" was not found.", invalid.display()).as_str())
+                )
+            );
+        }
 
         let listed = world();
         sqlx::query("INSERT INTO worlds.worlds (name, access_type) VALUES ($1, 'allow-list')")

@@ -17,7 +17,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::proof::VerifiedRoom;
-use crate::access::Access;
+use crate::access::{Access, SceneBanKey, WorldStanding};
 use crate::gatekeeper::moderation::{BanStatus, admission_ban};
 use crate::interfaces::{AccessPolicy, SceneIdentity};
 use crate::protocol::room_authority::address_bytes;
@@ -60,7 +60,11 @@ impl CurrentRoomPolicy {
     }
 
     /// The connection-ban predicate and the scene's ban list for `principal`.
-    async fn scene_gate(&self, principal: &Address, scene: &SceneId) -> Result<(), DenialReason> {
+    async fn scene_gate(
+        &self,
+        principal: &Address,
+        scene: &SceneBanKey,
+    ) -> Result<(), DenialReason> {
         let now = chrono::Utc::now().naive_utc();
         match admission_ban(
             self.policy.as_ref(),
@@ -100,8 +104,15 @@ impl CurrentRoomPolicy {
         &self,
         principal: &Address,
         world: &WorldName,
-        scene: &SceneId,
+        scene: &SceneBanKey,
     ) -> Result<(), DenialReason> {
+        match self.policy.world_standing(world).await {
+            Ok(WorldStanding::Open(_)) => {}
+            Ok(_) | Err(AuthorityNotEstablished::RefusedLacksAuthority { .. }) => {
+                return Err(DenialReason::NotAuthorized);
+            }
+            Err(_) => return Err(DenialReason::Unavailable),
+        }
         let now = chrono::Utc::now().naive_utc();
         match self
             .policy
@@ -115,7 +126,9 @@ impl CurrentRoomPolicy {
             }
             Err(_) => return Err(DenialReason::Unavailable),
         }
-        let by_name = SceneId::parse(world.key()).map_err(|_| DenialReason::NotAuthorized)?;
+        let by_name = SceneBanKey::scene(
+            &SceneId::parse(world.key()).map_err(|_| DenialReason::NotAuthorized)?,
+        );
         self.scene_gate(principal, &by_name).await
     }
 }
@@ -185,26 +198,24 @@ impl RelayPolicy for CurrentRoomPolicy {
                     .ok_or(DenialReason::NotAuthorized)?;
                 match resolved.realm.world() {
                     Some(world) => {
-                        let scene = match resolved.scene_id.as_ref() {
-                            Some(scene) => scene.clone(),
-                            None => {
+                        let scene = match resolved.ban_key() {
+                            Some(scene) => scene,
+                            None => SceneBanKey::world(
+                                world,
                                 self.scenes
                                     .world_active_scene(world)
                                     .await
                                     .map_err(|_| DenialReason::Unavailable)?
                                     .ok_or(DenialReason::NotAuthorized)?
-                                    .scene_id
-                            }
+                                    .base,
+                            ),
                         };
                         self.world_gate(&principal, world, &scene).await
                     }
                     None => {
                         self.scene_gate(
                             &principal,
-                            resolved
-                                .scene_id
-                                .as_ref()
-                                .ok_or(DenialReason::NotAuthorized)?,
+                            &resolved.ban_key().ok_or(DenialReason::NotAuthorized)?,
                         )
                         .await
                     }
@@ -296,7 +307,7 @@ mod moderation_boundary_tests {
     #[tokio::test]
     async fn relay_keeps_platform_scene_and_authority_fault_denials() {
         let actor = Address::parse("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap();
-        let scene = SceneId::parse("test-scene").unwrap();
+        let scene = SceneBanKey::scene(&SceneId::parse("test-scene").unwrap());
         for ban in [crate::access::Ban::Platform, crate::access::Ban::Scene] {
             let policy = CurrentRoomPolicy::new(
                 Arc::new(StubScenes::default()),

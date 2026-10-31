@@ -113,14 +113,16 @@ pub async fn get_scene_adapter(
     })?;
     let is_world = is_world_realm_name(&realm_name);
     let resolved = scene::resolve_adapter_room(&state, &realm_name, &scene_id).await?;
-    let resolved_scene_id = resolved
-        .scene_id
-        .as_ref()
-        .ok_or_else(|| ApiError::internal("scene resolution returned a lobby"))?
-        .as_str();
+    let ban_key = resolved
+        .ban_key()
+        .ok_or_else(|| ApiError::internal("scene resolution returned a lobby"))?;
     let device_id = device_identifier(&sf.metadata);
     let secret = scene::meta_str(&sf.metadata, "secret");
     let record = crate::writes::side_refusal(switch).is_none();
+    let caller = headers
+        .get("cf-connecting-ip")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or(identity.as_str());
     let ((), gate, world_allowed) = tokio::join!(
         async {
             if record {
@@ -129,7 +131,7 @@ pub async fn get_scene_adapter(
         },
         state
             .moderation
-            .connection_gate(&identity, device_id.as_deref(), &resolved_scene_id),
+            .connection_gate(&identity, device_id.as_deref(), ban_key.as_str()),
         async {
             if !is_world {
                 return Ok(true);
@@ -137,8 +139,9 @@ pub async fn get_scene_adapter(
             scene::has_world_access_permission(
                 &state,
                 &identity,
+                caller,
                 &realm_name,
-                Some(&resolved_scene_id),
+                Some(&ban_key),
                 secret.as_deref(),
                 device_id.as_deref(),
             )

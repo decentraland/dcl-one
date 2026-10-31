@@ -642,6 +642,11 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
             crate::rooms::gatekeeper_scene_room("main", scene.as_str())
         };
         let base = Parcel::parse("5,6").unwrap();
+        // A world scene's bans live under `<world>:<base>`, a Genesis one's under its id.
+        let ban_place = match realm.world() {
+            Some(world) => crate::access::SceneBanKey::world(world, base),
+            None => crate::access::SceneBanKey::scene(&scene),
+        };
         let policy = StubPolicy {
             world_owner: Ok(Some(crate::Address::parse(owner).unwrap())),
             protected: Ok([crate::Address::parse(protected).unwrap()]
@@ -696,7 +701,7 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
                 .await
                 .unwrap();
             sqlx::query("INSERT INTO social.scene_bans (place_id,banned_address,banned_by) VALUES ($1,$2,$3)")
-                .bind(place).bind(if place == scene.as_str() {banned} else {unrelated}).bind(owner).execute(&pool).await.unwrap();
+                .bind(if place == scene.as_str() {ban_place.as_str()} else {place}).bind(if place == scene.as_str() {banned} else {unrelated}).bind(owner).execute(&pool).await.unwrap();
         }
         for n in 0..205 {
             api.put(
@@ -782,14 +787,14 @@ async fn initial_metadata_scratch_first_join_recreation_burst_and_scene_authorit
             1
         );
         sqlx::query("DELETE FROM social.scene_bans WHERE place_id = $1")
-            .bind(scene.as_str())
+            .bind(ban_place.as_str())
             .execute(&pool)
             .await
             .unwrap();
         sqlx::query(
             "INSERT INTO social.scene_bans (place_id,banned_address,banned_by) VALUES ($1,$2,$3)",
         )
-        .bind(scene.as_str())
+        .bind(ban_place.as_str())
         .bind(current_ban)
         .bind(current_owner)
         .execute(&pool)
