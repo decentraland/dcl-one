@@ -1,5 +1,6 @@
-/* from: shop@2d3bf62:app/src/components/FilterBar/FilterBar.styles.ts (Toolbar, Count, Chips, Chip, ClearAll,
-   Right, FiltersPill), app/src/components/Dropdown/Dropdown.styles.ts (Trigger, Menu, Option). */
+/* from: shop@3a322cf9:app/src/components/FilterBar/FilterBar.styles.ts (Toolbar, Count, Chips, Chip, ClearAll,
+   Right, FiltersPill), app/src/components/Dropdown/Dropdown.styles.ts (Trigger, Menu, Option: the sort trigger and
+   its dark menu). */
 .shop-filterbar {
   display: flex;
   flex-wrap: wrap;
@@ -87,21 +88,22 @@
   gap: 24px;
   height: 40px;
   padding: 4px 4px 4px 12px;
-  background: rgba(0, 0, 0, 0.12);
-  border: 0.5px solid #a09ba8;
+  background: transparent;
+  border: 0.5px solid #fff;
   border-radius: 8px;
-  color: #ecebed;
+  color: #fff;
   font: inherit;
-  font-weight: 600;
+  font-weight: 500;
   font-size: 12px;
   line-height: 1.43;
   text-transform: uppercase;
   white-space: nowrap;
   cursor: pointer;
-  transition: border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
-.shop-filterbar__sorttrigger:hover { border-color: #fff; }
-.shop-filterbar__sorttrigger:focus-visible { outline: 0; border-color: #691fa9; }
+.shop-filterbar__sorttrigger:hover { background: rgba(255, 255, 255, 0.3); border-color: #fcfcfc; }
+.shop-filterbar__sorttrigger[data-open] { background: rgba(255, 255, 255, 0.2); }
+.shop-filterbar__sorttrigger:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
 .shop-filterbar__sorttrigger .shop-ico { color: #fcfcfc; transition: transform 0.15s ease; }
 .shop-filterbar__sorttrigger[data-open] .shop-ico { transform: rotate(180deg); }
 .shop-filterbar__sortmenu {
@@ -114,7 +116,9 @@
   padding: 0;
   list-style: none;
   overflow: hidden;
-  background: #fff;
+  background: #43404a;
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
   border-radius: 8px;
   box-shadow: 0 4px 25px 5px rgba(0, 0, 0, 0.25);
 }
@@ -125,8 +129,8 @@
   height: 40px;
   padding: 4px 4px 4px 8px;
   border: 0;
-  background: #fff;
-  color: #43404a;
+  background: transparent;
+  color: #cfcdd4;
   font: inherit;
   font-weight: 400;
   font-size: 14px;
@@ -135,8 +139,8 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.shop-filterbar__sortmenu button:hover { background: #f5f4f7; }
-.shop-filterbar__sortmenu button[data-active] { background: #ecebed; }
+.shop-filterbar__sortmenu button:hover { background: rgba(255, 255, 255, 0.1); }
+.shop-filterbar__sortmenu button[data-active] { background: rgba(255, 255, 255, 0.1); color: #fff; }
 
 .shop-filterbar__pill {
   display: none;
@@ -191,3 +195,4 @@
   .shop-filterbar__sorttrigger .shop-ico { width: 20px; height: 20px; }
   .shop-filterbar__pill { display: inline-flex; }
 }
+.shop-filterbar__pill .shop-filterbar__pillicon { color: #ecebed; }

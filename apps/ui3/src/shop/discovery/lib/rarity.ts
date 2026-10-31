@@ -11,12 +11,43 @@ const COLORS: Record<string, string> = {
   common: "#73d3d3",
   uncommon: "#ff8362",
   rare: "#34ce76",
-  epic: "#438fff",
-  legendary: "#a755f4",
-  exotic: "#9bd141",
+  epic: "#289cff",
+  legendary: "#a24bf3",
+  exotic: "#9cd71e",
   mythic: "#ff4bed",
   unique: "#fea217",
 };
+
+// The product card's per-rarity tile: `glow` is a radial gradient whose ellipse is `size` of the tile on both axes.
+// from: shop@3a322cf9:app/src/styles/theme.ts (rarityCard, rarityCardNone). Upstream keeps `label` apart from the
+// rarity colour on purpose: epic's chip text is #438fff and legendary's #b05dff while their flaps (rarityColor) are
+// #289cff and #a24bf3.
+const CARD: Record<string, { stroke: string; label: string; size: string; glow: string }> = {
+  common: { stroke: "#a0f4ff", label: "#73d3d3", size: "74.3%", glow: "rgb(223 244 245) 36.5%, rgb(169 228 228) 68.3%, rgb(115 211 211) 100%" },
+  uncommon: { stroke: "#ffb4aa", label: "#ff8362", size: "65.9%", glow: "rgb(255 202 187) 45.7%, rgb(255 167 143) 72.8%, rgb(255 131 98) 100%" },
+  rare: { stroke: "#6fefaa", label: "#34ce76", size: "66.4%", glow: "rgb(193 238 207) 60.6%, rgb(158 230 185) 70.4%, rgb(123 222 163) 80.3%, rgb(87 214 140) 90.1%, rgb(52 206 118) 100%" },
+  epic: { stroke: "#5dcfff", label: "#438fff", size: "135.5%", glow: "rgb(187 222 251) 2.9%, rgb(150 206 252) 26.9%, rgb(114 189 253) 51%, rgb(77 173 254) 75%, rgb(40 156 255) 99%" },
+  legendary: { stroke: "#dba0ff", label: "#b05dff", size: "65.4%", glow: "rgb(223 197 250) 37.5%, rgb(193 136 247) 68.8%, rgb(177 106 245) 84.4%, rgb(162 75 243) 100%" },
+  exotic: { stroke: "#caffa0", label: "#9cd71e", size: "76.2%", glow: "rgb(232 255 197) 32.2%, rgb(211 254 138) 66.1%, rgb(200 254 108) 83.1%, rgb(189 253 78) 100%" },
+  mythic: { stroke: "#ff95e8", label: "#ff4bed", size: "67.9%", glow: "rgb(255 188 246) 30.8%, rgb(255 132 242) 65.4%, rgb(255 103 239) 82.7%, rgb(255 75 237) 100%" },
+  unique: { stroke: "#fdffa0", label: "#fea217", size: "70.3%", glow: "rgb(255 236 181) 40.9%, rgb(255 218 142) 55.6%, rgb(255 199 102) 70.4%, rgb(254 181 63) 85.2%, rgb(254 171 43) 92.6%, rgb(254 162 23) 100%" },
+};
+const CARD_NONE = { flap: "#a09ba8", stroke: "#a09ba8", label: "#cfcdd4", labelBg: "rgba(236, 235, 237, 0.2)", background: "#ecebed" };
+
+export type RarityCardPalette = { flap: string; stroke: string; label: string; labelBg: string; background: string };
+
+export function rarityCardPalette(rarity?: string | null): RarityCardPalette {
+  const entry = CARD[(rarity ?? "").toLowerCase()];
+  if (!entry) return CARD_NONE;
+  const label = parseHex(entry.label);
+  return {
+    flap: rarityColor(rarity),
+    stroke: entry.stroke,
+    label: entry.label,
+    labelBg: label ? `rgba(${label[0]}, ${label[1]}, ${label[2]}, 0.2)` : CARD_NONE.labelBg,
+    background: `radial-gradient(ellipse ${entry.size} ${entry.size} at 50% 50%, ${entry.glow})`,
+  };
+}
 
 export const MAX_SUPPLY: Record<string, number> = {
   common: 100_000,

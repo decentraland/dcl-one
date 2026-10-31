@@ -41,7 +41,7 @@ describe("the Shop overview", () => {
     const cards = await within(creations).findAllByTestId("card");
     expect(cards.length).toBeGreaterThan(0);
     const hat = cards.find((c) => within(c).queryByText("Nacho Hat") && !within(c).queryByTestId("card-resale"))!;
-    expect(within(hat).getByTestId("card-price-now")).toHaveTextContent("12");
+    expect(within(hat).getByTestId("card-price")).toHaveTextContent("12");
     expect(screen.queryByTestId("best-deals-rail")).toBeNull();
     expect(screen.getByTestId("hero-credits-cta").getAttribute("href")).toBe("/shop/credits");
   });
@@ -91,7 +91,7 @@ describe("the Shop overview", () => {
     overview("ok", "web3");
     const rail = await screen.findByTestId("trending-rail");
     const sax = (await within(rail).findAllByTestId("card")).find((c) => within(c).queryByText("Hot Sax"))!;
-    expect(within(sax).getByTestId("card-price-now")).toHaveTextContent("21");
+    expect(within(sax).getByTestId("card-price")).toHaveTextContent("21");
     expect(within(sax).getByTestId("card-price-mana")).toHaveTextContent("or 4.02 MANA");
   });
 

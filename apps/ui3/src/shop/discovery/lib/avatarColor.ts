@@ -55,3 +55,16 @@ export function getAvatarBackgroundColor(displayName: string | null | undefined)
   const [r, g, b] = hsvToRgb(fnv1a32(displayName) / UINT32_MAX, 0.75, 1);
   return `#${hex(r)}${hex(g)}${hex(b)}`;
 }
+
+// from: shop@3a322cf9:app/src/components/CreatorBadge/CreatorBadge.tsx (colorForAddress, initialFor): the
+// fallback disc a creator without a picture gets, one hue per address at mid lightness so the white
+// initial stays legible.
+export function addressAvatarColor(address: string): string {
+  let hash = 0;
+  for (let i = 0; i < address.length; i++) hash = (hash * 31 + address.charCodeAt(i)) >>> 0;
+  return `hsl(${hash % 360}, 52%, 45%)`;
+}
+
+export function avatarInitial(name: string | null | undefined, address: string): string {
+  return (name?.trim()?.[0] || address.replace(/^0x/i, "")[0] || "?").toUpperCase();
+}
