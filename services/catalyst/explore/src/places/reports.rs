@@ -706,13 +706,28 @@ mod tests {
             .await
             .unwrap();
         sqlx::query(r#"INSERT INTO explore.place_reports (filename, reporter, signed_url, payload) VALUES ('legacy', 'reporter', 'https://node.example/upload/legacy?token=secret', '{"reason":"kept"}')"#).execute(&pool).await.unwrap();
-        sqlx::raw_sql(include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/schemas/migrations/0016_report_upload_capabilities.sql"
-        )))
-        .execute(&pool)
+        sqlx::query("DELETE FROM meta.schema_steps WHERE step = '0016_report_upload_capabilities'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let applied = crate::db::schema_migrate::migrate(
+            &pool,
+            crate::db::SCHEMA_SQL,
+            crate::db::MIGRATIONS_SQL,
+        )
         .await
         .unwrap();
+        assert_eq!(applied.steps, vec!["0016_report_upload_capabilities"]);
+        assert!(
+            crate::db::schema_migrate::migrate(
+                &pool,
+                crate::db::SCHEMA_SQL,
+                crate::db::MIGRATIONS_SQL
+            )
+            .await
+            .unwrap()
+            .is_empty()
+        );
         let row = sqlx::query("SELECT signed_url, upload_token_hash, payload FROM explore.place_reports WHERE filename = 'legacy'").fetch_one(&pool).await.unwrap();
         assert_eq!(
             row.get::<String, _>("signed_url"),
