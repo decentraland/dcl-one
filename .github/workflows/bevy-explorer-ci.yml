@@ -21,6 +21,7 @@
       - infra/packages/**
       - infra/containers/**
       - services/catalyst/**
+      - schemas/**
       - library/**
       - apps/sites/**
       - apps/ui3/**
@@ -49,6 +50,7 @@
       - infra/packages/**
       - infra/containers/**
       - services/catalyst/**
+      - schemas/**
       - library/**
       - apps/sites/**
       - apps/ui3/**

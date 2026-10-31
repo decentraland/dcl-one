@@ -11,7 +11,7 @@
   "normalization": "Exact upstream and patched file bytes. Repository .gitattributes disables newline conversion for this subtree. SHA256 manifests are UTF-8 with LF lines and lexicographically sorted repository-relative paths. No Git metadata or Cargo cache marker is imported.",
   "manifests": {
     "upstream-files.sha256": "7bce19bf15feb754a84a36ffd7e17f1d2a540cda764a2f7179b69021c3394fca",
-    "checksums.sha256": "218049fad236d75292ce6bab6bae5bc1808f8dcc542b1afcf3540e25cb4d1fef"
+    "checksums.sha256": "0e460ae4b4d714d631ef01f5809809431bc171f6a69b341cf83b9ce4f9874f88"
   },
   "patches": [
     {
@@ -50,6 +50,13 @@
         "Preserve queued Connect and Disconnect lifecycle dispatch after nonterminal aggregate receive reports",
         "Retain existing terminal payload handling, receive policy and queue accounting",
         "Exercise same-pass disconnect, lifecycle staging, timeout and native peer-slot reuse"
+      ]
+    },
+    {
+      "path": "patches/0005-poll-loopback-delivery-in-oversized-declaration-test.patch",
+      "sha256": "f136948351b53762596f1b006772918d0ab8dc4dd82c8e641ec668eca2afe7c0",
+      "changes": [
+        "Poll the host for up to five seconds in the oversized-declaration test instead of once: macOS delivers loopback datagrams asynchronously, so a single non-blocking poll after send_to raced and failed on the macOS runners"
       ]
     }
   ],

@@ -29,7 +29,8 @@ HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stre
                      'rendering/bevy-explorer/source/react-web/src/lib/hudAutomation.ts')
 IMAGES_INPUTS = (
     'flake.*',
-    'rendering/bevy-explorer/**',
+    'rendering/bevy-explorer/source/**',
+    'rendering/bevy-explorer/upstream.lock.json',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*.py',
     '.github/workflows/bevy-explorer-ci.yml',
@@ -40,6 +41,7 @@ IMAGES_INPUTS = (
     'infra/packages/**',
     'infra/containers/**',
     'services/catalyst/**',
+    'schemas/**',
     'library/**',
     '.cargo/**',
     'apps/sites/**',
@@ -74,7 +76,7 @@ APP_INPUTS = {
 
 
 def git(*args):
-    return subprocess.check_output(['git', *args], cwd=ROOT, text=True)
+    return subprocess.check_output(['git', *args], cwd=ROOT, text=True, env={**os.environ, 'GIT_GLOB_PATHSPECS': '1'})
 
 
 def api(path):
