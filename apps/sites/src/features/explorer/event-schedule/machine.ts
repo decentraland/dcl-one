@@ -6,18 +6,14 @@ import { track as defaultTrack, type TrackContext, type TrackFn } from "@/core/l
 import {
   emptyDraft,
   isStepValid,
-  simulateSubmitSchedule,
   type ScheduleDraft,
   type SubmitResult,
+  type SubmitFn,
 } from "@/data/lib/catalyst/landings/schedules";
 
 export type { TrackFn };
 
-export type SubmitFn = (args: {
-  draft: ScheduleDraft;
-  scheduleId?: string;
-  signal?: AbortSignal;
-}) => Promise<SubmitResult>;
+export type { SubmitFn } from "@/data/lib/catalyst/landings/schedules";
 
 type ScheduleInput = {
   trackCtx: TrackContext;
@@ -82,8 +78,7 @@ export const slugToState: (slug: string | null | undefined) => ScheduleStateId =
 
 export const FORM_ORDER: ScheduleStateId[] = ["basics", "dates", "review"];
 
-export const simulateSubmit: SubmitFn = ({ draft, scheduleId, signal }) =>
-  simulateSubmitSchedule(draft, { scheduleId, signal });
+const missingSubmit: SubmitFn = async () => { throw new Error("Schedule submission is unavailable."); };
 
 export const scheduleMachine = setup({
   types: {
@@ -137,7 +132,7 @@ export const scheduleMachine = setup({
           schedule_id: context.result?.id,
           active: context.result?.active,
           editing: Boolean(context.scheduleId),
-          stub: true,
+          stub: false,
         },
         context.trackCtx,
       ),
@@ -148,7 +143,7 @@ export const scheduleMachine = setup({
     trackCtx: input.trackCtx,
     draft: input.draft ?? emptyDraft(),
     scheduleId: input.scheduleId,
-    submit: input.submit ?? simulateSubmit,
+    submit: input.submit ?? missingSubmit,
     track: input.track ?? defaultTrack,
   }),
   initial: "authGate",
@@ -242,7 +237,7 @@ export function resolveScheduleSnapshot(args: {
     trackCtx,
     draft: draft ?? emptyDraft(),
     scheduleId,
-    submit: submit ?? simulateSubmit,
+    submit: submit ?? missingSubmit,
     track: track ?? defaultTrack,
   };
   return scheduleMachine.resolveState({ value: step, context });

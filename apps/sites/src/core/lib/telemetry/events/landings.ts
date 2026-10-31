@@ -173,7 +173,7 @@ export type LandingsEvents = {
   lp_hangout_submitted: {
     approved?: boolean;
     event_id?: string;
-    stub: true;
+    stub: boolean;
   };
   lp_home_download_clicked: {
     placement: string;
@@ -245,7 +245,7 @@ export type LandingsEvents = {
     active?: boolean;
     editing: boolean;
     schedule_id?: string;
-    stub: true;
+    stub: boolean;
   };
   lp_schedule_gate_viewed: Record<string, never>;
   lp_schedule_list_viewed: {
