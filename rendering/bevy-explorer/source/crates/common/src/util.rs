@@ -983,6 +983,17 @@ impl JoinRelativeExt for Path {
     }
 }
 
+pub fn watch_send_if_modified<T: PartialEq>(
+    watch: &tokio::sync::watch::Sender<T>,
+    value: T,
+) -> bool {
+    watch.send_if_modified(|old_value| {
+        let diff = old_value != &value;
+        *old_value = value;
+        diff
+    })
+}
+
 #[cfg(test)]
 mod join_relative_tests {
     use super::*;

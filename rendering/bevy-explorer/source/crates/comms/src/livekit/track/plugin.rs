@@ -4,9 +4,10 @@ use bevy::{
     render::render_resource::Extent3d,
 };
 use common::{debug_panic, util::AsH160};
+use dcl_component::proto_components::sdk::components::VideoState;
 use livestream_manager::{
     ActiveAudioTransmitter, ActiveTransmitter, ActiveVideoCast, AudioTransmitterKind,
-    AudioTransmitterVolume, TransmissionUpdated, TransmitterKind,
+    AudioTransmitterVolume, TransmissionImageResized, TransmitterKind,
 };
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -578,9 +579,13 @@ fn video_track_is_now_subscribed(
 
     let (sender, receiver) = mpsc::channel(60);
     let handle = runtime.spawn(livekit_video_thread(video, publication, sender));
-    commands
-        .entity(entity)
-        .try_insert((LivekitTrackTask(handle), VideoFrameReceiver { receiver }));
+    commands.entity(entity).try_insert((
+        LivekitTrackTask(handle),
+        VideoFrameReceiver {
+            receiver,
+            last_received: 0.,
+        },
+    ));
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -609,9 +614,14 @@ fn video_track_is_now_subscribed(
 
     let (command_sender, command_receiver) = tokio::sync::mpsc::unbounded_channel();
     let (video_sender, video_receiver) = tokio::sync::mpsc::channel(10);
-    let image = (*active_transmitter).clone();
+    let image = active_transmitter.image.clone();
     // the page attaches the track's video element to the media host under this id
-    let media_id = media::adopt_video(command_receiver, video_sender, &image);
+    let media_id = media::adopt_video(
+        command_receiver,
+        video_sender,
+        active_transmitter.state.clone(),
+        &image,
+    );
     video.attach(media_id);
     commands.entity(entity).try_insert(HtmlMediaEntity {
         _commands: command_sender,
@@ -633,7 +643,7 @@ fn video_track_is_now_unsubscribed(
 fn queue_frame_copy(
     mut video_tracks: Query<&mut HtmlMediaEntity, (With<Video>, With<Subscribed>)>,
     mut images: ResMut<Assets<Image>>,
-    mut transmission_updated: EventWriter<TransmissionUpdated>,
+    mut transmission_image_resized: EventWriter<TransmissionImageResized>,
 ) {
     for mut html_media_entity in video_tracks.iter_mut() {
         while let Ok(data) = html_media_entity.video.try_recv() {
@@ -652,33 +662,50 @@ fn queue_frame_copy(
                 height: info.height,
                 depth_or_array_layers: 1,
             };
-            transmission_updated.write(TransmissionUpdated);
+            transmission_image_resized.write(TransmissionImageResized);
         }
     }
 }
 
-fn active_transmitter_added(trigger: Trigger<OnAdd, ActiveTransmitter>, mut commands: Commands) {
+fn active_transmitter_added(
+    trigger: Trigger<OnAdd, ActiveTransmitter>,
+    mut commands: Commands,
+    active_transmitters: Query<&ActiveTransmitter>,
+) {
     let entity = trigger.target();
     commands.entity(entity).trigger(SubscribeToTrack);
+
+    let Ok(active_transmitter) = active_transmitters.get(entity) else {
+        unreachable!("Infallible query.");
+    };
+    active_transmitter.send_if_modified(VideoState::VsLoading);
 }
 
 fn active_transmitter_removed(
     trigger: Trigger<OnRemove, ActiveTransmitter>,
     mut commands: Commands,
+    active_transmitters: Query<&ActiveTransmitter>,
 ) {
     let entity = trigger.target();
     commands.entity(entity).queue_handled(
         entity_command::trigger(UnsubscribeToTrack),
         bevy::ecs::error::debug,
     );
+
+    let Ok(active_transmitter) = active_transmitters.get(entity) else {
+        unreachable!("Infallible query.");
+    };
+    active_transmitter.send_if_modified(VideoState::VsLoading);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+const BUFFER_THRESHOLD: f64 = 0.1;
 #[cfg(not(target_arch = "wasm32"))]
 fn copy_frame(
     mut commands: Commands,
     active_transmitter: Single<(Entity, &ActiveTransmitter, &mut VideoFrameReceiver)>,
     mut images: ResMut<Assets<Image>>,
-    mut transmission_updated: EventWriter<TransmissionUpdated>,
+    time: Res<Time<Real>>,
 ) {
     let (entity, active_transmitter, mut video_frame_receiver): (
         Entity,
@@ -686,23 +713,35 @@ fn copy_frame(
         Mut<VideoFrameReceiver>,
     ) = active_transmitter.into_inner();
 
-    let Some(image) = images.get_mut(active_transmitter.id()) else {
+    let Some(image) = images.get_mut(active_transmitter.image.id()) else {
         debug_panic!("ActiveTransmitter image handle is invalid");
     };
 
     let mut frame = None;
     loop {
-        match video_frame_receiver.try_recv() {
-            Ok(new_frame) => frame = Some(new_frame),
-            Err(mpsc::error::TryRecvError::Empty) => break,
+        match video_frame_receiver.receiver.try_recv() {
+            Ok(new_frame) => {
+                frame = Some(new_frame);
+                video_frame_receiver.last_received = time.elapsed_secs_f64();
+            }
+            Err(mpsc::error::TryRecvError::Empty) => {
+                let elapsed = time.elapsed_secs_f64();
+                if elapsed > video_frame_receiver.last_received + BUFFER_THRESHOLD {
+                    active_transmitter.send_if_modified(VideoState::VsBuffering);
+                    video_frame_receiver.last_received = elapsed;
+                }
+                break;
+            }
             Err(mpsc::error::TryRecvError::Disconnected) => {
                 error!("VideoFrameReceiver has disconnected.");
+                active_transmitter.send_if_modified(VideoState::VsError);
                 commands.entity(entity).try_remove::<VideoFrameReceiver>();
                 break;
             }
         }
     }
     if let Some(frame) = frame {
+        active_transmitter.send_if_modified(VideoState::VsPlaying);
         if image.width() != frame.width() || image.height() != frame.height() {
             debug!("Resizing active transmitter image.");
             image.resize(Extent3d {
@@ -710,7 +749,7 @@ fn copy_frame(
                 height: frame.height(),
                 depth_or_array_layers: 1,
             });
-            transmission_updated.write(TransmissionUpdated);
+            commands.send_event(TransmissionImageResized);
         }
         if let Some(data) = &mut image.data {
             // TODO verify this transfer priority

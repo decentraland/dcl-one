@@ -6,12 +6,9 @@ mod tests;
 mod video_receiver;
 mod video_transmitter;
 
-use bevy::prelude::*;
+use bevy::ecs::event::Event;
 
 pub use crate::{audio_transmitter::*, video_receiver::*, video_transmitter::*};
 
 #[derive(Event)]
-pub struct TransmissionUpdated;
-
-#[derive(Event)]
-pub struct TransmissionStopped;
+pub struct TransmissionImageResized;
