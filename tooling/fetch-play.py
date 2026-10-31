@@ -298,7 +298,7 @@ def fetch(wait=0, production=False, receipt=None):
         for run in candidates:
             # GitHub reuses the run ID on rerun; only this attempt was checked.
             attempt = (run['id'], run['run_attempt'])
-            if not trusted(run, pr) or attempt in checked:
+            if not trusted(run, pr if match_inputs else None) or attempt in checked:
                 continue
             if run['status'] == 'completed' and run['conclusion'] != 'success':
                 checked.add(attempt)

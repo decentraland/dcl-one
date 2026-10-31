@@ -571,6 +571,18 @@ class DevTest(unittest.TestCase):
                 dev.wait_ready(10)
         sleep.assert_not_called()
 
+    def test_wait_names_the_failed_dependency_before_its_blocked_services(self):
+        for dependency in ('api-build', 'web-install'):
+            with self.subTest(dependency=dependency):
+                failed = subprocess.CompletedProcess([], 0, json.dumps([
+                    {'name': name, 'exit_code': 1, 'is_running': False}
+                    for name in ('api', 'sites', dependency)
+                ]))
+                with patch.object(dev, 'pc', return_value=failed), patch.object(dev.time, 'sleep') as sleep:
+                    with self.assertRaisesRegex(RuntimeError, f'^{dependency} failed.*logs {dependency}'):
+                        dev.wait_ready(10)
+                sleep.assert_not_called()
+
     def test_first_pass_pending_lists_configured_mirrors_without_a_complete_pass(self):
         status = {'data': {
             'configured_mirrors': {'places': 'https://p', 'worlds': 'https://p', 'events': None},

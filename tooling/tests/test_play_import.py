@@ -825,6 +825,28 @@ class PlayImportTests(unittest.TestCase):
                                      (self.build / 'engine/pkg/webgpu_build_bg.wasm').read_bytes())
                     self.assertEqual(contract.verify(destination, self.root)['build_revision'], pr['merge'])
 
+    def test_non_engine_pr_uses_main_without_waiting_for_its_own_workflow(self):
+        pr = {'number': 7, 'head': SHA, 'base': 'b' * 40, 'merge': 'c' * 40}
+        own = run(event='pull_request', head_branch='feature', status='in_progress',
+                  conclusion=None, pull_requests=[{'number': 7}])
+        for main in ([], [run(id=43)]):
+            with self.subTest(main=bool(main)), \
+                    patch.object(play, 'current_pr', return_value=pr), \
+                    patch.object(play, 'engine_changed', return_value=False), \
+                    patch.object(play, 'api', return_value={'workflow_runs': [own, *main]}) as api, \
+                    patch.object(play, 'inputs_at', return_value=contract.inputs(self.root)), \
+                    patch.object(play, 'download_run', return_value=self.build) as download, \
+                    patch.object(play.time, 'sleep') as sleep:
+                if main:
+                    self.assertEqual(play.fetch(wait=60), self.build)
+                    self.assertEqual(download.call_args.args[0]['id'], 43)
+                else:
+                    with self.assertRaisesRegex(RuntimeError, 'No successful matching'):
+                        play.fetch(wait=60)
+                    download.assert_not_called()
+                api.assert_called_once()
+                sleep.assert_not_called()
+
     def test_development_rejects_untrusted_and_already_failed_runs_before_job_lookup(self):
         pr = {'number': 7, 'head': SHA, 'merge': 'b' * 40}
         candidates = [run(status='in_progress', conclusion=None, head_repository={'full_name': 'other/project'}),
