@@ -13,7 +13,6 @@ use bevy::{
 use common::structs::IVec2Arg;
 use ipfs::{ipfs_path::IpfsPath, IpfsIo};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
-use tokio_util::sync::CancellationToken;
 use zip::ZipArchive;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -149,7 +148,6 @@ pub async fn load_imposter(
     level: usize,
     required_crc: Option<u32>,
     download: bool,
-    cancel: CancellationToken,
 ) -> Option<BakedScene> {
     if required_crc.is_some_and(|crc| crc == 0) {
         // crc==0 means the area has no scenes, so resolve directly to an empty
@@ -164,8 +162,7 @@ pub async fn load_imposter(
     }
 
     if download {
-        if let Err(e) = load_imposter_remote(&ipfs, &id, parcel, level, required_crc, cancel).await
-        {
+        if let Err(e) = load_imposter_remote(&ipfs, &id, parcel, level, required_crc).await {
             warn!("{e}");
             return None;
         }
@@ -202,7 +199,6 @@ pub async fn load_imposter_remote(
     parcel: IVec2,
     level: usize,
     crc: Option<u32>,
-    cancel: CancellationToken,
 ) -> Result<(), anyhow::Error> {
     let client = ipfs.client();
     let base = IMPOSTER_URL_BASE
@@ -216,41 +212,24 @@ pub async fn load_imposter_remote(
     // bounds the connect+headers phase and the body by an inactivity timeout, so a
     // slow-but-progressing download isn't killed.
     let request = client.get(&zip_url).build()?;
-    // Race the network fetch + body read against the cancel token. If the
-    // owning `ImposterLoadTask` Component is dropped (entity despawn / out of
-    // range), this future is dropped together with the `select!`, releasing
-    // the IPFS semaphore permit and (on wasm) firing reqwest's `AbortGuard`
-    // to abort the in-flight browser fetch.
-    let bytes = tokio::select! {
-        fetched = async {
-            let fetched = match platform::fetch(
-                ipfs.async_request(request, client),
-                std::time::Duration::from_secs(30),
-                std::time::Duration::from_secs(10),
-            )
-            .await
-            {
-                Ok(fetched) => fetched,
-                // a missing imposter for this area is an expected 404
-                Err(platform::FetchError::Status(_)) => return Ok(None),
-                Err(platform::FetchError::Send(e)) => return Err(e),
-                Err(platform::FetchError::Headers) => {
-                    anyhow::bail!("imposter request timed out awaiting headers")
-                }
-                Err(platform::FetchError::Stalled) => {
-                    anyhow::bail!("imposter download stalled (no data for 10s)")
-                }
-                Err(platform::FetchError::Body(e)) => return Err(anyhow::anyhow!(e)),
-            };
-            Ok::<_, anyhow::Error>(Some(fetched.body))
-        } => match fetched? {
-            Some(bytes) => bytes,
-            None => return Ok(()),
-        },
-        _ = cancel.cancelled() => {
-            debug!("imposter load cancelled: id={id} parcel={parcel} level={level} url={zip_url}");
-            return Ok(());
+    let bytes = match platform::fetch(
+        ipfs.async_request(request, client),
+        std::time::Duration::from_secs(30),
+        std::time::Duration::from_secs(10),
+    )
+    .await
+    {
+        Ok(fetched) => fetched.body,
+        // a missing imposter for this area is an expected 404
+        Err(platform::FetchError::Status(_)) => return Ok(()),
+        Err(platform::FetchError::Send(e)) => return Err(e),
+        Err(platform::FetchError::Headers) => {
+            anyhow::bail!("imposter request timed out awaiting headers")
         }
+        Err(platform::FetchError::Stalled) => {
+            anyhow::bail!("imposter download stalled (no data for 10s)")
+        }
+        Err(platform::FetchError::Body(e)) => return Err(anyhow::anyhow!(e)),
     };
     let mut zip = ZipArchive::new(Cursor::new(bytes))?;
     let root = file_root(ipfs.cache_path(), false, id, level);
@@ -261,7 +240,14 @@ pub async fn load_imposter_remote(
 
     #[cfg(target_arch = "wasm32")]
     {
-        for i in 0..zip.len() {
+        // spec last: a readable spec marks the tile as cached, so an aborted load must not
+        // leave one beside a half-written texture
+        let mut indices: Vec<usize> = (0..zip.len()).collect();
+        indices.sort_by_key(|&i| {
+            zip.by_index_raw(i)
+                .is_ok_and(|f| f.name().ends_with("-spec.json"))
+        });
+        for i in indices {
             use futures_lite::io::AsyncWriteExt;
             use std::io::Read;
 
