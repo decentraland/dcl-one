@@ -21,7 +21,9 @@ export interface EditorRelease {
 }
 
 const REGISTRY = 'https://registry.npmjs.org'
-const CDN = 'https://unpkg.com'
+// unpkg answered 500 for an empty file of a fresh version (web-editor 0.3.17's main.crdt), and it
+// can lag a few minutes behind the registry on a new version; jsDelivr served both
+const CDN = 'https://cdn.jsdelivr.net/npm'
 // the registry's answer builds a url: only a version gets in
 const VERSION = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/
 
