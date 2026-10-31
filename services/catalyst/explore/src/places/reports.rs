@@ -697,9 +697,22 @@ mod tests {
 
     #[tokio::test]
     async fn capability_migration_scrubs_legacy_tokens_without_granting_authority() {
-        let pool = crate::db::scratch::pool(2)
+        let admin = crate::db::scratch::pool(2)
             .await
             .expect("report migration regression requires CATALYST_TEST_DATABASE_URL");
+        // Schema-shape changes need their own database: scratch pools in this
+        // process otherwise share the tables used by the route tests.
+        let database = format!("report_migration_{}", uuid::Uuid::new_v4().simple());
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE {database}")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect_with(admin.connect_options().as_ref().clone().database(&database))
+            .await
+            .unwrap();
+        crate::db::apply_schema(&pool).await.unwrap();
         // Recreate the previous column shape on this disposable test database.
         sqlx::query("ALTER TABLE explore.place_reports DROP COLUMN upload_token_hash")
             .execute(&pool)
@@ -735,5 +748,10 @@ mod tests {
         );
         assert!(row.get::<Option<Vec<u8>>, _>("upload_token_hash").is_none());
         assert_eq!(row.get::<Value, _>("payload"), json!({"reason":"kept"}));
+        pool.close().await;
+        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {database}")))
+            .execute(&admin)
+            .await
+            .unwrap();
     }
 }
