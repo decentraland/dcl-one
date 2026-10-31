@@ -225,6 +225,17 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(done.steps, every_step);
     assert!(done.created.len() > 20, "{}", done.created.len());
+    let owner_indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT indexname FROM pg_indexes WHERE schemaname = 'explore' AND indexname IN ('place_world_owner_idx', 'place_world_local_owner_idx') ORDER BY indexname",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        owner_indexes,
+        vec!["place_world_local_owner_idx", "place_world_owner_idx"],
+        "the additive object pass installs both owner indexes after their tables exist"
+    );
 
     let (permissions, granted): (serde_json::Value, bool) = sqlx::query_as(
         "SELECT permissions, permissions_granted FROM explore.event_profile_settings WHERE \"user\"='0xlegacy'"
