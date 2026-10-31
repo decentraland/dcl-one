@@ -14,6 +14,33 @@ export function isIdentical(r: Pick<PageResult, "pixels" | "structure" | "sides"
   return r.pixels.diff <= tolerance && r.structure.every((d) => d.expected) && (r.misses ?? []).every((m) => m.expected) && (r.unknown ?? []).every((u) => u.expected);
 }
 
+type Gated = Pick<PageResult, "page" | "viewport" | "pixels" | "structure" | "lines" | "sides" | "misses" | "unknown">;
+
+/**
+ * Each gated page×viewport (`page@viewport`) that is no longer identical, with every reason: an error,
+ * its differing pixels, its unexpected structural differences, and the requests it left unanswered or
+ * sent to an unknown host without declaring them. Empty when every gated page still is identical.
+ */
+export function gateFailures(gated: string[], results: Gated[], tolerance = 0): { id: string; reasons: string[] }[] {
+  const failures: { id: string; reasons: string[] }[] = [];
+  for (const id of gated) {
+    const r = results.find((x) => `${x.page}@${x.viewport}` === id);
+    if (!r) {
+      failures.push({ id, reasons: ["it was not captured"] });
+      continue;
+    }
+    if (isIdentical(r, tolerance)) continue;
+    const reasons: string[] = [];
+    for (const side of ["reference", "dcl-one"] as const) if (r.sides[side].error) reasons.push(`${side} error: ${r.sides[side].error}`);
+    if (r.pixels.diff > tolerance) reasons.push(`${r.pixels.diff} differing pixels`);
+    reasons.push(...r.lines.filter((_, i) => !r.structure[i]!.expected).slice(0, 40));
+    for (const m of (r.misses ?? []).filter((x) => !x.expected)) reasons.push(`unanswered (${m.side}): ${m.method} ${m.service} ${m.path}${m.query ? `?${m.query}` : ""}`);
+    for (const u of (r.unknown ?? []).filter((x) => !x.expected)) reasons.push(`unknown host (${u.side}): ${u.request}`);
+    failures.push({ id, reasons });
+  }
+  return failures;
+}
+
 /** A miss with the page's rule attached when one of its `unrecorded` entries covers it. */
 export function classifyMiss(m: Miss, spec: Pick<PageSpec, "unrecorded">): Miss & { expected?: string } {
   const text = `${m.method} ${m.service} ${m.path} ${m.request === undefined ? "" : JSON.stringify(m.request)}`;

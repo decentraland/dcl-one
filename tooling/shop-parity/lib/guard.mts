@@ -1,6 +1,19 @@
 // Keep a process off the network: every TCP connection it opens must go to loopback. http, https,
-// fetch (undici) and tls all connect through net.Socket, so one patch covers them.
+// fetch (undici) and tls all connect through net.Socket, so one patch covers them. And keep other
+// sites from driving a loopback server through the developer's browser.
+import type { IncomingHttpHeaders } from "node:http";
 import { Socket } from "node:net";
+
+/**
+ * Whether a loopback server serving `base` must refuse a request: one another site made
+ * (`Sec-Fetch-Site` other than same-origin or none, or a foreign `Origin`), or one naming another host.
+ * A page whose own name was rebound to 127.0.0.1 is same-origin to itself, but names that host in Host.
+ */
+export function foreignRequest(headers: IncomingHttpHeaders, base: URL): boolean {
+  const site = headers["sec-fetch-site"];
+  if (headers.host !== base.host) return true;
+  return (site !== undefined && site !== "same-origin" && site !== "none") || (headers.origin !== undefined && headers.origin !== base.origin);
+}
 
 const LOOPBACK = new Set(["127.0.0.1", "::1", "localhost"]);
 

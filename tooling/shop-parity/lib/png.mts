@@ -112,11 +112,13 @@ export function decodePng(buf: Buffer): Rgba {
 /**
  * Paste one viewport tile, taken at scroll offset `top`, into the page image below the rows already
  * filled (a scroll clamped at the bottom overlaps the previous tile). Returns the rows now filled.
+ * A tile narrower than the page fills its own width of each row; a wider one is cut at the page's.
  */
 export function pasteTile(out: Rgba, filled: number, top: number, shot: Rgba): number {
   const { width, height } = out;
+  const cols = Math.min(width, shot.width);
   for (let row = Math.max(0, filled - top); row < shot.height && top + row < height; row++) {
-    out.data.set(shot.data.subarray(row * shot.width * 4, row * shot.width * 4 + width * 4), (top + row) * width * 4);
+    out.data.set(shot.data.subarray(row * shot.width * 4, (row * shot.width + cols) * 4), (top + row) * width * 4);
   }
   return Math.max(filled, Math.min(height, top + shot.height));
 }

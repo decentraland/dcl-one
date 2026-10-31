@@ -25,6 +25,7 @@ export function defaultSet(): string {
 export async function capture(opts: { set: string; pages?: string[]; viewports?: string; out: string; build?: boolean; quiet?: boolean }): Promise<PageResult[]> {
   const recording = new Recording(join(RECORDINGS, opts.set));
   if (!recording.manifest) throw new Error(`no recording ${opts.set} under ${RECORDINGS}: run record.mts --set ${opts.set}`);
+  if (recording.manifest.incomplete) throw new Error(`recording ${opts.set} did not finish: run record.mts --set ${opts.set} again, which goes on from what it read`);
   const { stamp } = prepareReference();
   const reference = stamp.revision;
   if (recording.manifest.reference !== reference) console.warn(`warning: recording ${opts.set} was made with reference ${recording.manifest.reference.slice(0, 12)}, the pinned one is ${reference.slice(0, 12)}; what it reads now may be missing from the recording`);

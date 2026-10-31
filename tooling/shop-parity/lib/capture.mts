@@ -16,6 +16,8 @@ export type SideCapture = {
   collected: Collected;
   masks: Box[];
   regions: Box[];
+  /** The masks' boxes per declared mask, in spec order. */
+  maskGroups: Box[][];
   /** The regions' boxes per declared region, in spec order. */
   regionGroups: Box[][];
   console: string[];
@@ -168,8 +170,8 @@ async function captureIn(context: BrowserContext, spec: PageSpec, vp: Viewport, 
     await unstick(page);
     await frames(page);
     const collected = await page.evaluate(collectInPage, { keys, masks: [...masks, ...regions] });
-    const boxes = await page.evaluate(collectInPage, { keys: [], masks });
-    const regionBoxes = await page.evaluate(collectInPage, { keys: [], masks: regions });
+    const maskGroups: Box[][] = [];
+    for (const m of spec.masks ?? []) maskGroups.push((await page.evaluate(collectInPage, { keys: [], masks: m.selector[side] })).masks);
     const regionGroups: Box[][] = [];
     for (const r of spec.regions ?? []) regionGroups.push((await page.evaluate(collectInPage, { keys: [], masks: r.selector[side] })).masks);
     const png = encodePng(await tiles(page, vp, spec.maxHeight));
@@ -179,7 +181,7 @@ async function captureIn(context: BrowserContext, spec: PageSpec, vp: Viewport, 
       collected.texts = collected.texts.filter((n) => below(n.box));
       collected.height = Math.min(collected.height, spec.maxHeight);
     }
-    return { side, url: page.url(), png, collected, masks: boxes.masks, regions: regionBoxes.masks, regionGroups, console: consoleLines, log };
+    return { side, url: page.url(), png, collected, masks: maskGroups.flat(), regions: regionGroups.flat(), maskGroups, regionGroups, console: consoleLines, log };
   } catch (err) {
     const png = await page.screenshot({ fullPage: true }).catch(() => Buffer.alloc(0));
     return {
@@ -189,6 +191,7 @@ async function captureIn(context: BrowserContext, spec: PageSpec, vp: Viewport, 
       collected: { url: page.url(), width: vp.width, height: 0, nodes: [], texts: [], masks: [] },
       masks: [],
       regions: [],
+      maskGroups: [],
       regionGroups: [],
       console: consoleLines,
       log,

@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { capture, defaultSet } from "./capture.mts";
 import { isCommitted } from "./lib/build.mts";
 import { GATE_FILE, STATE } from "./lib/paths.mts";
-import { isIdentical } from "./lib/verdict.mts";
+import { gateFailures, isIdentical } from "./lib/verdict.mts";
 
 type Gate = { recording: string; pixelTolerance: number; pages: Record<string, string> };
 
@@ -18,7 +18,7 @@ const gate: Gate = existsSync(GATE_FILE) ? (JSON.parse(readFileSync(GATE_FILE, "
 const promote = process.argv.includes("--promote");
 // A page is marked identical against a commit: the build's sources and this tool's declarations both.
 if (promote && !isCommitted()) {
-  console.error("gate: commit or stash every change (and move apps/sites' gitignored .env files aside) before promoting");
+  console.error("gate: commit or stash every change (and move apps/sites' uncommitted .env files aside) before promoting");
   process.exit(1);
 }
 const gated = Object.keys(gate.pages);
@@ -44,22 +44,15 @@ if (promote) {
   process.exit(0);
 }
 
-let failed = 0;
+const failures = gateFailures(gated, results, gate.pixelTolerance);
 for (const id of gated) {
-  const r = results.find((x) => `${x.page}@${x.viewport}` === id);
-  if (!r) {
-    console.error(`gate: ${id} was not captured`);
-    failed++;
-    continue;
-  }
-  if (isIdentical(r, gate.pixelTolerance)) {
+  const f = failures.find((x) => x.id === id);
+  if (!f) {
     console.log(`gate: ${id} identical`);
     continue;
   }
-  failed++;
-  const err = r.sides.reference.error || r.sides["dcl-one"].error;
-  console.error(`gate: ${id} is no longer identical: ${r.pixels.diff} differing pixels${err ? `, error: ${err}` : ""}`);
-  for (const l of r.lines.filter((_, i) => !r.structure[i]!.expected).slice(0, 40)) console.error(`  ${l}`);
+  console.error(`gate: ${id} is no longer identical:`);
+  for (const reason of f.reasons) console.error(`  ${reason}`);
 }
 console.log(`report: ${join(out, "index.html")}`);
-process.exit(failed ? 1 : 0);
+process.exit(failures.length ? 1 : 0);
