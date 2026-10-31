@@ -25,7 +25,7 @@ use super::authorize::NewAuthorization;
 use super::checkout::{CartLine, RepricedLine};
 use super::errors::ApiError;
 use super::escrow::{Broker, BrokerError, BuyRequest, ManaPaymentVerification};
-use super::packs::{PackRow, ReversalOutcome};
+use super::packs::{Charge, MarkPaidOutcome, PackRow, ReversalOutcome};
 use super::pricing::{ItemInfo, ListingRow, MARKETPLACE_V2_POLYGON, Market, TradeLookup};
 use super::store::Credits;
 use super::{RawSettings, Settings, SharedState, State, router};
@@ -3329,7 +3329,7 @@ async fn webhook_purchase_and_refund_each_run_in_one_transaction() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
 
     let evt = unique("evt_qc_paid");
-    let paid = json!({ "id": evt, "type": "payment_intent.succeeded", "data": { "object": { "id": pi, "amount": 500, "metadata": { "sku": "qc-pack", "credits": "999999" } } } }).to_string();
+    let paid = json!({ "id": evt, "type": "payment_intent.succeeded", "data": { "object": { "id": pi, "amount": 500, "currency": "usd", "metadata": { "sku": "qc-pack", "credits": "999999" } } } }).to_string();
     let (status, out) = deliver(&app, &paid).await;
     assert_eq!(status, StatusCode::OK, "{out}");
     assert_eq!(out["detail"], "processed");
@@ -3444,7 +3444,7 @@ async fn webhook_purchase_and_refund_each_run_in_one_transaction() {
         v,
         json!({ "status": "processing", "creditsGranted": 0, "newBalance": 0, "error": "" })
     );
-    let completed = json!({ "id": unique("evt_qc_sess"), "type": "checkout.session.completed", "data": { "object": { "id": session, "amount_total": 500, "metadata": { "orderId": order_id } } } }).to_string();
+    let completed = json!({ "id": unique("evt_qc_sess"), "type": "checkout.session.completed", "data": { "object": { "id": session, "payment_status": "paid", "amount_total": 500, "currency": "usd", "metadata": { "orderId": order_id } } } }).to_string();
     let (_, out) = deliver(&app, &completed).await;
     assert_eq!(out["detail"], "processed");
     let (status, v) = call(
@@ -3504,7 +3504,7 @@ async fn webhook_purchase_and_refund_each_run_in_one_transaction() {
         (3, Some("builder")),
         "the order keeps the surface that opened it"
     );
-    let underpaid = json!({ "id": unique("evt_qc_multi_under"), "type": "checkout.session.completed", "data": { "object": { "id": multi_session, "amount_total": 500, "metadata": { "orderId": multi_order } } } }).to_string();
+    let underpaid = json!({ "id": unique("evt_qc_multi_under"), "type": "checkout.session.completed", "data": { "object": { "id": multi_session, "payment_status": "paid", "amount_total": 500, "currency": "usd", "metadata": { "orderId": multi_order } } } }).to_string();
     deliver(&app, &underpaid).await;
     let (_, v) = call(
         &app,
@@ -3519,7 +3519,7 @@ async fn webhook_purchase_and_refund_each_run_in_one_transaction() {
         v["status"], "processing",
         "one pack's price does not pay for three: {v}"
     );
-    let paid = json!({ "id": unique("evt_qc_multi"), "type": "checkout.session.completed", "data": { "object": { "id": multi_session, "amount_total": 1500, "metadata": { "orderId": multi_order } } } }).to_string();
+    let paid = json!({ "id": unique("evt_qc_multi"), "type": "checkout.session.completed", "data": { "object": { "id": multi_session, "payment_status": "paid", "amount_total": 1500, "currency": "usd", "metadata": { "orderId": multi_order } } } }).to_string();
     let (_, out) = deliver(&app, &paid).await;
     assert_eq!(out["detail"], "processed");
     let (_, v) = call(
@@ -3543,6 +3543,671 @@ async fn webhook_purchase_and_refund_each_run_in_one_transaction() {
         .execute(&pool)
         .await
         .unwrap();
+}
+
+/// A Checkout Session event as Stripe signs it; `payment_status: None`
+/// leaves the field out.
+fn session_event(
+    event_id: &str,
+    kind: &str,
+    session: &str,
+    payment_status: Option<&str>,
+    amount_total: i64,
+    currency: &str,
+) -> String {
+    let mut object = json!({
+        "id": session,
+        "amount_total": amount_total,
+        "currency": currency,
+        "payment_intent": format!("pi_{session}"),
+    });
+    if let Some(payment_status) = payment_status {
+        object["payment_status"] = json!(payment_status);
+    }
+    json!({ "id": event_id, "type": kind, "data": { "object": object } }).to_string()
+}
+
+/// One pack order of 50 credits for 500 USD cents, opened as a Checkout Session.
+async fn session_order_fixture(state: &SharedState, address: &str) -> (String, String) {
+    let pack = PackRow {
+        sku: "settle-pack".into(),
+        title: "Settle".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let order_id = unique("ord");
+    let session = unique("cs");
+    state
+        .credits
+        .insert_pending_order(&order_id, address, &pack.order(1).unwrap(), &session)
+        .await
+        .unwrap();
+    (order_id, session)
+}
+
+async fn session_order_row(
+    pool: &PgPool,
+    session: &str,
+) -> (String, Option<String>, Option<String>) {
+    sqlx::query_as(
+        "SELECT status, failure_reason, stripe_payment_intent FROM credits.purchases WHERE stripe_checkout_session = $1",
+    )
+    .bind(session)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn purchase_grants(pool: &PgPool, addr: &str) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM credits.ledger WHERE address = $1 AND kind = 'purchase'",
+    )
+    .bind(addr)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn delete_events(pool: &PgPool, prefix: &str) {
+    sqlx::query("DELETE FROM credits.stripe_events WHERE event_id LIKE $1")
+        .bind(format!("{prefix}-%"))
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+fn webhook_state(pool: &PgPool) -> SharedState {
+    test_state(
+        pool.clone(),
+        StateCfg {
+            stripe_webhook_secret: Some(WEBHOOK_SECRET),
+            ..StateCfg::default()
+        },
+    )
+}
+
+#[test]
+fn only_a_paid_session_is_settled() {
+    use super::handlers::stripe::session_payment_settled;
+    assert!(session_payment_settled(
+        &json!({ "payment_status": "paid" })
+    ));
+    for unsettled in [
+        json!({ "payment_status": "unpaid" }),
+        json!({ "payment_status": "no_payment_required" }),
+        json!({ "payment_status": "PAID" }),
+        json!({ "payment_status": null }),
+        json!({ "payment_status": true }),
+        json!({}),
+    ] {
+        assert!(!session_payment_settled(&unsettled), "{unsettled}");
+    }
+}
+
+#[tokio::test]
+async fn an_unpaid_checkout_completion_grants_nothing_until_the_payment_settles() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let wallet = scratch_wallet();
+    let addr = wallet.address.clone();
+    let (order_id, session) = session_order_fixture(&state, &addr).await;
+    let completed = "checkout.session.completed";
+    let succeeded = "checkout.session.async_payment_succeeded";
+
+    // A delayed method completes the session before any money arrives;
+    // a missing status or one that needs no payment is no payment either.
+    for (payment_status, amount_total) in [
+        (Some("unpaid"), 500),
+        (None, 500),
+        (Some("no_payment_required"), 0),
+        (Some("no_payment_required"), 500),
+    ] {
+        let event = session_event(
+            &unique("evt_unpaid"),
+            completed,
+            &session,
+            payment_status,
+            amount_total,
+            "usd",
+        );
+        let (status, out) = deliver(&app, &event).await;
+        assert_eq!(status, StatusCode::OK, "{out}");
+        assert_eq!(out["detail"], "processed");
+        assert_eq!(
+            available(&pool, &addr).await,
+            "0",
+            "payment_status {payment_status:?} grants nothing"
+        );
+    }
+    assert_eq!(purchase_grants(&pool, &addr).await, 0);
+    let expected_payment_intent = format!("pi_{session}");
+    assert_eq!(
+        session_order_row(&pool, &session).await,
+        (
+            "pending".to_string(),
+            None,
+            Some(expected_payment_intent.clone())
+        ),
+        "the unpaid completion marks the order processing"
+    );
+    let (_, v) = call(
+        &app,
+        &wallet,
+        "get",
+        &format!("/credits/credits/orders/{order_id}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(
+        v,
+        json!({ "status": "processing", "creditsGranted": 0, "newBalance": 0, "error": "" })
+    );
+
+    // A forged settlement is refused before any row moves.
+    let forged_body = session_event(
+        &unique("evt_unpaid"),
+        succeeded,
+        &session,
+        Some("paid"),
+        500,
+        "usd",
+    );
+    let mut forged = HeaderMap::new();
+    forged.insert(
+        "stripe-signature",
+        super::stripe::sign_for_tests(
+            "whsec_not_ours",
+            chrono::Utc::now().timestamp(),
+            forged_body.as_bytes(),
+        )
+        .parse()
+        .unwrap(),
+    );
+    let (status, _, _) = send(
+        &app,
+        "POST",
+        "/credits/stripe/webhook",
+        forged,
+        Some(serde_json::from_str(&forged_body).unwrap()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(available(&pool, &addr).await, "0");
+
+    // Settled in another currency: 500 minor units of it are not $5.00.
+    let (_, out) = deliver(
+        &app,
+        &session_event(
+            &unique("evt_unpaid"),
+            succeeded,
+            &session,
+            Some("paid"),
+            500,
+            "eur",
+        ),
+    )
+    .await;
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(available(&pool, &addr).await, "0");
+    assert_eq!(session_order_row(&pool, &session).await.0, "pending");
+
+    // The delayed payment settles: credited once, from the order row.
+    let settled_id = unique("evt_unpaid");
+    let settled = session_event(&settled_id, succeeded, &session, Some("paid"), 500, "usd");
+    let (status, out) = deliver(&app, &settled).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(available(&pool, &addr).await, "50");
+    assert_eq!(purchase_grants(&pool, &addr).await, 1);
+    let (status, _, payment_intent) = session_order_row(&pool, &session).await;
+    assert_eq!(status, "paid");
+    assert_eq!(
+        payment_intent.as_deref(),
+        Some(expected_payment_intent.as_str()),
+        "a later refund or dispute finds the purchase by its payment intent"
+    );
+    let paid_by: Option<String> = sqlx::query_scalar(
+        "SELECT stripe_event_id FROM credits.purchases WHERE stripe_checkout_session = $1",
+    )
+    .bind(&session)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(paid_by.as_deref(), Some(settled_id.as_str()));
+
+    // Replays and a second settled event for the same session add nothing.
+    let (_, out) = deliver(&app, &settled).await;
+    assert_eq!(out["detail"], "already processed");
+    let (_, out) = deliver(
+        &app,
+        &session_event(
+            &unique("evt_unpaid"),
+            completed,
+            &session,
+            Some("paid"),
+            500,
+            "usd",
+        ),
+    )
+    .await;
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(available(&pool, &addr).await, "50");
+    assert_eq!(purchase_grants(&pool, &addr).await, 1);
+    let (_, v) = call(
+        &app,
+        &wallet,
+        "get",
+        &format!("/credits/credits/orders/{order_id}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(
+        v,
+        json!({ "status": "credited", "creditsGranted": 50, "newBalance": 50, "error": "" })
+    );
+    assert_reconciles(&pool, &addr, "after a delayed payment settled").await;
+    assert_purchases_match_grants(&pool, &addr).await;
+
+    cleanup(&pool, &addr).await;
+    delete_events(&pool, "evt_unpaid").await;
+}
+
+#[tokio::test]
+async fn a_failed_delayed_payment_leaves_no_credits() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let wallet = scratch_wallet();
+    let addr = wallet.address.clone();
+    let (order_id, session) = session_order_fixture(&state, &addr).await;
+
+    let completed = session_event(
+        &unique("evt_asyncfail"),
+        "checkout.session.completed",
+        &session,
+        Some("unpaid"),
+        500,
+        "usd",
+    );
+    deliver(&app, &completed).await;
+    let failed = json!({
+        "id": unique("evt_asyncfail"),
+        "type": "checkout.session.async_payment_failed",
+        "data": { "object": {
+            "id": session,
+            "payment_status": "unpaid",
+            "amount_total": 500,
+            "currency": "usd",
+            "last_payment_error": { "message": "insufficient funds" },
+        } },
+    })
+    .to_string();
+    let (status, out) = deliver(&app, &failed).await;
+    assert_eq!(status, StatusCode::OK, "{out}");
+    assert_eq!(out["detail"], "processed");
+
+    let (status, failure_reason, _) = session_order_row(&pool, &session).await;
+    assert_eq!(status, "failed");
+    assert_eq!(failure_reason.as_deref(), Some("insufficient funds"));
+    assert_eq!(available(&pool, &addr).await, "0");
+    assert_eq!(purchase_grants(&pool, &addr).await, 0);
+
+    // A completion delivered late, or a contradicting settlement, cannot
+    // resurrect a failed order.
+    for (kind, payment_status) in [
+        ("checkout.session.completed", "unpaid"),
+        ("checkout.session.async_payment_succeeded", "paid"),
+    ] {
+        let event = session_event(
+            &unique("evt_asyncfail"),
+            kind,
+            &session,
+            Some(payment_status),
+            500,
+            "usd",
+        );
+        let (_, out) = deliver(&app, &event).await;
+        assert_eq!(out["detail"], "processed");
+    }
+    assert_eq!(session_order_row(&pool, &session).await.0, "failed");
+    assert_eq!(available(&pool, &addr).await, "0");
+    assert_eq!(purchase_grants(&pool, &addr).await, 0);
+    let (_, v) = call(
+        &app,
+        &wallet,
+        "get",
+        &format!("/credits/credits/orders/{order_id}"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(v["status"], "failed", "{v}");
+    assert_eq!(v["creditsGranted"], 0, "{v}");
+    assert_reconciles(&pool, &addr, "after a delayed payment failed").await;
+    assert_purchases_match_grants(&pool, &addr).await;
+
+    cleanup(&pool, &addr).await;
+    delete_events(&pool, "evt_asyncfail").await;
+}
+
+#[tokio::test]
+async fn a_settlement_delivered_before_the_completion_credits_once() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let (_, session) = session_order_fixture(&state, &addr).await;
+
+    // Stripe does not order deliveries: the settlement can land first.
+    let succeeded = session_event(
+        &unique("evt_order"),
+        "checkout.session.async_payment_succeeded",
+        &session,
+        Some("paid"),
+        500,
+        "usd",
+    );
+    let (_, out) = deliver(&app, &succeeded).await;
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(available(&pool, &addr).await, "50");
+
+    let completed = session_event(
+        &unique("evt_order"),
+        "checkout.session.completed",
+        &session,
+        Some("unpaid"),
+        500,
+        "usd",
+    );
+    let (_, out) = deliver(&app, &completed).await;
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(session_order_row(&pool, &session).await.0, "paid");
+    assert_eq!(available(&pool, &addr).await, "50");
+
+    // A failure delivered late conflicts with the settled payment: it is
+    // logged for verification, never acted on by revoking the credits.
+    let (_, out) = deliver(&app, &async_payment_failed(&unique("evt_order"), &session)).await;
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(session_order_row(&pool, &session).await.0, "paid");
+    assert_eq!(available(&pool, &addr).await, "50");
+    assert_eq!(purchase_grants(&pool, &addr).await, 1);
+    assert_reconciles(&pool, &addr, "after an out-of-order settlement").await;
+    assert_purchases_match_grants(&pool, &addr).await;
+
+    cleanup(&pool, &addr).await;
+    delete_events(&pool, "evt_order").await;
+}
+
+fn async_payment_failed(event_id: &str, session: &str) -> String {
+    json!({
+        "id": event_id,
+        "type": "checkout.session.async_payment_failed",
+        "data": { "object": { "id": session, "payment_status": "unpaid" } },
+    })
+    .to_string()
+}
+
+#[tokio::test]
+async fn a_processing_payment_outlives_the_sweep_and_a_late_settlement_still_credits() {
+    // The sweep walks every order, so this runs on a database of its own.
+    let Some(own) = OwnDatabase::create("processing").await else {
+        return;
+    };
+    let pool = own.pool.clone();
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let wallet = scratch_wallet();
+    let addr = wallet.address.clone();
+    // Its bank debit is in flight when the sweep runs.
+    let (processing_order, processing) = session_order_fixture(&state, &addr).await;
+    // Nothing heard from Stripe before the sweep; then its payment settles.
+    let (_, unseen) = session_order_fixture(&state, &addr).await;
+    // Its completion arrives after the sweep; then its debit fails.
+    let (_, late) = session_order_fixture(&state, &addr).await;
+    let event = |kind: &str, session: &str, payment_status: &str| {
+        session_event(
+            &unique("evt_proc"),
+            kind,
+            session,
+            Some(payment_status),
+            500,
+            "usd",
+        )
+    };
+
+    deliver(
+        &app,
+        &event("checkout.session.completed", &processing, "unpaid"),
+    )
+    .await;
+    sqlx::query(
+        "UPDATE credits.purchases SET created_at = created_at - interval '27 hours' WHERE address = $1",
+    )
+    .bind(&addr)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let retired = state
+        .credits
+        .abandon_stale_pack_orders(super::orders::ABANDON_AFTER)
+        .await
+        .unwrap();
+    assert_eq!(retired, 2, "only the orders with no payment in flight");
+    assert_eq!(session_order_row(&pool, &processing).await.0, "pending");
+    assert_eq!(session_order_row(&pool, &unseen).await.0, "abandoned");
+
+    // The buyer's cancel cannot retire it either: the money is on its way.
+    let (status, v) = call(
+        &app,
+        &wallet,
+        "post",
+        &format!("/credits/credits/orders/{processing_order}/cancel"),
+        &[],
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["status"], "processing", "{v}");
+
+    deliver(
+        &app,
+        &event(
+            "checkout.session.async_payment_succeeded",
+            &processing,
+            "paid",
+        ),
+    )
+    .await;
+    assert_eq!(session_order_row(&pool, &processing).await.0, "paid");
+    assert_eq!(available(&pool, &addr).await, "50");
+
+    // A verified settlement (signed, paid, the order's currency and
+    // amount) recovers an order the sweep had retired.
+    deliver(&app, &event("checkout.session.completed", &unseen, "paid")).await;
+    let (status, failure_reason, _) = session_order_row(&pool, &unseen).await;
+    assert_eq!(
+        (status.as_str(), failure_reason),
+        ("paid", None),
+        "the money arrived, so the retired order is credited"
+    );
+    assert_eq!(available(&pool, &addr).await, "100");
+
+    // A completion after the sweep shows the payment is in flight after
+    // all; when it fails, the order fails and grants nothing.
+    deliver(&app, &event("checkout.session.completed", &late, "unpaid")).await;
+    assert_eq!(
+        session_order_row(&pool, &late).await,
+        ("pending".to_string(), None, Some(format!("pi_{late}")))
+    );
+    deliver(&app, &async_payment_failed(&unique("evt_proc"), &late)).await;
+    assert_eq!(session_order_row(&pool, &late).await.0, "failed");
+    assert_eq!(available(&pool, &addr).await, "100");
+    assert_eq!(purchase_grants(&pool, &addr).await, 2);
+    assert_reconciles(&pool, &addr, "after the sweep and late settlements").await;
+    assert_purchases_match_grants(&pool, &addr).await;
+
+    own.drop().await;
+}
+
+#[tokio::test]
+async fn a_payment_intent_in_another_currency_grants_nothing() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let pack = PackRow {
+        sku: "settle-pack".into(),
+        title: "Settle".into(),
+        credits: "50".into(),
+        price_cents: 500,
+        currency: "usd".into(),
+        sort_order: 0,
+    };
+    let pi = unique("pi_ccy");
+    state
+        .credits
+        .insert_pending_purchase(&addr, &pack, &pi)
+        .await
+        .unwrap();
+    let succeeded = |currency: &str| {
+        json!({
+            "id": unique("evt_pi_ccy"),
+            "type": "payment_intent.succeeded",
+            "data": { "object": { "id": pi, "amount": 500, "currency": currency } },
+        })
+        .to_string()
+    };
+
+    let (_, out) = deliver(&app, &succeeded("jpy")).await;
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(available(&pool, &addr).await, "0");
+    let status: String =
+        sqlx::query_scalar("SELECT status FROM credits.purchases WHERE stripe_payment_intent = $1")
+            .bind(&pi)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(status, "pending");
+
+    let (_, out) = deliver(&app, &succeeded("USD")).await;
+    assert_eq!(out["detail"], "processed");
+    assert_eq!(available(&pool, &addr).await, "50");
+    assert_eq!(purchase_grants(&pool, &addr).await, 1);
+
+    cleanup(&pool, &addr).await;
+    delete_events(&pool, "evt_pi_ccy").await;
+}
+
+/// The reconciler's paid-purchases-equal-purchase-grants invariant, for one wallet.
+async fn assert_purchases_match_grants(pool: &PgPool, addr: &str) {
+    let (equal, paid, granted): (bool, String, String) = sqlx::query_as(
+        "WITH s AS ( \
+             SELECT COALESCE((SELECT SUM(credits) FROM credits.purchases \
+                              WHERE address = $1 AND status IN ('paid','refunded','disputed')), 0) AS paid, \
+                    COALESCE((SELECT SUM(amount) FROM credits.ledger \
+                              WHERE address = $1 AND kind = 'purchase'), 0) AS granted \
+         ) SELECT paid = granted, paid::text, granted::text FROM s",
+    )
+    .bind(addr)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert!(
+        equal,
+        "paid purchases ({paid}) must equal the purchase grants ({granted})"
+    );
+}
+
+#[tokio::test]
+async fn a_charge_must_name_its_currency_and_match_it() {
+    let Some(pool) = pool().await else { return };
+    let state = webhook_state(&pool);
+    let app = app(state.clone());
+    let addr = scratch_wallet().address;
+    let (_, session) = session_order_fixture(&state, &addr).await;
+
+    // Without a currency the amount means nothing: refused, and the claim
+    // rolls back so Stripe's retry is processed in full.
+    let no_currency_pi = unique("evt_noccy");
+    let no_currency_session = unique("evt_noccy");
+    for (event_id, body) in [
+        (
+            &no_currency_pi,
+            json!({ "id": no_currency_pi, "type": "payment_intent.succeeded", "data": { "object": { "id": unique("pi_noccy"), "amount": 500 } } }),
+        ),
+        (
+            &no_currency_session,
+            json!({ "id": no_currency_session, "type": "checkout.session.async_payment_succeeded", "data": { "object": { "id": session, "payment_status": "paid", "amount_total": 500 } } }),
+        ),
+    ] {
+        let (status, out) = deliver(&app, &body.to_string()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{out}");
+        let claimed: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM credits.stripe_events WHERE event_id = $1")
+                .bind(event_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(claimed, 0, "a refused delivery leaves no claim");
+    }
+    assert_eq!(session_order_row(&pool, &session).await.0, "pending");
+
+    // The flip reports why it refused, and changes nothing.
+    let mut tx = pool.begin().await.unwrap();
+    let outcome = state
+        .credits
+        .mark_order_paid_by_session_in_tx(
+            &mut tx,
+            &session,
+            "evt_direct",
+            Charge {
+                cents: 500,
+                currency: "eur",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(&outcome, MarkPaidOutcome::CurrencyMismatch { expected, charged } if expected == "usd" && charged == "eur"),
+        "{outcome:?}"
+    );
+    let outcome = state
+        .credits
+        .mark_order_paid_by_session_in_tx(
+            &mut tx,
+            &session,
+            "evt_direct",
+            Charge {
+                cents: 400,
+                currency: "usd",
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            outcome,
+            MarkPaidOutcome::AmountMismatch {
+                expected_cents: 500,
+                charged_cents: 400
+            }
+        ),
+        "{outcome:?}"
+    );
+    tx.rollback().await.unwrap();
+    assert_eq!(session_order_row(&pool, &session).await.0, "pending");
+    assert_eq!(available(&pool, &addr).await, "0");
+    assert_purchases_match_grants(&pool, &addr).await;
+
+    cleanup(&pool, &addr).await;
+    delete_events(&pool, "evt_noccy").await;
 }
 
 fn market_for_checkout() -> FakeMarket {
