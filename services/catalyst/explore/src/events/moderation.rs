@@ -65,9 +65,7 @@ fn set_approved(raw: &mut Map<String, Value>, actor: &str) {
 }
 
 fn set_rejected(raw: &mut Map<String, Value>, actor: &str, reason: Option<String>) {
-    if !flag(raw, "rejected") {
-        raw.insert("rejected_by".into(), json!(actor));
-    }
+    raw.insert("rejected_by".into(), json!(actor));
     raw.insert("approved".into(), json!(false));
     raw.insert("approved_by".into(), Value::Null);
     raw.insert("rejected".into(), json!(true));

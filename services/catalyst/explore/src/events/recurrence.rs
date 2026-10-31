@@ -38,6 +38,11 @@ pub(super) fn recompute(raw: &mut Map<String, Value>, now: DateTime<Utc>) -> Res
         ),
         None => None,
     };
+    if count.is_some() && until.is_some() {
+        return Err(ApiError::bad_request(
+            "recurrent_count and recurrent_until are mutually exclusive",
+        ));
+    }
     if !(1..=1000).contains(&interval) || count.is_some_and(|c| !(1..=1000).contains(&c)) {
         return Err(ApiError::bad_request(
             "recurrence interval/count out of range",
@@ -160,6 +165,13 @@ mod tests {
         recompute(&mut raw, Utc::now()).unwrap();
         assert_eq!(raw["recurrent_dates"][0], "2099-06-30T18:00:00.123+00:00");
         assert_eq!(raw["recurrent_dates"][1], "2099-08-31T18:00:00.123+00:00");
+    }
+
+    #[test]
+    fn count_and_until_cannot_be_combined() {
+        let mut raw = event();
+        raw.insert("recurrent_until".into(), json!("2099-07-01T18:00:00Z"));
+        assert!(recompute(&mut raw, Utc::now()).is_err());
     }
 
     #[test]

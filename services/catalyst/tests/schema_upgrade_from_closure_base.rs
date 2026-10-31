@@ -112,6 +112,26 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         .unwrap();
     sqlx::query("INSERT INTO worlds.worlds (name, owner) VALUES ('upgrade.dcl.eth', '0x' || repeat('b', 40))").execute(pool).await.unwrap();
 
+    // A settings table from the later self-writable era, before permission provenance.
+    sqlx::raw_sql(
+        r#"CREATE TABLE explore.event_profile_settings (
+        "user" text PRIMARY KEY, email text,
+        email_verified boolean NOT NULL DEFAULT false,
+        use_local_time boolean NOT NULL DEFAULT true,
+        notify_by_email boolean NOT NULL DEFAULT false,
+        notify_by_browser boolean NOT NULL DEFAULT false,
+        permissions jsonb NOT NULL DEFAULT '[]'::jsonb,
+        created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+        updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+        CONSTRAINT event_profile_settings_user_lowercase CHECK ("user" = lower("user"))
+    )"#,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions) VALUES ('0xlegacy','[\"edit_any_event\"]')")
+        .execute(pool).await.unwrap();
+
     // version 1 is another version: migrate refuses it, and the reviewed
     // release script (schemas/releases/v2-shop-schema.sql: the Shop schema
     // rename, the four ledgers, the stamp) is the hand-run step that makes
@@ -205,6 +225,19 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(done.steps, every_step);
     assert!(done.created.len() > 20, "{}", done.created.len());
+
+    let (permissions, granted): (serde_json::Value, bool) = sqlx::query_as(
+        "SELECT permissions, permissions_granted FROM explore.event_profile_settings WHERE \"user\"='0xlegacy'"
+    ).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        permissions,
+        serde_json::json!(["edit_any_event"]),
+        "upgrade preserves settings data"
+    );
+    assert!(
+        !granted,
+        "self-writable legacy permissions cannot become authority"
+    );
 
     let (quantity, source, credits): (i32, Option<String>, String) =
         sqlx::query_as("SELECT quantity, source, credits::text FROM credits.purchases")

@@ -37,4 +37,17 @@ describe("when signing a plain JSON schedule mutation", () => {
     await expect(signedFetch(identity, "https://node.test/events/api/schedules", { method: "POST", body: new Blob([body]) })).rejects.toThrow("serialized JSON");
     expect(requests).toEqual([]);
   });
+  describe("and the request edits an event", () => {
+    it("should bind the exact event body and a canonical nonce", async () => {
+      await signedFetch(identity, "https://node.test/events/api/events/id", { method: "PATCH", body });
+      expect(JSON.parse(new Headers(requests[0].headers).get("x-identity-metadata")!)).toMatchObject({ body_sha256: bytesToHex(sha256(new TextEncoder().encode(body))), nonce: expect.stringMatching(/^[\da-f-]{36}$/) });
+    });
+  });
+  describe("and the request deletes an event with no body", () => {
+    it("should bind the empty body and generate a one-use nonce", async () => {
+      await signedFetch(identity, "https://node.test/events/api/events/id", { method: "DELETE", signPath: "/api/events/id" });
+      expect(JSON.parse(new Headers(requests[0].headers).get("x-identity-metadata")!)).toMatchObject({ body_sha256: bytesToHex(sha256(new Uint8Array())), nonce: expect.stringMatching(/^[\da-f-]{36}$/) });
+    });
+  });
+
 });

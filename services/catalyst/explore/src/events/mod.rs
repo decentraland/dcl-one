@@ -1609,7 +1609,7 @@ mod tests {
             };
             let mut binds = Vec::new();
             let sql = build_list_sql(&filters, false, &mut binds);
-            assert!(sql.contains("LIMIT 100"));
+            assert!(sql.contains("LIMIT 100)"));
             assert!(
                 matches!(binds.get(binds.len()-2),Some(EventBind::Int64(value)) if *value==limit)
             );

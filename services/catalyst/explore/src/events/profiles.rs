@@ -139,8 +139,8 @@ async fn apply_profile_settings(
     .await?;
     sqlx::query(
         r#"INSERT INTO explore.event_profile_settings
-               ("user", email, email_verified, use_local_time, notify_by_email, notify_by_browser, permissions, created_at, updated_at)
-           VALUES ($1, $2, COALESCE($3, false), COALESCE($4, true), COALESCE($5, false), COALESCE($6, false), COALESCE($7, '[]'::jsonb), $8, $8)
+               ("user", email, email_verified, use_local_time, notify_by_email, notify_by_browser, permissions, permissions_granted, created_at, updated_at)
+           VALUES ($1, $2, COALESCE($3, false), COALESCE($4, true), COALESCE($5, false), COALESCE($6, false), COALESCE($7, '[]'::jsonb), $7 IS NOT NULL, $8, $8)
            ON CONFLICT ("user") DO UPDATE SET
                email = COALESCE($2, explore.event_profile_settings.email),
                email_verified = CASE WHEN $2 IS NOT NULL AND explore.event_profile_settings.email IS DISTINCT FROM $2
@@ -149,6 +149,7 @@ async fn apply_profile_settings(
                notify_by_email = COALESCE($5, explore.event_profile_settings.notify_by_email),
                notify_by_browser = COALESCE($6, explore.event_profile_settings.notify_by_browser),
                permissions = COALESCE($7, explore.event_profile_settings.permissions),
+               permissions_granted = CASE WHEN $7 IS NOT NULL THEN true ELSE explore.event_profile_settings.permissions_granted END,
                updated_at = $8"#,
     )
     .bind(&target)
@@ -254,7 +255,7 @@ pub(super) async fn event_permissions(
 ) -> Result<EventPermissions, ApiError> {
     let (moderator, permissions): (bool, Value) = sqlx::query_as(
         "SELECT EXISTS (SELECT 1 FROM explore.moderators WHERE address = $1), \
-         COALESCE((SELECT permissions FROM explore.event_profile_settings WHERE \"user\" = $1), '[]'::jsonb)",
+         COALESCE((SELECT permissions FROM explore.event_profile_settings WHERE \"user\" = $1 AND permissions_granted), '[]'::jsonb)",
     ).bind(signer.to_ascii_lowercase()).fetch_one(pool).await?;
     let has = |permission: &str| {
         moderator
@@ -429,7 +430,7 @@ async fn apply_legacy_schedule(
         / 1000;
     let allowed: bool = sqlx::query_scalar(
         "SELECT EXISTS (SELECT 1 FROM explore.moderators WHERE address = $1) \
-         OR EXISTS (SELECT 1 FROM explore.event_profile_settings WHERE \"user\" = $1 AND permissions ? 'edit_any_schedule')",
+         OR EXISTS (SELECT 1 FROM explore.event_profile_settings WHERE \"user\" = $1 AND permissions_granted AND permissions ? 'edit_any_schedule')",
     ).bind(&signer).fetch_one(&state.pool).await?;
     if !allowed {
         return Err(ApiError::forbidden("Forbidden"));
@@ -700,6 +701,71 @@ mod tests {
         )
         .unwrap();
         assert!(validate_own_settings(&message).is_ok());
+    }
+
+    #[tokio::test]
+    async fn legacy_permissions_require_an_explicit_moderator_regrant() {
+        use catalyst_fed::test_support::sign;
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let key = alloy::signers::local::PrivateKeySigner::random();
+        let user = format!("{:#x}", key.address());
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions) VALUES ($1,'[\"edit_any_event\",\"approve_any_event\",\"approve_own_event\",\"edit_any_schedule\"]')")
+            .bind(&user).execute(&pool).await.unwrap();
+        let message = ProfileSettingsUpdate {
+            target: user.clone(),
+            email: None,
+            email_verified: None,
+            use_local_time: Some(false),
+            notify_by_email: None,
+            notify_by_browser: None,
+            permissions: None,
+            signed_at: chrono::Utc::now().timestamp(),
+        };
+        for actor in [&user, "0xmoderator"] {
+            let signed = sign(
+                &key,
+                catalyst_fed::domains::events(),
+                message.clone(),
+                message.signed_at,
+            );
+            apply_profile_settings(&pool, &signed, actor).await.unwrap();
+            let permissions = event_permissions(&pool, &user).await.unwrap();
+            assert!(!permissions.edit_any && !permissions.approve_any && !permissions.approve_own);
+            let granted: bool = sqlx::query_scalar(
+                "SELECT permissions_granted FROM explore.event_profile_settings WHERE \"user\"=$1",
+            )
+            .bind(&user)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert!(
+                !granted,
+                "preference updates cannot bless legacy permissions"
+            );
+        }
+        let mut grant = message.clone();
+        grant.permissions = Some(vec!["approve_own_event".into()]);
+        let signed = sign(
+            &key,
+            catalyst_fed::domains::events(),
+            grant,
+            message.signed_at,
+        );
+        apply_profile_settings(&pool, &signed, "0xmoderator")
+            .await
+            .unwrap();
+        let signed = sign(
+            &key,
+            catalyst_fed::domains::events(),
+            message.clone(),
+            message.signed_at,
+        );
+        apply_profile_settings(&pool, &signed, &user).await.unwrap();
+        let permissions = event_permissions(&pool, &user).await.unwrap();
+        assert!(permissions.approve_own);
+        assert!(!permissions.edit_any && !permissions.approve_any);
     }
 
     #[tokio::test]

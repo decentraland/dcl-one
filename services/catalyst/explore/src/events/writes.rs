@@ -24,6 +24,7 @@ use axum::http::{HeaderMap, Method};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::{Postgres, Transaction};
 
 use super::moderation::{
@@ -91,10 +92,10 @@ pub struct UpdateEventBody {
     pub recurrent_month_mask: Option<i64>,
     #[serde(default)]
     pub recurrent_interval: Option<i64>,
-    #[serde(default)]
-    pub recurrent_count: Option<i64>,
-    #[serde(default)]
-    pub recurrent_until: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub recurrent_count: Option<Option<i64>>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub recurrent_until: Option<Option<String>>,
     #[serde(default)]
     pub x: Option<i32>,
     #[serde(default)]
@@ -448,6 +449,60 @@ pub async fn create_event(
     answer(&state, &id).await
 }
 
+/// Privileged event mutations bind exact request bytes and consume the signed nonce
+/// in the same transaction as the event write; a failed edit leaves it reusable.
+async fn record_privileged_request(
+    tx: &mut Transaction<'_, Postgres>,
+    headers: &HeaderMap,
+    signer: &str,
+    event_id: &str,
+    method: &str,
+    path: &str,
+    body: &[u8],
+) -> Result<(), ApiError> {
+    let metadata: Value = headers
+        .get("x-identity-metadata")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| serde_json::from_str(h).ok())
+        .ok_or_else(|| ApiError::bad_request("Signed event metadata required"))?;
+    let digest = hex::encode(Sha256::digest(body));
+    if metadata.get("body_sha256").and_then(Value::as_str) != Some(digest.as_str()) {
+        return Err(ApiError::bad_request(
+            "Event body must match signed body_sha256",
+        ));
+    }
+    let nonce = metadata
+        .get("nonce")
+        .and_then(Value::as_str)
+        .filter(|nonce| uuid::Uuid::parse_str(nonce).is_ok_and(|id| id.to_string() == *nonce))
+        .ok_or_else(|| ApiError::bad_request("Signed event nonce must be a canonical UUID"))?;
+    let hash = hex::encode(Sha256::digest(format!("legacy-event:{signer}:{nonce}")));
+    let signed_at = headers
+        .get("x-identity-timestamp")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.parse::<i64>().ok())
+        .ok_or_else(|| ApiError::bad_request("Invalid timestamp"))?
+        / 1000;
+    let payload = json!({"method":method,"path":path,"body_sha256":digest,"nonce":nonce});
+    if !crate::fed::record_action(
+        tx,
+        &crate::fed::Action {
+            scope: crate::fed::Scope::Events,
+            signature_hash: &hash,
+            signer,
+            subject_id: Some(event_id),
+            action_type: "EventPrivilegedWrite",
+            payload: &payload,
+            signed_at,
+        },
+    )
+    .await?
+    {
+        return Err(ApiError::http(409, "Event request already applied"));
+    }
+    Ok(())
+}
+
 /// `PATCH /api/events/{id}`: the admin's moderation or the owner's edit.
 pub async fn patch_event(
     State(state): State<SharedState>,
@@ -493,9 +548,44 @@ pub async fn patch_event(
     }
     let is_owner = owner == signer;
     if !is_owner && !permissions.edit_any {
-        return Err(ApiError::forbidden(
-            "You don't have permission to edit this event",
-        ));
+        let requested: Value = serde_json::from_slice(&body)
+            .map_err(|_| ApiError::bad_request("invalid patch body"))?;
+        if !permissions.approve_any
+            || requested.as_object().is_none_or(|fields| {
+                fields.keys().any(|key| {
+                    !["approved", "rejected", "rejection_reason"].contains(&key.as_str())
+                })
+            })
+        {
+            return Err(ApiError::forbidden(
+                "You don't have permission to edit this event",
+            ));
+        }
+    }
+    let was_approved = moderation::flag(&raw, "approved");
+    let privileged = !is_owner
+        || ((permissions.approve_any || permissions.approve_own)
+            // Retaining approval while changing content also exercises this grant.
+            && (was_approved
+                || edit.approved.is_some()
+                || edit.rejected.is_some()
+                || edit.rejection_reason.is_some()))
+        || (permissions.edit_any
+            && (edit.schedules.is_some()
+                || edit.url.is_some()
+                || edit.highlighted.is_some()
+                || edit.trending.is_some()));
+    if privileged {
+        record_privileged_request(
+            &mut tx,
+            &headers,
+            &signer,
+            &event_id,
+            method.as_str(),
+            uri.path(),
+            &body,
+        )
+        .await?;
     }
     if !is_owner {
         state.operator_writes()?;
@@ -507,23 +597,22 @@ pub async fn patch_event(
         edit.schedules = None;
         edit.url = None;
     }
-    let was_approved = raw
-        .get("approved")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let featured_changed = featured_item_changed(&raw, &edit);
-    if let Some(community) = &edit.community_id {
-        // Detaching still requires management of the existing community.
-        if let Some(community) = community
-            .as_deref()
-            .or_else(|| raw.get("community_id").and_then(Value::as_str))
-        {
-            moderation::validate_community(&mut *tx, community, &signer).await?;
-        }
+    if let Some(Some(community)) = &edit.community_id {
+        moderation::validate_community(&mut *tx, community, &signer).await?;
     }
     let before = raw.clone();
     apply_owner_edit(&mut raw, &edit, dates_present)?;
-    moderation::validate_references(&mut *tx, &raw).await?;
+    let mut changed_references = Map::new();
+    for (key, changed) in [
+        ("categories", edit.categories.is_some()),
+        ("schedules", edit.schedules.is_some()),
+    ] {
+        if changed && before.get(key) != raw.get(key) {
+            changed_references.insert(key.into(), raw[key].clone());
+        }
+    }
+    moderation::validate_references(&mut *tx, &changed_references).await?;
     if location_touched(&edit) {
         let world = raw.get("world").and_then(Value::as_bool).unwrap_or(false);
         let server = raw
@@ -567,7 +656,7 @@ pub async fn patch_event(
     if can_approve && edit.approved != Some(true) {
         if let Some(rejected) = edit.rejected {
             raw.insert("rejected".into(), json!(rejected));
-            if rejected && !moderation::flag(&before, "rejected") {
+            if rejected && (permissions.approve_any || !moderation::flag(&before, "rejected")) {
                 raw.insert("rejected_by".into(), json!(signer));
             } else if !rejected {
                 raw.insert("rejected_by".into(), Value::Null);
@@ -630,6 +719,24 @@ pub async fn delete_event(
     if mirrored && signer.is_some() {
         tx.rollback().await?;
         return Err(moderation::mirrored_event(&state.pool, &event_id).await);
+    }
+    if let Some(signer) = signer.as_ref().filter(|signer| signer.as_str() != owner) {
+        if !permissions.edit_any {
+            return Err(ApiError::forbidden(
+                "You don't have permission to delete this event",
+            ));
+        }
+        state.operator_writes()?;
+        record_privileged_request(
+            &mut tx,
+            &headers,
+            signer,
+            &event_id,
+            method.as_str(),
+            uri.path(),
+            &body,
+        )
+        .await?;
     }
     if is_soft_deleted(&raw) {
         tx.rollback().await?;
@@ -829,6 +936,24 @@ mod tests {
         );
     }
 
+    #[test]
+    fn changing_a_series_end_can_clear_the_previous_count() {
+        let mut stored = raw();
+        stored.extend(
+            json!({"recurrent":true,"recurrent_frequency":"WEEKLY","recurrent_count":3})
+                .as_object()
+                .unwrap()
+                .clone(),
+        );
+        let edit: UpdateEventBody = serde_json::from_value(
+            json!({"recurrent_count":null,"recurrent_until":"2099-02-01T10:00:00Z"}),
+        )
+        .unwrap();
+        apply_owner_edit(&mut stored, &edit, true).unwrap();
+        assert!(stored["recurrent_count"].is_null());
+        assert!(stored["recurrent_dates"].as_array().unwrap().len() > 3);
+    }
+
     use std::sync::Arc;
 
     use axum::body::Body;
@@ -849,7 +974,9 @@ mod tests {
         match auth {
             Some("signed") => {
                 let signed = path.split('?').next().unwrap();
-                let metadata = if signed.starts_with("/api/schedules") {
+                let metadata = if signed.starts_with("/api/schedules")
+                    || (signed.starts_with("/api/events/") && matches!(method, "PATCH" | "DELETE"))
+                {
                     use sha2::{Digest, Sha256};
                     json!({"name":"Alice","body_sha256":hex::encode(Sha256::digest(body.as_ref().map(Value::to_string).unwrap_or_default().as_bytes())),"nonce":uuid::Uuid::new_v4().to_string()}).to_string()
                 } else {
@@ -899,7 +1026,7 @@ mod tests {
             wallet,
             &method.to_lowercase(),
             path,
-            "{}",
+            &json!({"body_sha256":hex::encode(Sha256::digest(body.to_string().as_bytes())),"nonce":uuid::Uuid::new_v4().to_string()}).to_string(),
             true,
             &Utc::now().timestamp_millis().to_string(),
         )
@@ -1001,7 +1128,7 @@ mod tests {
         assert_eq!(owner_edit["data"]["rejected"], true);
         assert_eq!(owner_edit["data"]["rejected_by"], rejecting_actor);
         assert_eq!(owner_edit["data"]["rejection_reason"], "Moderator decision");
-        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions) VALUES ($1,'[\"edit_any_event\"]')").bind(&editor_address).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions_granted,permissions) VALUES ($1,true,'[\"edit_any_event\"]')").bind(&editor_address).execute(&pool).await.unwrap();
         let (status, edited) = call_as(
             &app,
             "PATCH",
@@ -1267,6 +1394,289 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn approval_only_grants_cannot_edit_content_and_replace_owner_rejections() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let owner = alloy::signers::local::PrivateKeySigner::random();
+        let reviewer = alloy::signers::local::PrivateKeySigner::random();
+        let owner_address = format!("{:#x}", owner.address());
+        let reviewer_address = format!("{:#x}", reviewer.address());
+        let id = moderation::create_as(
+            &pool,
+            &serde_json::from_value(new_event()).unwrap(),
+            &owner_address,
+            "test",
+        )
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions_granted,permissions) VALUES ($1,true,'[\"approve_own_event\"]'),($2,true,'[\"approve_any_event\"]')")
+            .bind(&owner_address).bind(&reviewer_address).execute(&pool).await.unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let path = format!("/api/events/{id}");
+        assert_eq!(
+            call_as(
+                &app,
+                "PATCH",
+                &path,
+                &reviewer,
+                json!({"name":"Forged title","approved":true})
+            )
+            .await
+            .0,
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            call_as(&app, "PATCH", &path, &reviewer, json!({"approved":true}))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        assert_eq!(
+            call_as(&app, "PATCH", &path, &owner, json!({"rejected":true}))
+                .await
+                .0,
+            StatusCode::OK
+        );
+        let (status, rejected) = call_as(
+            &app,
+            "PATCH",
+            &path,
+            &reviewer,
+            json!({"rejected":true,"rejection_reason":"Reviewer hold"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{rejected}");
+        assert_eq!(rejected["data"]["rejected_by"], reviewer_address);
+        let (_, held) = call_as(&app, "PATCH", &path, &owner, json!({"approved":true})).await;
+        assert_eq!(held["data"]["rejected"], true);
+        assert_eq!(held["data"]["rejection_reason"], "Reviewer hold");
+    }
+
+    #[tokio::test]
+    async fn unrelated_edits_ignore_stale_references_and_owners_can_detach_communities() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let wallet = alloy::signers::local::PrivateKeySigner::random();
+        let owner = format!("{:#x}", wallet.address());
+        let id = moderation::create_as(
+            &pool,
+            &serde_json::from_value(new_event()).unwrap(),
+            &owner,
+            "test",
+        )
+        .await
+        .unwrap();
+        sqlx::query("UPDATE explore.event SET raw=raw || $2 WHERE id=$1")
+            .bind(&id).bind(json!({"schedules":["deleted-schedule"],"categories":["retired-category"],"community_id":uuid::Uuid::new_v4().to_string()})).execute(&pool).await.unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let path = format!("/api/events/{id}");
+        let (status, renamed) = call_as(
+            &app,
+            "PATCH",
+            &path,
+            &wallet,
+            json!({"name":"Typo fixed","categories":["retired-category"]}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{renamed}");
+        let (status, detached) =
+            call_as(&app, "PATCH", &path, &wallet, json!({"community_id":null})).await;
+        assert_eq!(status, StatusCode::OK, "{detached}");
+        assert!(detached["data"]["community_id"].is_null());
+        assert_eq!(
+            call_as(
+                &app,
+                "PATCH",
+                &path,
+                &wallet,
+                json!({"categories":["invalid-new-category"]})
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+    }
+
+    #[tokio::test]
+    async fn privileged_event_mutations_bind_bodies_and_consume_nonces_only_on_commit() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let wallet = alloy::signers::local::PrivateKeySigner::random();
+        let signer = format!("{:#x}", wallet.address());
+        sqlx::query("INSERT INTO explore.moderators(address,added_at) VALUES($1,0)")
+            .bind(&signer)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        async fn request(
+            app: &axum::Router,
+            method: &str,
+            path: &str,
+            headers: &HeaderMap,
+            body: &str,
+        ) -> StatusCode {
+            let mut request = Request::builder()
+                .method(method)
+                .uri(path)
+                .header("content-type", "application/json");
+            for (name, value) in headers {
+                request = request.header(name, value);
+            }
+            app.clone()
+                .oneshot(request.body(Body::from(body.to_string())).unwrap())
+                .await
+                .unwrap()
+                .status()
+        }
+        for (method, body) in [("PATCH", r#"{"approved":true}"#), ("DELETE", "")] {
+            let id = moderation::create_as(
+                &pool,
+                &serde_json::from_value(new_event()).unwrap(),
+                "0xowner",
+                "test",
+            )
+            .await
+            .unwrap();
+            let path = format!("/api/events/{id}");
+            let metadata = json!({"body_sha256":hex::encode(Sha256::digest(body.as_bytes())),"nonce":uuid::Uuid::new_v4().to_string()}).to_string();
+            let timestamp = Utc::now().timestamp_millis().to_string();
+            let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+                &wallet,
+                &method.to_lowercase(),
+                &path,
+                &metadata,
+                true,
+                &timestamp,
+            )
+            .await;
+            let unbound = crate::shared::signed_fetch::test_support::signed_headers_by(
+                &wallet,
+                &method.to_lowercase(),
+                &path,
+                "{}",
+                true,
+                &timestamp,
+            )
+            .await;
+            assert_eq!(
+                request(&app, method, &path, &unbound, body).await,
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                request(&app, method, &path, &headers, r#"{"approved":false}"#).await,
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                request(&app, method, &path, &headers, body).await,
+                StatusCode::OK
+            );
+            assert_eq!(
+                request(&app, method, &path, &headers, body).await,
+                StatusCode::CONFLICT
+            );
+        }
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM explore.signed_actions WHERE signer=$1 AND action_type='EventPrivilegedWrite'").bind(&signer).fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 2);
+
+        // Content-only edits retain approval through either owner approval grant,
+        // so they need the same body binding and replay protection as explicit approval.
+        for permission in ["approve_own_event", "approve_any_event"] {
+            let owner = alloy::signers::local::PrivateKeySigner::random();
+            let address = format!("{:#x}", owner.address());
+            sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions_granted,permissions) VALUES ($1,true,$2)")
+                .bind(&address).bind(json!([permission])).execute(&pool).await.unwrap();
+            let id = moderation::create_as(
+                &pool,
+                &serde_json::from_value(new_event()).unwrap(),
+                &address,
+                "test",
+            )
+            .await
+            .unwrap();
+            moderation::moderate(
+                &pool,
+                &id,
+                &AdminPatch {
+                    approved: Some(true),
+                    ..Default::default()
+                },
+                "test",
+            )
+            .await
+            .unwrap();
+            let path = format!("/api/events/{id}");
+            let body = r#"{"name":"Approved content edit"}"#;
+            let metadata = json!({"body_sha256":hex::encode(Sha256::digest(body.as_bytes())),"nonce":uuid::Uuid::new_v4().to_string()}).to_string();
+            let timestamp = Utc::now().timestamp_millis().to_string();
+            let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+                &owner, "patch", &path, &metadata, true, &timestamp,
+            )
+            .await;
+            let unbound = crate::shared::signed_fetch::test_support::signed_headers_by(
+                &owner, "patch", &path, "{}", true, &timestamp,
+            )
+            .await;
+            assert_eq!(
+                request(&app, "PATCH", &path, &unbound, body).await,
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                request(
+                    &app,
+                    "PATCH",
+                    &path,
+                    &headers,
+                    r#"{"name":"Tampered content edit"}"#
+                )
+                .await,
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(
+                request(&app, "PATCH", &path, &headers, body).await,
+                StatusCode::OK
+            );
+            assert_eq!(
+                request(&app, "PATCH", &path, &headers, body).await,
+                StatusCode::CONFLICT
+            );
+            let raw: Value = sqlx::query_scalar("SELECT raw FROM explore.event WHERE id=$1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(raw["name"], "Approved content edit");
+            assert_eq!(raw["approved"], true);
+        }
+    }
+
+    #[tokio::test]
     async fn self_approval_cannot_clear_a_moderator_rejection_but_approve_any_can() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
@@ -1281,7 +1691,7 @@ mod tests {
         )
         .await
         .unwrap();
-        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions) VALUES ($1,'[\"approve_own_event\"]')").bind(&owner).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions_granted,permissions) VALUES ($1,true,'[\"approve_own_event\"]')").bind(&owner).execute(&pool).await.unwrap();
         let app = router(Arc::new(ExploreState::new(
             pool.clone(),
             Settings {
@@ -1309,6 +1719,7 @@ mod tests {
             undone["data"]["rejected"], false,
             "an owner can undo their own rejection"
         );
+        call_as(&app, "PATCH", &path, &wallet, json!({"rejected":true})).await;
         let (_, rejected) = call(
             &app,
             "PATCH",
@@ -1344,7 +1755,7 @@ mod tests {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
-        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\", permissions) VALUES ($1, '[\"edit_any_schedule\"]'::jsonb) ON CONFLICT (\"user\") DO UPDATE SET permissions = EXCLUDED.permissions")
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\", permissions_granted, permissions) VALUES ($1,true, '[\"edit_any_schedule\"]'::jsonb) ON CONFLICT (\"user\") DO UPDATE SET permissions = EXCLUDED.permissions, permissions_granted = true")
             .bind(address()).execute(&pool).await.unwrap();
         let app = router(Arc::new(ExploreState::new(
             pool.clone(),
