@@ -31,7 +31,7 @@ pub(super) fn place_columns() -> &'static str {
         format!(
             r#"
     id, title, description, raw->>'image' AS image,
-    creator_address AS owner,
+    LOWER(COALESCE(raw->>'owner', creator_address)) AS owner,
     creator_address,
     COALESCE((SELECT array_agg(p::text) FROM jsonb_array_elements_text(raw->'positions') p), ARRAY[]::text[]) AS positions,
     base_position,
@@ -265,6 +265,8 @@ pub struct PlaceListFilters {
     pub offset: i64,
     pub positions: Vec<String>,
     pub names: Vec<String>,
+    /// Legacy worlds `names` matches a substring; `world_names` stays exact.
+    pub partial_names: Vec<String>,
     pub categories: Vec<String>,
     pub only_highlighted: bool,
     pub only_excluded_from_ranking: bool,
@@ -281,6 +283,8 @@ pub struct PlaceListFilters {
     pub only_categorized: bool,
     pub operated_positions: Vec<String>,
     pub owner_filtered: bool,
+    pub owner: Option<String>,
+    pub include_opted_out: bool,
     pub destinations_mode: bool,
     pub require_content_places: bool,
     pub require_content_worlds: bool,

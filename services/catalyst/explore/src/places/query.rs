@@ -178,8 +178,9 @@ pub(super) fn build_where_from(
     if f.only_excluded_from_ranking {
         clauses.push(format!("{EXCLUDE_FROM_RANKING_SQL} IS TRUE"));
     }
-    let mut positions: Vec<String> = f.positions.clone();
-    positions.extend(f.operated_positions.iter().cloned());
+    // An explicit pointer narrows a lookup independently of ownership. Operator
+    // parcels are an alternative to the owner leg, never alternative pointers.
+    let positions = f.positions.clone();
     let mut positions_clause = None;
     if !positions.is_empty() {
         positions_clause = Some(format!("raw->'positions' @> ANY(${idx}::jsonb[])"));
@@ -190,22 +191,71 @@ pub(super) fn build_where_from(
                 .collect(),
         ));
         idx += 1;
-    } else if f.owner_filtered {
-        clauses.push("FALSE".to_string());
     }
     let mut names_clause = None;
     if !f.names.is_empty() {
         names_clause = Some(format!("lower(world_name) = ANY(${idx})"));
+        if f.include_opted_out {
+            clauses[0] = format!(
+                "(disabled IS FALSE OR (lower(world_name) = ANY(${idx}) AND COALESCE((SELECT COALESCE(reason, '') FROM explore.place_moderation m WHERE m.place_id = id AND m.disabled IS NOT NULL), raw->>'disabled_reason') = 'opt_out'))"
+            );
+        }
         binds.push(Bind::TextArray(
             f.names.iter().map(|n| n.to_lowercase()).collect(),
         ));
         idx += 1;
+    }
+    if !f.partial_names.is_empty() {
+        let clause = format!(
+            "EXISTS (SELECT 1 FROM unnest(${idx}::text[]) AS names(pattern) WHERE lower(world_name) LIKE names.pattern ESCAPE E'\\\\')"
+        );
+        binds.push(Bind::TextArray(
+            f.partial_names
+                .iter()
+                .map(|name| {
+                    format!(
+                        "%{}%",
+                        name.to_lowercase()
+                            .replace('\\', "\\\\")
+                            .replace('%', "\\%")
+                            .replace('_', "\\_")
+                    )
+                })
+                .collect(),
+        ));
+        idx += 1;
+        names_clause = Some(match names_clause {
+            Some(exact) => format!("({exact} AND {clause})"),
+            None => clause,
+        });
     }
     match (positions_clause, names_clause) {
         (Some(p), Some(n)) => clauses.push(format!("({p} OR {n})")),
         (Some(p), None) => clauses.push(p),
         (None, Some(n)) => clauses.push(n),
         (None, None) => {}
+    }
+    if let Some(owner) = &f.owner {
+        let mut owner_clause =
+            format!("(world IS TRUE AND LOWER(COALESCE(raw->>'owner', creator_address)) = ${idx})");
+        binds.push(Bind::Text(owner.to_lowercase()));
+        idx += 1;
+        if !f.operated_positions.is_empty() {
+            owner_clause = format!(
+                "({owner_clause} OR (world IS FALSE AND raw->'positions' @> ANY(${idx}::jsonb[])))"
+            );
+            binds.push(Bind::JsonbArray(
+                f.operated_positions
+                    .iter()
+                    .map(|p| serde_json::json!([p]))
+                    .collect(),
+            ));
+            idx += 1;
+        }
+        clauses.push(owner_clause);
+    } else if f.owner_filtered {
+        // The caller requested an owner but supplied no usable identity.
+        clauses.push("FALSE".to_string());
     }
     if !f.categories.is_empty() {
         clauses.push(format!("categories && ${idx}"));
@@ -767,10 +817,11 @@ mod tests {
 
         let f = PlaceListFilters {
             operated_positions: vec!["10,20".to_string()],
+            owner: Some("0xabc".to_string()),
             ..Default::default()
         };
         let (where_clause, binds) = build_where(&f, false);
-        assert!(where_clause.contains("raw->'positions' @> ANY($1::jsonb[])"));
+        assert!(where_clause.contains("raw->'positions' @> ANY($2::jsonb[])"));
         match binds.last().unwrap() {
             Bind::JsonbArray(v) => assert_eq!(v, &vec![serde_json::json!(["10,20"])]),
             _ => panic!("expected positions jsonb array bind"),

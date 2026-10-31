@@ -31,6 +31,7 @@ async fn owner(state: &CommsState, context: &PlaceContext) -> Result<Address, Ap
         .owner_address
         .as_deref()
         .and_then(|a| Address::parse(a).ok())
+        .filter(|_| context.world)
     {
         return Ok(address);
     }
@@ -510,6 +511,32 @@ mod tests {
         ) -> Result<Option<crate::rooms::ActiveDeployment>, crate::rooms::ResolveError> {
             Ok(None)
         }
+    }
+
+    #[tokio::test]
+    async fn genesis_owner_ignores_captured_scene_metadata() {
+        let actual = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let state = owner_state(StubPolicy {
+            land: Ok(Some(Arc::new(Some(crate::access::LandOperators {
+                owner: actual.into(),
+                operator: None,
+                update_operator: None,
+                update_managers: vec![],
+                approved_for_all: vec![],
+            })))),
+            ..Default::default()
+        });
+        let mut context = world_context(Some("0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"));
+        context.world = false;
+        context.world_name = None;
+        assert_eq!(owner(&state, &context).await.unwrap().as_str(), actual);
+        assert_eq!(
+            owner(&owner_state(StubPolicy::default()), &context)
+                .await
+                .unwrap_err()
+                .code,
+            503
+        );
     }
 
     #[tokio::test]

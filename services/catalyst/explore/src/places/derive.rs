@@ -30,7 +30,7 @@
 //! authority for the rows it lists.
 
 use std::collections::HashMap;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use anyhow::Result;
@@ -103,6 +103,25 @@ fn str_array(v: Option<&Value>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Creator categories follow the upstream active catalogue: at most three,
+/// deduplicated in tag order. Editorial categories are operator authority.
+fn creator_categories(tags: &[String]) -> Vec<String> {
+    let mut categories = Vec::new();
+    for tag in tags {
+        if tag != "poi"
+            && tag != "featured"
+            && super::handlers::category_i18n_en(tag).is_some()
+            && !categories.contains(tag)
+        {
+            categories.push(tag.clone());
+            if categories.len() == 3 {
+                break;
+            }
+        }
+    }
+    categories
+}
+
 pub fn derive(
     deployer_address: &str,
     pointers: &[String],
@@ -143,21 +162,28 @@ pub fn derive(
             h
         )
     });
+    // Curation identity comes from the signed deployment, never scene-authored metadata.
     let creator_address = non_empty(Some(deployer_address)).map(|s| s.to_lowercase());
+    let owner = creator_address.clone();
+    let categories = creator_categories(&tags);
     let id = super::parcel_place_id(&base);
     let at = deployed_at.map(|d| DateTime::<Utc>::from_naive_utc_and_offset(d, Utc));
     let mut raw = json!({
         "id": id,
         "title": title,
         "description": description,
-        "owner": creator_address,
+        "owner": owner,
+        "metadata_owner": non_empty(m.get("owner").and_then(Value::as_str)),
+        "metadata_creator": non_empty(m.get("creator").and_then(Value::as_str)),
+        "creator_address": creator_address,
+        "sdk": non_empty(m.get("runtimeVersion").and_then(Value::as_str)),
         "positions": positions,
         "base_position": base,
         "contact_name": contact_name,
         "contact_email": contact_email,
         "image": image,
         "tags": tags,
-        "categories": [],
+        "categories": categories,
         "disabled": false,
         "world": false,
         "deployed_at": at,
@@ -189,6 +215,7 @@ pub fn derive(
 pub const SELECT_SCENES: &str = r#"
     SELECT
         d.id,
+        d.entity_id,
         d.deployer_address,
         d.entity_pointers,
         d.entity_timestamp AS deployed_at,
@@ -197,7 +224,10 @@ pub const SELECT_SCENES: &str = r#"
         (SELECT cf.content_hash FROM content.content_files cf
           WHERE cf.deployment = d.id
             AND cf.key = (d.entity_metadata::jsonb)->'v'->'display'->>'navmapThumbnail'
-          LIMIT 1) AS thumbnail_hash
+          LIMIT 1) AS thumbnail_hash,
+        (SELECT cf.content_hash FROM content.content_files cf
+          WHERE cf.deployment = d.id AND cf.key = 'scene.json'
+          LIMIT 1) AS scene_json_hash
     FROM content.deployments d
     LEFT JOIN content.local_entities le ON le.entity_id = d.entity_id
     WHERE d.entity_type = 'scene' AND d.deleter_deployment IS NULL AND d.id > $2
@@ -220,7 +250,8 @@ const UPSERT: &str = r#"
          raw, fetched_at, origin)
     SELECT u.id, u.base_position, u.title, u.description, u.creator_address,
            COALESCE(m.content_rating, u.content_rating),
-           '{}', 0, 0, 0, u.deployed_at, COALESCE(m.disabled, false), COALESCE(m.highlighted, false),
+           ARRAY(SELECT jsonb_array_elements_text(u.raw->'categories')), 0, 0, 0,
+           u.deployed_at, COALESCE(m.disabled, false), COALESCE(m.highlighted, false),
            u.raw || COALESCE(r.overlay, '{}'::jsonb), timezone('UTC', now()), u.origin
     FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[],
                 $7::timestamp[], $8::jsonb[], $9::text[])
@@ -233,6 +264,10 @@ const UPSERT: &str = r#"
         title           = EXCLUDED.title,
         description     = EXCLUDED.description,
         creator_address = EXCLUDED.creator_address,
+        categories = CASE WHEN cardinality(EXCLUDED.categories) = 0 THEN explore.place.categories ELSE
+            ARRAY(SELECT c FROM unnest(EXCLUDED.categories || explore.place.categories) WITH ORDINALITY AS tags(c, position)
+                  WHERE c IN ('poi', 'featured') OR c = ANY(EXCLUDED.categories)
+                  GROUP BY c ORDER BY min(position)) END,
         deployed_at     = EXCLUDED.deployed_at,
         raw = EXCLUDED.raw || jsonb_strip_nulls(jsonb_build_object(
             'ranking',              explore.place.raw->'ranking',
@@ -314,8 +349,8 @@ const UPSERT_LOCAL_WORLDS: &str = r#"
                jsonb_build_object(
                    'title', COALESCE(w.title, NULLIF(btrim(s.meta->'display'->>'title'), '')),
                    'description', w.description,
-                   'image', CASE WHEN w.thumbnail_hash IS NOT NULL
-                                 THEN rtrim($1, '/') || '/contents/' || w.thumbnail_hash END,
+                   'image', CASE WHEN COALESCE(w.thumbnail_hash, s.thumbnail_hash) IS NOT NULL
+                                 THEN rtrim($1, '/') || '/contents/' || COALESCE(w.thumbnail_hash, s.thumbnail_hash) END,
                    'owner', w.owner,
                    'content_rating', w.content_rating,
                    'categories', to_jsonb(COALESCE(w.categories, '{}')),
@@ -325,6 +360,8 @@ const UPSERT_LOCAL_WORLDS: &str = r#"
                    'is_private', w.access_type <> 'unrestricted',
                    'settings_version', w.settings_version,
                    'contact_name', NULLIF(btrim(s.meta->'contact'->>'name'), ''),
+                   'contact_email', NULLIF(btrim(s.meta->'contact'->>'email'), ''),
+                   'sdk', NULLIF(btrim(s.meta->>'runtimeVersion'), ''),
                    'base_position', COALESCE(NULLIF(btrim(s.meta->'scene'->>'base'), ''), s.parcels[1], '0,0'),
                    'disabled', false,
                    'world', true,
@@ -336,7 +373,10 @@ const UPSERT_LOCAL_WORLDS: &str = r#"
                ) AS raw
         FROM worlds.worlds w
         CROSS JOIN LATERAL (
-            SELECT ws.entity->'metadata' AS meta, ws.parcels, ws.created_at
+            SELECT ws.entity->'metadata' AS meta, ws.parcels, ws.created_at,
+                   (SELECT file->>'hash' FROM jsonb_array_elements(ws.entity->'content') file
+                    WHERE file->>'file' = ws.entity->'metadata'->'display'->>'navmapThumbnail'
+                    LIMIT 1) AS thumbnail_hash
             FROM worlds.world_scenes ws
             WHERE ws.world_name = w.name AND ws.mirror_source IS NULL
             ORDER BY ws.created_at DESC, ws.entity_id
@@ -425,6 +465,65 @@ pub async fn run_once(
     scope: DeriveScope,
     content_public_url: &str,
 ) -> Result<PassSummary> {
+    run_once_with_storage(pool, scope, content_public_url, None).await
+}
+
+/// The stored, hash-addressed scene.json supplies creator/runtimeVersion.
+/// Limit each read to 2 MiB; missing, withheld or malformed metadata keeps
+/// the catalogue available without turning a storage fault into an empty pass.
+async fn scene_file(
+    storage: &crate::storage::Storage,
+    entity: &str,
+    hash: &str,
+) -> Result<Option<Value>> {
+    const MAX_SCENE_JSON_BYTES: u64 = 2 * 1024 * 1024;
+    if storage.withholds(entity) {
+        return Ok(None);
+    }
+    let Some(mut file) = storage.open(hash).await? else {
+        return Ok(None);
+    };
+    if file.size > MAX_SCENE_JSON_BYTES {
+        tracing::warn!(
+            entity,
+            hash,
+            size = file.size,
+            "place scene.json exceeds metadata read limit"
+        );
+        return Ok(None);
+    }
+    let last = file.size.saturating_sub(1);
+    let bytes = file.read_range(0, last).await?;
+    match serde_json::from_slice::<Value>(&bytes) {
+        Ok(value) if value.is_object() => Ok(Some(value)),
+        Ok(_) => Ok(None),
+        Err(error) => {
+            tracing::debug!(entity, hash, %error, "place scene.json is not JSON metadata");
+            Ok(None)
+        }
+    }
+}
+
+fn apply_scene_file(place: &mut DerivedPlace, scene: &Value, metadata: &Value) {
+    place.raw["metadata_creator"] = json!(
+        non_empty(scene.get("creator").and_then(Value::as_str))
+            .or_else(|| non_empty(scene_json(metadata).get("creator").and_then(Value::as_str)))
+    );
+    place.raw["sdk"] = json!(
+        non_empty(scene.get("runtimeVersion").and_then(Value::as_str)).or_else(|| non_empty(
+            scene_json(metadata)
+                .get("runtimeVersion")
+                .and_then(Value::as_str)
+        ))
+    );
+}
+
+async fn run_once_with_storage(
+    pool: &PgPool,
+    scope: DeriveScope,
+    content_public_url: &str,
+    storage: Option<&crate::storage::Storage>,
+) -> Result<PassSummary> {
     let started: NaiveDateTime = sqlx::query_scalar("SELECT timezone('UTC', clock_timestamp())")
         .fetch_one(pool)
         .await?;
@@ -438,7 +537,7 @@ pub async fn run_once(
             .fetch_all(pool)
             .await?;
         let fetched = rows.len() as i64;
-        let mut page: Vec<DerivedPlace> = Vec::with_capacity(rows.len());
+        let mut candidates = Vec::with_capacity(rows.len());
         for row in &rows {
             last_id = row.try_get("id")?;
             let deployer: String = row.try_get("deployer_address").unwrap_or_default();
@@ -447,7 +546,7 @@ pub async fn run_once(
             let meta: Value = row.try_get("meta").unwrap_or(Value::Null);
             let local: bool = row.try_get("local").unwrap_or(false);
             let thumb: Option<String> = row.try_get("thumbnail_hash").unwrap_or(None);
-            if let Some(p) = derive(
+            if let Some(place) = derive(
                 &deployer,
                 &pointers,
                 deployed_at,
@@ -456,9 +555,67 @@ pub async fn run_once(
                 content_public_url,
                 local,
             ) {
-                page.push(p);
-                derived += 1;
+                candidates.push((
+                    place,
+                    row.try_get::<String, _>("entity_id")?,
+                    row.try_get::<Option<String>, _>("scene_json_hash")?,
+                    meta,
+                ));
             }
+        }
+        // One primary-key lookup per bounded page. Immutable scene blobs are re-read only
+        // when their deployment or hash changes; a failed read is retried next pass.
+        let ids: Vec<&str> = candidates
+            .iter()
+            .map(|(place, ..)| place.id.as_str())
+            .collect();
+        let cached: HashMap<String, Value> = sqlx::query_as::<_, (String, Value)>(
+            "SELECT id, raw FROM explore.place WHERE id = ANY($1) AND raw->>'source' = 'content'",
+        )
+        .bind(&ids)
+        .fetch_all(pool)
+        .await?
+        .into_iter()
+        .collect();
+        let mut page = Vec::with_capacity(candidates.len());
+        let mut failed = Vec::new();
+        for (mut place, entity, hash, meta) in candidates {
+            if let (Some(storage), Some(hash)) = (storage, hash) {
+                let previous = cached.get(&place.id).filter(|raw| {
+                    raw["scene_metadata_entity"].as_str() == Some(entity.as_str())
+                        && raw["scene_metadata_hash"].as_str() == Some(hash.as_str())
+                });
+                if let Some(previous) = previous {
+                    for key in ["sdk", "metadata_creator"] {
+                        place.raw[key] = previous[key].clone();
+                    }
+                } else {
+                    match scene_file(storage, &entity, &hash).await {
+                        Ok(Some(scene)) => apply_scene_file(&mut place, &scene, &meta),
+                        Ok(None) => {
+                            // Missing or withheld blobs may become readable without redeployment.
+                            page.push(place);
+                            derived += 1;
+                            continue;
+                        }
+                        Err(error) => {
+                            tracing::warn!(%entity, %hash, %error, "skipping place with unreadable scene metadata");
+                            failed.push(place.id);
+                            continue;
+                        }
+                    }
+                }
+                place.raw["scene_metadata_entity"] = json!(entity);
+                place.raw["scene_metadata_hash"] = json!(hash);
+            }
+            page.push(place);
+            derived += 1;
+        }
+        // Preserve the last usable catalogue row on transient I/O failures; pruning still
+        // removes deployments absent from this pass, and failed rows remain due next pass.
+        if !failed.is_empty() {
+            sqlx::query("UPDATE explore.place SET fetched_at = timezone('UTC', clock_timestamp()) WHERE id = ANY($1) AND raw->>'source' = 'content'")
+                .bind(&failed).execute(pool).await?;
         }
         upsert_page(pool, page).await?;
         if fetched < PAGE {
@@ -656,15 +813,16 @@ pub fn spawn_job(
     scope: DeriveScope,
     interval: Duration,
     content_public_url: String,
+    storage: Option<Arc<crate::storage::Storage>>,
 ) {
     tracing::info!(scope = ?scope, interval_secs = interval.as_secs(), "place catalogue: deriving from content deployments");
     jobs.spawn_periodic_leased(
         JOB_NAME,
         PeriodicCfg::every(interval).with_error_backoff(Duration::from_secs(3600)),
         move |ctx| {
-            let (pool, url) = (pool.clone(), content_public_url.clone());
+            let (pool, url, storage) = (pool.clone(), content_public_url.clone(), storage.clone());
             async move {
-                let out = run_once(&pool, scope, &url).await?;
+                let out = run_once_with_storage(&pool, scope, &url, storage.as_deref()).await?;
                 ctx.progress(format!(
                     "{} places derived, {} pruned",
                     out.derived, out.pruned
@@ -712,6 +870,78 @@ mod tests {
         assert!(p.raw.get("local").is_none());
         let local = derive("0xABC", &[], None, &wrapped(), None, "/content", true).unwrap();
         assert_eq!(local.raw["local"], true);
+    }
+
+    #[test]
+    fn scene_file_metadata_cannot_replace_the_signed_deployer_identity() {
+        let mut metadata = wrapped();
+        metadata["v"]["owner"] = json!("0xLAND");
+        metadata["v"]["runtimeVersion"] = json!("6");
+        metadata["v"]["tags"] =
+            json!(["poi", "game", "game", "art", "social", "music", "featured"]);
+        let mut place = derive("0xDEPLOYER", &[], None, &metadata, None, "/content", true).unwrap();
+        apply_scene_file(
+            &mut place,
+            &json!({ "creator": "0xAUTHOR", "runtimeVersion": "7.1" }),
+            &metadata,
+        );
+        assert_eq!(place.creator_address.as_deref(), Some("0xdeployer"));
+        assert_eq!(place.raw["owner"], "0xdeployer");
+        assert_eq!(place.raw["metadata_owner"], "0xLAND");
+        assert_eq!(place.raw["metadata_creator"], "0xAUTHOR");
+        assert_eq!(place.raw["sdk"], "7.1");
+        assert_eq!(place.raw["categories"], json!(["game", "art", "social"]));
+        apply_scene_file(&mut place, &json!({}), &metadata);
+        assert_eq!(place.creator_address.as_deref(), Some("0xdeployer"));
+        assert_eq!(place.raw["sdk"], "6");
+    }
+
+    #[tokio::test]
+    async fn creator_categories_survive_rebuild_and_preserve_editorial_categories() {
+        let pool = crate::db::scratch::pool(2)
+            .await
+            .expect("scratch database required");
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let mut meta = wrapped();
+        let base = format!(
+            "{},{}",
+            u16::from_str_radix(&token[..4], 16).unwrap(),
+            u16::from_str_radix(&token[4..8], 16).unwrap()
+        );
+        meta["v"]["scene"]["base"] = json!(base);
+        meta["v"]["scene"]["parcels"] = json!([base]);
+        let place = derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap();
+        let id = place.id.clone();
+        upsert_page(&pool, vec![place]).await.unwrap();
+        sqlx::query("UPDATE explore.place SET categories = array_append(categories, 'featured') WHERE id = $1").bind(&id).execute(&pool).await.unwrap();
+        meta["v"]["tags"] = json!(["music"]);
+        upsert_page(
+            &pool,
+            vec![derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap()],
+        )
+        .await
+        .unwrap();
+        let categories: Vec<String> =
+            sqlx::query_scalar("SELECT categories FROM explore.place WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(categories, vec!["music", "featured"]);
+        meta["v"]["tags"] = json!(["unknown", "poi"]);
+        upsert_page(
+            &pool,
+            vec![derive("0xauthor", &[], None, &meta, None, "/content", true).unwrap()],
+        )
+        .await
+        .unwrap();
+        let unchanged: Vec<String> =
+            sqlx::query_scalar("SELECT categories FROM explore.place WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(unchanged, categories);
     }
 
     #[test]
@@ -890,6 +1120,110 @@ mod tests {
         .fetch_one(pool)
         .await
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn scene_metadata_cache_avoids_reads_and_isolates_storage_faults() {
+        let base = std::env::var("CATALYST_TEST_DATABASE_URL").expect("test database required");
+        let opts: sqlx::postgres::PgConnectOptions = base.parse().unwrap();
+        let admin = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with(opts.clone().database("postgres"))
+            .await
+            .unwrap();
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let name = format!("catalyst_z_scene_cache_{token}");
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect_with(opts.database(&name))
+            .await
+            .unwrap();
+        crate::db::apply_schema(&pool).await.unwrap();
+        let root = std::env::temp_dir().join(format!("scene-cache-{token}"));
+        let storage = crate::storage::Storage::from_config(&root).await.unwrap();
+        let first = scene(&pool, "first", "1,1", &["1,1"], None).await;
+        let second = scene(&pool, "second", "2,2", &["2,2"], None).await;
+        let bytes = bytes::Bytes::from_static(br#"{"runtimeVersion":"7","creator":"0xforged"}"#);
+        let hash = crate::auth::hash_bytes(&bytes);
+        storage.store(&hash, bytes).await.unwrap();
+        for deployment in [first, second] {
+            sqlx::query("INSERT INTO content.content_files (deployment, content_hash, key) VALUES ($1, $2, 'scene.json')")
+                .bind(deployment).bind(&hash).execute(&pool).await.unwrap();
+        }
+        run_once_with_storage(&pool, DeriveScope::All, "/content", Some(&storage))
+            .await
+            .unwrap();
+        let path = storage.file_path(&hash).await.unwrap().unwrap();
+        tokio::fs::remove_file(&path).await.unwrap();
+        tokio::fs::create_dir(&path).await.unwrap();
+        assert!(scene_file(&storage, "first", &hash).await.is_err());
+        // Both unchanged deployments use the cached immutable blob despite an I/O fault.
+        assert_eq!(
+            run_once_with_storage(&pool, DeriveScope::All, "/content", Some(&storage))
+                .await
+                .unwrap()
+                .derived,
+            2
+        );
+        sqlx::query("UPDATE content.deployments SET entity_id = 'first-redeploy' WHERE id = $1")
+            .bind(first)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let fresh = bytes::Bytes::from_static(br#"{"runtimeVersion":"8"}"#);
+        let fresh_hash = crate::auth::hash_bytes(&fresh);
+        storage.store(&fresh_hash, fresh).await.unwrap();
+        sqlx::query("UPDATE content.content_files SET content_hash = $1 WHERE deployment = $2")
+            .bind(&fresh_hash)
+            .bind(second)
+            .execute(&pool)
+            .await
+            .unwrap();
+        // One changed deployment faults; the other still refreshes and pruning retains the old usable row.
+        assert_eq!(
+            run_once_with_storage(&pool, DeriveScope::All, "/content", Some(&storage))
+                .await
+                .unwrap()
+                .derived,
+            1
+        );
+        let rows: Vec<(String, String, String)> = sqlx::query_as("SELECT base_position, raw->>'sdk', creator_address FROM explore.place ORDER BY base_position")
+            .fetch_all(&pool).await.unwrap();
+        assert_eq!(
+            rows,
+            vec![
+                ("1,1".into(), "7".into(), "0xabc".into()),
+                ("2,2".into(), "8".into(), "0xabc".into())
+            ]
+        );
+        tokio::fs::remove_dir(&path).await.unwrap();
+        storage
+            .store(
+                &hash,
+                bytes::Bytes::from_static(br#"{"runtimeVersion":"7"}"#),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            run_once_with_storage(&pool, DeriveScope::All, "/content", Some(&storage))
+                .await
+                .unwrap()
+                .derived,
+            2
+        );
+        tokio::fs::remove_dir_all(root).await.unwrap();
+        pool.close().await;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{name}\" WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
+        admin.close().await;
     }
 
     /// The local scope derives this node's own scenes (not a synced one, not
