@@ -1,7 +1,8 @@
 //! Place reports: `POST /api/report` (signed fetch) answers the URL the
 //! client uploads its report document to and records the report; the
 //! client's `PUT` of that URL uses an expiring upload capability, so an
-//! existing presigned-upload client needs no second wallet signature. The queue (`GET
+//! existing presigned-upload client needs no second wallet signature. Only a
+//! digest is retained; the capability is single-use and revoked on resolution. The queue (`GET
 //! /api/reports`, `PATCH /api/reports/{id}`, the admin bearer) lists and
 //! resolves them. The old service's default was an S3 presigned PUT; the
 //! document is small JSON, so v2 keeps it in `explore.place_reports.payload`
@@ -13,6 +14,7 @@ use axum::http::{HeaderMap, Method};
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::Row;
 
 use super::admin::RequireAdmin;
@@ -42,7 +44,12 @@ fn row_to_report(r: sqlx::postgres::PgRow) -> ReportRow {
         id: r.get("id"),
         entity_id: r.get("entity_id"),
         reporter: r.get("reporter"),
-        signed_url: r.get("signed_url"),
+        signed_url: r
+            .get::<String, _>("signed_url")
+            .split('?')
+            .next()
+            .unwrap_or_default()
+            .to_owned(),
         filename: r.get("filename"),
         payload: r.get("payload"),
         status: r.get("status"),
@@ -76,11 +83,17 @@ fn request_base_url(headers: &HeaderMap) -> String {
         .get("x-forwarded-host")
         .or_else(|| headers.get("host"))
         .and_then(|v| v.to_str().ok())
+        .filter(|host| {
+            !host
+                .chars()
+                .any(|c| c.is_whitespace() || "/\\?#@".contains(c))
+        })
         .unwrap_or("127.0.0.1")
         .to_string();
     let scheme = headers
         .get("x-forwarded-proto")
         .and_then(|v| v.to_str().ok())
+        .filter(|scheme| matches!(*scheme, "http" | "https"))
         .map(str::to_string)
         .unwrap_or_else(|| {
             if host.starts_with("127.0.0.1") || host.starts_with("localhost") {
@@ -126,21 +139,22 @@ pub async fn post_report(
     let filename = report_filename(&reporter, now.timestamp());
     let token = format!("{:032x}", rand::random::<u128>());
     let signed_url = format!(
-        "{}{}/upload/{filename}?token={token}",
+        "{}{}/upload/{filename}",
         request_base_url(&headers),
         public_path(&headers, uri.path())
     );
-    sqlx::query("INSERT INTO explore.place_reports (entity_id, reporter, signed_url, filename, payload, created_at) VALUES ($1, $2, $3, $4, $5, $6)")
+    sqlx::query("INSERT INTO explore.place_reports (entity_id, reporter, signed_url, filename, payload, created_at, upload_token_hash) VALUES ($1, $2, $3, $4, $5, $6, $7)")
         .bind(entity_id.as_deref())
         .bind(&reporter)
         .bind(&signed_url)
         .bind(&filename)
         .bind(&payload)
         .bind(now.naive_utc())
+        .bind(Sha256::digest(token.as_bytes()).to_vec())
         .execute(&state.pool)
         .await?;
     Ok(Json(
-        json!({ "ok": true, "data": { "signed_url": signed_url } }),
+        json!({ "ok": true, "data": { "signed_url": format!("{signed_url}?token={token}") } }),
     ))
 }
 
@@ -214,15 +228,15 @@ async fn upload_by_capability(
     if token.len() != 32 || !token.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Ok(0);
     }
-    // Only newly minted capability URLs authorize anonymous PUT. Older
+    // Only dedicated hashes authorize anonymous PUT, once and while open. Older
     // signed-fetch reports and federation reports cannot be uploaded this way.
     Ok(sqlx::query(
-        "UPDATE explore.place_reports SET payload = $3 WHERE filename = $1 \
-         AND split_part(signed_url, '?token=', 2) = $2 \
-         AND created_at >= timezone('UTC', now()) - make_interval(secs => $4)",
+        "UPDATE explore.place_reports SET payload = $3, upload_token_hash = NULL WHERE filename = $1 \
+         AND upload_token_hash = $2 AND status = 'open' \
+         AND created_at >= timezone('UTC', clock_timestamp()) - make_interval(secs => $4)",
     )
     .bind(filename)
-    .bind(token)
+    .bind(Sha256::digest(token.as_bytes()).to_vec())
     .bind(payload)
     .bind(UPLOAD_TTL_SECONDS)
     .execute(pool)
@@ -243,14 +257,14 @@ pub async fn put_report_upload(
     state.user_writes()?;
     let payload = body.map(|Json(v)| v).unwrap_or_else(|| json!({}));
     if let Some(token) = upload.token {
-        if upload_by_capability(&state.pool, &filename, &token, &payload).await? == 0 {
-            return Err(ApiError::forbidden("Invalid or expired upload URL"));
+        if upload_by_capability(&state.pool, &filename, &token, &payload).await? != 0 {
+            return Ok(Json(json!({ "ok": true })));
         }
-        return Ok(Json(json!({ "ok": true })));
+        // A stale capability must not override valid reporter authentication.
     }
     let reporter = state.signer(&headers, method.as_str(), uri.path()).await?;
     let updated = sqlx::query(
-        "UPDATE explore.place_reports SET payload = $3 WHERE filename = $1 AND reporter = $2",
+        "UPDATE explore.place_reports SET payload = $3, upload_token_hash = NULL WHERE filename = $1 AND reporter = $2 AND status = 'open'",
     )
     .bind(&filename)
     .bind(&reporter)
@@ -355,7 +369,7 @@ pub async fn resolve_report(
         ));
     }
     let sql = format!(
-        "UPDATE explore.place_reports SET status = $2, resolution = COALESCE($3, resolution),
+        "UPDATE explore.place_reports SET status = $2, upload_token_hash = CASE WHEN $2 <> 'open' THEN NULL ELSE upload_token_hash END, resolution = COALESCE($3, resolution),
              moderator_notes = COALESCE($4, moderator_notes), resolved_by = $5,
              resolved_at = CASE WHEN $2 <> 'open' THEN $6 ELSE NULL END
          WHERE id = $1 RETURNING {REPORT_COLUMNS}"
@@ -409,80 +423,302 @@ mod tests {
         assert_eq!(public_path(&headers, "/api/report"), "/api/report");
         assert_eq!(request_base_url(&headers), "https://node.example");
     }
-    #[tokio::test]
-    async fn upload_capability_is_bound_to_report_and_expiry() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
-            return;
-        };
-        let token = format!("{:032x}", rand::random::<u128>());
-        let filename = report_filename("0x12345678", Utc::now().timestamp());
-        let payload = json!({"reason":"broken scene"});
-        sqlx::query("INSERT INTO explore.place_reports (reporter, filename, signed_url) VALUES ('0x12345678', $1, $2)")
-            .bind(&filename).bind(format!("https://node.example/upload/{filename}?token={token}"))
-            .execute(&pool).await.unwrap();
-        use axum::body::Body;
-        use axum::http::{Request, StatusCode};
+    async fn request(
+        app: &axum::Router,
+        method: &str,
+        uri: &str,
+        signed: bool,
+        payload: Value,
+    ) -> (axum::http::StatusCode, Value) {
+        use axum::body::{Body, to_bytes};
+        use axum::http::Request;
         use tower::ServiceExt;
-        let mut settings = crate::Settings::for_tests();
-        settings.user_writes_enabled = true;
+        let mut req = Request::builder()
+            .method(method)
+            .uri(uri)
+            .header("content-type", "application/json");
+        if signed {
+            for (key, value) in crate::shared::signed_fetch::test_support::signed_headers(
+                &method.to_lowercase(),
+                uri.split('?').next().unwrap(),
+                "{}",
+                true,
+            )
+            .await
+            .iter()
+            {
+                req = req.header(key, value);
+            }
+        }
+        let response = app
+            .clone()
+            .oneshot(req.body(Body::from(payload.to_string())).unwrap())
+            .await
+            .unwrap();
+        let status = response.status();
+        let body = to_bytes(response.into_body(), 1 << 20).await.unwrap();
+        (status, serde_json::from_slice(&body).unwrap())
+    }
+
+    #[tokio::test]
+    async fn upload_authority_is_private_single_use_open_and_independent_of_signature() {
+        use axum::http::StatusCode;
+        let pool = crate::db::scratch::pool(4)
+            .await
+            .expect("report upload regressions require CATALYST_TEST_DATABASE_URL");
+        let settings = crate::Settings {
+            user_writes_enabled: true,
+            ..crate::Settings::for_tests()
+        };
         let app = crate::router(std::sync::Arc::new(crate::ExploreState::new(
             pool.clone(),
             settings,
             None,
         )));
-        let url = format!("/api/report/upload/{filename}");
-        let request = |uri: String| {
-            Request::builder()
-                .method("PUT")
-                .uri(uri)
-                .header("content-type", "application/json")
-                .body(Body::from(payload.to_string()))
+        for scenario in [
+            "unsigned",
+            "signed",
+            "invalid",
+            "expired",
+            "resolved",
+            "concurrent",
+            "legacy",
+        ] {
+            let (status, body) = request(
+                &app,
+                "POST",
+                "/api/report",
+                true,
+                json!({"scenario": scenario}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let issued = url::Url::parse(body["data"]["signed_url"].as_str().unwrap()).unwrap();
+            let token = issued
+                .query_pairs()
+                .find(|(key, _)| key == "token")
                 .unwrap()
-        };
-        assert_eq!(
-            app.clone()
-                .oneshot(request(url.clone()))
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::UNAUTHORIZED
-        );
-        assert_eq!(
-            app.oneshot(request(format!("{url}?token={token}")))
-                .await
-                .unwrap()
-                .status(),
-            StatusCode::OK
-        );
-        assert_eq!(
-            upload_by_capability(&pool, "another-report", &token, &payload)
-                .await
-                .unwrap(),
-            0
-        );
-        assert_eq!(
-            upload_by_capability(
+                .1
+                .into_owned();
+            let path = issued.path();
+            let filename = path.rsplit('/').next().unwrap();
+            let full = format!("{path}?token={token}");
+            let row = sqlx::query("SELECT signed_url, upload_token_hash FROM explore.place_reports WHERE filename = $1").bind(filename).fetch_one(&pool).await.unwrap();
+            assert!(!row.get::<String, _>("signed_url").contains('?'));
+            assert_eq!(
+                row.get::<Vec<u8>, _>("upload_token_hash"),
+                Sha256::digest(token.as_bytes()).to_vec()
+            );
+            let (reports, _) = list_reports(
                 &pool,
-                &filename,
-                "00000000000000000000000000000000",
-                &payload
+                &ReportQuery {
+                    status: None,
+                    entity_id: None,
+                    limit: None,
+                    offset: None,
+                },
             )
             .await
-            .unwrap(),
-            0
-        );
-        sqlx::query("UPDATE explore.place_reports SET created_at = timezone('UTC', now()) - interval '1 day' WHERE filename = $1")
-            .bind(&filename).execute(&pool).await.unwrap();
-        assert_eq!(
-            upload_by_capability(&pool, &filename, &token, &payload)
+            .unwrap();
+            assert!(!serde_json::to_string(&reports).unwrap().contains(&token));
+            let payload = json!({"reason": scenario});
+            assert_eq!(
+                request(
+                    &app,
+                    "PUT",
+                    &format!("{path}?token=bad"),
+                    false,
+                    payload.clone()
+                )
+                .await
+                .0,
+                StatusCode::UNAUTHORIZED
+            );
+            assert_eq!(
+                upload_by_capability(
+                    &pool,
+                    filename,
+                    "00000000000000000000000000000000",
+                    &payload
+                )
                 .await
                 .unwrap(),
-            0
-        );
-        sqlx::query("DELETE FROM explore.place_reports WHERE filename = $1")
-            .bind(&filename)
+                0
+            );
+            assert_eq!(
+                upload_by_capability(&pool, "another-report", &token, &payload)
+                    .await
+                    .unwrap(),
+                0
+            );
+            if scenario == "signed" {
+                // A valid signature from a different wallet cannot replace the evidence.
+                sqlx::query("UPDATE explore.place_reports SET reporter = 'another-wallet' WHERE filename = $1").bind(filename).execute(&pool).await.unwrap();
+                assert_eq!(
+                    request(&app, "PUT", path, true, payload.clone()).await.0,
+                    StatusCode::NOT_FOUND
+                );
+                sqlx::query("UPDATE explore.place_reports SET reporter = $2 WHERE filename = $1")
+                    .bind(filename)
+                    .bind(crate::shared::signed_fetch::test_support::address())
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            if scenario == "expired" {
+                sqlx::query("UPDATE explore.place_reports SET created_at = timezone('UTC', now()) - interval '1 day' WHERE filename = $1").bind(filename).execute(&pool).await.unwrap();
+                assert_eq!(
+                    request(&app, "PUT", &full, false, payload.clone()).await.0,
+                    StatusCode::UNAUTHORIZED
+                );
+            }
+            if scenario == "legacy" {
+                sqlx::query("UPDATE explore.place_reports SET upload_token_hash = NULL, signed_url = $2 WHERE filename = $1").bind(filename).bind(issued.as_str()).execute(&pool).await.unwrap();
+                let (rows, _) = list_reports(
+                    &pool,
+                    &ReportQuery {
+                        status: None,
+                        entity_id: None,
+                        limit: None,
+                        offset: None,
+                    },
+                )
+                .await
+                .unwrap();
+                assert!(!serde_json::to_string(&rows).unwrap().contains(&token));
+                assert_eq!(
+                    request(&app, "PUT", &full, false, payload.clone()).await.0,
+                    StatusCode::UNAUTHORIZED
+                );
+            }
+            if scenario == "resolved" {
+                let id =
+                    sqlx::query_scalar("SELECT id FROM explore.place_reports WHERE filename = $1")
+                        .bind(filename)
+                        .fetch_one(&pool)
+                        .await
+                        .unwrap();
+                resolve_report(
+                    &pool,
+                    id,
+                    &ReportPatch {
+                        status: "resolved".into(),
+                        resolution: None,
+                        notes: None,
+                        resolved_by: None,
+                    },
+                )
+                .await
+                .unwrap();
+                assert_eq!(
+                    request(&app, "PUT", &full, false, payload.clone()).await.0,
+                    StatusCode::UNAUTHORIZED
+                );
+                assert_eq!(
+                    request(&app, "PUT", path, true, payload.clone()).await.0,
+                    StatusCode::NOT_FOUND
+                );
+                resolve_report(
+                    &pool,
+                    id,
+                    &ReportPatch {
+                        status: "open".into(),
+                        resolution: None,
+                        notes: None,
+                        resolved_by: None,
+                    },
+                )
+                .await
+                .unwrap();
+                assert_eq!(
+                    request(&app, "PUT", &full, false, payload.clone()).await.0,
+                    StatusCode::UNAUTHORIZED
+                );
+                continue;
+            }
+            if scenario == "concurrent" {
+                let (first, second) = tokio::join!(
+                    request(&app, "PUT", &full, false, payload.clone()),
+                    request(&app, "PUT", &full, false, payload.clone())
+                );
+                assert!(matches!(
+                    (first.0, second.0),
+                    (StatusCode::OK, StatusCode::UNAUTHORIZED)
+                        | (StatusCode::UNAUTHORIZED, StatusCode::OK)
+                ));
+            } else {
+                let upload = match scenario {
+                    "signed" => path.to_owned(),
+                    "invalid" => format!("{path}?token=bad"),
+                    _ => full.clone(),
+                };
+                assert_eq!(
+                    request(
+                        &app,
+                        "PUT",
+                        &upload,
+                        scenario != "unsigned",
+                        payload.clone()
+                    )
+                    .await
+                    .0,
+                    StatusCode::OK,
+                    "{scenario}"
+                );
+            }
+            assert_eq!(
+                request(&app, "PUT", &full, false, json!({"reason":"overwrite"}))
+                    .await
+                    .0,
+                StatusCode::UNAUTHORIZED
+            );
+            let stored: Value =
+                sqlx::query_scalar("SELECT payload FROM explore.place_reports WHERE filename = $1")
+                    .bind(filename)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(stored, payload, "{scenario}");
+        }
+    }
+    #[test]
+    fn forwarded_host_cannot_insert_query_or_credentials_into_upload_urls() {
+        let mut headers = HeaderMap::new();
+        for host in [
+            "node.example?token=injected",
+            "node.example/path",
+            "user@node.example",
+            "node.example#fragment",
+        ] {
+            headers.insert("x-forwarded-host", host.parse().unwrap());
+            assert_eq!(request_base_url(&headers), "http://127.0.0.1");
+        }
+    }
+
+    #[tokio::test]
+    async fn capability_migration_scrubs_legacy_tokens_without_granting_authority() {
+        let pool = crate::db::scratch::pool(2)
+            .await
+            .expect("report migration regression requires CATALYST_TEST_DATABASE_URL");
+        // Recreate the previous column shape on this disposable test database.
+        sqlx::query("ALTER TABLE explore.place_reports DROP COLUMN upload_token_hash")
             .execute(&pool)
             .await
             .unwrap();
+        sqlx::query(r#"INSERT INTO explore.place_reports (filename, reporter, signed_url, payload) VALUES ('legacy', 'reporter', 'https://node.example/upload/legacy?token=secret', '{"reason":"kept"}')"#).execute(&pool).await.unwrap();
+        sqlx::raw_sql(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/schemas/migrations/0016_report_upload_capabilities.sql"
+        )))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let row = sqlx::query("SELECT signed_url, upload_token_hash, payload FROM explore.place_reports WHERE filename = 'legacy'").fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            row.get::<String, _>("signed_url"),
+            "https://node.example/upload/legacy"
+        );
+        assert!(row.get::<Option<Vec<u8>>, _>("upload_token_hash").is_none());
+        assert_eq!(row.get::<Value, _>("payload"), json!({"reason":"kept"}));
     }
 }
