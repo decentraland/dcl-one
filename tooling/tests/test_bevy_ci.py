@@ -192,13 +192,15 @@ class SelectionTest(unittest.TestCase):
         result = ci.select(self.base, self.commit())
         self.assertFalse(any(result[lane] for lane in ci.LANES) or result['scenes'])
 
-    def test_schema_files_rebuild_images_and_independent_crates_or_docs_do_not(self):
+    def test_images_track_schema_and_cli_manifest_but_skip_cli_source_and_docs(self):
         base = self.base
-        for name, expected in (('schemas/10_explore.sql', True), ('apps/dcl-scene-cli/src/main.rs', False),
+        for name, expected in (('schemas/10_explore.sql', True), ('apps/dcl-scene-cli/Cargo.toml', True),
+                               ('apps/dcl-scene-cli/src/main.rs', False),
                                ('rendering/bevy-explorer/README.md', False)):
             self.write(name, 'changed')
             head = self.commit()
             self.assertEqual(ci.consumer_changed(base, head, 'images'), expected, name)
+            self.assertFalse(any(ci.select(base, head)[lane] for lane in ci.LANES), name)
             base = head
 
     def test_consumer_failure_to_find_a_successful_baseline_builds_images(self):

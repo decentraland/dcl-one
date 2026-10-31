@@ -41,6 +41,7 @@ IMAGES_INPUTS = (
     'infra/packages/**',
     'infra/containers/**',
     'services/catalyst/**',
+    'apps/dcl-scene-cli/Cargo.toml',
     'schemas/**',
     'library/**',
     '.cargo/**',
