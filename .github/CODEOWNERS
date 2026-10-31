@@ -78,6 +78,7 @@
 # shop-ui
 /apps/ui3/src/shop/ @decentraland/web-applications
 /apps/sites/src/routes/shop/ @decentraland/web-applications
+/tooling/shop-parity/ @decentraland/web-applications
 
 # explore-ui
 /apps/ui3/src/explorer/ @decentraland/web-applications

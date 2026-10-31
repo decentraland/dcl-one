@@ -812,12 +812,22 @@ mod receive_policy {
     fn native_receive_valid_declaration_above_old_max_reports_before_allocation() {
         let (mut host, sender) = rig();
         enet_test_allocation_peak(true);
-        // Exercise admission directly: UDP delivery need not precede a nonblocking service call.
-        let event = inject(
-            &mut host,
-            &sender,
-            fragment(64 * 1024 * 1024, 2, 0, 0, true, 0, 1),
-        );
+        sender
+            .send_to(
+                &fragment(64 * 1024 * 1024, 2, 0, 0, true, 0, 1),
+                host.socket().local_addr().unwrap(),
+            )
+            .unwrap();
+        // Loopback delivery is asynchronous on macOS: the datagram is not always readable on
+        // the first non-blocking poll after send_to, so poll until the host reports it.
+        let started = std::time::Instant::now();
+        let mut event = None;
+        while event.is_none() && started.elapsed() < core::time::Duration::from_secs(5) {
+            event = host.service().unwrap().map(Event::no_ref);
+            if event.is_none() {
+                std::thread::sleep(core::time::Duration::from_millis(1));
+            }
+        }
         assert_eq!(
             enet_test_allocation_peak(false),
             0,
