@@ -1630,34 +1630,62 @@ impl IpfsIo {
         about: &mut ServerAbout,
         new_realm: &str,
     ) -> Result<(), anyhow::Error> {
-        let scenes_raw = self
-            .client
-            .get(format!("{new_realm}/scenes"))
-            .send()
-            .await
-            .map_err(|e| anyhow!(e))?;
-        if scenes_raw.status() == StatusCode::NOT_FOUND {
-            return Ok(());
-        } else if scenes_raw.status() != StatusCode::OK {
-            return Err(anyhow!("status: {}", scenes_raw.status()));
+        // The /scenes endpoint paginates, so a world with more scenes than one page returns would
+        // otherwise be truncated to that first page. Page through all of them and collect every
+        // scene's URN. The realm is user-chosen (e.g. a `realm=` deep link) and this runs while the
+        // client has no realm set, so the loop is bounded on the client, not only by the server:
+        // it dedupes by entity id and stops as soon as a page adds nothing new (an empty page, or a
+        // server that ignores `offset` and keeps returning the same one), a page cap backstops a
+        // server reporting a bogus `total`, and each request has its own timeout.
+        let mut all_scenes: Vec<ServerScene> = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        let mut total = 0usize;
+        let mut offset = 0usize;
+        const MAX_PAGES: usize = 50;
+        for _ in 0..MAX_PAGES {
+            let query_offset = offset.to_string();
+            let scenes_raw = self
+                .client
+                .get(format!("{new_realm}/scenes"))
+                .query(&[("limit", "100"), ("offset", query_offset.as_str())])
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+                .await
+                .map_err(|e| anyhow!(e))?;
+            if scenes_raw.status() == StatusCode::NOT_FOUND {
+                return Ok(());
+            } else if scenes_raw.status() != StatusCode::OK {
+                return Err(anyhow!("status: {}", scenes_raw.status()));
+            }
+            let page = scenes_raw
+                .json::<ServerScenes>()
+                .await
+                .map_err(|e| anyhow!(e))?;
+            total = page.total;
+            offset += page.scenes.len();
+            let mut added = 0;
+            for scene in page.scenes {
+                if seen.insert(scene.entity_id.clone()) {
+                    all_scenes.push(scene);
+                    added += 1;
+                }
+            }
+            if added == 0 || all_scenes.len() >= total {
+                break;
+            }
         }
-        let scenes = scenes_raw
-            .json::<ServerScenes>()
-            .await
-            .map_err(|e| anyhow!(e))?;
 
-        if scenes.total > 0 {
+        if total > 0 {
             if let Some(scenes_urn) = about.configurations.as_mut().and_then(|config| {
                 config
                     .scenes_urn
                     .as_mut()
                     .filter(|scenes| !scenes.is_empty())
             }) {
-                if scenes_urn.len() != scenes.total {
+                if scenes_urn.len() != total {
                     let ipfs_path = IpfsPath::new_from_urn::<EntityDefinition>(&scenes_urn[0])?;
 
-                    *scenes_urn = scenes
-                        .scenes
+                    *scenes_urn = all_scenes
                         .into_iter()
                         .map(|scene| {
                             format!(
