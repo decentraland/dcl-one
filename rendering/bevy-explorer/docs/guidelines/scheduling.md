@@ -22,7 +22,7 @@ flowchart LR
   end
   subgraph PostUpdate
     direction LR
-    ETP[EarlyTransformPropagate] --> CU[ColliderUpdate] --> PU[PlayerUpdate] --> CAM[CameraUpdate] --> IK[InverseKinematics] --> NT[Nametag] --> AS[AttachSync] --> BB[Billboard] --> TP[bevy TransformPropagate]
+    ETP[EarlyTransformPropagate] --> EBB[EarlyBillboard] --> CU[ColliderUpdate] --> PU[PlayerUpdate] --> CAM[CameraUpdate] --> IK[InverseKinematics] --> NT[Nametag] --> AS[AttachSync] --> BB[Billboard] --> TP[bevy TransformPropagate]
   end
   Update --> PostUpdate
 ```
@@ -82,13 +82,14 @@ index of every ordering point around the avatar, camera and collider transform p
 | Variant | Purpose |
 |---|---|
 | `EarlyTransformPropagate` | A first propagation so the sets below see current globals |
+| `EarlyBillboard` | Re-applies billboard rotations a scene transform write replaced, facing the previous frame's camera, so local transforms read below (a virtual camera parented to a billboard) are billboarded. Globals keep the scene's write until `TransformPropagate` |
 | `ColliderUpdate` | Collider transforms and the scene qbvh |
 | `PlayerUpdate` | Player movement and ground resolution |
 | `CameraUpdate` | Camera follow and modes |
 | `InverseKinematics` | Foot and head IK, plus a propagate of the avatar subtree |
 | `Nametag` | Nametag positioning from post-IK globals |
 | `AttachSync` | Avatar-attach and scene-proxy position sync |
-| `Billboard` | Billboard orientation |
+| `Billboard` | Billboard orientation, facing this frame's camera |
 
 A system that needs a position in `PostUpdate` goes `.in_set(PostUpdateSets::X)` as a
 producer or `.after(PostUpdateSets::X)` as a consumer. If an ordering point is genuinely

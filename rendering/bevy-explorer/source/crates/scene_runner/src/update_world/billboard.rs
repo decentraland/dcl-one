@@ -25,9 +25,15 @@ impl Plugin for BillboardPlugin {
             ComponentPosition::EntityOnly,
         );
 
+        // a scene write to a billboarded entity's transform replaces the billboarded rotation, so
+        // re-apply it (against the previous frame's camera) before the camera reads it. the final
+        // pass faces this frame's camera.
         app.add_systems(
             PostUpdate,
-            update_billboards.in_set(PostUpdateSets::Billboard),
+            (
+                update_billboards.in_set(PostUpdateSets::EarlyBillboard),
+                update_billboards.in_set(PostUpdateSets::Billboard),
+            ),
         );
     }
 }
@@ -100,7 +106,7 @@ pub(crate) fn update_billboards(
     contexts: Query<&RendererSceneContext>,
     cam: Query<&Transform, (With<PrimaryCamera>, Without<Billboard>)>,
 ) {
-    // read the camera's local Transform rather than its GlobalTransform: this system runs after
+    // read the camera's local Transform rather than its GlobalTransform: the final pass runs after
     // CameraUpdate (which writes the camera's local Transform) but before the frame's transform
     // propagation, so the camera's GlobalTransform is still a frame stale. the camera is a root
     // entity, so its GlobalTransform is just its Transform.
