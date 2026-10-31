@@ -14,11 +14,12 @@
   position: sticky;
   top: 16px;
 }
-/* Pinned under the site nav and the subnav, scrolling inside when every section is expanded. */
+/* Pinned under the site nav and the subnav (upstream's 92 + 66 = 158px at full width; the site nav is
+   shorter at ≤991px), scrolling inside when every section is expanded, 24px clear of the screen edge. */
 @media (min-width: 901px) {
   .shop-browse__col {
-    top: 158px;
-    max-height: calc(100vh - 182px);
+    top: calc(var(--site-header-h, 92px) + 66px);
+    max-height: calc(100vh - var(--site-header-h, 92px) - 66px - 24px);
   }
   .shop-browse__sidebar {
     min-height: 0;

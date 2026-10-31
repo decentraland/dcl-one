@@ -7,6 +7,7 @@ import { SHOP_BASE } from "../../routes";
 import { fetchCollectionItems, type CollectionSummary } from "../api";
 import { useProfile } from "../hooks";
 import { t } from "../intl";
+import { addressAvatarColor, avatarInitial } from "../lib/avatarColor";
 import type { CatalogItem } from "../lib/catalogItem";
 import { rarityMedia } from "../lib/rarity";
 import { useShopQuery } from "../query";
@@ -27,19 +28,13 @@ export function CollectionMosaic({ items }: { items: CatalogItem[] }) {
   );
 }
 
-function colorForAddress(addr: string): string {
-  let hash = 0;
-  for (let i = 0; i < addr.length; i++) hash = (hash * 31 + addr.charCodeAt(i)) >>> 0;
-  return `hsl(${hash % 360}, 52%, 45%)`;
-}
-
 function CreatorRow({ address }: { address: string }) {
   const navigate = useNavigate();
   const profile = useProfile(address);
   const [broken, setBroken] = useState(false);
   useEffect(() => setBroken(false), [profile?.picture]);
   const name = profile?.name ? profile.name.charAt(0).toUpperCase() + profile.name.slice(1) : shortAddress(address);
-  const initial = (profile?.name?.trim()?.[0] || address.replace(/^0x/i, "")[0] || "?").toUpperCase();
+  const initial = avatarInitial(profile?.name, address);
   return (
     <button
       type="button"
@@ -54,7 +49,7 @@ function CreatorRow({ address }: { address: string }) {
       {profile?.picture && !broken ? (
         <img className="shop-colcard__ava" src={profile.picture} alt="" loading="lazy" onError={() => setBroken(true)} />
       ) : (
-        <span className="shop-colcard__ava" data-letter style={{ backgroundColor: colorForAddress(address) }} aria-hidden>
+        <span className="shop-colcard__ava" data-letter style={{ backgroundColor: addressAvatarColor(address) }} aria-hidden>
           {initial}
         </span>
       )}

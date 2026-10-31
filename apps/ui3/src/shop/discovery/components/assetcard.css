@@ -186,9 +186,17 @@
 .shop-card__sub {
   font-size: 12px;
   margin-bottom: 2px;
+  color: #a09ba8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* market/components/ItemCard.tsx (the favourites and My Items card) shares this sheet and keeps its taller line. */
+.shop-card__body:not([data-row]) .shop-card__sub {
+  margin-bottom: 0;
+  line-height: 1.43;
 }
 .shop-card__sub[data-issued] {
-  color: #a09ba8;
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.2px;
 }
@@ -285,6 +293,8 @@
   font-size: 12px;
   line-height: normal;
   text-transform: uppercase;
+  /* ItemCard paints this chip in the full rarity colour; AssetCard sets its own label colour inline. */
+  color: #fff;
 }
 .shop-card__chip[data-variant="icon"] {
   width: 20px;

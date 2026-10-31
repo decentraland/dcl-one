@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router";
 
 import { fetchCommunityProfiles } from "../../data/hooks/useCommunityProfiles";
+import { shortAddress } from "../model/address";
 import { shopClient } from "../api/shop";
 import { readMirrorFreshness, type IndexFreshness } from "./freshness";
 import { fetchCampaign, type Campaign } from "./lib/contentful";
@@ -122,22 +123,23 @@ function batchedProfile(address: string): Promise<CreatorProfile | null> {
   });
 }
 
+const creatorAddress = (address: string | null | undefined) => (address && /^0x[0-9a-fA-F]{40}$/.test(address) ? address.toLowerCase() : null);
+
 export function useCreatorProfile(address: string | null | undefined): { profile: CreatorProfile | null; loading: boolean } {
-  const addr = address && /^0x[0-9a-fA-F]{40}$/.test(address) ? address.toLowerCase() : null;
+  const addr = creatorAddress(address);
   const { data, isLoading } = useShopQuery(addr ? ["creator-name", addr] : null, () => batchedProfile(addr!), { staleMs: 5 * 60_000 });
   return { profile: data ?? null, loading: !!addr && isLoading && data === undefined };
 }
 
 export function useCreatorName(address: string | null | undefined): string | undefined {
-  const addr = address && /^0x[0-9a-fA-F]{40}$/.test(address) ? address.toLowerCase() : null;
-  const { data, isLoading } = useShopQuery(addr ? ["creator-name", addr] : null, () => batchedProfile(addr!), { staleMs: 5 * 60_000 });
+  const { profile, loading } = useCreatorProfile(address);
+  const addr = creatorAddress(address);
   if (!address) return undefined;
   if (!addr) return address;
-  if (isLoading && data === undefined) return undefined;
-  const name = data?.name?.trim();
-  if (!name) return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-  const shown = name.charAt(0).toUpperCase() + name.slice(1);
-  return shown;
+  if (loading) return undefined;
+  const name = profile?.name?.trim();
+  if (!name) return shortAddress(addr);
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 const SITE_NAME = "Decentraland Shop";

@@ -19,6 +19,9 @@ const COLORS: Record<string, string> = {
 };
 
 // The product card's per-rarity tile: `glow` is a radial gradient whose ellipse is `size` of the tile on both axes.
+// from: shop@3a322cf9:app/src/styles/theme.ts (rarityCard, rarityCardNone). Upstream keeps `label` apart from the
+// rarity colour on purpose: epic's chip text is #438fff and legendary's #b05dff while their flaps (rarityColor) are
+// #289cff and #a24bf3.
 const CARD: Record<string, { stroke: string; label: string; size: string; glow: string }> = {
   common: { stroke: "#a0f4ff", label: "#73d3d3", size: "74.3%", glow: "rgb(223 244 245) 36.5%, rgb(169 228 228) 68.3%, rgb(115 211 211) 100%" },
   uncommon: { stroke: "#ffb4aa", label: "#ff8362", size: "65.9%", glow: "rgb(255 202 187) 45.7%, rgb(255 167 143) 72.8%, rgb(255 131 98) 100%" },
