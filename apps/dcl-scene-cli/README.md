@@ -72,6 +72,11 @@ commands, `/scene-json`, `/scene-thumbnail`, `/data-layer?token=`) need `Authori
 <token>`, else 401. Pages get it only by `<meta>` on a top-level loopback navigation or a `#token=`
 fragment.
 
+On **Scene**, use Left/Right, Home or End to switch editor tabs. In **Shape**, arrow keys
+move between parcels; Space or Enter toggles a parcel. **Add spawn area** opens numeric
+coordinates as an alternative to drawing. Save or Cancel finishes the spawn draft.
+Errors stay visible until dismissed; successful saves are announced briefly.
+
 ### Voice and multiplayer
 
 The embedded LiveKit uses 7880-7882; `--no-livekit` and `--tunnel` use the ws-room (no audio). An
@@ -99,6 +104,11 @@ dcl-scene-cli storage export [--out FILE] | import FILE [--merge]
 
 The preview serves the storage service's routes from `.dcl-one/storage.sqlite` or forwards them,
 signed, upstream; a bare command acts where the preview's **Storage** tab points.
+
+Browser imports merge by default. Unchecking **Merge with existing values** requires
+confirmation before replacing every local scope. JSON values are parsed; quote a string
+such as `"true"` to keep it as text. Environment values are always text. Use Previous/Next
+to browse larger listings.
 
 ## Share it
 

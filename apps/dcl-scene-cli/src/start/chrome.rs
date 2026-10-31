@@ -176,6 +176,7 @@ pub(crate) fn document(
   <div class="bar__mark"><span class="bar__dot"></span>DCL Scene CLI <span id="preview-connection" data-health-url="{health_url}" role="status" aria-live="polite"></span></div>
   {nav}
 </header>
+<div class="page-feedback"><div id="page-errors" role="alert" aria-atomic="true"></div><div id="page-feedback" role="status" aria-live="polite" aria-atomic="true"></div></div>
 {body}
 </body>
 </html>
