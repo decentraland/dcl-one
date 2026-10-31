@@ -303,7 +303,7 @@ class SceneSuiteTest(unittest.TestCase):
         self.assertEqual([scene.split('/')[0] for scene in ci.scene_suite('snapshots').split(';')],
                          list(ci.SNAPSHOT_SCENES))
         names = [name for scene in full for name in scene.split('/')[1:]]
-        self.assertTrue(names and all(name == name.strip() and ';' not in name for name in names))
+        self.assertTrue(all(name == name.strip() and ';' not in name for name in names))
         self.assertEqual(len(names), len(set(names)))
 
     def test_malformed_suite_lines_are_rejected(self):

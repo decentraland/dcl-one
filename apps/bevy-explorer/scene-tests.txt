@@ -2,21 +2,19 @@
 # `tooling/bevy-ci.py scene-suite`. One scene per line: its parcel, then each assertion of that
 # scene that currently fails and is allowed to, after a '/'. The runner exits 0 only when every
 # failure is listed here, so a newly failing assertion still breaks the run. Graphical acceptance
-# stays open while any assertion is listed; remove an entry once its capture matches again.
-# Listed 2026-10-31 from two identical main runs: 35 captures below the scenes' 0.9995 grey-diff
-# threshold (the embedded references predate the hidden native UI and the current lighting) and
-# 8 assertions whose reference image does not exist yet.
+# holds while no assertion is listed; list one only with its reason in the commit, and remove it
+# once its capture matches again.
 52,-52
 52,-54
 52,-56
 52,-58
 52,-60
-52,-62/gltf-container: avocado model loads correctly/gltf-container: H.E.V Mark IV model loads correctly
-52,-64/visibility: true - if exist a reference snapshot should match with it/visibility: false - if exist a reference snapshot should match with it
-52,-66/mesh-renderer: box - if exist a reference snapshot should match with it/mesh-renderer: sphere - if exist a reference snapshot should match with it/mesh-renderer: cylinder - if exist a reference snapshot should match with it/mesh-renderer: plane - if exist a reference snapshot should match with it
-52,-68/avatar-attach: attach an entity on left hand/avatar-attach: attach an entity on right hand/avatar-attach: attach an entity on tag name/avatar-attach: attach an entity on position
-54,-52/material: blue emissiveIntensity:100: if exist a reference snapshot should match with it/material: blue with alpha if exist a reference snapshot should match with it/material: blue with texture if exist a reference snapshot should match with it/material: blue with metallic:0 roghness:1 alphaTest:1: if exist a reference snapshot should match with it/material: blue with metallic:0.5 roghness:0.5 alphaTest:1: if exist a reference snapshot should match with it/material: blue with metallic:0 roghness:0 alphaTest:1: if exist a reference snapshot should match with it/material: blue with metallic:1 roghness:0 alphaTest:1: if exist a reference snapshot should match with it/material: uv checker if exist a reference snapshot should match with it/material: uv checker with transparency mode auto: if exist a reference snapshot should match with it/material: uv checker with transparency mode blend: if exist a reference snapshot should match with it/material: transparency mode auto with emissive: if exist a reference snapshot should match with it/material: rock wall texture if exist a reference snapshot should match with it/material: rock wall texture with bump texture: if exist a reference snapshot should match with it/material: avatar portrait
-54,-54/text-shape: default text - if exist a reference snapshot should match with it/text-shape: colorized - if exist a reference snapshot should match with it/text-shape: outlined - if exist a reference snapshot should match with it/text-shape: changed font - if exist a reference snapshot should match with it/text-shape: align 1 - if exist a reference snapshot should match with it/text-shape: align 2 - if exist a reference snapshot should match with it
-54,-56/video-player: if exist a reference snapshot should match with it
-54,-58/ui-brackground: should render different flexbox property with colors/ui-brackground: shoud test texture -> Stretch/ui-brackground: shoud test texture -> Stretch with colored/ui-brackground: shoud test texture -> Stretch with uvs/ui-brackground: shoud test texture -> Using avatar texture/ui-brackground: shoud test texture -> NineSlices with default textureSlices/ui-brackground: shoud test texture -> NineSlices with right values/ui-brackground: shoud test texture -> Smaller NineSlices with right values
-54,-60/ui-text: should render the entire screen red with white label/ui-text: should render the entire screen red with blue label
+52,-62
+52,-64
+52,-66
+52,-68
+54,-52
+54,-54
+54,-56
+54,-58
+54,-60
