@@ -107,7 +107,14 @@ non-Linux package jobs use `Headless packages / build (...)`. Linux package comp
 Graphical tests do not run automatically on PRs or block builds; check their verdict and
 readiness (evidence supplied for the task) before claiming graphical acceptance. Manual dispatch accepts a
 chosen ref; use `--ref main` for main validation. The default `full` suite runs all 14 scenes;
-`snapshots` selects three diagnostic scenes and cannot establish acceptance.
+`snapshots` selects three diagnostic scenes and cannot establish acceptance. `scene-tests.txt`
+lists every scene and the assertions it currently allows to fail (`tooling/bevy-ci.py scene-suite`
+turns it into the runner's `--test_scenes` argument); a run passes only when every failure is
+listed, so a new failure still fails main. The step summary (`scene-summary`) reports the counts,
+unlisted failures and listed assertions that pass again, which should then be removed. Graphical
+acceptance stays open while the list is non-empty: the 43 listed assertions are 35 captures below
+the scenes' grey-diff threshold, because the embedded references predate the hidden native UI and
+the current lighting, and 8 assertions whose reference image does not exist yet.
 
 The graphical job has a 100-minute limit; scene execution has 20 minutes, leaving time to upload
 logs and captures. Same-ref runs are serialized without cancelling the active run. Pushes compare
@@ -118,8 +125,8 @@ The harness retains player simulation but renders only 256×256 snapshot windows
 unused sky cubemap. Native UI is hidden and the background clock is frozen; scene lighting and
 scene-authored time overrides remain active. Captures wait for completed render frames without
 pending shader pipelines. Native video textures are held until GPU readback, then queued updates
-resume. References keep their CPU pixels; invalid images fail comparison. References, thresholds
-and allowed failures are unchanged; see measurements (evidence supplied for the task).
+resume. References keep their CPU pixels; invalid images fail comparison. References and the
+scenes' thresholds are unchanged; the allowed failures are the ones `scene-tests.txt` lists.
 
 ## Naming and publication
 

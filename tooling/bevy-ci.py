@@ -10,6 +10,8 @@ import subprocess
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = '.github/workflows/bevy-explorer-ci.yml'
 SCENES_WORKFLOW = '.github/workflows/bevy-explorer-scenes.yml'
+SCENE_SUITE = 'apps/bevy-explorer/scene-tests.txt'
+SNAPSHOT_SCENES = ('52,-62', '52,-64', '52,-66')
 PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Smoke'}
 LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
@@ -72,6 +74,7 @@ APP_INPUTS = {
     'build-headless.py': ('headless',),
     'install-linux-deps.py': (*LANES, 'scenes'),
     'prepare-native-cache.py': ('clippy', 'test', 'headless', 'native-matrix', 'scenes'),
+    'scene-tests.txt': ('scenes',),
 }
 
 
@@ -241,6 +244,47 @@ def scenes_plan(event, base, head):
         return {'scenes': True, 'sha': head, 'reason': 'Comparison unavailable; run graphical tests'}
 
 
+def scene_suite(suite):
+    """The --test_scenes argument: each scene's parcel, then the failures it allows."""
+    scenes = []
+    for line in (ROOT / SCENE_SUITE).read_text().splitlines():
+        if not line or line.startswith('#'):
+            continue
+        parcel, *allowed = line.split('/')
+        if (not re.fullmatch(r'-?[0-9]+,-?[0-9]+', parcel) or ';' in line
+                or any(not name or name != name.strip() for name in allowed)):
+            raise ValueError(f'Malformed scene suite line: {line!r}')
+        scenes.append(line)
+    if suite == 'snapshots':
+        scenes = [scene for scene in scenes if scene.split('/')[0] in SNAPSHOT_SCENES]
+    return ';'.join(scenes)
+
+
+def scene_summary(suite, outcome, log):
+    """One step-summary line: assertion counts, failures the suite does not list, listed ones
+    that pass again, and that acceptance stays open while any failure is listed."""
+    verdicts = re.findall(r'automatic_testing: test .*: (true|false) \[[0-9]+ remaining\]', log)
+    passed, failed = verdicts.count('true'), verdicts.count('false')
+    failures = re.findall(r'"\[\((-?[0-9]+,-?[0-9]+)\) : (.*)\]",\n\s*".*",\n\s*(true|false),', log)
+    listed = {(scene.split('/')[0], name) for scene in scene_suite(suite).split(';')
+              for name in scene.split('/')[1:]}
+    unexpected = [f'({parcel}) {name}' for parcel, name, expected in failures if expected == 'false']
+    complete = 'all tests passed!' in log or 'all failures were allowed' in log
+    stale = sorted(f'({parcel}) {name}' for parcel, name in listed - {(p, n) for p, n, _ in failures}) if complete else []
+    text = f'Graphical scene tests ({suite}): **{outcome}**. {passed} assertions passed, {failed} failed'
+    if not verdicts:
+        text += '; no assertion ran, see the scene-test log artifact'
+    elif failed:
+        text += f'; {failed - len(unexpected)} of them are listed in `{SCENE_SUITE}`, so graphical acceptance stays open'
+    else:
+        text += '; graphical acceptance holds for this suite' if not listed else f'; `{SCENE_SUITE}` still lists failures'
+    if unexpected:
+        text += '. Not listed: ' + ', '.join(unexpected)
+    if stale:
+        text += '. Listed but passing, remove them: ' + ', '.join(stale)
+    return text + '. Only the full suite establishes graphical acceptance; see the scene-test log artifact.\n'
+
+
 def image_matrix(products):
     return {'include': [
         {'product': product, 'arch': arch, 'runner': 'ubuntu-24.04' + ('-arm' if arch == 'arm64' else '')}
@@ -330,11 +374,22 @@ def write_outputs(values):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan'))
+    parser.add_argument('command', choices=('plan', 'source', 'scenes-plan', 'consumer-plan',
+                                            'scene-suite', 'scene-summary'))
     parser.add_argument('--consumer', choices=('images', 'headless'))
     parser.add_argument('--base', default=os.environ.get('BASE_SHA', ''))
     parser.add_argument('--head', default=os.environ.get('GITHUB_SHA', 'HEAD'))
+    parser.add_argument('--suite', choices=('full', 'snapshots'), default='full')
+    parser.add_argument('--outcome', default='')
+    parser.add_argument('--log', default='scene-tests.log')
     args = parser.parse_args()
+    if args.command == 'scene-suite':
+        print(scene_suite(args.suite))
+        return
+    if args.command == 'scene-summary':
+        log = Path(args.log).read_text() if Path(args.log).exists() else ''
+        print(scene_summary(args.suite, args.outcome, log), end='')
+        return
     if args.command != 'source':
         head = git('rev-parse', args.head).strip()
         event = os.environ.get('GITHUB_EVENT_NAME', 'local')
