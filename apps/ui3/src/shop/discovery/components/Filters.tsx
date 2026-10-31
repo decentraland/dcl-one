@@ -245,7 +245,7 @@ export default function Filters(props: FiltersProps) {
   const maxPct = priceToSliderPct(sliderMax);
 
   return (
-    <div className="shop-filters" data-testid="filters">
+    <div className="shop-filters">
       <FilterSection title={t("assets.category")} open={openCategory} onToggle={() => setOpenCategory((o) => !o)} summary={categorySummary} desktopStatic>
         <CategoryFilter
           category={category}
@@ -306,7 +306,7 @@ export default function Filters(props: FiltersProps) {
             onBlur={commitSlide}
           />
         </div>
-        <div className="shop-filters__range" data-testid="price-range-labels">
+        <div className="shop-filters__range">
           <span>
             <Icon name="credits" size={16} />
             {sliderMin.toLocaleString("en-US")}

@@ -79,7 +79,7 @@ export default function FilterBar({
         {onOpenFilters ? (
           <button type="button" className="shop-filterbar__pill" data-testid="open-filters" onClick={onOpenFilters}>
             {t("filterBar.filters")}
-            <Icon name="filter" size={16} />
+            <Icon name="filter" size={20} className="shop-filterbar__pillicon" />
           </button>
         ) : null}
       </div>
@@ -115,7 +115,6 @@ export function SortDropdown({ value, options, onChange }: { value: string; opti
         aria-haspopup="listbox"
         aria-expanded={open}
         aria-label={t("filterBar.sortBy")}
-        data-testid="sort-trigger"
         onClick={() => setOpen((o) => !o)}
       >
         <span>{t("filterBar.sortBy")}</span>

@@ -122,6 +122,12 @@ function batchedProfile(address: string): Promise<CreatorProfile | null> {
   });
 }
 
+export function useCreatorProfile(address: string | null | undefined): { profile: CreatorProfile | null; loading: boolean } {
+  const addr = address && /^0x[0-9a-fA-F]{40}$/.test(address) ? address.toLowerCase() : null;
+  const { data, isLoading } = useShopQuery(addr ? ["creator-name", addr] : null, () => batchedProfile(addr!), { staleMs: 5 * 60_000 });
+  return { profile: data ?? null, loading: !!addr && isLoading && data === undefined };
+}
+
 export function useCreatorName(address: string | null | undefined): string | undefined {
   const addr = address && /^0x[0-9a-fA-F]{40}$/.test(address) ? address.toLowerCase() : null;
   const { data, isLoading } = useShopQuery(addr ? ["creator-name", addr] : null, () => batchedProfile(addr!), { staleMs: 5 * 60_000 });
