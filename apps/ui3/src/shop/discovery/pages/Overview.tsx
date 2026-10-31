@@ -117,7 +117,7 @@ export default function Overview() {
       ) : listings.isLoading || items.length > 0 ? (
         <>
           <IndexNotice freshness={listings.data?.meta.freshness ?? listingsFreshness} what={t("overview.newCreations")} />
-          <Rail title={t("overview.newCreations")} items={items.slice(0, 12)} loading={listings.isLoading} source="new_creations" viewAllTo={`${SHOP_BASE}/items`} testId="new-creations-rail" />
+          <Rail title={t("overview.newCreations")} items={items.slice(0, 12)} loading={listings.isLoading} source="new_creations" viewAllTo={`${SHOP_BASE}/items`} />
           <div className="shop-overview__promos">
             <LivePromo
               to={`${SHOP_BASE}/items?category=emote`}

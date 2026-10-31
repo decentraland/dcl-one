@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { PRIMARY_WEARABLE, ShopHarness, type CatalogAnswers } from "../fixtures";
 import { invalidateShopQueries } from "../query";
-import OverviewOutfitsRow from "./OverviewOutfitsRow";
+import OverviewOutfitsRow, { orderOutfitsByRecency } from "./OverviewOutfitsRow";
 
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
@@ -46,6 +46,32 @@ describe("the overview's Buy the Look row", () => {
     expect(cards[0]).toHaveTextContent("Neon Bloom");
     expect(cards[0]).toHaveTextContent("1 item");
     expect(cards[0]).toHaveTextContent("12");
+    expect(within(cards[0]!).getByText("12 Credits")).toBeTruthy();
     expect(cards[0]!.getAttribute("href")).toBe("/shop/items/outfits/o1");
+  });
+});
+
+describe("orderOutfitsByRecency", () => {
+  const DAY = 24 * 60 * 60 * 1000;
+  const NOW = Date.UTC(2026, 9, 30);
+
+  it("shuffles, but puts each age bucket (7, 21, 60, 365 days, older) ahead of the next", () => {
+    const outfits = [400, 2, 30, 100, 10, 5, 3000, 20].map((days, i) => ({ id: i, createdAt: NOW - days * DAY }));
+    const bucket = (createdAt: number) => {
+      const i = [7, 21, 60, 365].findIndex((d) => NOW - createdAt < d * DAY);
+      return i === -1 ? 4 : i;
+    };
+    for (let run = 0; run < 20; run++) {
+      const order = orderOutfitsByRecency(outfits, NOW).map((o) => bucket(o.createdAt));
+      expect(order).toHaveLength(outfits.length);
+      expect(order).toEqual([...order].sort((a, b) => a - b));
+    }
+  });
+
+  it("leaves the list it is given as it was", () => {
+    const outfits = [{ createdAt: NOW - 30 * DAY }, { createdAt: NOW - DAY }];
+    const copy = [...outfits];
+    orderOutfitsByRecency(outfits, NOW);
+    expect(outfits).toEqual(copy);
   });
 });
