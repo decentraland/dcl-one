@@ -807,10 +807,14 @@ def wait_ready(timeout, postgres_only=False):
         processes = pc('process', 'list', '--output', 'json', capture_output=True, text=True)
         if processes.returncode:
             raise RuntimeError('The development supervisor is not running. Run foundation-dev up.')
-        for process in json.loads(processes.stdout):
-            if process.get('exit_code', 0) != 0 and not process.get('is_running'):
-                name = process['name']
-                raise RuntimeError(f'{name} failed. Inspect foundation-dev logs {name}.')
+        failed = {p['name'] for p in json.loads(processes.stdout)
+                  if p.get('exit_code', 0) != 0 and not p.get('is_running')}
+        if failed:
+            graph = project(config, postgres_only)['processes']
+            roots = sorted(name for name in failed
+                           if not failed.intersection(graph.get(name, {}).get('depends_on', {})))
+            name = (roots or sorted(failed))[0]
+            raise RuntimeError(f'{name} failed. Inspect foundation-dev logs {name}.')
         try:
             if postgres_only:
                 sql(config, 'SELECT 1', 'postgres')

@@ -42,3 +42,49 @@ that runs a script under `scripts/` must add it to the export assembler's `KEEP_
 
 Spawn the CLI through `error_contract.rs` `run()` (`CHILD_TIMEOUT`); never wait on a product timeout
 such as `DCL_SCENE_CLI_LINKER_TIMEOUT_SECS` (default 600).
+
+## Browser journeys in CI
+
+`Scene CLI journeys` builds the PR base and proposed CLI and runs the same 42
+stages against both: launch targets, scene editor, storage scopes and transfers,
+publishing targets, wallet handoff, missing integrations, offline feedback and
+tablet layouts (768 × 1024). Local HTTP fixtures replace upstream services. Runtime credentials
+are removed from child processes; no wallet signatures or live uploads occur.
+
+```sh
+node tooling/scene-cli-journeys.mjs --binary services/catalyst/target/debug/dcl-scene-cli \
+  --chrome chromium --label head --revision HEAD --output .cache/scene-cli-journeys/head
+python3 tooling/scene-cli-journey-report.py render .cache/scene-cli-journeys
+```
+
+Run from the repository root with Node 24+ and Chromium/Chrome. Add a second run
+with `--label base` and `--output .cache/scene-cli-journeys/base` for comparisons.
+Ports 18765–18766 must be free. Each run cleans its temporary processes and scene.
+Artifacts retain partial screenshots and errors when a stage fails. Changed
+screenshots request review; they do not fail a pixel baseline. Current visual
+defects are observable without tests requiring them to persist.
+
+The 30-day `scene-cli-journeys` artifact contains PNGs, manifests, logs and
+`report.html`. A trusted publisher updates one bot PR comment with changed journeys
+in collapsed `<details>` sections and direct GitHub image attachments. It creates
+no releases or tags. With no changes or failures it posts no initial comment;
+an existing comment is updated to clear stale results. Comparisons mask carets,
+clock labels, request counts and minted entity IDs; uploaded screenshots are
+unmodified. Live wallets, remote deployment,
+World mutations, voice and external clients/editors remain unverified boundaries.
+Capture and publishing are separate jobs in `.github/workflows/scene-cli-journeys.yml`.
+Automatic comments apply to same-repository PRs after the publisher script is on
+the default branch. Fork and Dependabot PRs retain artifacts; a maintainer can
+dispatch the same workflow with its `run_id` input to publish a completed run.
+The first PR can bootstrap publication locally with:
+
+```sh
+python3 tooling/scene-cli-journey-report.py publish --repo OWNER/REPO --run-id RUN_ID
+```
+
+This needs `GH_TOKEN` with Actions read, contents read and PR write permissions,
+and a token accepted by GitHub's attachment endpoint for inline images.
+If the endpoint refuses the token, the comment links to the artifact instead;
+no extra secret or storage service is required.
+See the [journey CI ADR](../../../docs/adr/2026-10-30-scene-cli-journey-ci.md) for the
+publication boundary.
