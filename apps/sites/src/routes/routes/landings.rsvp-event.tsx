@@ -4,6 +4,7 @@ import LdRsvpEventView from "@ui/landings/pages/LdRsvpEventView";
 import {
   eventCoords,
   eventJumpUrl,
+  eventOccurrence,
   formatEventWhen,
 } from "@/data/lib/catalyst/places/events";
 import { loadRsvp } from "@/data/lib/catalyst/landings/rsvp.server";
@@ -65,6 +66,7 @@ type LoaderData = Awaited<ReturnType<typeof loader>> extends Response
 export default function LandingsRsvpEvent({ loaderData }: Route.ComponentProps) {
   const { sid, step, eventId, assignment, rsvp } = loaderData as LoaderData;
   const e = rsvp.event;
+  const start = e ? eventOccurrence(e).start : undefined;
 
   const auth = useAuth();
   const commit = buildRsvpCommit(getIdentity);
@@ -72,10 +74,10 @@ export default function LandingsRsvpEvent({ loaderData }: Route.ComponentProps) 
   const view: RsvpEventView = {
     id: eventId,
     title: e?.name ?? "Event not found",
-    when: formatEventWhen(e?.start_at ?? e?.next_start_at ?? null),
+    when: formatEventWhen(start ?? null),
     host: e?.user_name ?? e?.scene_name ?? "Decentraland",
     description: e?.description ?? "This event may have ended or the link is no longer valid.",
-    schedule: formatEventWhen(e?.start_at ?? e?.next_start_at ?? null),
+    schedule: formatEventWhen(start ?? null),
     location: (e ? eventCoords(e) : null) ?? "Location not published",
     jumpHref:
       e?.url ??

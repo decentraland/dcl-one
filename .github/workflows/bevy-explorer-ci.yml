@@ -144,6 +144,8 @@ jobs:
       group: ${{ github.workflow }}-test-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: true
     env:
+      # Use system Git for LiveKit's libyuv submodule; libgit2's macOS TLS fetch can fail.
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       SCCACHE_GHA_ENABLED: 'true'
       SCCACHE_GHA_VERSION: dcl-bevy-windows-v1
     steps:
