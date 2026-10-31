@@ -1,13 +1,19 @@
 # dev entry points. `just --list` for a summary.
 # node recipes assume node 22+ on PATH (nvm users: the interactive shell's PATH is inherited).
 
+# recipe arguments reach the shell as "$@", so a realm url with `&` or spaces stays one argument
+set positional-arguments
+
+# the wasm rustflags (+atomics, ...) need nightly; same pin as apps/bevy-explorer/build-web.py
+wasm_toolchain := "nightly-2026-04-15"
+
 # build the wasm engine into deploy/web/engine/pkg, then serve the react-web page (which hosts
 # the engine + live bridge-scene preview) and open a browser at the vite dev server.
-wasm:
-    wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social"
+wasm: ts-bindings
+    RUSTUP_TOOLCHAIN={{wasm_toolchain}} wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social"
     rm -f ./deploy/web/engine/pkg/.gitignore
     WASM_SIZE=$(wc -c < ./deploy/web/engine/pkg/webgpu_build_bg.wasm) && echo "{\"wasmSize\":${WASM_SIZE}}" > ./deploy/web/engine/pkg/manifest.json
-    wasm-pack build crates/dcl_scene_wasm --target web --out-dir ../../deploy/web/engine/pkg-scene --no-default-features
+    RUSTUP_TOOLCHAIN={{wasm_toolchain}} wasm-pack build crates/dcl_scene_wasm --target web --out-dir ../../deploy/web/engine/pkg-scene --no-default-features
     rm -f ./deploy/web/engine/pkg-scene/.gitignore
     # inline the scene runtime's glue into the sandbox worker — the engine loads
     # pkg/sandbox_worker.bundle.js, so this must re-run on every wasm build.
@@ -29,15 +35,16 @@ bundle-native: ts-bindings
     cd react-web && npm run bundle:native
     mkdir -p target && touch target/.bundle-native-stamp
 
-# bundle only if react-web sources changed since the last successful bundle
+# bundle only if react-web or the Rust structs behind its generated types changed since the last
+# successful bundle
 _bundle-native-if-stale:
     #!/usr/bin/env sh
     set -eu
     stamp=target/.bundle-native-stamp
     if [ -f "$stamp" ] && [ -f assets/react-hud/app.html ] \
        && [ -f assets/bridge-scene/BevyExplorerUI/about ] \
-       && [ -z "$(find react-web -name node_modules -prune -o -type f -newer "$stamp" -print | head -n 1)" ]; then
-        echo "react-web unchanged; skipping bundle (just bundle-native to force)"
+       && [ -z "$(find react-web crates/system_api_types -name node_modules -prune -o -type f -newer "$stamp" -print | head -n 1)" ]; then
+        echo "HUD sources unchanged; skipping bundle (just bundle-native to force)"
     else
         just bundle-native
     fi
@@ -47,15 +54,16 @@ _bundle-native-if-stale:
 native-debug *ARGS: _bundle-native-if-stale
     cargo build --package dcl_deno_ipc
     cargo build --bin decentra-bevy-cef
-    cargo run --bin decentra-bevy -- {{ARGS}}
+    cargo run --bin decentra-bevy -- "$@"
 
 # build + run the native app (release) with the CEF react HUD
 native-release *ARGS: _bundle-native-if-stale
     cargo build --release --package dcl_deno_ipc
     cargo build --release --bin decentra-bevy-cef
-    cargo run --release --bin decentra-bevy -- {{ARGS}}
+    cargo run --release --bin decentra-bevy -- "$@"
 
-# one-time per machine: fetch the CEF framework the dev fallback loads from
+# one-time per machine: fetch the CEF framework. only macos falls back to it at runtime; on linux
+# and windows the loader must find it (LD_LIBRARY_PATH on linux, see readme.md)
 setup-cef:
     cargo install export-cef-dir --version "139.8.0+139.0.40"
     export-cef-dir --force $HOME/.local/share/cef

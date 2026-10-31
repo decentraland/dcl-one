@@ -62,7 +62,9 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   arguments after them (`--realm <url> --position x,y`). Both bundle the HUD when it is stale.
   A bare `cargo run` gives a login screen with no HUD because the bundle isn't built. Both
   binaries build: `cargo build --package dcl_deno_ipc` then `cargo build`. `just setup-cef`
-  fetches the CEF framework once. Packaging follows the [native build steps](running.md#native).
+  fetches the CEF framework once; only macOS falls back to it at runtime, so the `just` loop is
+  macOS-first (see [Running](running.md#native) for Linux and Windows). Packaging follows the
+  [native build steps](running.md#native).
 - **CEF `localStorage` is ephemeral.** Anything the native HUD must remember goes through
   `lib/prefs`, which the engine persists to disk. No native popups from the HUD: CEF's popup
   windows aren't composited into the texture.

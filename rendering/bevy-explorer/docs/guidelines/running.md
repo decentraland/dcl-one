@@ -21,7 +21,9 @@ just native-debug --realm <about-url> --position x,y
 
 `just native-debug` bundles the HUD when stale and runs the client. A plain `cargo run` boots to
 a login screen with no HUD. Both binaries must build: `cargo build --package dcl_deno_ipc`,
-then `cargo build`.
+then `cargo build`. This loop is verified on macOS, the only platform where the client falls back
+to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` (see
+`source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs.
 
 To package, follow the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml):
 pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With those installed:
