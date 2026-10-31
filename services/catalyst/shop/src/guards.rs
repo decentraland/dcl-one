@@ -166,6 +166,12 @@ pub fn refusal_json(refusal: &Refusal) -> Value {
         Refusal::CreditValueTooLarge { value, cap } => {
             json!({ "code": "creditValueTooLarge", "value": value, "cap": cap })
         }
+        Refusal::SettlementNeedAboveReference { need, reference } => {
+            json!({ "code": "settlementNeedAboveReference", "need": need, "reference": reference })
+        }
+        Refusal::UnlistedMarketplace { venue } => {
+            json!({ "code": "unlistedMarketplace", "chainId": venue.chain_id, "contract": venue.contract })
+        }
     }
 }
 

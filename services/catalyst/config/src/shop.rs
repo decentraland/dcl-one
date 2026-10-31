@@ -321,6 +321,16 @@ pub struct ShopConfig {
     #[arg(long, env = "MANA_PRICE_MAX_STALENESS_SECS", default_value_t = DEFAULT_MANA_PRICE_MAX_STALENESS_SECS)]
     pub mana_price_max_staleness_secs: i64,
 
+    /// The oldest round of a marketplace's MANA/USD feed a credit for a
+    /// USD-pegged trade is sized at; the marketplace's own tolerance applies
+    /// too, and the stricter wins. Past it the authorization is refused (503).
+    #[arg(
+        long,
+        env = "CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS",
+        default_value_t = 3600
+    )]
+    pub credits_usd_pegged_feed_max_age_secs: u64,
+
     /// primary (the legacy secondary | auto run as primary: credits pay for
     /// CollectionStore mints only, SHOP.md).
     #[arg(long, env = "CHECKOUT_FULFILLMENT_MODE", default_value = "primary")]

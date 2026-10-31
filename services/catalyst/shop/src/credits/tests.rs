@@ -8,10 +8,12 @@
 //! the observable results they guarded are.
 
 use std::collections::HashMap;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use alloy::signers::{Signer as _, local::PrivateKeySigner};
+use alloy_primitives::Address;
 use async_trait::async_trait;
 use axum::Router;
 use axum::body::{Body, to_bytes};
@@ -2582,6 +2584,383 @@ async fn a_five_dollar_pack_signs_the_mana_of_five_hundred_cents_on_the_authoriz
 /// listing, nor against a LAND token, nor for a batch that hides a resale
 /// beside an item order; the line's kind comes from the decoded trade and
 /// the mirror, never from the request. Eligible primaries still pledge.
+/// The tests' MANA/USD feed: a rate (or a refusal) per marketplace, and the
+/// marketplaces it was asked about.
+#[derive(Default)]
+struct FakeFeed {
+    answers: std::sync::Mutex<HashMap<Address, Result<String, String>>>,
+    asked: std::sync::Mutex<Vec<(u64, Address)>>,
+}
+
+impl FakeFeed {
+    fn answer(&self, marketplace: Address, answer: Result<&str, &str>) {
+        self.answers.lock().unwrap().insert(
+            marketplace,
+            answer.map(str::to_string).map_err(str::to_string),
+        );
+    }
+
+    fn asked(&self) -> Vec<(u64, Address)> {
+        self.asked.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl super::feed::MarketplaceFeed for FakeFeed {
+    async fn read(
+        &self,
+        chain_id: u64,
+        marketplace: Address,
+    ) -> Result<super::feed::FeedReading, String> {
+        self.asked.lock().unwrap().push((chain_id, marketplace));
+        let answer = self
+            .answers
+            .lock()
+            .unwrap()
+            .get(&marketplace)
+            .cloned()
+            .unwrap_or_else(|| Err("no feed for this marketplace".to_string()))?;
+        Ok(super::feed::FeedReading {
+            rate: crate::types::ManaUsdRate::parse_usd_per_mana(&answer).unwrap(),
+            aggregator: Address::repeat_byte(0xa1),
+            tolerance_secs: 3_600,
+            updated_at_s: chrono::Utc::now().timestamp(),
+            block: 1,
+            block_hash: alloy_primitives::B256::ZERO,
+        })
+    }
+}
+
+#[test]
+fn the_feed_age_limit_is_a_positive_comparable_number_of_seconds() {
+    let with = |secs: u64| {
+        Settings::parse(RawSettings {
+            credits_usd_pegged_feed_max_age_secs: secs,
+            ..RawSettings::default()
+        })
+    };
+    assert_eq!(
+        Settings::parse(RawSettings::default())
+            .unwrap()
+            .credits_usd_pegged_feed_max_age_secs,
+        3_600
+    );
+    assert!(with(0).is_err(), "0 would refuse every USD-pegged credit");
+    assert!(with(1).is_ok());
+    assert!(with(i64::MAX as u64).is_ok());
+    assert!(
+        with(i64::MAX as u64 + 1).is_err(),
+        "past i64::MAX the limit cannot be compared with a timestamp"
+    );
+}
+
+#[tokio::test]
+async fn a_usd_pegged_credit_is_sized_at_its_listed_marketplaces_feed_within_the_quotes_cap() {
+    let Some(db) = OwnDatabase::create("feed").await else {
+        return;
+    };
+    let pool = db.pool.clone();
+    let manager = "0x8b3a40ca1b6f5cafc99d112a4d02e897d1fd8cc5".to_string();
+    let signer_key = "0x4c0883a69102937d6231471b5dbb6204fe512961708279f2e3e8a5d4b8e3e3e3";
+    let mut settings = Settings::parse(RawSettings {
+        writes_enabled: true,
+        mock_card: true,
+        credits_onchain_authorize_enabled: true,
+        credits_signer_key: Some(signer_key.into()),
+        credits_manager_contract: Some(manager.clone()),
+        mana_price_max_staleness_secs: 3600,
+        ..RawSettings::default()
+    })
+    .unwrap();
+    settings.usage = super::usage::Settings {
+        enabled: true,
+        rpc_url: Some("http://127.0.0.1:9/".into()),
+        chain_id: 137,
+        contract: Some(manager.clone()),
+        ..super::usage::Settings::default()
+    };
+    // The index has folded no block time yet: no expiry can be confirmed.
+    sqlx::query("INSERT INTO credits.usage_index_cursor (chain_id, contract, last_block, folded_block, folded_at) VALUES (137, $1, 100, 100, timezone('UTC', now()))")
+        .bind(&manager)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The Polygon marketplace this node knows, one it does not, and the
+    // Amoy deployment named on a Polygon trade.
+    const LISTED: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
+    const UNLISTED: &str = "0x540fb08edb56aae562864b390542c97f562825ba";
+    const AMOY_V3: &str = "0x257db44ac97789c16ab277eae87dcde0c246cc9f";
+    const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";
+    let marketplace = Address::from_str(LISTED).unwrap();
+    let trade = |contract: &str, received: Value| {
+        json!({ "id": "x", "signer": CREATOR, "signature": "0x00", "type": "public_item_order", "network": "MATIC", "chainId": 137, "contract": contract,
+                "checks": { "uses": 1, "expiration": 4102444800000i64, "effective": 0, "salt": "0x", "contractSignatureIndex": 0, "signerSignatureIndex": 0 },
+                "sent": [{ "assetType": 4, "contractAddress": COLLECTION, "itemId": "4" }], "received": [received] })
+    };
+    // $2.00 pegged (USD wei), and 4 MANA.
+    let usd_two = json!({ "assetType": 2, "contractAddress": MANA_POLYGON, "amount": "2000000000000000000", "beneficiary": CREATOR });
+    let mana_four = json!({ "assetType": 1, "contractAddress": MANA_POLYGON, "amount": "4000000000000000000", "beneficiary": CREATOR });
+    let market = FakeMarket::default()
+        .with_item(COLLECTION, "4", "4000000000000000000", true)
+        .with_trade("be6e", trade(LISTED, usd_two.clone()))
+        .with_trade("0bad", trade(UNLISTED, usd_two.clone()))
+        .with_trade("0bad-1", trade(UNLISTED, mana_four))
+        .with_trade("a0e1", trade(AMOY_V3, usd_two))
+        .with_mana_usd("0.5");
+    let feed = Arc::new(FakeFeed::default());
+    let state: SharedState = Arc::new(
+        State::with_sources(
+            pool.clone(),
+            Outbound::for_tests(),
+            settings,
+            Arc::new(market),
+            Arc::new(MockBroker::configured()),
+            None,
+        )
+        .with_gate(Arc::new(super::settlement::FixedGate(Ok(()))))
+        .with_feed(feed.clone()),
+    );
+    let lane = app(state.clone());
+    let funded = || async {
+        let wallet = scratch_wallet();
+        let (status, v) = call(
+            &lane,
+            &wallet,
+            "post",
+            "/credits/packs/credits_usd_5/mock-purchase",
+            &[],
+            None,
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{v}");
+        wallet
+    };
+    let wallet = funded().await;
+    let authorize = |body: Value| {
+        let lane = &lane;
+        let wallet = &wallet;
+        async move {
+            call(
+                lane,
+                wallet,
+                "post",
+                "/credits/credits/authorize",
+                &[],
+                Some(body),
+            )
+            .await
+        }
+    };
+    let pegged = json!({ "usdPriceCents": 200, "tradeId": "be6e" });
+    let rows = |address: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (String, String, String, i16, i64)>(
+                "SELECT id, status, oracle_rate::text, oracle_decimals, usd_cents FROM credits.authorizations WHERE address = $1 ORDER BY created_at",
+            )
+            .bind(address)
+            .fetch_all(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let held = |address: String| {
+        let state = state.clone();
+        async move { state.credits.spendable(&address).await.unwrap().held_cents }
+    };
+    feed.answer(marketplace, Ok("0.5"));
+
+    // A trade on a marketplace this node does not list, or on a listed one
+    // of another chain, is refused by the rule: no feed read, nothing signed
+    // or reserved, whether it is USD-pegged or priced in MANA.
+    for (trade_id, what) in [
+        ("0bad", "an unknown contract"),
+        ("0bad-1", "an unknown contract, MANA-priced"),
+        ("a0e1", "the Amoy marketplace on a Polygon trade"),
+    ] {
+        let (status, v) = authorize(json!({ "usdPriceCents": 200, "tradeId": trade_id })).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{what}: {v}");
+        assert_eq!(v["refusal"], "unlisted_marketplace", "{what}: {v}");
+    }
+    assert!(feed.asked().is_empty(), "no feed was read");
+    assert!(rows(wallet.address.clone()).await.is_empty());
+
+    // No feed answer: refused before anything is signed or reserved.
+    feed.answer(marketplace, Err("the round is stale"));
+    let (status, v) = authorize(pegged.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{v}");
+    assert_eq!(v["source"], super::feed::SOURCE, "{v}");
+    assert!(
+        rows(wallet.address.clone()).await.is_empty(),
+        "nothing reserved: {v}"
+    );
+    assert_eq!(available(&pool, &wallet.address).await, "50");
+    assert_eq!(
+        feed.asked(),
+        vec![(137, marketplace)],
+        "the listed marketplace is read"
+    );
+
+    // The feed answers 0.495 while the snapshot says 0.50: the $2 trade needs
+    // 4.0404 MANA, under the 4.08 its quote allows; the credit is held to
+    // that reference rather than the 4.12 the buffered need would be.
+    feed.answer(marketplace, Ok("0.495"));
+    let (status, v) = authorize(pegged.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(v["credit"]["amount"], "4080000000000000000", "{v}");
+    assert_eq!(
+        v["maxCreditedValue"], v["credit"]["amount"],
+        "the spend limit is the signed value"
+    );
+    assert_eq!(
+        v["usdCents"], 200,
+        "the debit is the quoted cents, whatever the rate"
+    );
+    assert_eq!(v["oracleRate"], "495000000000000000");
+    let first = rows(wallet.address.clone()).await;
+    assert_eq!(first.len(), 1);
+    assert_eq!(
+        (first[0].2.as_str(), first[0].3, first[0].4),
+        ("495000000000000000", 18, 200),
+        "the row records the feed rate a remainder is priced at"
+    );
+    assert_eq!(
+        super::settlement::remainder_credits(
+            "1010000000000000000",
+            Some(&first[0].2),
+            Some(first[0].3)
+        ),
+        Some(5),
+        "1.01 MANA at 0.495 is 50 cents, 5 credits (at the 0.50 snapshot it would be 6)"
+    );
+
+    // At 0.45 the trade needs 4.44 MANA, above the 4.08 the quote allows:
+    // refused, not signed short and not signed larger.
+    feed.answer(marketplace, Ok("0.45"));
+    let (status, v) = authorize(pegged.clone()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{v}");
+    assert_eq!(
+        rows(wallet.address.clone()).await.len(),
+        1,
+        "nothing more reserved"
+    );
+
+    // The buyer cancels the first credit (say its purchase reverted). Its
+    // signature can still be used until it expires, so its reservation stays.
+    let (status, v) = call(
+        &lane,
+        &wallet,
+        "post",
+        "/credits/credits/authorize/cancel",
+        &[],
+        Some(json!({ "salts": [first[0].0] })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        held(wallet.address.clone()).await,
+        200,
+        "a retired credit is still held"
+    );
+
+    // A new authorization needs balance of its own: 400 of the 500 cents
+    // are held after it, so a third is refused.
+    feed.answer(marketplace, Ok("0.5"));
+    let (status, v) = authorize(pegged.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(
+        v["credit"]["amount"], "4080000000000000000",
+        "4 MANA at 0.50, times 1.02"
+    );
+    assert_eq!(held(wallet.address.clone()).await, 400);
+    let (status, v) = authorize(pegged.clone()).await;
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED, "{v}");
+    assert_eq!(held(wallet.address.clone()).await, 400);
+
+    // Past the retired credit's expiry by the clock, but the index has not
+    // read the chain that far: the reservation is kept.
+    sqlx::query("UPDATE credits.authorizations SET expires_at = timezone('UTC', now()) - interval '1 minute' WHERE id = $1")
+        .bind(&first[0].0)
+        .execute(&pool)
+        .await
+        .unwrap();
+    state.credits.expire_stale_authorizations().await.unwrap();
+    assert_eq!(rows(wallet.address.clone()).await[0].1, "retired");
+    assert_eq!(
+        held(wallet.address.clone()).await,
+        400,
+        "the clock alone never releases a credit"
+    );
+    // Once the index has folded a block past the expiry, it is released.
+    sqlx::query("UPDATE credits.usage_index_cursor SET folded_block_time = timezone('UTC', now()) WHERE chain_id = 137")
+        .execute(&pool)
+        .await
+        .unwrap();
+    state.credits.expire_stale_authorizations().await.unwrap();
+    assert_eq!(rows(wallet.address.clone()).await[0].1, "released");
+    assert_eq!(held(wallet.address.clone()).await, 200);
+
+    // A retry of the same signed request while the feed is down answers the
+    // credit already reserved: same salt, value and signature, one reservation.
+    let other = funded().await;
+    let headers = signed_headers(&other, "post", "/credits/credits/authorize").await;
+    let send_as = |headers: HeaderMap| {
+        let lane = &lane;
+        let pegged = pegged.clone();
+        async move {
+            send(
+                lane,
+                "POST",
+                "/credits/credits/authorize",
+                headers,
+                Some(pegged),
+            )
+            .await
+        }
+    };
+    let (status, _, original) = send_as(headers.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{original}");
+    feed.answer(marketplace, Err("the endpoint is down"));
+    let asked = feed.asked().len();
+    let (status, _, replayed) = send_as(headers).await;
+    assert_eq!(status, StatusCode::OK, "{replayed}");
+    assert_eq!(
+        replayed["credit"], original["credit"],
+        "the same credit, signature included"
+    );
+    assert_eq!(feed.asked().len(), asked, "a replay never reads the feed");
+    assert_eq!(
+        rows(other.address.clone()).await.len(),
+        1,
+        "one reservation"
+    );
+    // Another wallet sending the same lines cannot reach that row.
+    let third = funded().await;
+    let (status, _, v) =
+        send_as(signed_headers(&third, "post", "/credits/credits/authorize").await).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{v}");
+    assert!(rows(third.address.clone()).await.is_empty());
+
+    // A group with no USD-pegged line never reads the feed and records the
+    // quote rate.
+    feed.answer(marketplace, Ok("0.5"));
+    let asked = feed.asked().len();
+    let (status, v) = call(
+        &lane,
+        &third,
+        "post",
+        "/credits/credits/authorize",
+        &[],
+        Some(json!({ "usdPriceCents": 200, "contractAddress": COLLECTION, "itemId": "4" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    assert_eq!(feed.asked().len(), asked);
+    assert_eq!(v["oracleRate"], "500000000000000000");
+
+    db.drop().await;
+}
+
 #[tokio::test]
 async fn the_authorize_lane_refuses_every_resale_spelling_and_pledges_primaries_only() {
     let Some(db) = OwnDatabase::create("rule").await else {
@@ -2612,7 +2991,7 @@ async fn the_authorize_lane_refuses_every_resale_spelling_and_pledges_primaries_
         .execute(&pool)
         .await
         .unwrap();
-    const MARKETPLACE_V3: &str = "0x540fb08edb56aae562864b390542c97f562825ba";
+    const MARKETPLACE_V3: &str = "0xe38ef22abe871513555cba89adfe45ab4f548ada";
     const LAND_REGISTRY: &str = "0xf87e31492faf9a91b02ee0deaad50d51d56d5d4d";
     const STRANGER: &str = "0x00000000000000000000000000000000000000d1";
     const MANA_POLYGON: &str = "0xa1c57f48f0deb89f569dfbe6e2b7f46d33606fd4";

@@ -468,6 +468,23 @@ impl Credits {
         Ok(res.rows_affected() as i64)
     }
 
+    /// The authorization `address` already reserved under `idempotency_key`,
+    /// if any. The key is derived from the signer, and the address is
+    /// checked too, so no other wallet finds the row.
+    pub async fn authorization_for_key(
+        &self,
+        idempotency_key: &str,
+        address: &str,
+    ) -> Result<Option<String>, ApiError> {
+        Ok(sqlx::query_scalar(
+            "SELECT id FROM credits.authorizations WHERE idempotency_key = $1 AND address = $2",
+        )
+        .bind(idempotency_key)
+        .bind(address)
+        .fetch_optional(&self.pool)
+        .await?)
+    }
+
     pub async fn get_authorization(&self, id: &str) -> Result<Option<AuthorizationRow>, ApiError> {
         let row = sqlx::query(
             "SELECT id, address, usd_cents, amount_wei::text AS amount_wei, status, expires_at, chain_id, contract, credit_hash, \

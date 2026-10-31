@@ -79,6 +79,7 @@ pub mod digest;
 pub mod dto;
 pub mod errors;
 pub mod escrow;
+pub mod feed;
 pub mod handlers;
 pub mod history;
 pub mod money;
@@ -148,6 +149,8 @@ pub struct RawSettings {
     pub marketplace_markup_bps: i64,
     /// `MANA_PRICE_MAX_STALENESS_SECS` (300).
     pub mana_price_max_staleness_secs: i64,
+    /// `CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS` (3600).
+    pub credits_usd_pegged_feed_max_age_secs: u64,
     /// `CHECKOUT_FULFILLMENT_MODE` (primary; the legacy secondary | auto run as primary).
     pub checkout_fulfillment_mode: String,
     /// `CREDITS_REQUIRE_PURCHASE_INTENT` (true).
@@ -215,6 +218,7 @@ impl Default for RawSettings {
             credits_currency: DEFAULT_CREDITS_CURRENCY.to_string(),
             marketplace_markup_bps: DEFAULT_MARKETPLACE_MARKUP_BPS,
             mana_price_max_staleness_secs: DEFAULT_MANA_PRICE_MAX_STALENESS_SECS,
+            credits_usd_pegged_feed_max_age_secs: 3_600,
             checkout_fulfillment_mode: DEFAULT_CHECKOUT_FULFILLMENT_MODE.to_string(),
             require_purchase_intent: DEFAULT_REQUIRE_PURCHASE_INTENT,
             checkout_worker_interval_secs: DEFAULT_CHECKOUT_WORKER_INTERVAL_SECS,
@@ -257,6 +261,7 @@ pub struct Settings {
     pub credits_currency: String,
     pub marketplace_markup_bps: i64,
     pub mana_price_max_staleness_secs: i64,
+    pub credits_usd_pegged_feed_max_age_secs: u64,
     pub checkout_fulfillment_mode: String,
     pub require_purchase_intent: bool,
     pub checkout_worker_interval: Duration,
@@ -391,6 +396,14 @@ impl Settings {
                 crate::types::CreditSizing::MAX_HEADROOM_PCT
             );
         }
+        if raw.credits_usd_pegged_feed_max_age_secs == 0
+            || raw.credits_usd_pegged_feed_max_age_secs > i64::MAX as u64
+        {
+            anyhow::bail!(
+                "CREDITS_USD_PEGGED_FEED_MAX_AGE_SECS must be between 1 and {}: 0 refuses every USD-pegged credit, and a larger value cannot be compared with a timestamp",
+                i64::MAX
+            );
+        }
         if raw.credit_buffer_bps > crate::types::CreditSizing::MAX_BUFFER_BPS {
             anyhow::bail!(
                 "CREDITS_ORACLE_BUFFER_BPS must be at most {}",
@@ -421,6 +434,7 @@ impl Settings {
             },
             marketplace_markup_bps: raw.marketplace_markup_bps,
             mana_price_max_staleness_secs: raw.mana_price_max_staleness_secs,
+            credits_usd_pegged_feed_max_age_secs: raw.credits_usd_pegged_feed_max_age_secs,
             checkout_fulfillment_mode: parse_fulfillment_mode(&raw.checkout_fulfillment_mode)?,
             require_purchase_intent: raw.require_purchase_intent,
             checkout_worker_interval: Duration::from_secs(raw.checkout_worker_interval_secs.max(1)),
@@ -458,6 +472,7 @@ impl Settings {
             writes_enabled: true,
             require_purchase_intent: false,
             mana_price_max_staleness_secs: 3600,
+            credits_usd_pegged_feed_max_age_secs: 3_600,
             ..RawSettings::default()
         })
         .expect("the defaults parse")
@@ -488,6 +503,8 @@ pub struct State {
     pub gate: Arc<dyn settlement::IssuanceGate>,
     /// The `revokeCredits` sender, with `CREDITS_REVOKER_KEY_FILE` over the index's endpoint.
     pub revoker: Option<Arc<settlement::Revoker>>,
+    /// The MANA/USD feed a USD-pegged group's marketplace settles at (`feed.rs`).
+    pub feed: Arc<dyn feed::MarketplaceFeed>,
 }
 
 pub type SharedState = Arc<State>;
@@ -560,6 +577,13 @@ impl State {
             )),
             None => Arc::new(settlement::ClosedGate),
         };
+        let feed: Arc<dyn feed::MarketplaceFeed> = match &chain {
+            Some(chain) => Arc::new(feed::ChainFeed::new(
+                chain.clone(),
+                settings.credits_usd_pegged_feed_max_age_secs,
+            )),
+            None => Arc::new(feed::NoFeed),
+        };
         let revoker = match (&chain, settings.credits_revoker_key.as_deref()) {
             (Some(chain), Some(key)) => match settlement::Revoker::new(
                 credits.clone(),
@@ -587,12 +611,19 @@ impl State {
             settings,
             gate,
             revoker,
+            feed,
         }
     }
 
     /// The tests' gate in place of the chain read.
     pub fn with_gate(mut self, gate: Arc<dyn settlement::IssuanceGate>) -> Self {
         self.gate = gate;
+        self
+    }
+
+    /// The tests' MANA/USD feed in place of the chain read.
+    pub fn with_feed(mut self, feed: Arc<dyn feed::MarketplaceFeed>) -> Self {
+        self.feed = feed;
         self
     }
 
