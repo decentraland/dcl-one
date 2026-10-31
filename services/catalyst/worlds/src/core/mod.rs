@@ -37,6 +37,7 @@ pub mod forwarding;
 pub mod http;
 pub mod manifest;
 pub mod names;
+pub mod owners;
 pub mod permissions;
 pub mod scenes;
 pub mod settings;
@@ -60,7 +61,7 @@ use tokio::sync::mpsc;
 use crate::auth::Eip1654Validator;
 use crate::comms::presence::Presence;
 use crate::comms::world_identity::WorldName;
-use crate::jobs::Jobs;
+use crate::jobs::{Jobs, PeriodicCfg};
 use crate::policy::Policy;
 use crate::shared::cors;
 use crate::shared::identity::Address;
@@ -84,6 +85,8 @@ pub struct Settings {
     /// `GLOBAL_SCENES_URN`: scenes the configuration names, kept by the blob
     /// store collector (`/admin/gc`).
     pub global_scenes_urn: Vec<String>,
+    /// `WORLDS_OWNER_RECONCILE_INTERVAL_SECS`: the [`owners::JOB`] period; `None` is off.
+    pub owner_reconcile_interval: Option<Duration>,
 }
 
 impl std::fmt::Debug for Settings {
@@ -106,7 +109,14 @@ impl Settings {
             admin_token: admin_token.filter(|t| !t.trim().is_empty()),
             upload_limits: upload_limits.validate(deploy::MAX_UPLOAD_SIZE_BYTES as u64)?,
             global_scenes_urn: Vec::new(),
+            owner_reconcile_interval: None,
         })
+    }
+
+    /// The period (`WORLDS_OWNER_RECONCILE_INTERVAL_SECS`, 12 h by default); `0` is off.
+    pub fn with_owner_reconcile_interval_secs(mut self, secs: u64) -> Self {
+        self.owner_reconcile_interval = (secs > 0).then(|| Duration::from_secs(secs));
+        self
     }
 
     pub fn with_global_scenes_urn(mut self, raw: Option<&str>) -> Self {
@@ -121,6 +131,7 @@ impl Settings {
             admin_token: admin_token.map(str::to_string),
             upload_limits: UploadLimits::default(),
             global_scenes_urn: Vec::new(),
+            owner_reconcile_interval: None,
         }
     }
 }
@@ -372,8 +383,23 @@ impl CoreState {
     }
 
     /// The `worlds-access-log` job: drains the queue into `world_access_log`
-    /// in batches until shutdown, flushing what is left on cancel.
+    /// in batches until shutdown, flushing what is left on cancel; and the
+    /// leased [`owners::JOB`].
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
+        if let Some(interval) = self.settings.owner_reconcile_interval {
+            let state = self.clone();
+            let cfg = PeriodicCfg::every(interval)
+                .with_jitter(Duration::from_secs(60))
+                .with_error_backoff(Duration::from_secs(3600));
+            jobs.spawn_periodic_leased(owners::JOB, cfg, move |ctx| {
+                let state = state.clone();
+                async move {
+                    let summary = owners::reconcile(&state.pool, &state.policy).await?;
+                    ctx.progress(format!("{summary:?}"));
+                    Ok(())
+                }
+            });
+        }
         let Some(mut rx) = self.access_log_rx.lock().take() else {
             return;
         };

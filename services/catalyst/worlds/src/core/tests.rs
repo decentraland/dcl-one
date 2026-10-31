@@ -483,7 +483,8 @@ async fn first_deploy_seeds_the_resolved_name_owner() {
 
 /// A NAME transfer: the previous holder loses the publish and every owner
 /// route at once (the authority is asked, `worlds.owner` is only its cache),
-/// the new holder's publish rewrites the cache.
+/// `GET /permissions` names the new holder before any republish, and the new
+/// holder's publish rewrites the cache.
 #[tokio::test]
 async fn a_name_transfer_moves_ownership_on_the_next_publish() {
     let Some(f) = fixture().await else { return };
@@ -532,6 +533,14 @@ async fn a_name_transfer_moves_ownership_on_the_next_publish() {
         Some(old.address.as_str()),
         "a refused publish rewrites nothing"
     );
+    f.market.graph.name_owner.clear();
+    let permissions = expect(
+        &f.app,
+        Case::new("get", format!("/world/{}/permissions", world.display())),
+        200,
+    )
+    .await;
+    assert_eq!(permissions["owner"].as_str(), Some(new.address.as_str()));
 
     post_entity(
         &f.app,
@@ -556,6 +565,162 @@ async fn a_name_transfer_moves_ownership_on_the_next_publish() {
     )
     .await;
     assert_eq!(permissions["owner"].as_str(), Some(new.address.as_str()));
+}
+
+async fn seed_owned_world(pool: &PgPool, name: &str, owner: Option<&Address>, mirror: bool) {
+    sqlx::query(
+        "INSERT INTO worlds.worlds (name, owner, mirror_source) \
+         VALUES ($1, $2, CASE WHEN $3 THEN 'https://upstream.example' END)",
+    )
+    .bind(name)
+    .bind(owner)
+    .bind(mirror)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// The owner job rewrites a transferred NAME's world, keeps one already
+/// right and leaves alone a name the subgraph does not list, a mirrored
+/// world and a personal world. Counts are this fixture's: the scratch
+/// database is shared, so other tests' worlds are only unresolved here.
+#[tokio::test]
+async fn the_owner_job_reconciles_transferred_names_and_keeps_the_rest() {
+    let Some(f) = fixture().await else { return };
+    let (old, new, held) = (Wallet::random(), Wallet::random(), Wallet::random());
+    let (sold, kept, unknown, mirrored) = (world_name(), world_name(), world_name(), world_name());
+    let personal = format!("{}.dcl.eth", Wallet::random().address.as_str());
+    seed_owned_world(&f.pool, sold.key(), Some(&old.address), false).await;
+    seed_owned_world(&f.pool, kept.key(), Some(&held.address), false).await;
+    seed_owned_world(&f.pool, unknown.key(), Some(&old.address), false).await;
+    seed_owned_world(&f.pool, mirrored.key(), None, true).await;
+    seed_owned_world(&f.pool, &personal, Some(&old.address), false).await;
+    f.names.set(&new.address, sold.label());
+    f.names.set(&held.address, kept.label());
+    f.names.set(&held.address, mirrored.label());
+
+    let summary = super::owners::reconcile(&f.pool, &f.state.policy)
+        .await
+        .unwrap();
+    assert_eq!(summary.updated, 1);
+    assert_eq!(
+        summary.checked - summary.unresolved,
+        2,
+        "sold and kept resolved"
+    );
+    assert_eq!(
+        stored_owner(&f.pool, &sold).await.as_deref(),
+        Some(new.address.as_str())
+    );
+    assert_eq!(
+        stored_owner(&f.pool, &kept).await.as_deref(),
+        Some(held.address.as_str())
+    );
+    assert_eq!(
+        stored_owner(&f.pool, &unknown).await.as_deref(),
+        Some(old.address.as_str()),
+        "an unresolved name keeps its stored owner"
+    );
+    assert_eq!(stored_owner(&f.pool, &mirrored).await, None);
+    assert_eq!(
+        stored_owner(&f.pool, &WorldName::parse(&personal).unwrap())
+            .await
+            .as_deref(),
+        Some(old.address.as_str())
+    );
+}
+
+/// The public permissions document asks the name authority only for a
+/// world with a row, so random names cost no subgraph query.
+#[tokio::test]
+async fn the_permissions_document_of_an_unpublished_name_skips_the_authority() {
+    let Some(f) = fixture().await else { return };
+    let (holder, world) = (Wallet::random(), world_name());
+    f.names.set(&holder.address, world.label());
+    let permissions = expect(
+        &f.app,
+        Case::new("get", format!("/world/{}/permissions", world.display())),
+        200,
+    )
+    .await;
+    assert_eq!(permissions["owner"], serde_json::Value::Null);
+    assert_eq!(f.market.graph.name_owner.len(), 0);
+}
+
+/// More names than one subgraph query asks: every chunk is resolved.
+#[tokio::test]
+async fn the_owner_job_reconciles_past_one_query_of_names() {
+    let Some(f) = fixture().await else { return };
+    let (old, new) = (Wallet::random(), Wallet::random());
+    let worlds: Vec<WorldName> = (0..150).map(|_| world_name()).collect();
+    for w in &worlds {
+        seed_owned_world(&f.pool, w.key(), Some(&old.address), false).await;
+        f.names.set(&new.address, w.label());
+    }
+
+    let summary = super::owners::reconcile(&f.pool, &f.state.policy)
+        .await
+        .unwrap();
+    assert_eq!(summary.updated, 150);
+    assert_eq!(summary.checked - summary.unresolved, 150);
+    for w in [&worlds[0], &worlds[99], &worlds[149]] {
+        assert_eq!(
+            stored_owner(&f.pool, w).await.as_deref(),
+            Some(new.address.as_str())
+        );
+    }
+}
+
+/// A name with several tokens: the job stores the holder admission reads.
+#[tokio::test]
+async fn the_owner_job_and_admission_agree_on_a_name_with_several_tokens() {
+    let Some(f) = fixture().await else { return };
+    let (old, a, b) = (Wallet::random(), Wallet::random(), Wallet::random());
+    let world = world_name();
+    seed_owned_world(&f.pool, world.key(), Some(&old.address), false).await;
+    f.names.set(&a.address, world.label());
+    f.names.set(&b.address, world.label());
+    let first = std::cmp::min(a.address.as_str(), b.address.as_str());
+
+    let summary = super::owners::reconcile(&f.pool, &f.state.policy)
+        .await
+        .unwrap();
+    assert_eq!(summary.updated, 1);
+    assert_eq!(stored_owner(&f.pool, &world).await.as_deref(), Some(first));
+    let live = f.state.policy.current_owner(&world, None).await.unwrap();
+    assert_eq!(live.as_ref().map(|a| a.as_str()), Some(first));
+}
+
+/// A publish between the job's read and its write wins: the write compares
+/// with the owner it read.
+#[tokio::test]
+async fn the_owner_job_loses_a_race_with_a_publish() {
+    let Some(f) = fixture().await else { return };
+    let (read, published, holder) = (Wallet::random(), Wallet::random(), Wallet::random());
+    let world = world_name();
+    seed_owned_world(&f.pool, world.key(), Some(&published.address), false).await;
+    let change = |previous: &Wallet| super::owners::Change {
+        name: world.key().to_string(),
+        owner: holder.address.as_str().to_string(),
+        previous: Some(previous.address.as_str().to_string()),
+    };
+
+    let stale = super::owners::write(&f.pool, &[change(&read)])
+        .await
+        .unwrap();
+    assert_eq!(stale, 0);
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(published.address.as_str())
+    );
+    let fresh = super::owners::write(&f.pool, &[change(&published)])
+        .await
+        .unwrap();
+    assert_eq!(fresh, 1);
+    assert_eq!(
+        stored_owner(&f.pool, &world).await.as_deref(),
+        Some(holder.address.as_str())
+    );
 }
 
 /// A world this node only mirrored becomes local on its owner's publish: the
