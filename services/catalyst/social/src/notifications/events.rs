@@ -627,6 +627,49 @@ mod tests {
         catch_up_pages_live_audiences_and_retention(&pool).await;
     }
 
+    // The worker deliberately returns when its wall-clock budget expires.
+    // Assert eventual completion and durable progress across bounded passes,
+    // rather than requiring a particular runner to drain the queue in 5 seconds.
+    async fn drain_until_complete(
+        pool: &PgPool,
+        now: NaiveDateTime,
+        event_pattern: &str,
+        expected_intents: usize,
+    ) {
+        let mut previous = std::collections::HashMap::<Uuid, (String, bool)>::new();
+        for pass in 0..=32 {
+            let progress: Vec<(Uuid, String, bool)> = sqlx::query_as(
+                "SELECT id,recipient_after,processed_at IS NOT NULL
+                 FROM social.event_notification_intents WHERE event_id LIKE $1",
+            )
+            .bind(event_pattern)
+            .fetch_all(pool)
+            .await
+            .unwrap();
+            for (id, cursor, completed) in &progress {
+                if let Some((old_cursor, old_completed)) = previous.get(id) {
+                    assert!(
+                        cursor >= old_cursor,
+                        "a committed recipient cursor must not regress"
+                    );
+                    assert!(
+                        !old_completed || *completed,
+                        "completed intents must stay completed"
+                    );
+                }
+                previous.insert(*id, (cursor.clone(), *completed));
+            }
+            if progress.len() == expected_intents && progress.iter().all(|(_, _, done)| *done) {
+                return;
+            }
+            if pass == 32 {
+                break;
+            }
+            run_once(pool, "https://example.org", now).await.unwrap();
+        }
+        panic!("event notification queue did not complete within 32 resumable passes");
+    }
+
     async fn catch_up_pages_live_audiences_and_retention(pool: &PgPool) {
         let now = chrono::DateTime::parse_from_rfc3339("2101-06-01T18:00:00Z")
             .unwrap()
@@ -677,10 +720,7 @@ mod tests {
             plan[0]["Execution Time"], plan[0]["Plan"]
         );
         let before = std::time::Instant::now();
-        run_once(pool, "https://example.org", now).await.unwrap();
-        for _ in 0..3 {
-            run_once(pool, "https://example.org", now).await.unwrap();
-        }
+        drain_until_complete(pool, now, &format!("{prefix}:%"), 125).await;
         let notices: i64=sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE metadata->>'eventId' LIKE $1 AND type='events_started'")
             .bind(format!("{prefix}:%")).fetch_one(pool).await.unwrap();
         assert_eq!(
@@ -703,8 +743,8 @@ mod tests {
             before.elapsed()
         );
 
-        // A large community drains more than the previous ten-page cap in
-        // one budgeted pass; additional passes remain safe on slower runners.
+        // A large community resumes after a partially committed page and an
+        // additional short-budget pass. Runner speed must not determine correctness.
         let large_community = Uuid::new_v4();
         let large_event = format!("{prefix}:large");
         sqlx::query("INSERT INTO social.communities(id,name,owner_address) VALUES($1,'Large',$2)")
@@ -725,17 +765,40 @@ mod tests {
             VALUES($1,'Large',true,'local',$2,$3,$3+interval '1 hour',3600000,
             jsonb_build_object('name','Large','approved',true,'community_id',$2::text,'start_at',$3::timestamp,'duration',3600000,'user',$4::text))")
             .bind(&large_event).bind(large_community.to_string()).bind(now+Span::hours(2)).bind(&address).execute(pool).await.unwrap();
+        let large_intent = Uuid::new_v4();
         sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at)
             SELECT $1,id,'event_created',raw,true,$3 FROM explore.event WHERE id=$2")
-            .bind(Uuid::new_v4()).bind(&large_event).bind(now).execute(pool).await.unwrap();
+            .bind(large_intent).bind(&large_event).bind(now).execute(pool).await.unwrap();
         let large_before = std::time::Instant::now();
-        run_once(pool, "https://example.org", now).await.unwrap();
-        for _ in 0..3 {
-            run_once(pool, "https://example.org", now).await.unwrap();
+        dispatch_page(pool, "https://example.org", now)
+            .await
+            .unwrap();
+        let (cursor, completed): (String, bool) = sqlx::query_as(
+            "SELECT recipient_after,processed_at IS NOT NULL FROM social.event_notification_intents WHERE id=$1",
+        ).bind(large_intent).fetch_one(pool).await.unwrap();
+        assert!(
+            !cursor.is_empty() && !completed,
+            "one page must persist partial progress"
+        );
+        if let Ok(result) = tokio::time::timeout(
+            Duration::from_millis(1),
+            run_once(pool, "https://example.org", now),
+        )
+        .await
+        {
+            result.unwrap();
         }
+        drain_until_complete(pool, now, &large_event, 1).await;
         let large_count:i64=sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE metadata->>'eventId'=$1 AND type='event_created'")
             .bind(&large_event).fetch_one(pool).await.unwrap();
         assert_eq!(large_count, 10005);
+        let distinct_recipients: i64 = sqlx::query_scalar(
+            "SELECT count(DISTINCT address) FROM social.notifications WHERE metadata->>'eventId'=$1 AND type='event_created'",
+        ).bind(&large_event).fetch_one(pool).await.unwrap();
+        assert_eq!(
+            distinct_recipients, large_count,
+            "resuming never duplicates recipient delivery"
+        );
         eprintln!(
             "event queue smoke: drained 10005-member community in {:?}",
             large_before.elapsed()
