@@ -115,7 +115,7 @@ mod tests {
     /// parcel list (any other document gets an empty page), or, when `fail` is
     /// set, HTTP 500 with `Retry-After: 0`, so the reader spends its retries
     /// without waiting through the backoff ladder.
-    pub(super) async fn fake_land_subgraph(
+    async fn fake_land_subgraph(
         parcels: serde_json::Value,
         fail: Arc<std::sync::atomic::AtomicBool>,
     ) -> String {
@@ -899,19 +899,39 @@ mod stream_access {
             ((token >> 64) % 301) as i32 - 150,
         );
         let parcel = format!("{x},{y}");
-        let subgraph = super::tests::fake_land_subgraph(
-            serde_json::json!([{ "id": "stream-land", "searchParcelX": x.to_string(), "searchParcelY": y.to_string(), "owner": { "id": land_owner.as_str() }, "parcel": { "estate": null } }]),
-            Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        ).await;
-        let market = catalyst::chain_index::ChainIndex::new(
-            Outbound::for_tests(),
-            catalyst::chain_index::IndexSettings {
-                marketplace_subgraph_url: Some(subgraph),
-                ..catalyst::chain_index::IndexSettings::for_tests()
-            },
+        let document = serde_json::json!({ "owner": land_owner.as_str() });
+        let land_app = axum::Router::new().route(
+            &format!("/parcels/{x}/{y}/operators"),
+            axum::routing::get(move || {
+                let document = document.clone();
+                async move { Json(document) }
+            }),
         );
-        market.allow_loopback_for_tests();
-        let market = Arc::new(market);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let land_url = format!("http://{}", listener.local_addr().unwrap());
+        let land_server =
+            tokio::spawn(async move { axum::serve(listener, land_app).await.unwrap() });
+        let policy = Arc::new(
+            Policy::new(pool.clone(), PersonalWorldsPolicy::disabled(), None).with_land_operators(
+                Some(catalyst::worlds::policy::LandOperatorsReader::new(
+                    Outbound::for_tests().allowing_private_hosts(),
+                    &land_url,
+                )),
+            ),
+        );
+        let document = policy
+            .land_document(catalyst::comms::world_identity::Parcel::parse(&parcel).unwrap())
+            .await
+            .expect("LAND operators fixture must answer the notification owner's parcel")
+            .expect("LAND operators reader must be configured");
+        assert_eq!(
+            document
+                .as_ref()
+                .as_ref()
+                .expect("fixture parcel must have a LAND document")
+                .owner,
+            land_owner.as_str(),
+        );
         let directory =
             Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default());
         let (host, deleted) = ingress_stub().await;
@@ -926,13 +946,9 @@ mod stream_access {
             pool.clone(),
             Outbound::for_tests(),
             settings,
-            Some(market.clone()),
             None,
-            Arc::new(Policy::new(
-                pool.clone(),
-                PersonalWorldsPolicy::disabled(),
-                Some(market),
-            )),
+            None,
+            policy,
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
             directory.clone(),
@@ -1101,6 +1117,7 @@ mod stream_access {
         }
         let (status, _) = call(&app, &admin_key, "DELETE", &metadata).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+        land_server.abort();
     }
 }
 
