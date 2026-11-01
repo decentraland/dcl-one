@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { newCheckout } from "../cart/machine";
 import { partitionCart } from "../cart/partition";
+import { rarityCardPalette } from "../discovery/lib/rarity";
 import { storeMint, wearableResale, creatorOrder, parcelResale, BOOK } from "../payment/fixtures";
 import CartPage from "./CartPage";
 import { createDemo, DemoShell, type DemoScenario } from "./demo";
@@ -37,6 +38,48 @@ async function clickWhenEnabled(button: () => HTMLElement) {
   });
   await act(async () => {});
 }
+
+describe("the cart line, drawn as upstream's", () => {
+  it("one ready way to pay needs no chooser", async () => {
+    renderCart({ session: "web2", lines: [MIXED![0]!] });
+    const mint = screen.getByRole("article", { name: "Rainbow Hat" });
+    expect(within(mint).queryByTestId("payment-choice")).toBeNull();
+    await walletSettled();
+  });
+
+  it("a saved method the session no longer offers keeps the chooser, so the buyer can pick again", async () => {
+    renderCart({ session: "web2", lines: [{ ...MIXED![0]!, method: "mana" }] });
+    const mint = screen.getByRole("article", { name: "Rainbow Hat" });
+    expect(within(mint).getByRole("radio", { name: /Credits/ })).toBeTruthy();
+    await walletSettled();
+  });
+
+  it("the line price and the total are read with their unit", async () => {
+    renderCart({ session: "web2", lines: [MIXED![0]!] });
+    const mint = screen.getByRole("article", { name: "Rainbow Hat" });
+    expect(within(mint).getByText("12 Credits", { selector: ".shop-sr" })).toBeTruthy();
+    expect(within(screen.getByTestId("total-credits")).getByText("12 Credits", { selector: ".shop-sr" })).toBeTruthy();
+    await walletSettled();
+  });
+
+  it("signed out, the mint's only option waits on sign-in, so the chooser stays hidden too", async () => {
+    renderCart({ session: "signedOut", lines: [MIXED![0]!] });
+    expect(within(screen.getByRole("article", { name: "Rainbow Hat" })).queryByTestId("payment-choice")).toBeNull();
+    await walletSettled();
+  });
+
+  it("the thumbnail is the rarity's tile with its category flap, and the band opens with a back link", async () => {
+    renderCart({ session: "web3", lines: [{ ...MIXED![0]!, category: "wearable", wearableCategory: "hat", rarity: "epic" }] });
+    const mint = screen.getByRole("article", { name: "Rainbow Hat" });
+    const thumb = mint.querySelector<HTMLElement>("[data-thumb]")!;
+    expect(thumb.style.getPropertyValue("--tile-stroke")).toBe(rarityCardPalette("epic").stroke);
+    expect(thumb.style.getPropertyValue("--tile-bg")).toBe(rarityCardPalette("epic").background);
+    expect(within(mint).getByTestId("cart-line-flap").getAttribute("data-size")).toBe("sm");
+    expect(within(screen.getByRole("article", { name: "Rainbow Hat" })).getByTestId("cart-line-flap-icon")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Back from the Cart" })).toBeTruthy();
+    await walletSettled();
+  });
+});
 
 describe("the cart page", () => {
   it("empty: says so and links to the catalogue", async () => {

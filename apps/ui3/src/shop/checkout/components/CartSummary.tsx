@@ -5,6 +5,9 @@ import { creditsFloor, formatUsd } from "../../model/money";
 import type { UsdBalance } from "../../credits/credits";
 import { CreditsAmount, ManaAmount } from "../../credits/components/Amount";
 import HeldCredits from "../../credits/components/HeldCredits";
+import Icon from "../../discovery/components/Icon";
+import { formatCredits, formatCreditsFull } from "../../discovery/components/PriceTag";
+import { t } from "../../discovery/intl";
 import "./cartsummary.css";
 
 export type CartSummaryProps = {
@@ -26,12 +29,18 @@ export default function CartSummary({ partition, balance, balanceError = false, 
 
   return (
     <dl className="shop-summary" aria-label="Totals">
-      <div className="shop-summary__total" data-testid="cart-total">
+      <div className="shop-summary__total">
         <dt>Total: {units} {units === 1 ? "item" : "items"}</dt>
         <dd className="shop-summary__values">
           {credits && credits.charged > 0 ? (
             <span className="shop-summary__value" data-testid="total-credits">
-              <CreditsAmount credits={creditsFloor(credits.charged)} size={24} />
+              <span className="shop-summary__amount">
+                <Icon name="credits" className="shop-summary__coin" />{" "}
+                <span aria-hidden title={formatCreditsFull(creditsFloor(credits.charged))}>
+                  {formatCredits(creditsFloor(credits.charged))}
+                </span>
+                <span className="shop-sr">{t("assetCard.credits", { count: creditsFloor(credits.charged) })}</span>
+              </span>
               {credits.quoted !== credits.charged ? <span className="shop-summary__sub">priced {formatUsd(credits.quoted)}</span> : null}
             </span>
           ) : null}

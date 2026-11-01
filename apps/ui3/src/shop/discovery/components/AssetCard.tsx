@@ -66,6 +66,7 @@ export function cartInputFor(item: CatalogItem, source?: string) {
       name: item.name,
       thumbnail: item.thumbnail || undefined,
       category: item.category,
+      ...(item.wearableCategory ? { wearableCategory: item.wearableCategory } : {}),
       rarity: item.rarity,
       creator: item.creator || undefined,
       urn: item.urn,

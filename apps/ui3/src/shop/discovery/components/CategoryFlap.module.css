@@ -1,5 +1,4 @@
-/* from: shop@3a322cf9:app/src/components/CategoryFlap/CategoryFlap.styles.ts (the default size; upstream's
-   size="sm" has no caller here) */
+/* from: shop@3a322cf9:app/src/components/CategoryFlap/CategoryFlap.styles.ts */
 .root {
   position: absolute;
   top: 0;
@@ -22,6 +21,16 @@
   width: 21px;
   height: 21px;
   color: #fcfcfc;
+}
+.root[data-size="sm"] {
+  width: 56.49px;
+  height: 58px;
+}
+.root[data-size="sm"] .glyph {
+  top: 8px;
+  left: 8.4px;
+  width: 16px;
+  height: 16px;
 }
 @media (max-width: 720px) {
   .root {

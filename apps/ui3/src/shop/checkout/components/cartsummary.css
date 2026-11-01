@@ -112,3 +112,20 @@
     font-size: 20px;
   }
 }
+
+.shop-summary__amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #fcfcfc;
+}
+
+.shop-summary__amount .shop-summary__coin {
+  width: 30px;
+  height: 30px;
+  color: #fcfcfc;
+  -webkit-mask-size: 24px 24px;
+  mask-size: 24px 24px;
+  -webkit-mask-position: left center;
+  mask-position: left center;
+}

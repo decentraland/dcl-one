@@ -73,13 +73,15 @@ function CartUpsell({ exclude }: { exclude: string[] }) {
   if (upsell.length === 0) return null;
   return (
     <div className="shop-cart__upsell">
-      <Rail title="You might also like" items={upsell} source="related" testId="cart-upsell" />
+      <Rail title="You might also like" items={upsell} source="related" testId="carousel" variant="collection" />
     </div>
   );
 }
 
 function CartScreen() {
   const navigate = useNavigate();
+  // Back as upstream's, except a cart opened first in its tab (a link, a new tab) goes to the Shop rather than nowhere.
+  const goBack = () => ((window.history.state as { idx?: number } | null)?.idx ? navigate(-1) : navigate("/shop/items"));
   const location = useLocation();
   const services = useShopServices();
   const nav = (location.state ?? {}) as CartNavState;
@@ -161,6 +163,12 @@ function CartScreen() {
     return (
       <main className="shop-cart" aria-labelledby="shop-cart-title">
         <div className="shop-cart__band">
+          <div className="shop-cart__crumbs">
+            <button type="button" className="shop-cart__back" onClick={goBack} aria-label="Back from the Cart">
+              <Icon name="arrow-left" size={18} />
+              Cart
+            </button>
+          </div>
           <div className="shop-cart__inner">
             <h1 id="shop-cart-title" className="u-sr-only">
               Cart
@@ -186,6 +194,12 @@ function CartScreen() {
   return (
     <main className="shop-cart" aria-labelledby="shop-cart-title">
       <div className="shop-cart__band">
+        <div className="shop-cart__crumbs">
+          <button type="button" className="shop-cart__back" onClick={goBack} aria-label="Back from the Cart">
+            <Icon name="arrow-left" size={18} />
+            Cart
+          </button>
+        </div>
         <div className="shop-cart__inner">
           <div className="shop-cart__notices">
             {co.wallet.accountMismatch ? (
@@ -245,7 +259,7 @@ function CartScreen() {
             <div className="shop-cart__left">
               <section className="shop-cart__panel" aria-labelledby="shop-cart-title">
                 <div className="shop-cart__panelhead">
-                  <button type="button" className="shop-cart__panelback" onClick={() => navigate(-1)} aria-label="Go back">
+                  <button type="button" className="shop-cart__panelback" onClick={goBack} aria-label="Go back">
                     <Icon name="arrow-left" size={20} />
                   </button>
                   <h1 id="shop-cart-title" className="shop-cart__title">
