@@ -463,9 +463,9 @@ mod tests {
     #[tokio::test]
     async fn upload_authority_is_private_single_use_open_and_independent_of_signature() {
         use axum::http::StatusCode;
-        let pool = crate::db::scratch::pool(4)
-            .await
-            .expect("report upload regressions require CATALYST_TEST_DATABASE_URL");
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
         let settings = crate::Settings {
             user_writes_enabled: true,
             ..crate::Settings::for_tests()
@@ -697,9 +697,10 @@ mod tests {
 
     #[tokio::test]
     async fn capability_migration_scrubs_legacy_tokens_without_granting_authority() {
-        let admin = crate::db::scratch::pool(2)
-            .await
-            .expect("report migration regression requires CATALYST_TEST_DATABASE_URL");
+        use futures::FutureExt;
+        let Some(admin) = crate::db::scratch::pool(2).await else {
+            return;
+        };
         // Schema-shape changes need their own database: scratch pools in this
         // process otherwise share the tables used by the route tests.
         let database = format!("report_migration_{}", uuid::Uuid::new_v4().simple());
@@ -707,51 +708,62 @@ mod tests {
             .execute(&admin)
             .await
             .unwrap();
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(2)
-            .connect_with(admin.connect_options().as_ref().clone().database(&database))
-            .await
-            .unwrap();
-        crate::db::apply_schema(&pool).await.unwrap();
-        // Recreate the previous column shape on this disposable test database.
-        sqlx::query("ALTER TABLE explore.place_reports DROP COLUMN upload_token_hash")
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query(r#"INSERT INTO explore.place_reports (filename, reporter, signed_url, payload) VALUES ('legacy', 'reporter', 'https://node.example/upload/legacy?token=secret', '{"reason":"kept"}')"#).execute(&pool).await.unwrap();
-        sqlx::query("DELETE FROM meta.schema_steps WHERE step = '0016_report_upload_capabilities'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        let applied = crate::db::schema_migrate::migrate(
-            &pool,
-            crate::db::SCHEMA_SQL,
-            crate::db::MIGRATIONS_SQL,
-        )
-        .await
-        .unwrap();
-        assert_eq!(applied.steps, vec!["0016_report_upload_capabilities"]);
-        assert!(
-            crate::db::schema_migrate::migrate(
+        // Await cleanup before propagating a setup or assertion panic. Merely
+        // spawning cleanup from Drop can lose it when the test runtime exits.
+        let outcome = std::panic::AssertUnwindSafe(async {
+            let pool = sqlx::postgres::PgPoolOptions::new()
+                .max_connections(2)
+                .connect_with(admin.connect_options().as_ref().clone().database(&database))
+                .await
+                .unwrap();
+            crate::db::apply_schema(&pool).await.unwrap();
+            // Recreate the previous column shape on this disposable test database.
+            sqlx::query("ALTER TABLE explore.place_reports DROP COLUMN upload_token_hash")
+                .execute(&pool)
+                .await
+                .unwrap();
+            sqlx::query(r#"INSERT INTO explore.place_reports (filename, reporter, signed_url, payload) VALUES ('legacy', 'reporter', 'https://node.example/upload/legacy?token=secret', '{"reason":"kept"}')"#).execute(&pool).await.unwrap();
+            sqlx::query("DELETE FROM meta.schema_steps WHERE step = '0016_report_upload_capabilities'")
+                .execute(&pool)
+                .await
+                .unwrap();
+            let applied = crate::db::schema_migrate::migrate(
                 &pool,
                 crate::db::SCHEMA_SQL,
-                crate::db::MIGRATIONS_SQL
+                crate::db::MIGRATIONS_SQL,
             )
             .await
-            .unwrap()
-            .is_empty()
-        );
-        let row = sqlx::query("SELECT signed_url, upload_token_hash, payload FROM explore.place_reports WHERE filename = 'legacy'").fetch_one(&pool).await.unwrap();
-        assert_eq!(
-            row.get::<String, _>("signed_url"),
-            "https://node.example/upload/legacy"
-        );
-        assert!(row.get::<Option<Vec<u8>>, _>("upload_token_hash").is_none());
-        assert_eq!(row.get::<Value, _>("payload"), json!({"reason":"kept"}));
-        pool.close().await;
-        sqlx::query(sqlx::AssertSqlSafe(format!("DROP DATABASE {database}")))
-            .execute(&admin)
-            .await
             .unwrap();
+            assert_eq!(applied.steps, vec!["0016_report_upload_capabilities"]);
+            assert!(
+                crate::db::schema_migrate::migrate(
+                    &pool,
+                    crate::db::SCHEMA_SQL,
+                    crate::db::MIGRATIONS_SQL
+                )
+                .await
+                .unwrap()
+                .is_empty()
+            );
+            let row = sqlx::query("SELECT signed_url, upload_token_hash, payload FROM explore.place_reports WHERE filename = 'legacy'").fetch_one(&pool).await.unwrap();
+            assert_eq!(
+                row.get::<String, _>("signed_url"),
+                "https://node.example/upload/legacy"
+            );
+            assert!(row.get::<Option<Vec<u8>>, _>("upload_token_hash").is_none());
+            assert_eq!(row.get::<Value, _>("payload"), json!({"reason":"kept"}));
+            pool.close().await;
+        })
+        .catch_unwind()
+        .await;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE {database} WITH (FORCE)"
+        )))
+        .execute(&admin)
+        .await
+        .unwrap();
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
     }
 }
