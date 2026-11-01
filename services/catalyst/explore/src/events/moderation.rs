@@ -681,21 +681,9 @@ pub fn build_create_raw(
     Ok(Value::Object(doc))
 }
 
-/// The old `generate_id`: a uuid-shaped sha256 of the name and the instant.
-pub(crate) fn generate_id(seed: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(seed.as_bytes());
-    hasher.update(Utc::now().timestamp_nanos_opt().unwrap_or(0).to_be_bytes());
-    let h = hex::encode(hasher.finalize());
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
+/// Event identifiers stay unique even when concurrent creates share a clock tick.
+fn generate_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// The old `resolve_location` as a query: a world event names its world by
@@ -836,7 +824,7 @@ pub async fn create_as(
         body.y,
     )
     .await?;
-    let id = generate_id(&body.name);
+    let id = generate_id();
     let mut doc = build_create_raw(body, creator, start_at, place_id.as_deref(), world, now)?;
     doc["id"] = json!(id);
     if creator != ADMIN_CREATOR {
@@ -1396,7 +1384,35 @@ mod tests {
                 json!("https://decentraland.org/play/?position=10%2C20")
             )
         );
-        assert_eq!(generate_id("n").len(), 36);
+    }
+
+    #[test]
+    fn concurrent_event_creates_get_unique_canonical_uuid_ids() {
+        let barrier = std::sync::Barrier::new(8);
+        let ids = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        (0..1000).map(|_| generate_id()).collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let mut seen = std::collections::HashSet::new();
+        for id in ids {
+            let parsed = uuid::Uuid::parse_str(&id).unwrap();
+            assert_eq!(parsed.get_version_num(), 4);
+            assert_eq!(parsed.to_string(), id);
+            assert!(
+                seen.insert(id),
+                "concurrent creates must not share an event ID"
+            );
+        }
     }
 
     #[tokio::test]
