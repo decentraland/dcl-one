@@ -97,12 +97,15 @@ export async function comparePage(
   writeFileSync(join(dir, "dcl-one.png"), caps["dcl-one"].png);
   writeFileSync(join(dir, "structure.json"), JSON.stringify({ reference: caps.reference.collected, "dcl-one": caps["dcl-one"].collected }));
 
-  const masks = (spec.masks ?? []).map((m) => ({ why: m.why, reference: caps.reference.masks, dclOne: caps["dcl-one"].masks }));
-  const regions = (spec.regions ?? []).map((m) => ({ why: m.why, reference: caps.reference.regions, dclOne: caps["dcl-one"].regions }));
-  const ignore = [...caps.reference.masks, ...caps["dcl-one"].masks, ...caps.reference.regions, ...caps["dcl-one"].regions];
+  const masks = (spec.masks ?? []).map((m, i) => ({ why: m.why, reference: caps.reference.maskGroups[i] ?? [], dclOne: caps["dcl-one"].maskGroups[i] ?? [] }));
+  const regions = (spec.regions ?? []).map((m, i) => ({ why: m.why, reference: caps.reference.regionGroups[i] ?? [], dclOne: caps["dcl-one"].regionGroups[i] ?? [] }));
   let pixels: PageResult["pixels"] = { diff: Number.POSITIVE_INFINITY, antialiased: 0, masked: 0, ratio: 1, width: 0, height: 0, bands: [] };
   try {
-    const p = pixelDiff(decodePng(caps.reference.png), decodePng(caps["dcl-one"].png), { masks: ignore });
+    // A mask hides a box only where both sides have one; a region hides its area on both sides.
+    const p = pixelDiff(decodePng(caps.reference.png), decodePng(caps["dcl-one"].png), {
+      masks: { a: caps.reference.masks, b: caps["dcl-one"].masks },
+      regions: [...caps.reference.regions, ...caps["dcl-one"].regions],
+    });
     writeFileSync(join(dir, "diff.png"), encodePng(p.image));
     pixels = { diff: p.diff, antialiased: p.antialiased, masked: p.masked, ratio: p.ratio, width: p.width, height: p.height, bands: p.bands.slice(0, 12) };
   } catch (err) {

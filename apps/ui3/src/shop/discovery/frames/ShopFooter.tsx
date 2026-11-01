@@ -154,7 +154,7 @@ export default function ShopFooter() {
     { key: "resources", label: "Resources", links: RESOURCES },
   ];
   return (
-    <footer className="shop-footer" data-testid="shop-footer">
+    <footer className="shop-footer">
       <div className="shop-footer__main">
         <div className="shop-footer__left">
           <span className="shop-footer__wordmark">Decentraland</span>
