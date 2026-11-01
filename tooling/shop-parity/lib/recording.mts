@@ -30,6 +30,8 @@ export type Manifest = {
   /** Page targets discovered while recording (item URLs and the like). */
   targets: Record<string, string>;
   entries: number;
+  /** Set while the recording run that wrote it has not finished (it failed or was interrupted). */
+  incomplete?: boolean;
 };
 
 export type Answer = { status: number; contentType: string; body: Buffer; headers?: Record<string, string> };
@@ -47,6 +49,9 @@ export function canonicalJson(v: unknown): string {
 }
 
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
+
+/** Decentraland's own hosts: the only ones record mode reads a picture from, to learn its size. */
+export const learnable = (url: URL) => url.protocol === "https:" && (url.hostname === "decentraland.org" || url.hostname.endsWith(".decentraland.org"));
 
 export function entryKey(method: string, service: Service, path: string, query: string, request?: unknown): string {
   const base = `${method} ${service} ${path}${query ? `?${query}` : ""}`;
@@ -131,10 +136,15 @@ export class Recording {
   /** dcl-one-only routes with no upstream (purchase offers): answered by this hook when recording. */
   synthesize: ((req: { method: string; service: Service; path: string; query: string; request: unknown }) => Promise<Answer | null>) | null = null;
   readonly live: boolean;
+  /** Record mode: requests production answered with a server error, which nothing kept (record.mts lists them). */
+  readonly failures: string[] = [];
+  /** The pauses before the second and third attempt when production fails. */
+  private readonly retryDelays: number[];
 
-  constructor(dir: string, opts: { live?: boolean } = {}) {
+  constructor(dir: string, opts: { live?: boolean; retryDelays?: number[] } = {}) {
     this.dir = dir;
     this.live = !!opts.live;
+    this.retryDelays = opts.retryDelays ?? [1000, 3000];
     const index = join(dir, "index.json");
     if (existsSync(index)) {
       for (const e of JSON.parse(readFileSync(index, "utf8")) as Entry[]) this.entries.set(e.key, e);
@@ -145,13 +155,27 @@ export class Recording {
     if (existsSync(images)) for (const [k, v] of Object.entries(JSON.parse(readFileSync(images, "utf8")))) this.images.set(k, v as { width: number; height: number });
   }
 
-  /** Record mode: read the real picture once to learn its size (its bytes are never kept). */
+  /**
+   * Record mode: read the real picture once to learn its size (its bytes are never kept). Only from
+   * Decentraland's own hosts, redirects included: a page renders pictures from any URL a creator or
+   * profile names, and the harness has no reason to reach a LAN or link-local address for one.
+   */
   async learnImage(seed: string, url: string): Promise<void> {
     if (!this.live || this.images.has(seed)) return;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(20_000) });
-      const size = imageSize(Buffer.from(await res.arrayBuffer()));
-      if (size) this.images.set(seed, size);
+      let next = new URL(url);
+      for (let hop = 0; hop < 4 && learnable(next); hop++) {
+        const res = await fetch(next, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
+        const location = res.status >= 300 && res.status < 400 ? res.headers.get("location") : null;
+        if (location) {
+          await res.body?.cancel();
+          next = new URL(location, next);
+          continue;
+        }
+        const size = imageSize(Buffer.from(await res.arrayBuffer()));
+        if (size) this.images.set(seed, size);
+        return;
+      }
     } catch {
       // unknown size: the placeholder keeps its default
     }
@@ -177,10 +201,18 @@ export class Recording {
     const h: Record<string, string> = { accept: headers?.accept ?? "*/*" };
     if (headers?.["content-type"]) h["content-type"] = headers["content-type"];
     let lastError: unknown;
+    let wait = 0;
     for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, Math.max(wait, this.retryDelays[attempt - 1] ?? 0)));
+      wait = 0;
       try {
         const res = await fetch(url, { method, headers: h, body: method === "GET" || method === "HEAD" || !body ? undefined : new Uint8Array(body), signal: AbortSignal.timeout(30_000) });
-        return { status: res.status, contentType: res.headers.get("content-type") ?? "application/octet-stream", body: Buffer.from(await res.arrayBuffer()) };
+        const answer = { status: res.status, contentType: res.headers.get("content-type") ?? "application/octet-stream", body: Buffer.from(await res.arrayBuffer()) };
+        // A server error is the service's moment, not its answer: ask again, and the caller keeps none.
+        if (answer.status < 500 || attempt === 2) return answer;
+        // A Retry-After in seconds is honoured, up to ten.
+        const after = Number(res.headers.get("retry-after"));
+        if (after > 0) wait = Math.min(after, 10) * 1000;
       } catch (err) {
         lastError = err;
       }
@@ -212,14 +244,26 @@ export class Recording {
 
   private async rpc(path: string, body: Buffer | undefined, side: string): Promise<Answer> {
     const parsed = parseBody(body);
-    const calls: RpcCall[] = Array.isArray(parsed) ? (parsed as RpcCall[]) : [parsed as RpcCall];
+    const calls = (Array.isArray(parsed) ? parsed : [parsed]) as (RpcCall | null | undefined)[];
     const out: unknown[] = [];
     for (const call of calls) {
+      if (typeof call?.method !== "string") {
+        // Not a JSON-RPC call (an empty body, say): there is nothing to look up, but the page asked.
+        this.misses.push({ key: entryKey("POST", "rpc", path, "", call ?? null), service: "rpc", method: "POST", path, query: "", side });
+        out.push({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "not a JSON-RPC call" } });
+        continue;
+      }
       const request = { method: call.method, params: call.params ?? [] };
       const key = entryKey("POST", "rpc", path, "", request);
       let entry = this.entries.get(key);
       if (!entry && this.live) {
         const res = await this.fetchLive("POST", "rpc", path, "", Buffer.from(JSON.stringify({ jsonrpc: "2.0", id: 1, ...request })), { "content-type": "application/json", accept: "application/json" });
+        if (res.status >= 500) {
+          // Kept nowhere: listed, and a replay misses it, so --fill asks again.
+          this.failures.push(`POST rpc ${path} ${call.method}: answered ${res.status}`);
+          out.push({ jsonrpc: "2.0", id: call.id ?? null, error: { code: -32000, message: `upstream answered ${res.status}` } });
+          continue;
+        }
         const answer = JSON.parse(res.body.toString("utf8")) as Record<string, unknown>;
         const result = Buffer.from(JSON.stringify("error" in answer ? { error: answer.error } : { result: answer.result }));
         entry = this.store({ key, method: "POST", service: "rpc", path, query: "", request, status: 200, contentType: "application/json" }, result);
@@ -272,6 +316,8 @@ export class Recording {
     const request = method === "GET" || method === "HEAD" ? undefined : parseBody(req.body);
     const key = entryKey(method, req.service, req.path, query, request);
     let entry = this.entries.get(key);
+    // A server error a recording made before such errors were refused kept: record mode asks again.
+    if (entry && this.live && entry.status >= 500) entry = undefined;
     if (!entry && this.live && req.service === "offers" && this.synthesize) {
       const res = await this.synthesize({ method, service: req.service, path: req.path, query, request });
       if (res) entry = this.store({ key, method, service: req.service, path: req.path, query, ...(request === undefined ? {} : { request }), status: res.status, contentType: res.contentType }, res.body);
@@ -283,6 +329,11 @@ export class Recording {
         const size = imageSize(res.body);
         if (size) this.images.set(req.path, size);
         return { status: 200, contentType: "image/png", body: placeholderPng(req.path, size?.width, size?.height) };
+      }
+      // Not kept: listed, and a replay misses it, so --fill asks again.
+      if (res.status >= 500) {
+        this.failures.push(`${method} ${req.service} ${req.path}: answered ${res.status}`);
+        return res;
       }
       entry = this.store({ key, method, service: req.service, path: req.path, query, ...(request === undefined ? {} : { request }), status: res.status, contentType: res.contentType }, res.body);
     }
@@ -308,6 +359,30 @@ export class Recording {
 }
 
 /**
+ * Run `work` against a live recording and save what it read, with its manifest, even when `work`
+ * throws or the run is interrupted (Ctrl+C): a crash midway must not cost the answers already on
+ * disk. Until `work` finishes the manifest says `incomplete`, so a capture does not take it as done.
+ */
+export async function savingAfter<T>(live: Recording, work: () => Promise<T>, manifest: () => Partial<Manifest>): Promise<T> {
+  // Registered before the browser starts, so it runs before playwright's own handler exits the process.
+  const interrupted = () => {
+    live.save({ ...manifest(), incomplete: true });
+    process.exit(130);
+  };
+  process.once("SIGINT", interrupted);
+  try {
+    const result = await work();
+    live.save({ ...manifest(), incomplete: undefined });
+    return result;
+  } catch (err) {
+    live.save({ ...manifest(), incomplete: true });
+    throw err;
+  } finally {
+    process.off("SIGINT", interrupted);
+  }
+}
+
+/**
  * Read each request a replay could not answer once from production into `live`, sending a POST's
  * body as it was. One failed read does not stop the rest, and what was read is saved either way.
  */
@@ -324,8 +399,18 @@ export async function fillMisses(replay: Recording, live: Recording, log: (line:
         failed.push(`${m.method} ${m.service} ${m.path}: its body was not kept`);
         continue;
       }
+      if (m.service === "rpc" && m.request === undefined) {
+        failed.push(`${m.method} ${m.service} ${m.path}: not a JSON-RPC call`);
+        continue;
+      }
       try {
+        const before = live.failures.length;
         const answer = await live.answer({ method: m.method, service: m.service, path: m.path, search: m.query, body: sent?.body, headers: { "content-type": sent?.contentType ?? "application/json", accept: "application/json" }, side: "fill" });
+        // A server error (an rpc one is answered 200 with a JSON-RPC error) was not kept.
+        if (live.failures.length > before) {
+          failed.push(...live.failures.slice(before));
+          continue;
+        }
         log(`filled ${m.method} ${m.service} ${m.path} -> ${answer.status}`);
         filled++;
       } catch (err) {
