@@ -20,7 +20,7 @@ export function formatCreditsFull(n: number): string {
 
 export function CreditsAmount({ credits, testId, strike = false }: { credits: number; testId?: string; strike?: boolean }) {
   return (
-    <span className={`shop-price__credits${strike ? " shop-price__credits--was" : ""}`} data-testid={testId} title={t("assetCard.credits", { count: credits })}>
+    <span className={`shop-price__credits${strike ? " shop-price__credits--was" : ""}`} data-testid={testId || undefined} title={t("assetCard.credits", { count: credits })}>
       {strike ? null : <Icon name="credits" size={15} className="shop-price__mark" />}
       <span aria-hidden>{formatCredits(credits)}</span>
       <span className="shop-sr">{t("assetCard.credits", { count: credits })}</span>
@@ -31,7 +31,7 @@ export function CreditsAmount({ credits, testId, strike = false }: { credits: nu
 export function ManaAmount({ wei, network = "polygon", testId }: { wei: ManaWei; network?: "polygon" | "ethereum"; testId?: string }) {
   const amount = formatMana(wei, { group: true });
   return (
-    <span className="shop-price__mana" data-testid={testId} title={`${amount} MANA`}>
+    <span className="shop-price__mana" data-testid={testId || undefined} title={`${amount} MANA`}>
       <ManaMark size={14} network={network} className="shop-price__mark" />
       <span>{amount}</span>
       <span className="shop-sr"> MANA</span>

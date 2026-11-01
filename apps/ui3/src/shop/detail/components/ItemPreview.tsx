@@ -74,7 +74,7 @@ export default function ItemPreview({ item, avatarShape = null, renderer }: { it
   const clip = useShopQuery(isEmote && urn && show3d && !waiting ? ["emote-clip", urn, body] : null, (signal) => fetchEmoteClipUrl(urn!, body, signal), { staleMs: 30 * 60_000 });
 
   return (
-    <div className="shop-preview" data-testid="item-preview" data-status={show3d ? status : "thumbnail"}>
+    <div className="shop-preview" data-status={show3d ? status : "thumbnail"}>
       {!show3d || failed || !canPreview || (view === "item" && !isEmote) ? (
         item.thumbnail ? <img className="shop-preview__thumb" src={item.thumbnail} alt={item.name} /> : null
       ) : waiting ? (
