@@ -95,6 +95,17 @@ const OUTFIT_ORDER =
 const CREATOR_TAG =
   "every mint line says it is bought from its creator: one Shop sells mints and resales side by side (AGENTS.md: the Shop absorbs every Marketplace feature), where the reference shows the chip only while its secondary-sales flag is on, and that flag is off in the recording";
 
+const PLAY_MODE =
+  "the play-mode chip shows only when the item carries data.emote.loop (detail/ItemDetail.tsx, as upstream's own comment states); the reference shows PLAY ONCE on this wearable, whose recorded rows carry no emote data";
+
+/**
+ * The reference cart's first line card, whatever item the detail page put in it: the first innermost element
+ * holding three or more buttons (the stepper, favourite and remove; the rail's cards below match too, later).
+ * It holds for the recording's single credits mint; a resale (no stepper) or a shown chooser would need more.
+ * dcl-one's side uses its own line classes.
+ */
+const LINE_CARD = "(//main//*[count(.//button)>=3 and not(.//*[count(.//button)>=3])])[1]";
+
 const NEWSLETTER = "the third-party beehiiv newsletter iframe is replaced by a first-party form of the same box (discovery/frames/ShopFooter.tsx, posting to /v1/newsletter)";
 
 /** The reference's footer loads that iframe from beehiiv, a host the harness does not record. */
@@ -227,6 +238,7 @@ export const PAGES: PageSpec[] = [
       { match: /(^|\/)(payment-panel|cta-sign-in|cta-add-to-cart|price-credits|detail-stock)$/, status: "only-dcl-one", why: PAYMENT_PANEL },
       { match: /^"Preview unavailable for this item"$/, status: "only-dcl-one", why: NO_MODELS },
       { match: /^key:preview$/, why: NO_MODELS, only: ["text"] },
+      { match: /(^|\/)detail-play-mode$|^key:tag\.play-mode$|^"PLAY ONCE"$/, status: "only-reference", why: PLAY_MODE },
     ],
     unrecorded: [PREVIEW_AVATAR, NEWSLETTER_EMBED],
   },
@@ -249,8 +261,8 @@ export const PAGES: PageSpec[] = [
       { name: "lines", selector: both(panelOf("Fitting room")) },
       { name: "lines.count", selector: both("xpath=//main//*[starts-with(normalize-space(),'Cart:') and not(*)]") },
       { name: "lines.fitting-room", selector: both(byText("button", "Fitting room")) },
-      { name: "line.name", selector: both("xpath=//main//*[normalize-space()='Semi Visible Man RGB' and not(*)]") },
-      { name: "line.price", selector: { reference: "xpath=//main//*[normalize-space(text())='Semi Visible Man RGB']/ancestor::*[count(.//button)>=3][1]//span[normalize-space(text())='12']/..", "dcl-one": "[data-testid=cart-line-price]" } },
+      { name: "line.name", selector: { reference: `xpath=(${LINE_CARD}//*[@title and not(*)])[1]`, "dcl-one": "xpath=(//article[contains(@class,'shop-cartline')])[1]//*[contains(@class,'shop-cartline__name')]" } },
+      { name: "line.price", selector: { reference: `xpath=(${LINE_CARD}//span[normalize-space(text())!='' and translate(normalize-space(text()),'0123456789,.K','')=''])[last()]/..`, "dcl-one": "xpath=(//article[contains(@class,'shop-cartline')])[1]//*[contains(@class,'shop-cartline__price')]" } },
       { name: "lines.clear", selector: both(byText("*", "Clear cart")) },
       { name: "summary", selector: both(panelOf("Purchase Summary")) },
       { name: "summary.title", selector: both(byText("*", "Purchase Summary")) },

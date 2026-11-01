@@ -337,6 +337,11 @@
   line-height: 48px;
 }
 
+/* Upstream's CollectionCarousel Root: 40px over the item page's rail (the cart supplies its own spacing). */
+.shop-pdp .shop-pdp__rail {
+  margin-top: 40px;
+}
+
 .shop-pdp .shop-detail__divider {
   width: 100%;
   margin: 24px 0 0;

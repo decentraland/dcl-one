@@ -62,6 +62,7 @@ export type CartLineDisplay = {
   name: string;
   thumbnail?: string;
   category?: string;
+  wearableCategory?: string;
   rarity?: string;
   creator?: string;
   urn?: string;

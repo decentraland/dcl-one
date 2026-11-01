@@ -850,6 +850,7 @@ export default function ItemDetail() {
           viewAllTo={rail.isCollectionOnly ? `${SHOP_BASE}/collection/${contractAddress}` : undefined}
           testId="detail-rail"
           variant="collection"
+          className="shop-pdp__rail"
         />
       ) : null}
 
