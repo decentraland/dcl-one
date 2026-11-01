@@ -77,7 +77,7 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<GetPrivateMessagesSettingsResponse, SocialError> {
         let me = Self::caller(&context)?;
-        let targets: Vec<String> = request.user.iter().map(|u| normalize(&u.address)).collect();
+        let mut targets: Vec<String> = request.user.iter().map(|u| normalize(&u.address)).collect();
         if targets.len() > MAX_USER_ADDRESSES {
             return Ok(GetPrivateMessagesSettingsResponse {
                 response: Some(
@@ -87,6 +87,9 @@ impl SocialServiceImpl {
                 ),
             });
         }
+        // One entry per address, at its first occurrence; the limit counts the request as sent.
+        let mut seen = std::collections::HashSet::new();
+        targets.retain(|t| seen.insert(t.clone()));
         let rows = match context
             .server_context
             .db()
