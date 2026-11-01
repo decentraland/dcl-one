@@ -60,35 +60,44 @@ export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<str
   return flags;
 }
 
-/** Reads the file again unless the flags were primed, a fresh answer is held, a read just failed or one is running. */
+/**
+ * Reads the file again unless the flags were primed, a fresh answer is held, a read just failed or one is running.
+ * `now` is the clock for all of it: the answer's age and the backoff are both measured from it.
+ */
 export function refreshRemoteFlags(now = Date.now()): Promise<void> {
   if (snapshot?.primed || (snapshot && now - snapshot.at < TTL_MS)) return Promise.resolve();
   if (failedAt !== null && now - failedAt < BACKOFF_MS) return Promise.resolve();
   if (inflight) return inflight;
   const started = generation;
-  inflight = (async () => {
+  // On `now`'s clock, but at the moment the read ends: a slow read must not age its own answer or shorten the backoff.
+  const t0 = Date.now();
+  const stamp = () => now + (Date.now() - t0);
+  const read: Promise<void> = (async () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
         const flags = await fetchRemoteFlags(AbortSignal.timeout(TIMEOUT_MS));
         if (generation !== started) return;
         failedAt = null;
-        publish({ at: Date.now(), primed: false, flags });
+        publish({ at: stamp(), primed: false, flags });
         return;
       } catch {
         // Retried once; after that the last answer (or "off") stands until the backoff passes.
       }
     }
-    if (generation === started) failedAt = Date.now();
+    if (generation === started) failedAt = stamp();
   })().finally(() => {
-    inflight = null;
+    if (inflight === read) inflight = null;
   });
-  return inflight;
+  inflight = read;
+  return read;
 }
 
 /** Hold these flags as the service's answer: a host that knows them, and tests, skip the read. Null forgets them. */
 export function primeRemoteFlags(flags: Record<string, boolean> | null): void {
   generation++;
   failedAt = null;
+  // A read already running belongs to the old generation; the next refresh starts its own.
+  inflight = null;
   publish(flags ? { at: Date.now(), primed: true, flags: { ...flags } } : null);
 }
 

@@ -149,7 +149,11 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
   const early = position !== undefined && position < 10;
   const price = cardPrice(item, session);
   const onSale = useSaleActive({ priceCredits: item.priceCredits, compareAtCredits: item.compareAtCredits, saleEndsAt: item.saleEndsAt });
-  const showSale = onSale && price.kind === "credits" && price.compareAt != null;
+  const resale = !!item.tokenId || item.listingType === "secondary";
+  // A flash sale is a native listing's (upstream applies it to fixed-price listings only). Resales are priced
+  // in MANA today, so cardPrice never gives them a was-price; this keeps the sale badge off the Resale tag
+  // should a resale ever be priced in Credits.
+  const showSale = onSale && !resale && price.kind === "credits" && price.compareAt != null;
   const detailPath = detailRouteFor(item);
   const input = cartInputFor(item, source);
   const lineId = input ? cartLineId(input.asset, input.listing) : null;
@@ -213,7 +217,7 @@ export default function AssetCard({ item, mode = "shop", source = "grid", positi
       <div className="shop-card__media" data-testid="card-media" style={{ background: palette.background, "--tile-stroke": palette.stroke } as CSSProperties}>
         <CategoryFlap item={item} testId="card-flap" />
         {showSale && price.kind === "credits" && price.compareAt ? <SaleTag pct={saleDiscountPct(price.compareAt, price.credits)} testId="card-sale-badge" /> : null}
-        {item.tokenId || item.listingType === "secondary" ? <span className="shop-card__resale" data-testid="card-resale">{t("assetCard.resale")}</span> : null}
+        {resale ? <span className="shop-card__resale" data-testid="card-resale">{t("assetCard.resale")}</span> : null}
         {item.listingCount && item.listingCount > 1 ? (
           <span className="shop-card__count" data-testid="card-listing-count">
             {t("assetCard.listings", { count: item.listingCount })}
