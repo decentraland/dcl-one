@@ -153,6 +153,7 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   "assetCard.unitsLeftAtThisPrice": "Only {count} left at this price",
   "assetCard.listings": "{count} on sale",
   "assetCard.credits": "{count, plural, one {# Credit} other {# Credits}}",
+  "assetCard.wasCredits": "was {count, plural, one {# Credit} other {# Credits}}",
   "assetCard.orMana": "or {amount} MANA",
   "assetCard.manaOnly": "MANA",
   "assetCard.manaPriceOnPage": "Priced in MANA at checkout",

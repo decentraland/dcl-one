@@ -89,7 +89,7 @@ describe("the collectibles grid", () => {
     await screen.findAllByTestId("card");
     expect(lastUrl(client).searchParams.get("rarity")).toBe("epic");
     expect(lastUrl(client).searchParams.get("isSmart")).toBe("true");
-    fireEvent.click(screen.getByTestId("sort-trigger"));
+    fireEvent.click(screen.getByRole("button", { name: "Sort by" }));
     fireEvent.click(within(screen.getByTestId("sort-select")).getByRole("option", { name: /cheapest/i }));
     await waitFor(() => expect(screen.getByTestId("where")).toHaveTextContent("sort=price-asc"));
     await waitFor(() => expect(lastUrl(client).searchParams.get("sortBy")).toBe("cheapest"));
@@ -129,7 +129,7 @@ describe("the collectibles grid", () => {
     items("/shop/items", { client });
     await screen.findAllByTestId("card");
     fireEvent.change(screen.getByRole("combobox", { name: "Sale type" }), { target: { value: "primary" } });
-    fireEvent.click(screen.getByTestId("sort-trigger"));
+    fireEvent.click(screen.getByRole("button", { name: "Sort by" }));
     fireEvent.click(within(screen.getByTestId("sort-select")).getByRole("option", { name: /cheapest/i }));
     await waitFor(() => expect(lastUrl(client).searchParams.get("sortBy")).toBe("cheapest"));
     expect(lastUrl(client).searchParams.get("listingType")).toBe("primary");
