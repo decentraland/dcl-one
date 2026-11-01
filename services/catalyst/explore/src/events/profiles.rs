@@ -78,7 +78,7 @@ async fn load_settings_many(
             'user',u.address,'email',s.email,'email_verified',COALESCE(s.email_verified,false),
             'use_local_time',COALESCE(s.use_local_time,true),'notify_by_email',COALESCE(s.notify_by_email,false),
             'notify_by_browser',COALESCE(s.notify_by_browser,false),
-            'permissions',CASE WHEN m.address IS NOT NULL THEN $2::jsonb ELSE COALESCE(s.permissions,'[]'::jsonb) END,
+            'permissions',CASE WHEN m.address IS NOT NULL THEN $2::jsonb WHEN s.permissions_granted THEN s.permissions ELSE '[]'::jsonb END,
             'created_at',to_char(COALESCE(s.created_at,TIMESTAMP '1970-01-01'),'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'),
             'updated_at',to_char(COALESCE(s.updated_at,TIMESTAMP '1970-01-01'),'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'))
         FROM UNNEST($1::text[]) u(address)
@@ -98,7 +98,7 @@ pub async fn load_settings(conn: &mut PgConnection, user: &str) -> Result<Value,
 
 async fn require_permission(pool: &PgPool, signer: &str, permission: &str) -> Result<(), ApiError> {
     let allowed: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM explore.moderators WHERE address=$1) OR EXISTS (SELECT 1 FROM explore.event_profile_settings WHERE \"user\"=$1 AND permissions ? $2)",
+        "SELECT EXISTS (SELECT 1 FROM explore.moderators WHERE address=$1) OR EXISTS (SELECT 1 FROM explore.event_profile_settings WHERE \"user\"=$1 AND permissions_granted AND permissions ? $2)",
     ).bind(signer.to_ascii_lowercase()).bind(permission).fetch_one(pool).await?;
     if allowed {
         Ok(())
@@ -212,13 +212,24 @@ pub async fn update_my_profile_settings(
     State(state): State<SharedState>,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    raw_body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
     state.user_writes()?;
+    let body: Value = serde_json::from_slice(&raw_body)
+        .map_err(|_| ApiError::bad_request("Invalid profile JSON"))?;
     if !catalyst_fed::is_envelope(&body) {
         let signer = state.signer(&headers, "patch", uri.path()).await?;
         let message = legacy_profile_message(body, &signer, true)?;
         let mut tx = state.pool.begin().await?;
+        record_profile_request(
+            &mut tx,
+            &headers,
+            &signer,
+            &message.target,
+            uri.path(),
+            &raw_body,
+        )
+        .await?;
         let settings = save_profile_settings(&mut tx, &message).await?;
         tx.commit().await?;
         return Ok(ok(settings));
@@ -235,6 +246,59 @@ pub async fn update_my_profile_settings(
     Ok(ok(
         apply_profile_settings(&state.pool, &signed, &signer).await?
     ))
+}
+
+/// Bind signed-fetch profile mutations to their exact bytes and consume the
+/// nonce in the same transaction as the settings; failed writes roll both back.
+async fn record_profile_request(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    headers: &HeaderMap,
+    signer: &str,
+    target: &str,
+    path: &str,
+    body: &[u8],
+) -> Result<(), ApiError> {
+    let metadata: Value = headers
+        .get("x-identity-metadata")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| serde_json::from_str(h).ok())
+        .ok_or_else(|| ApiError::bad_request("Signed profile metadata required"))?;
+    let digest = hex::encode(Sha256::digest(body));
+    if metadata.get("body_sha256").and_then(Value::as_str) != Some(digest.as_str()) {
+        return Err(ApiError::bad_request(
+            "Profile body must match signed body_sha256",
+        ));
+    }
+    let nonce = metadata
+        .get("nonce")
+        .and_then(Value::as_str)
+        .filter(|nonce| uuid::Uuid::parse_str(nonce).is_ok_and(|id| id.to_string() == *nonce))
+        .ok_or_else(|| ApiError::bad_request("Signed profile nonce must be a canonical UUID"))?;
+    let hash = hex::encode(Sha256::digest(format!("legacy-profile:{signer}:{nonce}")));
+    let signed_at = headers
+        .get("x-identity-timestamp")
+        .and_then(|h| h.to_str().ok())
+        .and_then(|h| h.parse::<i64>().ok())
+        .ok_or_else(|| ApiError::bad_request("Invalid timestamp"))?
+        / 1000;
+    let payload = json!({"method":"patch","path":path,"body_sha256":digest,"nonce":nonce});
+    if !fed::record_action(
+        tx,
+        &fed::Action {
+            scope: fed::Scope::Events,
+            signature_hash: &hash,
+            signer,
+            subject_id: Some(target),
+            action_type: "ProfileSettingsUpdate",
+            payload: &payload,
+            signed_at,
+        },
+    )
+    .await?
+    {
+        return Err(ApiError::http(409, "Profile request already applied"));
+    }
+    Ok(())
 }
 
 fn legacy_profile_message(
@@ -353,14 +417,25 @@ pub async fn update_profile_settings(
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     Path(profile_id): Path<String>,
-    Json(body): Json<Value>,
+    raw_body: Bytes,
 ) -> Result<Json<Value>, ApiError> {
     state.operator_writes()?;
+    let body: Value = serde_json::from_slice(&raw_body)
+        .map_err(|_| ApiError::bad_request("Invalid profile JSON"))?;
     if !catalyst_fed::is_envelope(&body) {
         let signer = state.signer(&headers, "patch", uri.path()).await?;
         require_permission(&state.pool, &signer, "edit_any_profile").await?;
         let message = legacy_profile_message(body, &profile_id, false)?;
         let mut tx = state.pool.begin().await?;
+        record_profile_request(
+            &mut tx,
+            &headers,
+            &signer,
+            &message.target,
+            uri.path(),
+            &raw_body,
+        )
+        .await?;
         let settings = save_profile_settings(&mut tx, &message).await?;
         tx.commit().await?;
         return Ok(ok(settings));
@@ -715,7 +790,7 @@ mod tests {
                 wallet,
                 method,
                 path,
-                "{}",
+                &json!({"body_sha256":hex::encode(Sha256::digest(body.to_string().as_bytes())),"nonce":uuid::Uuid::new_v4().to_string()}).to_string(),
                 true,
                 &chrono::Utc::now().timestamp_millis().to_string(),
             )
@@ -793,6 +868,102 @@ mod tests {
                 .as_array()
                 .unwrap()
                 .contains(&json!("edit_any_profile"))
+        );
+    }
+
+    #[tokio::test]
+    async fn profile_signatures_bind_exact_bytes_reject_replay_and_audit_once() {
+        use crate::shared::signed_fetch::test_support::signed_headers_by;
+        use axum::{
+            body::Body,
+            http::{Request, StatusCode},
+        };
+        use tower::ServiceExt;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let key = alloy_signer_local::PrivateKeySigner::random();
+        let signer = format!("{:#x}", key.address());
+        let target = format!(
+            "{:#x}",
+            alloy_signer_local::PrivateKeySigner::random().address()
+        );
+        sqlx::query("INSERT INTO explore.moderators(address,added_at) VALUES($1,0)")
+            .bind(&signer)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let app = crate::router(std::sync::Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                ..crate::Settings::for_tests()
+            },
+            None,
+        )));
+        let app = axum::Router::new().nest("/events", app);
+        async fn call(
+            app: &axum::Router,
+            path: &str,
+            headers: &HeaderMap,
+            body: &str,
+        ) -> StatusCode {
+            let mut request = Request::builder()
+                .method("PATCH")
+                .uri(path)
+                .header("content-type", "application/json");
+            for (name, value) in headers {
+                request = request.header(name, value);
+            }
+            app.clone()
+                .oneshot(request.body(Body::from(body.to_owned())).unwrap())
+                .await
+                .unwrap()
+                .status()
+        }
+        for (path, body, changed) in [
+            (
+                "/events/api/profiles/me/settings".to_owned(),
+                r#"{"use_local_time":false}"#,
+                r#"{"use_local_time":true}"#,
+            ),
+            (
+                format!("/events/api/profiles/{target}/settings"),
+                r#"{"permissions":["edit_any_event"]}"#,
+                r#"{"permissions":["edit_any_profile"]}"#,
+            ),
+        ] {
+            let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+            let metadata = json!({"body_sha256":hex::encode(Sha256::digest(body.as_bytes())),"nonce":uuid::Uuid::new_v4().to_string()}).to_string();
+            let headers =
+                signed_headers_by(&key, "patch", &path, &metadata, true, &timestamp).await;
+            assert_eq!(
+                call(&app, &path, &headers, changed).await,
+                StatusCode::BAD_REQUEST
+            );
+            let unbound = signed_headers_by(&key, "patch", &path, "{}", true, &timestamp).await;
+            assert_eq!(
+                call(&app, &path, &unbound, body).await,
+                StatusCode::BAD_REQUEST
+            );
+            assert_eq!(call(&app, &path, &headers, body).await, StatusCode::OK);
+            assert_eq!(
+                call(&app, &path, &headers, body).await,
+                StatusCode::CONFLICT
+            );
+        }
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM explore.signed_actions WHERE signer=$1 AND action_type='ProfileSettingsUpdate'")
+            .bind(&signer).fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 2);
+        let mut conn = pool.acquire().await.unwrap();
+        assert_eq!(
+            load_settings(&mut conn, &signer).await.unwrap()["use_local_time"],
+            false
+        );
+        assert_eq!(
+            load_settings(&mut conn, &target).await.unwrap()["permissions"],
+            json!(["edit_any_event"])
         );
     }
 
@@ -904,7 +1075,7 @@ mod tests {
         };
         let key = alloy::signers::local::PrivateKeySigner::random();
         let user = format!("{:#x}", key.address());
-        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions) VALUES ($1,'[\"edit_any_event\",\"approve_any_event\",\"approve_own_event\",\"edit_any_schedule\"]')")
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions) VALUES ($1,'[\"edit_any_event\",\"approve_any_event\",\"approve_own_event\",\"edit_any_schedule\",\"edit_any_profile\"]')")
             .bind(&user).execute(&pool).await.unwrap();
         let message = ProfileSettingsUpdate {
             target: user.clone(),
@@ -926,6 +1097,12 @@ mod tests {
             apply_profile_settings(&pool, &signed, actor).await.unwrap();
             let permissions = event_permissions(&pool, &user).await.unwrap();
             assert!(!permissions.edit_any && !permissions.approve_any && !permissions.approve_own);
+            for permission in ["edit_any_profile", "edit_any_schedule"] {
+                assert!(require_permission(&pool, &user, permission).await.is_err());
+            }
+            let mut conn = pool.acquire().await.unwrap();
+            let settings = load_settings(&mut conn, &user).await.unwrap();
+            assert_eq!(settings["permissions"], json!([]));
             let granted: bool = sqlx::query_scalar(
                 "SELECT permissions_granted FROM explore.event_profile_settings WHERE \"user\"=$1",
             )

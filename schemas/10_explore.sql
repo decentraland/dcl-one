@@ -283,31 +283,6 @@ CREATE TABLE explore.place_interaction_counts (
     CONSTRAINT place_interaction_counts_nonnegative CHECK (favorites >= 0 AND likes >= 0 AND dislikes >= 0)
 );
 
--- Qualified local voter counts are a rebuildable projection of user_likes
--- (activity >=100), updated under the interaction counter lock in the same
--- transaction. One row/entity; PK serves vote updates and world-scene reads.
--- No FK to catalogue rows: user facts outlive undeploy/redeploy of a stable
--- local place identity. REBUILD_VOTE_SCORES reproduces the projection.
--- Mirrored aggregate scores retain upstream authority: their active-voter
--- totals cannot be recovered from an already-computed Wilson bound.
-CREATE TABLE explore.place_vote_scores (
-    entity_id text PRIMARY KEY,
-    active_likes bigint NOT NULL CHECK (active_likes >= 0),
-    active_dislikes bigint NOT NULL CHECK (active_dislikes >= 0),
-    like_rate double precision GENERATED ALWAYS AS (
-        CASE WHEN active_likes + active_dislikes > 0
-             THEN active_likes::double precision / (active_likes + active_dislikes) END
-    ) STORED,
-    like_score double precision GENERATED ALWAYS AS (
-        CASE WHEN active_likes + active_dislikes > 0 THEN
-            ((active_likes::double precision + 1.9208) / (active_likes + active_dislikes)
-              - 1.96 * sqrt(active_likes::double precision * active_dislikes / (active_likes + active_dislikes) + 0.9604)
-                / (active_likes + active_dislikes))
-            / (1 + 3.8416 / (active_likes + active_dislikes)::double precision) END
-    ) STORED,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
-);
-
 -- ── events ─────────────────────────────────────────────────────────────────
 
 -- The mirrored leg of /api/events (src/explore/events/mirror.rs).
