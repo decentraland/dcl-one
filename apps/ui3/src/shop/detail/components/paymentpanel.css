@@ -40,9 +40,8 @@
 .shop-pay__caption {
   font-size: 14px;
   font-weight: 600;
-  line-height: 1.2;
   text-transform: uppercase;
-  color: #a09ba8;
+  color: rgba(255, 255, 255, 0.7);
 }
 .shop-pay__stock {
   font-size: 18px;
@@ -229,6 +228,7 @@
 .shop-pay__ctaprice .shop-price__credits,
 .shop-pay__ctaprice .shop-price__mana {
   font-size: 15px;
+  font-weight: inherit;
 }
 .shop-pay__ctaprice .shop-price__mark {
   width: 18px !important;

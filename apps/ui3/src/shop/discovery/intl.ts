@@ -232,7 +232,6 @@ export const EN_MESSAGES: Readonly<Record<string, string>> = {
   "itemDetail.exportBlocked": "Export",
   "itemDetail.exportBlockedTooltip": "This Item doesn't allow VRM export",
   "itemDetail.playShowcase": "Play showcase",
-  "itemDetail.creator": "Creator",
   "itemDetail.collection": "Collection",
   "itemDetail.price": "Price",
   "itemDetail.stock": "Stock",
