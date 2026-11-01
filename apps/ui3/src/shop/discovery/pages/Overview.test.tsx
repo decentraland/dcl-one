@@ -31,13 +31,13 @@ describe("the Shop overview", () => {
     overview("loading");
     await settle();
     expect(screen.getByTestId("hero-title")).toHaveTextContent("A New Way to Shop");
-    expect(within(screen.getByTestId("new-creations-rail")).getAllByTestId("skeleton-card").length).toBeGreaterThan(0);
+    expect(within(screen.getByRole("region", { name: "New Creations" })).getAllByTestId("skeleton-card").length).toBeGreaterThan(0);
     expect(within(screen.getByTestId("trending-rail")).getAllByTestId("skeleton-card").length).toBeGreaterThan(0);
   });
 
   it("renders the rails with credits-first cards, the deals rail only with enough deals", async () => {
     overview();
-    const creations = await screen.findByTestId("new-creations-rail");
+    const creations = await screen.findByRole("region", { name: "New Creations" });
     const cards = await within(creations).findAllByTestId("card");
     expect(cards.length).toBeGreaterThan(0);
     const hat = cards.find((c) => within(c).queryByText("Nacho Hat") && !within(c).queryByTestId("card-resale"))!;
@@ -48,7 +48,7 @@ describe("the Shop overview", () => {
 
   it("New Creations asks for primaries only; a resale in Trending is MANA only, never its credit figure", async () => {
     overview("ok", "web3", { "/v3/catalog/trending": { data: [PRIMARY_WEARABLE, RESALE_WEARABLE] } });
-    const creations = await screen.findByTestId("new-creations-rail");
+    const creations = await screen.findByRole("region", { name: "New Creations" });
     expect(within(creations).queryByTestId("card-resale")).toBeNull();
     const rail = await screen.findByTestId("trending-rail");
     const resale = (await within(rail).findAllByTestId("card")).find((c) => within(c).queryByTestId("card-resale"));
@@ -60,7 +60,7 @@ describe("the Shop overview", () => {
   it("hides the credits CTA in the iOS web view", async () => {
     window.history.pushState({}, "", "/?view=mobile-iap");
     overview();
-    await within(await screen.findByTestId("new-creations-rail")).findAllByTestId("card");
+    await within(await screen.findByRole("region", { name: "New Creations" })).findAllByTestId("card");
     expect(screen.queryByTestId("hero-credits-cta")).toBeNull();
     window.history.pushState({}, "", "/");
   });

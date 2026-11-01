@@ -1,4 +1,5 @@
-/* from: shop@2d3bf62:app/src/pages/Overview.styles.ts (Carousel, Viewport, Track, Arrow, Dots), app/src/styles/row.styles.ts,
+/* from: shop@3a322cf9:app/src/styles/row.styles.ts (Head, Title, Arrow), app/src/pages/Overview.styles.ts (Carousel);
+   shop@2d3bf62:app/src/pages/Overview.styles.ts (Carousel, Viewport, Track, Arrow, Dots), app/src/styles/row.styles.ts,
    app/src/styles/card.styles.ts (railGutter: 18px of room so a lifted, ringed card is not clipped) */
 .shop-rail {
   display: flex;
@@ -8,6 +9,7 @@
 .shop-rail__head {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 12px;
   margin-bottom: 10px;
 }
@@ -17,7 +19,7 @@
   font-weight: var(--ui-title-weight, 600);
   line-height: 1.5;
   letter-spacing: var(--ui-title-tracking, 0);
-  flex: 1;
+  color: #fcfcfc;
   min-width: 0;
 }
 .shop-rail__all {
@@ -74,7 +76,7 @@
 }
 .shop-rail__arrow {
   position: absolute;
-  top: var(--rail-arrow-top, 105px);
+  top: var(--rail-arrow-top, 106px);
   transform: translateY(-50%);
   z-index: 5;
   width: 44px;
