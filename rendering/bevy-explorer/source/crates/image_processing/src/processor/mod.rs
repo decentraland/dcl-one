@@ -3,7 +3,7 @@ mod draco;
 mod native_fs;
 #[cfg(target_arch = "wasm32")]
 mod wasm_fs;
-use std::io::Write;
+use std::{collections::VecDeque, io::Write};
 
 use base64::{engine::general_purpose, Engine};
 use bevy::log::{
@@ -25,7 +25,27 @@ pub(crate) async fn process_events(
     mut req_rx: UnboundedReceiver<AssetForProcessing>,
     resp_sx: UnboundedSender<Result<AssetForProcessing, ()>>,
 ) {
-    while let Some(req) = req_rx.blocking_recv() {
+    // requests taken from the channel, not yet processed
+    let mut pending: VecDeque<AssetForProcessing> = VecDeque::new();
+    loop {
+        if pending.is_empty() {
+            let Some(req) = req_rx.blocking_recv() else {
+                return;
+            };
+            pending.push_back(req);
+        }
+        while let Ok(req) = req_rx.try_recv() {
+            pending.push_back(req);
+        }
+        // a gltf that failed to load shows nothing until it is repaired, while a texture
+        // compression only improves one that is already showing: repairs go first, so a
+        // millisecond repair never waits behind a queue of 200ms compressions
+        let next = pending
+            .iter()
+            .position(|req| matches!(req.ty, ProcessingAssetType::UnloadableGltf))
+            .unwrap_or(0);
+        let req = pending.remove(next).expect("pending is not empty");
+
         let Ok((raw_bytes, key)) = read_file(&req.cache_path).await else {
             error!("can't read {:?}", req.cache_path);
             let _ = resp_sx.send(Err(()));
