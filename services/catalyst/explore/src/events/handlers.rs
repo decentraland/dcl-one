@@ -128,12 +128,20 @@ fn parse_filters(
     admin: bool,
     include_unapproved: bool,
 ) -> Result<Option<EventListFilters>, ApiError> {
-    let limit = q
-        .limit
+    let with_recurrent_dates = q
+        .with_recurrent_dates
         .as_deref()
-        .and_then(|s| s.parse::<i64>().ok())
+        .and_then(parse_bool)
+        .unwrap_or(false);
+    let requested_limit = q.limit.as_deref().and_then(|s| s.parse::<i64>().ok());
+    if with_recurrent_dates && requested_limit.is_some_and(|limit| limit > 25) {
+        return Err(ApiError::bad_request(
+            "with_recurrent_dates requires limit <= 25",
+        ));
+    }
+    let limit = requested_limit
         .map(|n| n.clamp(0, 500))
-        .unwrap_or(500);
+        .unwrap_or(if with_recurrent_dates { 25 } else { 500 });
     if limit == 0 {
         return Ok(None);
     }
@@ -235,11 +243,7 @@ fn parse_filters(
         estate_id,
         community_id,
         schedule: q.schedule.clone(),
-        with_recurrent_dates: q
-            .with_recurrent_dates
-            .as_deref()
-            .and_then(parse_bool)
-            .unwrap_or(false),
+        with_recurrent_dates,
         places_ids,
         destination_ids: Vec::new(),
         from,
@@ -677,6 +681,27 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(f.owner && f.creator.is_none() && f.only_attendee && f.include_deleted && f.admin);
+    }
+
+    #[test]
+    fn expanded_recurrence_pagination_rejects_oversized_limits_instead_of_skipping_rows() {
+        let mut query =
+            EventListQuery::from_pairs(&[("with_recurrent_dates".into(), "true".into())]);
+        assert_eq!(
+            parse_filters(&query, vec![], None, None, false, false)
+                .unwrap()
+                .unwrap()
+                .limit,
+            25
+        );
+        query.limit = Some("26".into());
+        assert!(parse_filters(&query, vec![], None, None, false, false).is_err());
+        query.limit = Some("25".into());
+        query.offset = Some("25".into());
+        let filters = parse_filters(&query, vec![], None, None, false, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!((filters.limit, filters.offset), (25, 25));
     }
 
     #[test]

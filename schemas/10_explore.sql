@@ -466,6 +466,8 @@ CREATE TABLE explore.event_profile_settings (
     notify_by_email   boolean NOT NULL DEFAULT false,
     notify_by_browser boolean NOT NULL DEFAULT false,
     permissions       jsonb NOT NULL DEFAULT '[]'::jsonb,
+    -- Only an explicit moderator grant enables permission values as authority.
+    permissions_granted boolean NOT NULL DEFAULT false,
     created_at        timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at        timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT event_profile_settings_user_lowercase CHECK ("user" = lower("user"))
