@@ -1,7 +1,8 @@
 // from: shop@94584a5c:app/src/lib/rarity.ts
-// Rarity colours, labels and scarcity. The palette is ui3's --rar-* tokens (atoms/primitives.css),
-// not upstream's Figma theme, so the Shop's chips match the rest of ui3; the maximum supply per
-// rarity is @dcl/schemas' Rarity.getMaxSupply.
+// Rarity colours, labels and scarcity. COLORS is upstream's rarity palette (shop@3a322cf9
+// app/src/styles/theme.ts), used by every Shop surface that colours by rarity: card flaps, the item
+// page's chip and glow, favourites and collection mosaics. ui3's --rar-* tokens outside the Shop keep
+// their own values. The maximum supply per rarity is @dcl/schemas' Rarity.getMaxSupply.
 
 import { t } from "../intl";
 

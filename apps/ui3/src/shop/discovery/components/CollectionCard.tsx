@@ -5,7 +5,7 @@ import { useNavigate } from "react-router";
 import { shortAddress } from "../../model/address";
 import { SHOP_BASE } from "../../routes";
 import { fetchCollectionItems, type CollectionSummary } from "../api";
-import { useProfile } from "../hooks";
+import { useCreatorProfile } from "../hooks";
 import { t } from "../intl";
 import { addressAvatarColor, avatarInitial } from "../lib/avatarColor";
 import type { CatalogItem } from "../lib/catalogItem";
@@ -30,7 +30,8 @@ export function CollectionMosaic({ items }: { items: CatalogItem[] }) {
 
 function CreatorRow({ address }: { address: string }) {
   const navigate = useNavigate();
-  const profile = useProfile(address);
+  // The same batched, cached lookup as the cards' creator line, so a page showing both asks once.
+  const { profile } = useCreatorProfile(address);
   const [broken, setBroken] = useState(false);
   useEffect(() => setBroken(false), [profile?.picture]);
   const name = profile?.name ? profile.name.charAt(0).toUpperCase() + profile.name.slice(1) : shortAddress(address);
