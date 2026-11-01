@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { PAGES, type PageSpec } from "./pages.mts";
 import { offerSynthesizer } from "./lib/offers.mts";
 import { RECORDINGS, referencePin, ROOT, STATE } from "./lib/paths.mts";
-import { fillMisses, Recording } from "./lib/recording.mts";
+import { fillMisses, Recording, savingAfter } from "./lib/recording.mts";
 import { runAll, selectViewports } from "./lib/run.mts";
 import { prepareReference } from "./reference.mts";
 
@@ -40,29 +40,36 @@ if (process.argv.includes("--fill")) {
   const targets: Record<string, string> = { ...(live.manifest?.targets ?? {}) };
   const now = live.manifest?.recordedAt ? Date.parse(live.manifest.recordedAt) : Date.now();
   let current: PageSpec | null = null;
-  const { results } = await runAll(live, specs, selectViewports(arg("--viewports")), {
-    now,
-    targets,
-    out: join(STATE, "record-run", set),
-    beforePage: async (spec) => {
-      current = spec;
-    },
-    onPage: async (side, page) => {
-      if (side === "reference" && current?.discover) Object.assign(targets, await current.discover(page));
-    },
-    onResult: (r) => console.log(`recorded ${r.page}@${r.viewport}: ${r.sides.reference.error ?? "reference ok"}, ${r.sides["dcl-one"].error ?? "dcl-one ok"}`),
-  });
   const commit = spawnSync("git", ["rev-parse", "HEAD"], { cwd: ROOT, encoding: "utf8" }).stdout.trim();
-  live.save({
+  const run = () =>
+    runAll(live, specs, selectViewports(arg("--viewports")), {
+      now,
+      targets,
+      out: join(STATE, "record-run", set),
+      beforePage: async (spec) => {
+        current = spec;
+      },
+      onPage: async (side, page) => {
+        if (side === "reference" && current?.discover) Object.assign(targets, await current.discover(page));
+      },
+      onResult: (r) => console.log(`recorded ${r.page}@${r.viewport}: ${r.sides.reference.error ?? "reference ok"}, ${r.sides["dcl-one"].error ?? "dcl-one ok"}`),
+    });
+  // Saved even if the run dies midway: running the same command again goes on from what was read.
+  const { results } = await savingAfter(live, run, () => ({
     set,
     recordedAt: new Date(now).toISOString(),
     source: "production Decentraland services, read-only, through the pinned reference shop and the dcl-one UI",
     reference: referencePin().revision,
     dclOne: commit,
     targets,
-  });
+  }));
   const missing = results.flatMap((r) => r.misses);
   if (missing.length) console.log(`unanswered while recording (dcl-one-only routes): ${[...new Set(missing.map((m) => `${m.method} ${m.service} ${m.path}`))].join(", ")}`);
+  // A page may have rendered (or discovered its targets) from these errors: they were not kept.
+  if (live.failures.length) {
+    console.error(`production answered ${live.failures.length} request(s) with a server error; none was kept, so record.mts --set ${set} --fill can ask again, but check the pages that read them:\n${[...new Set(live.failures)].map((f) => `  ${f}`).join("\n")}`);
+    process.exitCode = 1;
+  }
 }
 
 // An error answer replays like any other: both sides render the same error state and nothing is reported.

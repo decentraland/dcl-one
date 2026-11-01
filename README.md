@@ -19,7 +19,7 @@ conformance capture corpus and internal docs stay in the private repository.
 | `library/` | Shared crates, API types, the protocol (`library/protocol`) |
 | `schemas/` | The PostgreSQL schema |
 | `infra/` | Nix packages, container images, the gateway |
-| `tooling/` | Build and publication tools used by the workflows, and their tests |
+| `tooling/` | Build and publication tools used by the workflows, developer tools such as the Shop parity harness, and their tests |
 
 ## Agentic roles
 

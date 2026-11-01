@@ -1,6 +1,9 @@
 // Perceptual pixel diff: the pixelmatch method (YIQ colour delta with a perceptual threshold, and
 // anti-aliasing detection so a pixel that is an edge's anti-aliasing on either side is tolerated).
-// Declared mask rectangles are painted alike on both images first; area only one image has counts.
+// Area only one image has counts. A mask hides what cannot be equal inside a box both images have
+// at the same place, so a pixel only one image masks counts too (the box moved, grew, or is missing),
+// unless the other image's box comes within 1px of it: the structural diff's tolerance. A region is a
+// deliberate difference's area, whose extent differs between the sides, and hides its pixels on both.
 import type { Box } from "./collect.mts";
 import type { Rgba } from "./png.mts";
 
@@ -89,15 +92,24 @@ function pad(img: Rgba, w: number, h: number): { data: Uint8Array; inside: (x: n
   return { data, inside: (x, y) => x < img.width && y < img.height };
 }
 
-export function pixelDiff(a: Rgba, b: Rgba, opts: { threshold?: number; masks?: Box[] } = {}): PixelResult {
+const MASK_A = 1, MASK_B = 2, REGION = 4, NEAR_A = 8, NEAR_B = 16;
+
+export function pixelDiff(a: Rgba, b: Rgba, opts: { threshold?: number; masks?: { a: Box[]; b: Box[] }; regions?: Box[] } = {}): PixelResult {
   const w = Math.max(a.width, b.width), h = Math.max(a.height, b.height);
   const A = pad(a, w, h), B = pad(b, w, h);
   const masked = new Uint8Array(w * h);
-  for (const m of opts.masks ?? []) {
-    for (let y = Math.max(0, Math.floor(m.y)); y < Math.min(h, Math.ceil(m.y + m.h)); y++) {
-      for (let x = Math.max(0, Math.floor(m.x)); x < Math.min(w, Math.ceil(m.x + m.w)); x++) masked[y * w + x] = 1;
+  const mark = (boxes: Box[], bit: number, grow = 0) => {
+    for (const m of boxes) {
+      for (let y = Math.max(0, Math.floor(m.y) - grow); y < Math.min(h, Math.ceil(m.y + m.h) + grow); y++) {
+        for (let x = Math.max(0, Math.floor(m.x) - grow); x < Math.min(w, Math.ceil(m.x + m.w) + grow); x++) masked[y * w + x]! |= bit;
+      }
     }
-  }
+  };
+  mark(opts.masks?.a ?? [], MASK_A);
+  mark(opts.masks?.b ?? [], MASK_B);
+  mark(opts.masks?.a ?? [], NEAR_A, 1);
+  mark(opts.masks?.b ?? [], NEAR_B, 1);
+  mark(opts.regions ?? [], REGION);
   const maxDelta = 35215 * (opts.threshold ?? 0.1) ** 2;
   const out = new Uint8Array(w * h * 4);
   const rowDiff = new Uint32Array(h);
@@ -106,13 +118,14 @@ export function pixelDiff(a: Rgba, b: Rgba, opts: { threshold?: number; masks?: 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x, p = i * 4;
-      if (masked[i]) {
+      const m = masked[i]!;
+      if (m & REGION || (m & MASK_A && m & NEAR_B) || (m & MASK_B && m & NEAR_A)) {
         nMasked++;
         out.set([120, 60, 200, 255], p);
         continue;
       }
       let bad = false, tolerated = false;
-      if (!A.inside(x, y) || !B.inside(x, y)) bad = true;
+      if (m & (MASK_A | MASK_B) || !A.inside(x, y) || !B.inside(x, y)) bad = true;
       else {
         const delta = colorDelta(A.data, B.data, p, p, false);
         if (Math.abs(delta) > maxDelta) {

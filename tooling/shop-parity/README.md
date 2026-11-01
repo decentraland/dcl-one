@@ -21,18 +21,22 @@ pnpm test && pnpm typecheck
 
 Node 24+, with `apps/ui3` and `apps/sites` installed (`pnpm install` in each). `--build` builds
 `apps/sites` with an allowlisted environment, so none of the developer's `VITE_*` or deploy variables
-is baked into the bundle, and stamps the build with what it was built from: the commit, a hash of
-every uncommitted change that can reach the build (edits and untracked files anywhere in the
-repository but this tool, and `apps/sites`' gitignored `.env*` files), and the Node version. Without `--build`, a
-run refuses a build whose stamp is not the current sources. `gate.mts --promote` runs only on a fully
+is baked into the bundle. Vite also reads `apps/sites`' `.env*` files from disk, so `--build`
+refuses to run while one that is not committed exists, gitignored or not (`.env.production.local` is
+neither), and names it. It stamps the build with what it was built
+from: the commit, a hash of every uncommitted change that can reach the build (edits and untracked
+files anywhere in the repository but this tool), and the Node version. Without `--build`, a run
+refuses a build whose stamp is not the current sources. `gate.mts --promote` runs only on a fully
 committed tree, this tool included. `--pages overview,items` and `--viewports desktop` narrow a run.
-`CHROMIUM_BIN` picks the browser; both sides always use the same one. `pnpm test` needs no install.
+`CHROMIUM_BIN` picks the browser; both sides always use the same one. `pnpm test` needs no install,
+and the repository's structure check runs it.
 
 The three loopback servers listen on 5176–5178 (`SHOP_PARITY_PORT_BASE` moves them). The replay
 answers the sites preview only, server to server, and refuses any request a browser makes; the
-preview refuses any request another site makes. So a website open elsewhere cannot make a recording
-read production. A page opened on the preview or the reference in another browser calls the real
-services and is not what is compared.
+preview refuses any request another site makes. Both also refuse a `Host` other than their own
+loopback address, which is what a page on a name rebound to 127.0.0.1 would send. So a website open
+elsewhere cannot make a recording read production. A page opened on the preview or the reference in
+another browser calls the real services and is not what is compared.
 
 ## What a run does
 
@@ -57,9 +61,13 @@ services and is not what is compared.
   `trending.card.price#0: font-weight 600→700, text "20"→"20 Credits"`.
 - **Pixels.** Each page is taken as a user scrolls it (viewport tiles stitched at their scroll
   offset, fixed bars painted once, sticky elements at their place in the layout) and diffed perceptually (YIQ threshold 0.1, anti-aliasing
-  tolerated). Masks cover only what cannot match between two renders (3D previews); regions cover a
-  declared deliberate difference, and a structural difference inside a region takes its rule. Both
-  are declared per page with their reason.
+  tolerated). Masks cover only what cannot match between two renders (3D previews), inside a box both
+  sides have at the same place: a pixel only one side masks counts as differing unless the other
+  side's box comes within 1px of it (the structural tolerance), so a masked box that moves or grows
+  is caught. Regions cover a declared deliberate difference, whose extent differs
+  between the sides, so a region hides its area on both; a structural difference inside a region
+  takes its rule only when it lies inside that region on every side it appears. Both are declared
+  per page with their reason.
 - **Report.** `state/shop-parity/runs/<time>/index.html`: per page and viewport the reference,
   dcl-one and diff images, the bands where pixels differ, the unexpected structural lines, the
   expected ones with their rule, console errors and any request the recording could not answer.
@@ -79,7 +87,13 @@ node record.mts --set <date> --fill    # replay, read what the replay could not 
 ```
 
 `--fill` sends each missed request as the page sent it, body included, and saves what it read even
-when one read fails; the failures are listed and the exit code is 1.
+when one read fails; the failures are listed and the exit code is 1. A server error (5xx) is asked
+again twice, after 1 s and 3 s (longer if `Retry-After` says so, up to 10 s), and never kept: it
+stays a miss for the next `--fill`, recording lists it at the end and exits 1, and an older
+recording's kept 5xx is asked again. A recording that dies midway, Ctrl+C included, still saves what
+it read, marked incomplete; `capture.mts` refuses an incomplete recording, and running the same
+`record.mts` command again goes on from what was read. To learn a picture's size, recording reads it
+once, from Decentraland's own hosts only.
 
 Recording drives both UIs against the production services (public reads only) and keeps their
 answers in `state/shop-parity/recordings/<set>/`. They are real public data (profiles, listings,

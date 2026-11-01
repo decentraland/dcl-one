@@ -11,6 +11,7 @@ export type Side = "reference" | "dcl-one";
 export type PerSide<T> = { reference: T; "dcl-one": T };
 
 export type KeyElement = { name: string; selector: string | PerSide<string>; max?: number };
+/** What cannot be equal between two renders, in a box both sides have at the same place: a pixel only one side masks still counts. */
 export type Mask = { selector: PerSide<string[]>; why: string };
 /** A deliberate difference's area: excluded from the pixel count, listed with its rule. */
 export type Region = { selector: PerSide<string[]>; why: string };
