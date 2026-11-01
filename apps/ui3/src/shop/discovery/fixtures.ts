@@ -20,6 +20,7 @@ import type { ShopTransport, TransportRequest } from "../api/signer";
 import { BOOK, ITEM, TOKEN } from "../payment/fixtures";
 import type { UnifiedListingRaw } from "./api";
 import { resetShopQueries } from "./query";
+import { primeRemoteFlags } from "./lib/remoteFlags";
 import type { RawCollectionItem } from "./lib/catalogItem";
 
 export type CatalogScenario = "ok" | "empty" | "error" | "outage" | "loading";
@@ -338,15 +339,18 @@ export type HarnessProps = {
   offers?: OfferSource;
   host?: ShopWalletHost;
   cart?: CartStore;
+  /** The feature-flags service's answer (lib/remoteFlags.ts); every rollout flag is off unless named here. */
+  remoteFlags?: Record<string, boolean>;
 };
 
 /**
  * Mounts a Shop page the way a host does: its route inside a memory router, the wallet seam, the offer
  * seam and the document's Shop client (installed before the first render). Stories and tests share it.
  */
-export function ShopHarness({ children, path = "*", entry = "/", session = "signedOut", scenario = "ok", overrides, client, offers = missingOfferRoute, host, cart }: HarnessProps) {
+export function ShopHarness({ children, path = "*", entry = "/", session = "signedOut", scenario = "ok", overrides, client, offers = missingOfferRoute, host, cart, remoteFlags = {} }: HarnessProps) {
   const [installed] = useState(() => {
     resetShopQueries();
+    primeRemoteFlags(remoteFlags);
     setShopClient(client ?? catalogClient(scenario, overrides));
     return true;
   });
