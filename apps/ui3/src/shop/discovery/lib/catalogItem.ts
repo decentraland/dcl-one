@@ -106,6 +106,8 @@ export function toCatalogItem(r: RawCollectionItem): CatalogItem {
     ...(r.tradeId ? { tradeId: r.tradeId } : {}),
     ...(mana ? { manaWei: mana } : {}),
     available: toAvailable(r.available),
+    // A closed mint reports a zero price; a live one is what makes the item buyable from its creator.
+    hasPrimaryListing: !!r.price && r.price !== "0",
     onSale: r.isOnSale ?? undefined,
     gender: toGender(r.data?.wearable?.bodyShapes),
   };

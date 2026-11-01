@@ -108,6 +108,13 @@ describe("an eligible primary wearable (a store mint)", () => {
     expect(screen.queryByTestId("pay-mana")).toBeNull();
     fireEvent.click(screen.getByTestId("cta-sign-in"));
     expect(signIn).toHaveBeenCalled();
+    expect(screen.queryByTestId("state-signInRequired")).toBeNull();
+  });
+
+  it("signed out with no way to sign in here: the disabled buy says why", () => {
+    show(storeMint(SIGNED_OUT), SIGNED_OUT);
+    expect(screen.queryByTestId("cta-sign-in")).toBeNull();
+    expect(screen.getByTestId("state-signInRequired")).toBeTruthy();
   });
 
   it("short credits: an explicit top-up, credits stay selected, nothing moves to MANA", () => {

@@ -158,6 +158,12 @@ CREATE INDEX place_world_local_world_name_col_idx ON explore.place_world_local (
 CREATE INDEX place_world_local_positions_path_gin
     ON explore.place_world_local USING gin ((raw->'positions') jsonb_path_ops);
 
+-- Public owner-filtered world lists probe both catalogue legs through place_indexed.
+CREATE INDEX place_world_owner_idx ON explore.place
+    (lower(COALESCE(raw->>'owner', creator_address))) WHERE world IS TRUE;
+CREATE INDEX place_world_local_owner_idx ON explore.place_world_local
+    (lower(COALESCE(raw->>'owner', creator_address))) WHERE world IS TRUE;
+
 -- The read surface for every place/world query: the mirrored leg and the local leg.
 CREATE VIEW explore.place_indexed AS
     SELECT id, base_position, title, description, creator_address, content_rating,
@@ -211,8 +217,10 @@ CREATE TABLE explore.place_ranking (
 );
 
 -- A viewer's report of a place (src/explore/places/reports.rs): POST /api/report
--- records it with the upload URL it answers, the reporter's PUT of that URL
--- stores the document in `payload`, the operator queue resolves it. `filename`
+-- records a token-free upload URL and a nullable SHA-256 capability digest.
+-- The low-volume upload probes the unique filename, requires an open report,
+-- and consumes the digest atomically; reporter-signed writes revoke it too.
+-- The reporter's PUT of that URL stores the document in `payload`, the operator queue resolves it. `filename`
 -- is the upload key (unique, the PUT's probe with the reporter).
 CREATE TABLE explore.place_reports (
     id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -220,6 +228,7 @@ CREATE TABLE explore.place_reports (
     entity_id       text,
     reporter        text NOT NULL,
     signed_url      text NOT NULL,
+    upload_token_hash bytea,
     payload         jsonb NOT NULL DEFAULT '{}'::jsonb,
     status          text NOT NULL DEFAULT 'open',
     resolution      text,
@@ -227,6 +236,7 @@ CREATE TABLE explore.place_reports (
     resolved_by     text,
     resolved_at     timestamp without time zone,
     created_at      timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT place_reports_upload_token_hash_length CHECK (upload_token_hash IS NULL OR octet_length(upload_token_hash) = 32),
     CONSTRAINT place_reports_filename_key UNIQUE (filename),
     CONSTRAINT place_reports_status_known CHECK (status IN ('open', 'resolved', 'dismissed', 'actioned')),
     CONSTRAINT place_reports_reporter_lowercase CHECK (reporter = lower(reporter))
@@ -466,6 +476,8 @@ CREATE TABLE explore.event_profile_settings (
     notify_by_email   boolean NOT NULL DEFAULT false,
     notify_by_browser boolean NOT NULL DEFAULT false,
     permissions       jsonb NOT NULL DEFAULT '[]'::jsonb,
+    -- Only an explicit moderator grant enables permission values as authority.
+    permissions_granted boolean NOT NULL DEFAULT false,
     created_at        timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at        timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT event_profile_settings_user_lowercase CHECK ("user" = lower("user"))

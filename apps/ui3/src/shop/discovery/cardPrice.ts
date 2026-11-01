@@ -68,7 +68,9 @@ export function cardPrice(item: CatalogItem, session: Session): CardPrice {
   const listed = item.onSale !== false && (item.priceCredits > 0 || !!item.manaWei || !!item.tradeId || item.acquisition === "store");
   const primary = !item.tokenId && item.listingType !== "secondary";
   if (primary && item.available === 0) return { kind: "soldOut" };
-  if (!listed) return { kind: "notForSale" };
+  // A catalogue row reports a closed mint as a zero price (hasPrimaryListing false). Our backend also sends
+  // isOnSale false then, but upstream's catalogue can still mark it on sale with the trade row the mint left.
+  if (!listed || (primary && item.hasPrimaryListing === false && !(item.priceCredits > 0))) return { kind: "notForSale" };
   const rule = cardEligibility(item, session);
   const mana = parseManaWei(item.manaWei ?? null);
   if (rule && rule.allowed.includes("credits")) {
