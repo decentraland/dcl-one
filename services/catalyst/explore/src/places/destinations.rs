@@ -211,7 +211,11 @@ fn owner_param(pairs: &[(String, String)]) -> Option<&str> {
 fn require_feed_content(f: &mut PlaceListFilters) {
     let lookup = is_lookup_query(f);
     let names_parcels = f.positions.iter().any(|p| !p.is_empty());
-    let names_worlds = f.names.iter().any(|n| !n.is_empty());
+    let names_worlds = f
+        .names
+        .iter()
+        .chain(&f.partial_names)
+        .any(|n| !n.is_empty());
     f.require_content_places = !lookup && !names_parcels;
     f.require_content_worlds = !lookup && !names_worlds;
 }
@@ -281,8 +285,9 @@ pub fn parse_with_options(pairs: &[(String, String)]) -> Result<DestinationFlags
 fn select_branches(f: &mut PlaceListFilters, kinds: &[String]) {
     let wants_place = kinds.is_empty() || kinds.iter().any(|k| k == "place");
     let wants_world = kinds.is_empty() || kinds.iter().any(|k| k == "world");
-    let excludes_worlds = !f.positions.is_empty() && f.names.is_empty();
-    let excludes_places = !f.names.is_empty() && f.positions.is_empty();
+    let has_names = !f.names.is_empty() || !f.partial_names.is_empty();
+    let excludes_worlds = !f.positions.is_empty() && !has_names;
+    let excludes_places = has_names && f.positions.is_empty();
     let place_branch = wants_place && !excludes_places;
     let world_branch = wants_world && !excludes_worlds;
     f.only_places = !world_branch;
@@ -314,10 +319,8 @@ pub(crate) fn parse_filters(
     if positions.is_empty() {
         positions = positions_param(pairs, "pointer")?;
     }
-    let mut names = multi(pairs, "world_names")?;
-    if names.is_empty() {
-        names = multi(pairs, "names")?;
-    }
+    let names = multi(pairs, "world_names")?;
+    let partial_names = multi(pairs, "names")?;
     let sdk = if truthy(pairs, "only_sdk7") {
         Some("7".to_string())
     } else {
@@ -329,6 +332,7 @@ pub(crate) fn parse_filters(
         positions,
         categories: multi(pairs, "categories")?,
         names,
+        partial_names,
         ids: multi(pairs, "ids")?
             .into_iter()
             .map(|id| id.to_lowercase())
@@ -471,7 +475,9 @@ pub(crate) async fn list_destinations(
     pairs: &[(String, String)],
 ) -> Result<Json<ApiDataTotal<Destination>>, ApiError> {
     let (mut filters, only_favorites, flags) = parse_filters(pairs)?;
-    let user = state.viewer(headers, method, signed_path).await;
+    let user =
+        super::handlers::favorites_viewer(state, headers, method, signed_path, only_favorites)
+            .await?;
     if !state
         .places
         .scope_to_viewer(&mut filters, user.as_deref(), only_favorites)
@@ -480,6 +486,7 @@ pub(crate) async fn list_destinations(
     }
     if let Some(owner) = owner_param(pairs) {
         filters.owner_filtered = true;
+        filters.owner = Some(owner.to_lowercase());
         filters.operated_positions = state.places.operated_positions(owner).await?;
     }
     run_list(state, filters, &flags).await
@@ -577,22 +584,30 @@ fn by_selectors(selectors: BatchSelectors, viewer: Option<String>) -> PlaceListF
 }
 
 /// `POST /api/destinations` with an array body, for an in-process caller:
-/// the ids as `{"ids": ids}` (lowercased, matched by id only), the default
-/// flags, an anonymous viewer and at most `MAX_LIMIT` rows.
+/// the ids lowercased and matched by id only, the default flags, an
+/// anonymous viewer and at most `MAX_LIMIT` rows. As that route answers:
+/// no ids, no rows (not every destination); more than `MAX_BATCH_ITEMS`, 400.
 pub async fn destinations_by_ids(
     state: &ExploreState,
     ids: Vec<String>,
 ) -> Result<Vec<Destination>, ApiError> {
-    let body = Value::Array(ids.into_iter().map(Value::String).collect());
-    let Some(selectors) = parse_batch_body(&body)? else {
-        return Ok(Vec::new());
-    };
-    let filters = by_selectors(selectors, None);
-    if no_branch(&filters) {
+    if ids.is_empty() {
         return Ok(Vec::new());
     }
-    let flags = parse_with_options(&[])?;
-    Ok(list_page(state, filters, &flags).await?.0)
+    if ids.len() > MAX_BATCH_ITEMS {
+        return Err(ApiError::bad_request(format!(
+            "Too many items (max {MAX_BATCH_ITEMS})"
+        )));
+    }
+    let selectors = BatchSelectors {
+        ids: ids.into_iter().map(|id| id.to_lowercase()).collect(),
+        positions: Vec::new(),
+        world_names: Vec::new(),
+    };
+    let filters = by_selectors(selectors, None);
+    Ok(list_page(state, filters, &DestinationFlags::default())
+        .await?
+        .0)
 }
 
 #[cfg(test)]
@@ -686,10 +701,17 @@ mod param_parity_tests {
             filters(&[("positions", "1,1"), ("pointer", "2,2")]).positions,
             vec!["1,1"]
         );
-        assert_eq!(filters(&[("names", "a.dcl.eth")]).names, vec!["a.dcl.eth"]);
+        assert_eq!(
+            filters(&[("names", "a.dcl.eth")]).partial_names,
+            vec!["a.dcl.eth"]
+        );
         assert_eq!(
             filters(&[("world_names", "b.dcl.eth"), ("names", "a.dcl.eth")]).names,
             vec!["b.dcl.eth"]
+        );
+        assert_eq!(
+            filters(&[("world_names", "b.dcl.eth"), ("names", "a")]).partial_names,
+            vec!["a"]
         );
     }
 

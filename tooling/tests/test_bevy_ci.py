@@ -187,6 +187,20 @@ class SelectionTest(unittest.TestCase):
         self.write('docs/example.md', 'changed')
         self.assertFalse(ci.consumer_plan('pull_request', self.base, self.commit(), '')['images'])
 
+    def test_wildcard_inputs_stay_in_their_directory(self):
+        self.write('tooling/dev-regressions-x/y.json', '{}')
+        result = ci.select(self.base, self.commit())
+        self.assertFalse(any(result[lane] for lane in ci.LANES) or result['scenes'])
+
+    def test_schema_files_rebuild_images_and_independent_crates_or_docs_do_not(self):
+        base = self.base
+        for name, expected in (('schemas/10_explore.sql', True), ('apps/dcl-scene-cli/src/main.rs', False),
+                               ('rendering/bevy-explorer/README.md', False)):
+            self.write(name, 'changed')
+            head = self.commit()
+            self.assertEqual(ci.consumer_changed(base, head, 'images'), expected, name)
+            base = head
+
     def test_consumer_failure_to_find_a_successful_baseline_builds_images(self):
         with patch.object(ci, 'api', return_value={'workflow_runs': []}):
             self.assertTrue(ci.consumer_plan('push', self.base, self.base, 'example/project')['images'])

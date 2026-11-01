@@ -1,4 +1,5 @@
-/* from: shop@2d3bf62:app/src/components/OutfitsRow/OutfitsRow.styles.ts, app/src/components/OutfitCard/OutfitCard.styles.ts */
+/* from: shop@3a322cf9:app/src/components/OutfitsRow/OutfitsRow.styles.ts, app/src/components/OutfitCard/OutfitCard.styles.ts,
+   app/src/components/Button/Button.styles.ts (the glass CTA) */
 .shop-chrome .shop-outfits-row__viewport {
   --rail-arrow-top: 55%;
 }
@@ -162,20 +163,24 @@
   gap: 8px;
   width: 100%;
   min-height: 40px;
+  padding: 12px 22px;
   border: 0;
   border-radius: 12px;
-  background: #fff;
-  color: var(--shop-text, #161518);
+  background: rgba(255, 255, 255, 0.2);
+  color: #fcfcfc;
   font: inherit;
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.046em;
+  letter-spacing: 0.46px;
   text-transform: uppercase;
   cursor: pointer;
 }
 .shop-chrome .shop-outfit-card__cta:disabled {
-  opacity: 0.6;
+  opacity: 0.5;
   cursor: default;
+}
+@media (hover: hover) {
+  .shop-chrome .shop-outfit-card__cta:hover:not(:disabled) { background: #fcfcfc; color: #242129; }
 }
 @media (hover: hover) {
   .shop-chrome .shop-outfit-card:hover .shop-outfit-card__frame::after { opacity: 1; }

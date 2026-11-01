@@ -19,7 +19,7 @@ conformance capture corpus and internal docs stay in the private repository.
 | `library/` | Shared crates, API types, the protocol (`library/protocol`) |
 | `schemas/` | The PostgreSQL schema |
 | `infra/` | Nix packages, container images, the gateway |
-| `tooling/` | Build and publication tools used by the workflows, and their tests |
+| `tooling/` | Build and publication tools used by the workflows, developer tools such as the Shop parity harness, and their tests |
 
 ## Agentic roles
 
@@ -61,6 +61,11 @@ and skip when unset. The web packages run `pnpm test` (`apps/ui3`, `apps/sites`,
 `apps/ui3/editor-scene`) and `npm test` in `rendering/bevy-explorer/source/react-web`
 after `scripts/gen-ts-bindings.sh`; the protocol runs `make -C library/protocol
 test`; the workflow guards run with `python3 -m unittest discover -s tooling/tests`.
+
+## Standards
+
+Web UI code follows [UI standards](docs/ui-standards.md); component styles use
+CSS Modules.
 
 ## Clone the repository
 

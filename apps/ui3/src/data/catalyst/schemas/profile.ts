@@ -45,7 +45,7 @@ export const AvatarSchema = z
     sexualOrientation: z.string().optional(),
     language: z.string().optional(),
     profession: z.string().optional(),
-    birthdate: z.number().optional(),
+    birthdate: z.number().nullish(),
     realName: z.string().optional(),
     hobbies: z.string().optional(),
     ethAddress: z.string().optional(),

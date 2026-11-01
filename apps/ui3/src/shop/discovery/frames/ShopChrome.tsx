@@ -1,12 +1,13 @@
-// from: shop@2d3bf62:app/src/components/NavBar/NavBar.tsx (the Shop subnav under the site nav: its section
-//       tabs, the search box, Buy Credits, favorites, activity and the cart with its count),
-//       app/src/components/NavBar/NavBar.styles.ts, app/src/components/ShopFooter/ShopFooter.tsx;
+// from: shop@3a322cf9:app/src/components/NavBar/NavBar.tsx (the Shop subnav under the site nav: its section
+//       tabs, the search box, Buy Credits, favorites, activity and the cart with its count; the bars deepen
+//       once the page scrolls), app/src/components/NavBar/NavBar.styles.ts;
+//       shop@2d3bf62:app/src/components/ShopFooter/ShopFooter.tsx;
 //       v2 ui3/src/marketplace/frames/MarketplaceChrome.tsx, frames/shop-tabs.ts, new-shop/NewShopTabs.tsx (superseded)
 // Plus marketplace@3bf3662f:webapp/src/components/Navigation/Navigation.tsx, Navigation.css and
 // components/PageLayout/PageLayout.tsx (the announcement strip, the slim footer) for the pages only
 // upstream Marketplace has.
 
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link, useLocation } from "react-router";
 
 import ChromeShell from "../../../components/ChromeShell";
@@ -90,10 +91,10 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
   const { pathname } = useLocation();
   const hidesSearch = /^\/shop\/my-items(\/|$)/.test(pathname);
   const favActive = /^\/shop\/my-favorites(\/|$)/.test(pathname);
-  const inCart = /^\/shop\/cart(\/|$)/.test(pathname);
   const market = set === "marketplace";
   const creditsCta = !iap && !market && !isLandPath(pathname);
   const tabsRef = useRef<HTMLElement>(null);
+  const scrolled = useScrolled();
   useEffect(() => {
     const nav = tabsRef.current;
     const current = nav?.querySelector<HTMLElement>('[aria-current="page"]');
@@ -104,7 +105,7 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
     }
   }, [active, tabs]);
   return (
-    <div className="shop-subnav" data-testid="shop-tools" data-iap={iap || undefined} data-set={set}>
+    <div className="shop-subnav" data-testid="subnav" data-iap={iap || undefined} data-set={set} data-scrolled={scrolled || undefined}>
       <nav ref={tabsRef} className="shop-subnav__tabs" aria-label={t("nav.sections")} data-testid="subnav-tabs">
         {tabs.map((tab) => (
           <Link
@@ -118,16 +119,11 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
             {tab.label}
           </Link>
         ))}
-        {inCart ? (
-          <Link key="cart" className="active" aria-current="page" to={`${SHOP_BASE}/cart`}>
-            {t("nav.cart")}
-          </Link>
-        ) : null}
       </nav>
       <hr className="shop-subnav__divider" aria-hidden="true" />
       {hidesSearch || market ? null : <SearchDropdown />}
       {!creditsCta ? null : (
-        <Link className="shop-subnav__credits shop-buy-ring" to={`${SHOP_BASE}/credits`} data-testid="nav-credits">
+        <Link className="shop-subnav__credits shop-buy-ring" to={`${SHOP_BASE}/credits`}>
           <Icon name="credits" size={20} />
           {t("nav.getCredits")}
         </Link>
@@ -136,7 +132,7 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
         <Icon name={favActive ? "heart-solid" : "heart"} size={28} />
       </Link>
       {signedIn && !market ? (
-        <Link className="shop-subnav__icon" data-kind="activity" to={`${SHOP_BASE}/activity`} aria-label={t("nav.activity")} data-testid="nav-activity">
+        <Link className="shop-subnav__icon" data-kind="activity" to={`${SHOP_BASE}/activity`} aria-label={t("nav.activity")} data-testid="subnav-activity">
           <Icon name="history" size={28} />
         </Link>
       ) : null}
@@ -146,11 +142,11 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
           data-kind="cart"
           to={`${SHOP_BASE}/cart`}
           aria-label={count > 0 ? t("nav.cartCount", { count }) : t("nav.cart")}
-          data-testid="nav-cart"
+          data-testid="subnav-cart"
         >
           <Icon name={count > 0 ? "cart-solid" : "cart"} size={28} />
           {count > 0 ? (
-            <span className="shop-subnav__badge" data-testid="nav-cart-badge">
+            <span className="shop-subnav__badge" data-testid="subnav-cart-badge">
               {count}
             </span>
           ) : null}
@@ -158,6 +154,33 @@ function ShopSubnav({ tabs, active, iap, signedIn, set }: { tabs: Tab[]; active:
       )}
     </div>
   );
+}
+
+const SCROLL_ENTER = 24;
+const SCROLL_EXIT = 4;
+
+// The bars deepen once the page scrolls, with hysteresis so a page resting near the threshold does not flicker.
+function useScrolled(): boolean {
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    let on = false;
+    const apply = (next: boolean) => {
+      on = next;
+      setScrolled(next);
+      document.body.toggleAttribute("data-shop-scrolled", next);
+    };
+    const onScroll = () => {
+      const next = on ? window.scrollY > SCROLL_EXIT : window.scrollY > SCROLL_ENTER;
+      if (next !== on) apply(next);
+    };
+    apply(window.scrollY > SCROLL_ENTER);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      document.body.removeAttribute("data-shop-scrolled");
+    };
+  }, []);
+  return scrolled;
 }
 
 export default function ShopChrome({ children, topbar, footer }: { children?: ReactNode; topbar?: ReactNode; footer?: ReactNode | false }) {

@@ -189,7 +189,8 @@
       ],
       "paths": [
         "/apps/sites/",
-        "/apps/ui3/"
+        "/apps/ui3/",
+        "/library/ui/"
       ]
     },
     {
@@ -200,7 +201,8 @@
       ],
       "paths": [
         "/apps/ui3/src/shop/",
-        "/apps/sites/src/routes/shop/"
+        "/apps/sites/src/routes/shop/",
+        "/tooling/shop-parity/"
       ]
     },
     {
