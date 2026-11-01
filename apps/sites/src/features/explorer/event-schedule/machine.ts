@@ -132,7 +132,6 @@ export const scheduleMachine = setup({
           schedule_id: context.result?.id,
           active: context.result?.active,
           editing: Boolean(context.scheduleId),
-          stub: false,
         },
         context.trackCtx,
       ),

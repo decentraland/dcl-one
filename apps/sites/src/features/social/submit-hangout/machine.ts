@@ -128,7 +128,7 @@ export const hangoutMachine = setup({
     trackSubmitted: ({ context }) =>
       context.track(
         HANGOUT_EVENTS.submitted,
-        { event_id: context.result?.id, approved: context.result?.approved, stub: false },
+        { event_id: context.result?.id, approved: context.result?.approved },
         context.trackCtx,
       ),
   },
