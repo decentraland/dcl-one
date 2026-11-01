@@ -6,7 +6,8 @@
 //
 // As upstream, the file lives in a module snapshot for 60s rather than in the query cache, so a page
 // invalidating its queries (after a purchase) does not switch a flag off while it refetches. A read gets
-// 3s and one retry; a failed refresh keeps the last answer, and the next mount or focus tries again.
+// 3s and one retry; a failed refresh keeps the last answer, and a mount or focus 10s later tries again.
+// Flags a host (or a test) primes are kept: no read replaces them.
 
 import { useEffect, useSyncExternalStore } from "react";
 
@@ -14,6 +15,7 @@ const DEFAULT_SERVICE = "https://feature-flags.decentraland.org";
 const APP = "dapps";
 const TTL_MS = 60_000;
 const TIMEOUT_MS = 3_000;
+const BACKOFF_MS = 10_000;
 
 export const REMOTE_FLAG = {
   /** Whether the Shop asks for personalised suggestions at all; the row still hides itself without a signal. */
@@ -23,11 +25,21 @@ export const REMOTE_FLAG = {
 export type RemoteFlag = (typeof REMOTE_FLAG)[keyof typeof REMOTE_FLAG];
 
 type FlagsWindow = Window & typeof globalThis & { __SHOP_FEATURE_FLAGS__?: string };
-type Snapshot = { at: number; flags: Readonly<Record<string, boolean>> };
+type Snapshot = { at: number; primed: boolean; flags: Readonly<Record<string, boolean>> };
 
 let snapshot: Snapshot | null = null;
 let inflight: Promise<void> | null = null;
+let failedAt: number | null = null;
+/** Bumped by a prime, so a read started before it cannot publish over it. */
+let generation = 0;
 const listeners = new Set<() => void>();
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
+
+const getSnapshot = () => snapshot;
 
 function service(): string {
   const declared = typeof window !== "undefined" ? (window as FlagsWindow).__SHOP_FEATURE_FLAGS__ : undefined;
@@ -48,40 +60,41 @@ export async function fetchRemoteFlags(signal?: AbortSignal): Promise<Record<str
   return flags;
 }
 
-/** Reads the file again unless a fresh answer is held or a read is already running. */
+/** Reads the file again unless the flags were primed, a fresh answer is held, a read just failed or one is running. */
 export function refreshRemoteFlags(now = Date.now()): Promise<void> {
-  if (snapshot && now - snapshot.at < TTL_MS) return Promise.resolve();
+  if (snapshot?.primed || (snapshot && now - snapshot.at < TTL_MS)) return Promise.resolve();
+  if (failedAt !== null && now - failedAt < BACKOFF_MS) return Promise.resolve();
   if (inflight) return inflight;
+  const started = generation;
   inflight = (async () => {
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        publish({ at: Date.now(), flags: await fetchRemoteFlags(AbortSignal.timeout(TIMEOUT_MS)) });
+        const flags = await fetchRemoteFlags(AbortSignal.timeout(TIMEOUT_MS));
+        if (generation !== started) return;
+        failedAt = null;
+        publish({ at: Date.now(), primed: false, flags });
         return;
       } catch {
-        // Retried once; after that the last answer (or "off") stands until the next mount or focus.
+        // Retried once; after that the last answer (or "off") stands until the backoff passes.
       }
     }
+    if (generation === started) failedAt = Date.now();
   })().finally(() => {
     inflight = null;
   });
   return inflight;
 }
 
-/** Hold these flags as the service's answer: a host that knows them, and tests, skip the read. Null forgets. */
+/** Hold these flags as the service's answer: a host that knows them, and tests, skip the read. Null forgets them. */
 export function primeRemoteFlags(flags: Record<string, boolean> | null): void {
-  publish(flags ? { at: Date.now(), flags: { ...flags } } : null);
+  generation++;
+  failedAt = null;
+  publish(flags ? { at: Date.now(), primed: true, flags: { ...flags } } : null);
 }
 
 /** One rollout flag; false until the service answers yes. */
 export function useRemoteFlag(flag: RemoteFlag): boolean {
-  const current = useSyncExternalStore(
-    (l) => {
-      listeners.add(l);
-      return () => listeners.delete(l);
-    },
-    () => snapshot,
-    () => snapshot,
-  );
+  const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   useEffect(() => {
     void refreshRemoteFlags();
     const onFocus = () => void refreshRemoteFlags();

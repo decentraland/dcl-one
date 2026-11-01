@@ -87,6 +87,28 @@ describe("useRemoteFlag", () => {
     expect(view.getByTestId("flag").textContent).toBe("true");
   });
 
+  it("waits 10s after a failed refresh before reading again", async () => {
+    answers.push(json({}, 500), json({}, 500));
+    const now = Date.now();
+    await refreshRemoteFlags(now);
+    expect(flagReads()).toBe(2);
+    await refreshRemoteFlags(now + 5_000);
+    expect(flagReads()).toBe(2);
+    await refreshRemoteFlags(Date.now() + 11_000);
+    expect(flagReads()).toBe(3);
+  });
+
+  it("keeps primed flags: no read replaces them, not even one already running", async () => {
+    answers.push(json({ flags: {} }));
+    const running = refreshRemoteFlags();
+    primeRemoteFlags(ON);
+    await running;
+    const view = render(<Probe />);
+    expect(view.getByTestId("flag").textContent).toBe("true");
+    await refreshRemoteFlags(Date.now() + 61_000);
+    expect(flagReads()).toBe(1);
+  });
+
   it("survives a page invalidating its queries", async () => {
     primeRemoteFlags(ON);
     const view = render(<Probe />);
