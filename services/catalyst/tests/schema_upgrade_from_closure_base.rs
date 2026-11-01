@@ -250,19 +250,6 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         "self-writable legacy permissions cannot become authority"
     );
 
-    let (permissions, granted): (serde_json::Value, bool) = sqlx::query_as(
-        "SELECT permissions, permissions_granted FROM explore.event_profile_settings WHERE \"user\"='0xlegacy'"
-    ).fetch_one(pool).await.unwrap();
-    assert_eq!(
-        permissions,
-        serde_json::json!(["edit_any_event"]),
-        "upgrade preserves settings data"
-    );
-    assert!(
-        !granted,
-        "self-writable legacy permissions cannot become authority"
-    );
-
     let (quantity, source, credits): (i32, Option<String>, String) =
         sqlx::query_as("SELECT quantity, source, credits::text FROM credits.purchases")
             .fetch_one(pool)

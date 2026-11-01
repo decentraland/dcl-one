@@ -115,7 +115,7 @@ mod tests {
     /// parcel list (any other document gets an empty page), or, when `fail` is
     /// set, HTTP 500 with `Retry-After: 0`, so the reader spends its retries
     /// without waiting through the backoff ladder.
-    async fn fake_land_subgraph(
+    pub(super) async fn fake_land_subgraph(
         parcels: serde_json::Value,
         fail: Arc<std::sync::atomic::AtomicBool>,
     ) -> String {
@@ -890,6 +890,30 @@ mod stream_access {
         let Some(pool) = catalyst::db::scratch::pool(4).await else {
             return;
         };
+        let admin_key = random_key();
+        let admin = Address::parse(&address_of(&admin_key)).unwrap();
+        let land_owner = Address::parse(&address_of(&random_key())).unwrap();
+        let token = Uuid::new_v4().as_u128();
+        let (x, y) = (
+            (token % 301) as i32 - 150,
+            ((token >> 64) % 301) as i32 - 150,
+        );
+        let parcel = format!("{x},{y}");
+        let subgraph = super::tests::fake_land_subgraph(
+            serde_json::json!([{ "id": "stream-land", "searchParcelX": x.to_string(), "searchParcelY": y.to_string(), "owner": { "id": land_owner.as_str() }, "parcel": { "estate": null } }]),
+            Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        ).await;
+        let market = catalyst::chain_index::ChainIndex::new(
+            Outbound::for_tests(),
+            catalyst::chain_index::IndexSettings {
+                marketplace_subgraph_url: Some(subgraph),
+                ..catalyst::chain_index::IndexSettings::for_tests()
+            },
+        );
+        market.allow_loopback_for_tests();
+        let market = Arc::new(market);
+        let directory =
+            Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default());
         let (host, deleted) = ingress_stub().await;
         let settings = Settings {
             livekit: LiveKit {
@@ -902,24 +926,21 @@ mod stream_access {
             pool.clone(),
             Outbound::for_tests(),
             settings,
-            None,
+            Some(market.clone()),
             None,
             Arc::new(Policy::new(
                 pool.clone(),
                 PersonalWorldsPolicy::disabled(),
-                None,
+                Some(market),
             )),
             Arc::new(SceneResolver::new(pool.clone())),
             Arc::new(catalyst::comms::presence::Presence::new()),
-            Arc::new(catalyst::comms::interfaces::test_support::StubDirectory::default()),
+            directory.clone(),
         ));
         let app = axum::Router::new().nest("/comms-gatekeeper", router(state.clone()));
         let place_id = Uuid::new_v4().to_string();
-        let parcel = format!("stream-test-{}", Uuid::new_v4().simple());
-        let admin_key = random_key();
-        let admin = Address::parse(&address_of(&admin_key)).unwrap();
-        // The place has an owner, as every catalogue row does: the reset and revoke
-        // notifications resolve their recipient from it.
+        // The signer administers the scene, but LAND determines reset/revoke recipients.
+        // Self-declared catalogue ownership must not redirect those notifications.
         sqlx::query(
             "INSERT INTO explore.place (id, base_position, raw) VALUES ($1, $2, $3::jsonb)",
         )
@@ -1016,6 +1037,11 @@ mod stream_access {
         .await
         .unwrap();
         assert_eq!(rows, 2, "the replaced credential is kept, inactive");
+        {
+            let notifications = directory.streaming_notifications.lock().unwrap();
+            assert_eq!(notifications.len(), 1);
+            assert_eq!(notifications[0].recipient, land_owner);
+        }
 
         let stranger = random_key();
         let (status, body) = call(&app, &stranger, "POST", &metadata).await;
@@ -1064,6 +1090,15 @@ mod stream_access {
             deleted.lock().unwrap().as_slice(),
             ["IN_1".to_string(), "IN_2".to_string()]
         );
+        {
+            let notifications = directory.streaming_notifications.lock().unwrap();
+            assert_eq!(notifications.len(), 2);
+            assert!(
+                notifications
+                    .iter()
+                    .all(|event| event.recipient == land_owner)
+            );
+        }
         let (status, _) = call(&app, &admin_key, "DELETE", &metadata).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
     }
