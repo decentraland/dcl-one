@@ -62,6 +62,17 @@ describe("the cart line, drawn as upstream's", () => {
     await walletSettled();
   });
 
+  it("back from a cart opened first (a link, a new tab, the Explorer's memory router) goes to the Shop", async () => {
+    const demo = createDemo({ session: "web2", lines: [MIXED![0]!] });
+    render(
+      <DemoShell demo={demo} routes={{ "/shop/items": <p>ITEMS PAGE</p> }}>
+        <CartPage />
+      </DemoShell>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Back from the Cart" }));
+    expect(await screen.findByText("ITEMS PAGE")).toBeTruthy();
+  });
+
   it("signed out, the mint's only option waits on sign-in, so the chooser stays hidden too", async () => {
     renderCart({ session: "signedOut", lines: [MIXED![0]!] });
     expect(within(screen.getByRole("article", { name: "Rainbow Hat" })).queryByTestId("payment-choice")).toBeNull();

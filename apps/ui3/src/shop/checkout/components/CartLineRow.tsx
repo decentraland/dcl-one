@@ -6,8 +6,7 @@ import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Trash } from "../../../atoms/icons";
 import Icon from "../../discovery/components/Icon";
 import CategoryFlap from "../../discovery/components/CategoryFlap";
-import { formatCredits, formatCreditsFull } from "../../discovery/components/PriceTag";
-import { t } from "../../discovery/intl";
+import { CreditsAmount } from "../../discovery/components/PriceTag";
 import { categoryIcon } from "../../discovery/lib/itemIcons";
 import { rarityCardPalette } from "../../discovery/lib/rarity";
 import { DetailCreator } from "../../detail/components/DetailBadges";
@@ -159,15 +158,7 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
     const total = mulCents(option.charge, quantity);
     if (total !== null) {
       const credits = creditsFloor(total);
-      price = (
-        <>
-          <Icon name="credits" className="shop-cartline__coin" />{" "}
-          <span aria-hidden title={formatCreditsFull(credits)}>
-            {formatCredits(credits)}
-          </span>
-          <span className="shop-sr">{t("assetCard.credits", { count: credits })}</span>
-        </>
-      );
+      price = <CreditsAmount credits={credits} className="shop-cartline__amount" coinClassName="shop-cartline__coin" />;
     }
   } else if (option?.method === "mana" && option.quote?.method === "mana") {
     const total = mulMana(option.quote.amount, quantity);
@@ -175,19 +166,21 @@ export default function CartLineRow({ line, offer, view, changes, refusal, disab
   }
   // One ready way to pay needs no chooser (upstream shows none). It stays for MANA-only lines (their reasons and
   // guidance), for a real choice, for any option with something to say, and when the line's saved method is no
-  // longer offered (a MANA choice kept from a web3 session), so the buyer can pick again.
+  // longer offered (a MANA choice kept from a web3 session), so the buyer can pick again, or has no price to show.
   const showChoice =
     !!view &&
-    (view.manaOnly || view.options.length > 1 || !option || view.options.some((o) => o.state.kind !== "ready" && o.state.kind !== "signInRequired"));
+    (view.manaOnly || view.options.length > 1 || !option || !price || view.options.some((o) => o.state.kind !== "ready" && o.state.kind !== "signInRequired"));
   const choicePriced = !!view && view.options.length > 1;
   const favKey = favoriteKeyOf(line);
+  // As upstream's rarityTileStyle: a line without a rarity gets the neutral tile and its grey outline.
+  const palette = rarityCardPalette(line.display.rarity);
   // The flap names a wearable's or an emote's category; LAND, names and older saved lines have none to show.
   const flapItem = line.display.category ? { category: line.display.category, wearableCategory: line.display.wearableCategory, rarity: line.display.rarity ?? "" } : null;
   const href = line.display.href;
 
   return (
     <article className="shop-cartline" data-unavailable={unavailable || undefined} aria-label={line.display.name}>
-      <div className="shop-cartline__thumb" data-thumb style={{ "--tile-bg": rarityCardPalette(line.display.rarity).background, "--tile-stroke": rarityCardPalette(line.display.rarity).stroke } as CSSProperties}>
+      <div className="shop-cartline__thumb" data-thumb style={{ "--tile-bg": palette.background, "--tile-stroke": palette.stroke } as CSSProperties}>
         {flapItem && categoryIcon(flapItem) ? <CategoryFlap item={flapItem} size="sm" testId="cart-line-flap" /> : null}
         {href ? (
           <a className="shop-cartline__thumb-link" href={href} aria-label={line.display.name}>

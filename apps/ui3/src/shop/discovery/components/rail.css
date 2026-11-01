@@ -149,7 +149,6 @@
   color: inherit;
 }
 
-.shop-rail[data-variant="collection"] { margin-top: 40px; }
 .shop-rail[data-variant="collection"] .shop-rail__head { margin-bottom: 20px; }
 .shop-rail[data-variant="collection"] .shop-rail__title { font-size: 22px; font-weight: 700; line-height: normal; }
 .shop-rail[data-variant="collection"] .shop-rail__arrow { top: 112px; width: 53px; height: 53px; }

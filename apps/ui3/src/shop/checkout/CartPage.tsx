@@ -22,6 +22,7 @@ import CartLineRow from "./components/CartLineRow";
 import CartSummary from "./components/CartSummary";
 import CheckoutGroups from "./components/CheckoutGroups";
 import FlowBanner from "./components/FlowBanner";
+import { SHOP_BASE } from "../routes";
 import { EnsureQueryClient, useShopServices } from "./services";
 import { useCheckout, type CheckoutView } from "./useCheckout";
 import cartEmptyIllustration from "./assets/cart-empty.svg?url";
@@ -78,11 +79,24 @@ function CartUpsell({ exclude }: { exclude: string[] }) {
   );
 }
 
+/** Upstream's "← Cart" over the band (Cart.styles.ts Crumbs, Back); hidden at 880px and below. */
+function CartCrumbs({ onBack }: { onBack: () => void }) {
+  return (
+    <div className="shop-cart__crumbs">
+      <button type="button" className="shop-cart__back" onClick={onBack} aria-label="Back from the Cart">
+        <Icon name="arrow-left" size={18} />
+        Cart
+      </button>
+    </div>
+  );
+}
+
 function CartScreen() {
   const navigate = useNavigate();
-  // Back as upstream's, except a cart opened first in its tab (a link, a new tab) goes to the Shop rather than nowhere.
-  const goBack = () => ((window.history.state as { idx?: number } | null)?.idx ? navigate(-1) : navigate("/shop/items"));
   const location = useLocation();
+  // Back as upstream's, except a cart opened first (a link, a new tab, the Explorer's memory router) goes to the
+  // Shop rather than nowhere. The "default" key marks a router's first entry in both browser and memory routers.
+  const goBack = () => (location.key !== "default" ? navigate(-1) : navigate(`${SHOP_BASE}/items`));
   const services = useShopServices();
   const nav = (location.state ?? {}) as CartNavState;
   const [topUpOpen, setTopUpOpen] = useState(false);
@@ -163,12 +177,7 @@ function CartScreen() {
     return (
       <main className="shop-cart" aria-labelledby="shop-cart-title">
         <div className="shop-cart__band">
-          <div className="shop-cart__crumbs">
-            <button type="button" className="shop-cart__back" onClick={goBack} aria-label="Back from the Cart">
-              <Icon name="arrow-left" size={18} />
-              Cart
-            </button>
-          </div>
+          <CartCrumbs onBack={goBack} />
           <div className="shop-cart__inner">
             <h1 id="shop-cart-title" className="u-sr-only">
               Cart
@@ -194,12 +203,7 @@ function CartScreen() {
   return (
     <main className="shop-cart" aria-labelledby="shop-cart-title">
       <div className="shop-cart__band">
-        <div className="shop-cart__crumbs">
-          <button type="button" className="shop-cart__back" onClick={goBack} aria-label="Back from the Cart">
-            <Icon name="arrow-left" size={18} />
-            Cart
-          </button>
-        </div>
+        <CartCrumbs onBack={goBack} />
         <div className="shop-cart__inner">
           <div className="shop-cart__notices">
             {co.wallet.accountMismatch ? (

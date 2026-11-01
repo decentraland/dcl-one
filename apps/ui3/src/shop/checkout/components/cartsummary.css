@@ -113,11 +113,13 @@
   }
 }
 
-.shop-summary__amount {
+/* Scoped past the shared .shop-price__credits (CreditsAmount), whose gap and weight are the cards'. */
+.shop-summary__value .shop-summary__amount {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   color: #fcfcfc;
+  font-weight: inherit;
 }
 
 .shop-summary__amount .shop-summary__coin {

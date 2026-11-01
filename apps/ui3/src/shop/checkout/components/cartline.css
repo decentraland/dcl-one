@@ -170,6 +170,12 @@ a.shop-cartline__name:hover {
   font-weight: inherit;
 }
 
+/* Scoped past the shared .shop-price__credits (CreditsAmount): the line's own gap and weight. */
+.shop-cartline__price .shop-cartline__amount {
+  gap: 4px;
+  font-weight: inherit;
+}
+
 .shop-cartline__price .shop-cartline__coin {
   width: 24px;
   height: 24px;

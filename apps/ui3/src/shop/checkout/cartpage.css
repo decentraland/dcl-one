@@ -361,9 +361,7 @@
   padding: 32px var(--shop-gutter, 54px) 24px;
 }
 
-/* The rail's own top margin is the item page's; here the upsell's padding is the only gap (upstream zeroes it). */
-.shop-cart__upsell section,
-.shop-cart__upsell .shop-rail[data-variant] {
+.shop-cart__upsell section {
   margin-top: 0;
 }
 
