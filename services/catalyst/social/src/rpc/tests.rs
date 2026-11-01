@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use alloy::signers::local::PrivateKeySigner;
 use futures::{SinkExt, StreamExt};
 use prost::Message;
 use sqlx::PgPool;
@@ -23,7 +24,7 @@ use super::drpc::client::{RpcClient, RpcClientModule, ServiceClient};
 use super::drpc::service_module_definition::ProcedureContext;
 use super::drpc::stream_protocol::Generator;
 use super::drpc::transport::{Transport, TransportError, TransportMessage};
-use super::handshake::test_support::{EPHEMERAL_KEY, ROOT_KEY, frame, frame_for};
+use super::handshake::test_support::{EPHEMERAL_KEY, ROOT_KEY, frame, frame_for, frame_signed};
 use super::profiles::Profiles;
 use super::proto::v2::*;
 use super::pubsub::SocialEvent;
@@ -1327,13 +1328,17 @@ struct Server {
 }
 
 async fn spawn_server(pool: Option<PgPool>, auth_window_secs: i64) -> Server {
-    spawn_server_with(pool, auth_window_secs, None).await
+    let settings = Settings {
+        auth_window_secs,
+        ..Settings::default()
+    };
+    spawn_server_with(pool, settings, None).await
 }
 
-/// [`spawn_server`] with the EIP-1654 validator the handshake uses.
+/// [`spawn_server`] with its settings and the EIP-1654 validator the handshake uses.
 async fn spawn_server_with(
     pool: Option<PgPool>,
-    auth_window_secs: i64,
+    settings: Settings,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
 ) -> Server {
     let pool = pool.unwrap_or_else(|| {
@@ -1345,10 +1350,6 @@ async fn spawn_server_with(
         Db::new(pool.clone()),
         Arc::new(FakeVoiceRooms::new(pool.clone())),
     );
-    let settings = Settings {
-        auth_window_secs,
-        ..Settings::default()
-    };
     let state = Arc::new(State::with_context(settings, ctx, eip1654));
     let jobs = Jobs::new();
     state.start_topology(&jobs, Arc::new(crate::comms::topology::Topology::default()));
@@ -1563,13 +1564,34 @@ async fn explorer(
     server: &Server,
     root_key: &str,
 ) -> (String, RpcClient<TungsteniteTransport>, SocialClient) {
-    let mut socket = connect(server, "/social-rpc").await;
     let (signer, frame) = frame_for(
         root_key,
         "/social-rpc",
         chrono::Utc::now().timestamp_millis(),
     )
     .await;
+    signed_in(server, signer, frame).await
+}
+
+/// [`explorer`] as a wallet the caller holds, with an ephemeral key made for
+/// the call, so no key is written out as text.
+async fn explorer_as(
+    server: &Server,
+    root: &PrivateKeySigner,
+) -> (String, RpcClient<TungsteniteTransport>, SocialClient) {
+    let ts = chrono::Utc::now().timestamp_millis();
+    let payload =
+        crate::shared::signed_fetch::build_payload_v6("get", "/social-rpc", &ts.to_string(), "{}");
+    let (signer, frame) = frame_signed(root, &PrivateKeySigner::random(), ts, &payload, "{}").await;
+    signed_in(server, signer, frame).await
+}
+
+async fn signed_in(
+    server: &Server,
+    signer: String,
+    frame: String,
+) -> (String, RpcClient<TungsteniteTransport>, SocialClient) {
+    let mut socket = connect(server, "/social-rpc").await;
     socket.send(WsMessage::Text(frame.into())).await.unwrap();
     let mut client = RpcClient::new(TungsteniteTransport::new(socket))
         .await
@@ -1607,6 +1629,20 @@ async fn subscribed<T>(
     generator
 }
 
+/// A Pulse island frame naming `wallets` as present.
+fn pulse_frame(wallets: Vec<String>) -> Vec<u8> {
+    use crate::comms::protocol::pulse::decentraland::kernel::comms::v3::{
+        IslandData, IslandStatusMessage,
+    };
+    IslandStatusMessage {
+        data: vec![IslandData {
+            peers: wallets,
+            ..Default::default()
+        }],
+    }
+    .encode_to_vec()
+}
+
 /// A second wallet for the two-client run.
 const SECOND_ROOT_KEY: &str = "7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6";
 
@@ -1633,17 +1669,6 @@ async fn two_explorers_exchange_a_friend_request_over_the_socket() {
         !server.state.ctx.is_online(&alice) && !server.state.ctx.is_online(&bob),
         "handshakes do not establish Pulse presence"
     );
-    let pulse_frame = |wallets: Vec<String>| {
-        crate::comms::protocol::pulse::decentraland::kernel::comms::v3::IslandStatusMessage {
-            data: vec![
-                crate::comms::protocol::pulse::decentraland::kernel::comms::v3::IslandData {
-                    peers: wallets,
-                    ..Default::default()
-                },
-            ],
-        }
-        .encode_to_vec()
-    };
     server
         .state
         .ctx
