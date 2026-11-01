@@ -15,6 +15,12 @@
 //! own settings behind `DATA_WRITES_ENABLED`, the moderator-only writes (the
 //! schedules, another profile's settings) behind `OPS_WRITES_ENABLED`, the
 //! switch of the node's moderation.
+//!
+//! Legacy notify_by_email/notify_by_browser values are stored for profile API
+//! compatibility. Social delivery uses its own subscriptions and per-message
+//! preferences; these legacy profile values do not configure that worker.
+//! Private profile reads and permission grants remain moderator-only, even
+//! for a wallet carrying the legacy edit_any_profile permission.
 
 use axum::Json;
 use axum::body::Bytes;
@@ -96,17 +102,6 @@ pub async fn load_settings(conn: &mut PgConnection, user: &str) -> Result<Value,
         .ok_or_else(|| ApiError::internal("profile settings missing"))
 }
 
-async fn require_permission(pool: &PgPool, signer: &str, permission: &str) -> Result<(), ApiError> {
-    let allowed: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM explore.moderators WHERE address=$1) OR EXISTS (SELECT 1 FROM explore.event_profile_settings WHERE \"user\"=$1 AND permissions_granted AND permissions ? $2)",
-    ).bind(signer.to_ascii_lowercase()).bind(permission).fetch_one(pool).await?;
-    if allowed {
-        Ok(())
-    } else {
-        Err(ApiError::forbidden("Forbidden"))
-    }
-}
-
 async fn apply_profile_settings(
     pool: &PgPool,
     signed: &catalyst_fed::Signed<ProfileSettingsUpdate>,
@@ -147,7 +142,7 @@ async fn save_profile_settings(
     sqlx::query(
         r#"INSERT INTO explore.event_profile_settings
                ("user", email, email_verified, use_local_time, notify_by_email, notify_by_browser, permissions, permissions_granted, created_at, updated_at)
-           VALUES ($1, $2, COALESCE($3, false), COALESCE($4, true), CASE WHEN $2 IS NOT NULL THEN false ELSE COALESCE($5, false) END, COALESCE($6, false), COALESCE($7, '[]'::jsonb), $7 IS NOT NULL, $8, $8)
+           VALUES ($1, $2, COALESCE($3, false), COALESCE($4, true), false, COALESCE($6, false), COALESCE($7, '[]'::jsonb), $7 IS NOT NULL, $8, $8)
            ON CONFLICT ("user") DO UPDATE SET
                email = COALESCE($2, explore.event_profile_settings.email),
                email_verified = CASE WHEN $2 IS NOT NULL AND explore.event_profile_settings.email IS DISTINCT FROM $2
@@ -180,7 +175,7 @@ pub async fn list_profile_settings(
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
     let user = state.signer(&headers, method.as_str(), uri.path()).await?;
-    require_permission(&state.pool, &user, "edit_any_profile").await?;
+    require_moderator(&state.pool, &user).await?;
     let users: Vec<String> = sqlx::query_scalar(
         r#"SELECT "user" FROM explore.event_profile_settings UNION SELECT address FROM explore.moderators ORDER BY "user" ASC LIMIT $1"#,
     )
@@ -406,7 +401,7 @@ pub async fn get_profile_settings(
     Path(profile_id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
     let user = state.signer(&headers, method.as_str(), uri.path()).await?;
-    require_permission(&state.pool, &user, "edit_any_profile").await?;
+    require_moderator(&state.pool, &user).await?;
     let mut conn = state.pool.acquire().await?;
     Ok(ok(load_settings(&mut conn, &profile_id).await?))
 }
@@ -424,7 +419,7 @@ pub async fn update_profile_settings(
         .map_err(|_| ApiError::bad_request("Invalid profile JSON"))?;
     if !catalyst_fed::is_envelope(&body) {
         let signer = state.signer(&headers, "patch", uri.path()).await?;
-        require_permission(&state.pool, &signer, "edit_any_profile").await?;
+        require_moderator(&state.pool, &signer).await?;
         let message = legacy_profile_message(body, &profile_id, false)?;
         let mut tx = state.pool.begin().await?;
         record_profile_request(
@@ -448,7 +443,7 @@ pub async fn update_profile_settings(
             "target does not match path profile_id",
         ));
     }
-    require_permission(&state.pool, &signer, "edit_any_profile").await?;
+    require_moderator(&state.pool, &signer).await?;
     validate_profile_settings(&signed.message)?;
     Ok(ok(
         apply_profile_settings(&state.pool, &signed, &signer).await?
@@ -844,6 +839,45 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{body}");
         let (status, body) =
             call(&app, &editor, "get", "/api/profiles/settings", Value::Null).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        for target in [&editor_address, &moderator_address] {
+            let path = format!("/api/profiles/{target}/settings");
+            let (status, body) = call(&app, &editor, "get", &path, Value::Null).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+            let (status, body) = call(
+                &app,
+                &editor,
+                "patch",
+                &path,
+                json!({"permissions":PROFILE_PERMISSIONS}),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+            let message: ProfileSettingsUpdate = serde_json::from_value(json!({"target":target,"permissions":PROFILE_PERMISSIONS,"signed_at":chrono::Utc::now().timestamp()})).unwrap();
+            let envelope = catalyst_fed::test_support::sign(
+                &editor,
+                catalyst_fed::domains::events(),
+                message.clone(),
+                message.signed_at,
+            );
+            let (status, body) = call(
+                &app,
+                &editor,
+                "patch",
+                &path,
+                serde_json::to_value(envelope).unwrap(),
+            )
+            .await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{body}");
+        }
+        let (status, body) = call(
+            &app,
+            &moderator,
+            "get",
+            "/api/profiles/settings",
+            Value::Null,
+        )
+        .await;
         assert_eq!(status, StatusCode::OK, "{body}");
         assert!(
             body["data"]
@@ -869,6 +903,24 @@ mod tests {
                 .unwrap()
                 .contains(&json!("edit_any_profile"))
         );
+    }
+
+    #[tokio::test]
+    async fn email_notifications_need_a_saved_email_on_insert_and_update() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let target = format!(
+            "{:#x}",
+            alloy_signer_local::PrivateKeySigner::random().address()
+        );
+        let message: ProfileSettingsUpdate = serde_json::from_value(json!({"target":target,"notify_by_email":true,"signed_at":chrono::Utc::now().timestamp()})).unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        for _ in 0..2 {
+            let settings = save_profile_settings(&mut conn, &message).await.unwrap();
+            assert_eq!(settings["notify_by_email"], false);
+            assert!(settings["email"].is_null());
+        }
     }
 
     #[tokio::test]
@@ -1097,9 +1149,7 @@ mod tests {
             apply_profile_settings(&pool, &signed, actor).await.unwrap();
             let permissions = event_permissions(&pool, &user).await.unwrap();
             assert!(!permissions.edit_any && !permissions.approve_any && !permissions.approve_own);
-            for permission in ["edit_any_profile", "edit_any_schedule"] {
-                assert!(require_permission(&pool, &user, permission).await.is_err());
-            }
+            assert!(require_moderator(&pool, &user).await.is_err());
             let mut conn = pool.acquire().await.unwrap();
             let settings = load_settings(&mut conn, &user).await.unwrap();
             assert_eq!(settings["permissions"], json!([]));

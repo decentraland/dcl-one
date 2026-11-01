@@ -1,0 +1,73 @@
+# ADR: Event notification delivery and signed profile mutations
+
+- Status: Proposed
+- Date: 2026-11-01
+
+## Context
+
+Event moderation and authoring belong to Explore. Social owns notification
+delivery records and subscription preferences. An event change and its notice
+must commit together, while delivery must survive worker restarts and retries.
+The components share one PostgreSQL database and one process; adding an internal
+HTTP call or a separate broker would not improve this transaction boundary.
+
+Profile settings support both signed federation envelopes and signed-fetch JSON.
+Administrative permission grants and private profile reads require a moderator.
+A signed-fetch signature over a method and pathname alone does not bind mutation
+contents or prevent a captured request from being applied again.
+
+## Decision
+
+Social owns `social.event_notification_intents`, including the event snapshot,
+recipient progress and completion state. Explore inserts transition intents into
+this relation in the transaction that updates the event. This is an explicit
+SQL-level dependency on the shared database, without a reverse Rust dependency.
+Social's worker reads Explore's catalogue and local RSVP records to discover
+occurrences and rechecks recipient eligibility before inserting delivery records.
+
+Lifecycle discovery uses a rolling one-hour catch-up window and an indexable live
+event bound. Only occurrences with eligible local audiences enter the queue.
+Stable occurrence identifiers and a unique occurrence constraint retain durable
+scan progress, including due-time ties and late arrivals; there is no separate
+timestamp cursor that could permanently skip a newly approved event.
+
+The worker drains recipient pages within a five-second time budget, reserving at
+most two seconds for scanning. Cursor advancement,
+notification insertion and email-outbox insertion commit atomically. Completed
+queue entries are retained for 30 days and removed in bounded batches only after
+their occurrence and processing times are older than retention. This exceeds the
+catch-up window, preventing cleanup from making old lifecycle events eligible
+again. Unfinished entries are retained. Reminder and start delivery checks reject
+stale occurrences and recheck the current event schedule and payload under a
+shared event-row lock before each page, so an old queued start is suppressed after
+rescheduling. An already processed or
+suppressed occurrence remains deduplicated if the same occurrence is later
+reapproved. Outage recovery does not promise delivery of every missed historical
+notice.
+
+Event notification channel preferences come from Social subscriptions, including
+per-type settings and community opt-outs. Legacy Explore profile notification
+settings remain a separate contract. Event-only in-app suppression does not
+change unrelated producers. Suppressed event rows are stored as read with a
+read timestamp, keeping them out of the unread index while preserving independent
+email delivery.
+
+Plain profile PATCH requests bind the exact body bytes through `body_sha256` and
+a canonical UUID `nonce` in signed metadata. Nonce consumption and the profile
+write commit together; a failed write does not consume the nonce. Signed
+federation envelopes retain their typed-payload signature and nonce checks.
+Only moderators may grant permissions or administer/read other profiles. A
+delegated event permission does not grant profile-administration authority.
+
+## Verification and limits
+
+Regression coverage must include moderator authority on self and other-address
+paths, altered bodies and replay, channel preferences, local audience filtering,
+late approvals, stale notices, due-time ties beyond one page, concurrent workers,
+retention and schema upgrades. Query plans and measured test workloads accompany
+the implementation report; they are not a production capacity guarantee.
+
+This change adds no service, process, transport or dependency. The schema changes
+are additive for released databases. The unpublished queue layout belongs to this
+feature's migration and object-creation path. Production delivery, restore and
+rollback readiness require separate evidence.

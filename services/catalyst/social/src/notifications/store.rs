@@ -138,6 +138,30 @@ pub async fn insert_notifications<'e, E>(
 where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
+    insert_batch(executor, batch, false).await
+}
+
+/// Event delivery opts into in-app preferences without silently changing the
+/// established behavior of other producers. Hidden rows are already read so
+/// they never enter the bell's partial unread index; email remains independent.
+pub(super) async fn insert_event_notifications<'e, E>(
+    executor: E,
+    batch: &[NewNotification],
+) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    insert_batch(executor, batch, true).await
+}
+
+async fn insert_batch<'e, E>(
+    executor: E,
+    batch: &[NewNotification],
+    event_preferences: bool,
+) -> Result<u64, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     if batch.is_empty() {
         return Ok(0);
     }
@@ -149,12 +173,18 @@ where
     let sql = format!(
         r#"
         WITH ins AS (
-            INSERT INTO social.notifications (id, address, type, metadata, occurred_at, in_app)
-            SELECT n.*, NOT COALESCE((s.details->>'ignore_all_in_app')::boolean, false)
-                        AND COALESCE((s.details->'message_type'->n.type->>'in_app')::boolean, true)
+            INSERT INTO social.notifications (id, address, type, metadata, occurred_at, in_app, read, read_at)
+            SELECT n.*, v.visible, NOT v.visible,
+                   CASE WHEN NOT v.visible THEN timezone('UTC', now()) END
             FROM UNNEST($1::uuid[], $2::text[], $3::text[], $4::jsonb[], $5::timestamp[])
                 AS n(id,address,type,metadata,occurred_at)
             LEFT JOIN social.subscriptions s ON s.address = n.address
+            CROSS JOIN LATERAL (
+                SELECT NOT $6::boolean OR (
+                    NOT COALESCE((s.details->>'ignore_all_in_app')::boolean, false)
+                    AND COALESCE((s.details->'message_type'->n.type->>'in_app')::boolean, true)
+                ) AS visible
+            ) v
             ON CONFLICT (id) DO NOTHING
             RETURNING id, address, type
         )
@@ -167,6 +197,7 @@ where
         .bind(&kinds)
         .bind(&metadata)
         .bind(&occurred)
+        .bind(event_preferences)
         .execute(executor)
         .await?;
     Ok(res.rows_affected())
@@ -1052,6 +1083,57 @@ mod pg_tests {
         );
         let listed = c.list(&a, 50, None, false).await.unwrap();
         assert_eq!(listed.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn event_in_app_preferences_leave_email_and_existing_producers_independent() {
+        let Some(c) = store().await else { return };
+        let address = fresh_address();
+        sqlx::query("INSERT INTO social.subscriptions(address,email,details) VALUES($1,'recipient@example.org',$2)")
+            .bind(&address).bind(serde_json::json!({"message_type":{"events_started":{"in_app":false,"email":true},"events_starts_soon":{"in_app":true,"email":false}}}))
+            .execute(c.pool()).await.unwrap();
+        let hidden = NewNotification::now(address.clone(), "events_started", serde_json::json!({}));
+        let visible =
+            NewNotification::now(address.clone(), "events_starts_soon", serde_json::json!({}));
+        insert_event_notifications(c.pool(), &[hidden.clone(), visible.clone()])
+            .await
+            .unwrap();
+        let hidden_flags: (bool, bool, bool) = sqlx::query_as(
+            "SELECT in_app,read,read_at IS NOT NULL FROM social.notifications WHERE id=$1",
+        )
+        .bind(hidden.id)
+        .fetch_one(c.pool())
+        .await
+        .unwrap();
+        assert_eq!(hidden_flags, (false, true, true));
+        assert_eq!(
+            delivery_state(c.pool(), hidden.id).await.unwrap().0,
+            "pending"
+        );
+        assert_eq!(
+            delivery_state(c.pool(), visible.id).await.unwrap().0,
+            "skipped"
+        );
+        let unread = c.list(&address, 100, None, true).await.unwrap();
+        assert!(unread.iter().any(|notice| notice.id == visible.id));
+        assert!(unread.iter().all(|notice| notice.id != hidden.id));
+        sqlx::query("UPDATE social.subscriptions SET details='{\"ignore_all_in_app\":true}' WHERE address=$1").bind(&address).execute(c.pool()).await.unwrap();
+        let legacy =
+            NewNotification::now(address.clone(), "friend_first_wear", serde_json::json!({}));
+        insert_notifications(c.pool(), std::slice::from_ref(&legacy))
+            .await
+            .unwrap();
+        let legacy_flags: (bool, bool) =
+            sqlx::query_as("SELECT in_app,read FROM social.notifications WHERE id=$1")
+                .bind(legacy.id)
+                .fetch_one(c.pool())
+                .await
+                .unwrap();
+        assert_eq!(
+            legacy_flags,
+            (true, false),
+            "existing generic producers retain their prior visibility contract"
+        );
     }
 
     #[tokio::test]

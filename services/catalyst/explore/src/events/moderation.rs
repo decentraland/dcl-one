@@ -376,6 +376,7 @@ impl Decision {
 pub(super) async fn hide_mirrored_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
+    before: &Map<String, Value>,
     raw: Map<String, Value>,
     actor: &str,
 ) -> Result<(), ApiError> {
@@ -385,15 +386,10 @@ pub(super) async fn hide_mirrored_locked(
         deleted_reason: text(&raw, "deleted_reason"),
         ..Default::default()
     };
-    let before: Option<Value> =
-        sqlx::query_scalar("SELECT raw FROM explore.event WHERE id = $1 FOR UPDATE")
-            .bind(event_id)
-            .fetch_optional(&mut **tx)
-            .await?;
     super::notifications::record_transition(
         tx,
         event_id,
-        before.as_ref(),
+        Some(&Value::Object(before.clone())),
         &Value::Object(raw.clone()),
         false,
     )
@@ -906,6 +902,7 @@ pub async fn create_as(
 pub(super) async fn store_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
+    before: &Map<String, Value>,
     raw: Map<String, Value>,
     signer: &str,
     payload: Value,
@@ -914,16 +911,15 @@ pub(super) async fn store_locked(
     doc["id"] = json!(event_id);
     let f = super::mirror::extract_fields(&doc)
         .ok_or_else(|| ApiError::internal("event document without an id"))?;
-    let previous: Option<(Value, String)> =
-        sqlx::query_as("SELECT raw, origin FROM explore.event WHERE id = $1 FOR UPDATE")
-            .bind(event_id)
-            .fetch_optional(&mut **tx)
-            .await?;
-    let Some((before, origin)) = previous else {
-        return Err(ApiError::not_found("Event not found"));
-    };
-    super::notifications::record_transition(tx, event_id, Some(&before), &doc, origin == LOCAL)
-        .await?;
+    // The caller loaded and locked this local event before applying edits.
+    super::notifications::record_transition(
+        tx,
+        event_id,
+        Some(&Value::Object(before.clone())),
+        &doc,
+        true,
+    )
+    .await?;
     sqlx::query(
         "UPDATE explore.event SET name = $2, start_at = $3::timestamptz AT TIME ZONE 'UTC', finish_at = $4::timestamptz AT TIME ZONE 'UTC',
              next_start_at = $5::timestamptz AT TIME ZONE 'UTC', next_finish_at = $6::timestamptz AT TIME ZONE 'UTC', duration_ms = $7,

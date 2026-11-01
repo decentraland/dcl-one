@@ -1,6 +1,6 @@
 //! Event notices over local RSVP consent and managed, local community
-//! associations. The first lifecycle scan starts now; subsequent passes use
-//! a durable (due time, event id) cursor. Explore captures moderation changes
+//! associations. A rolling one-hour catch-up uses retained occurrence intents
+//! as durable scan progress. Explore captures moderation changes
 //! atomically with the event. Dispatch pages commit their recipient cursor
 //! with notification/email-outbox inserts, so crashes and retries are safe.
 
@@ -11,11 +11,14 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
-use super::store::{NewNotification, insert_notifications};
+use super::store::{NewNotification, insert_event_notifications};
 use crate::identity::Address;
 
 const PAGE: i64 = 100;
-const DISPATCH_PAGES: usize = 10;
+const CATCH_UP_SECONDS: i64 = 3600;
+const PASS_BUDGET: Duration = Duration::from_secs(5);
+const SCAN_BUDGET: Duration = Duration::from_secs(2);
+const RETENTION_DAYS: i64 = 30;
 
 #[derive(sqlx::FromRow)]
 struct Occurrence {
@@ -45,53 +48,64 @@ struct Recipient {
     community_name: Option<String>,
 }
 
+fn occurrence_id(event_id: &str, starts_at: NaiveDateTime, kind: &str) -> Uuid {
+    Uuid::new_v5(
+        &Uuid::NAMESPACE_URL,
+        format!("event-occurrence:{event_id}:{starts_at}:{kind}").as_bytes(),
+    )
+}
+
+// finish_at is the final series finish, unlike next_finish_at which can remain
+// stale until the next catalogue refresh. Bound live candidates before expanding
+// recurrence, then keyset-order the unqueued occurrences. The unique queue key
+// makes concurrent scans safe and avoids losing late approvals behind a cursor.
+const SCAN_SQL: &str = "
+    SELECT DISTINCT e.id AS event_id,e.raw - 'recurrent_dates' AS event,e.origin='local' AS local_event,
+           d.starts_at,d.starts_at - $2::int4 * interval '1 second' AS due_at
+    FROM explore.event e CROSS JOIN LATERAL (
+        SELECT CASE WHEN pg_input_is_valid(value, 'timestamp with time zone')
+               THEN value::timestamptz AT TIME ZONE 'UTC' END AS starts_at
+        FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(e.raw->'recurrent_dates')='array'
+             AND e.raw->'recurrent_dates' <> '[]'::jsonb THEN e.raw->'recurrent_dates'
+             ELSE jsonb_build_array(e.raw->'start_at') END)
+    ) d
+    WHERE e.approved AND e.finish_at > $3
+      AND COALESCE(e.raw->>'rejected','false') <> 'true'
+      AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true'
+      AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true'
+      AND (EXISTS (SELECT 1 FROM explore.event_attendance_local a
+                   WHERE a.event_id=e.id AND a.action='going')
+           OR ($1='events_started' AND e.origin='local' AND EXISTS (
+               SELECT 1 FROM social.communities c JOIN social.community_members m ON m.community_id=c.id
+               WHERE c.id=CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END
+                 AND c.origin='local' AND c.active AND NOT c.suspended
+                 AND NOT EXISTS (SELECT 1 FROM social.subscription_opt_outs o
+                     WHERE o.address=m.member_address AND o.scope='community' AND o.scope_id=e.community_id))))
+      AND d.starts_at - $2::int4 * interval '1 second' >= $4
+      AND d.starts_at - $2::int4 * interval '1 second' <= $3
+      AND CASE WHEN $1='events_starts_soon' THEN d.starts_at > $3
+               ELSE d.starts_at + e.duration_ms * interval '1 millisecond' > $3 END
+      AND NOT EXISTS (SELECT 1 FROM social.event_notification_intents q
+                      WHERE q.event_id=e.id AND q.occurrence_start=d.starts_at AND q.kind=$1)
+    ORDER BY due_at,event_id LIMIT $5";
+
 async fn scan_kind(
     pool: &PgPool,
     kind: &str,
     ahead: i32,
     now: NaiveDateTime,
 ) -> anyhow::Result<u64> {
-    let mut tx = pool.begin().await?;
-    let initialized = sqlx::query("INSERT INTO social.event_notification_cursor (kind,due_at) VALUES ($1,$2) ON CONFLICT (kind) DO NOTHING")
-        .bind(kind).bind(now).execute(&mut *tx).await?.rows_affected() > 0;
-    if initialized {
-        tx.commit().await?;
-        return Ok(0);
-    }
-    let (since, event_id): (NaiveDateTime, String) = sqlx::query_as(
-        "SELECT due_at,event_id FROM social.event_notification_cursor WHERE kind=$1 FOR UPDATE",
-    )
-    .bind(kind)
-    .fetch_one(&mut *tx)
-    .await?;
-    if now < since {
-        tx.commit().await?;
-        return Ok(0);
-    }
-    // The guarded cast ignores malformed upstream recurrence strings rather
-    // than letting one bad mirror row stall every other event's notices.
-    let rows: Vec<Occurrence> = sqlx::query_as(
-        "SELECT DISTINCT e.id AS event_id,e.raw - 'recurrent_dates' AS event,e.origin='local' AS local_event, \
-                d.starts_at,d.starts_at - $3::int4 * interval '1 second' AS due_at \
-         FROM explore.event e CROSS JOIN LATERAL ( \
-             SELECT CASE WHEN pg_input_is_valid(value, 'timestamp with time zone') \
-                    THEN value::timestamptz AT TIME ZONE 'UTC' END AS starts_at \
-             FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(e.raw->'recurrent_dates')='array' \
-                  AND e.raw->'recurrent_dates' <> '[]'::jsonb THEN e.raw->'recurrent_dates' \
-                  ELSE jsonb_build_array(e.raw->'start_at') END) \
-         ) d \
-         WHERE e.approved AND COALESCE(e.raw->>'rejected','false') <> 'true' \
-           AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true' \
-           AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true' \
-           AND (d.starts_at - $3::int4 * interval '1 second',e.id) > ($1,$2) \
-           AND d.starts_at - $3::int4 * interval '1 second' <= $4 \
-         ORDER BY due_at,event_id LIMIT $5",
-    ).bind(since).bind(&event_id).bind(ahead).bind(now).bind(PAGE).fetch_all(&mut *tx).await?;
+    let rows: Vec<Occurrence> = sqlx::query_as(SCAN_SQL)
+        .bind(kind)
+        .bind(ahead)
+        .bind(now)
+        .bind(now - Span::seconds(CATCH_UP_SECONDS))
+        .bind(PAGE)
+        .fetch_all(pool)
+        .await?;
     let ids: Vec<Uuid> = rows
         .iter()
-        .map(|row| {
-            crate::explore::events::notifications::occurrence_id(&row.event_id, row.starts_at, kind)
-        })
+        .map(|row| occurrence_id(&row.event_id, row.starts_at, kind))
         .collect();
     let event_ids: Vec<&str> = rows.iter().map(|row| row.event_id.as_str()).collect();
     let events: Vec<Value> = rows.iter().map(|row| row.event.clone()).collect();
@@ -99,34 +113,10 @@ async fn scan_kind(
     let starts: Vec<NaiveDateTime> = rows.iter().map(|row| row.starts_at).collect();
     let due: Vec<NaiveDateTime> = rows.iter().map(|row| row.due_at).collect();
     sqlx::query(
-        "INSERT INTO explore.event_notification_intents (id,event_id,event,local_event,occurrence_start,occurred_at,kind) \
+        "INSERT INTO social.event_notification_intents (id,event_id,event,local_event,occurrence_start,occurred_at,kind) \
          SELECT n.*,$7 FROM UNNEST($1::uuid[],$2::text[],$3::jsonb[],$4::boolean[],$5::timestamp[],$6::timestamp[]) n \
-         ON CONFLICT (id) DO NOTHING",
-    ).bind(ids).bind(event_ids).bind(events).bind(local).bind(starts).bind(due).bind(kind).execute(&mut *tx).await?;
-    let (next_time, next_id) = if rows.len() < PAGE as usize {
-        let id = rows
-            .last()
-            .filter(|last| last.due_at == now)
-            .map(|last| last.event_id.clone())
-            .unwrap_or_else(|| {
-                if since == now {
-                    event_id
-                } else {
-                    String::new()
-                }
-            });
-        (now, id)
-    } else {
-        let last = rows.last().expect("a full page has a last row");
-        (last.due_at, last.event_id.clone())
-    };
-    sqlx::query("UPDATE social.event_notification_cursor SET due_at=$2,event_id=$3 WHERE kind=$1")
-        .bind(kind)
-        .bind(next_time)
-        .bind(next_id)
-        .execute(&mut *tx)
-        .await?;
-    tx.commit().await?;
+         ON CONFLICT DO NOTHING",
+    ).bind(ids).bind(event_ids).bind(events).bind(local).bind(starts).bind(due).bind(kind).execute(pool).await?;
     Ok(rows.len() as u64)
 }
 
@@ -138,31 +128,32 @@ async fn recipients(
     tx: &mut Transaction<'_, Postgres>,
     intent: &Intent,
 ) -> anyhow::Result<Vec<Recipient>> {
+    let community_id = Uuid::parse_str(text(&intent.event, "community_id")).ok();
     // A community scope opt-out affects the community audience. An explicit
     // RSVP remains independent consent and can still receive a generic notice.
     let rows = sqlx::query_as(
         "WITH candidates AS ( \
             SELECT $3::text AS address,false AS community,NULL::text AS community_name \
-            WHERE $2 IN ('event_approved','event_rejected','event_deleted') \
+            WHERE $2 IN ('event_approved','event_rejected','event_deleted') AND $3 > $6 \
             UNION ALL \
             SELECT a.signer,false,NULL FROM explore.event_attendance_local a JOIN explore.event e ON e.id=a.event_id \
-            WHERE a.event_id=$1 AND a.action='going' AND $2 IN ('events_starts_soon','events_started') \
+            WHERE a.event_id=$1 AND a.signer > $6 AND a.action='going' AND $2 IN ('events_starts_soon','events_started') \
               AND e.approved AND COALESCE(e.raw->>'rejected','false') <> 'true' \
               AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true' AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true' \
             UNION ALL \
             SELECT m.member_address,true,c.name FROM social.community_members m \
             JOIN social.communities c ON c.id=m.community_id \
-            JOIN explore.event e ON e.id=$1 AND e.community_id=c.id::text AND e.origin='local' \
-            WHERE $4 AND $2 IN ('event_created','events_started') AND c.id::text=$5 \
+            JOIN explore.event e ON e.id=$1 AND e.community_id=$5::uuid::text AND e.origin='local' \
+            WHERE $4 AND $2 IN ('event_created','events_started') AND c.id=$5::uuid AND m.member_address > $6 \
               AND c.origin='local' AND c.active AND NOT c.suspended AND e.approved \
               AND COALESCE(e.raw->>'rejected','false') <> 'true' \
               AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true' AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true' \
               AND NOT EXISTS (SELECT 1 FROM social.subscription_opt_outs o \
-                  WHERE o.address=m.member_address AND o.scope='community' AND o.scope_id=$5) \
+                  WHERE o.address=m.member_address AND o.scope='community' AND o.scope_id=$5::uuid::text) \
         ) SELECT address,bool_or(community) AS community,max(community_name) AS community_name \
           FROM candidates WHERE address > $6 GROUP BY address ORDER BY address LIMIT $7",
     ).bind(&intent.event_id).bind(&intent.kind).bind(text(&intent.event,"user"))
-        .bind(intent.local_event).bind(text(&intent.event,"community_id")).bind(&intent.recipient_after)
+        .bind(intent.local_event).bind(community_id).bind(&intent.recipient_after)
         .bind(PAGE).fetch_all(&mut **tx).await?;
     Ok(rows)
 }
@@ -237,15 +228,43 @@ async fn dispatch_page(
     let mut tx = pool.begin().await?;
     let intent: Option<Intent> = sqlx::query_as(
         "SELECT id,event_id,kind,event,local_event,occurrence_start,occurred_at,recipient_after \
-         FROM explore.event_notification_intents WHERE processed_at IS NULL ORDER BY dispatch_at,id LIMIT 1 FOR UPDATE SKIP LOCKED",
+         FROM social.event_notification_intents WHERE processed_at IS NULL ORDER BY dispatch_at,id LIMIT 1 FOR UPDATE SKIP LOCKED",
     ).fetch_optional(&mut *tx).await?;
-    let Some(intent) = intent else {
+    let Some(mut intent) = intent else {
         tx.commit().await?;
         return Ok(None);
     };
-    let stale_reminder = intent.kind == "events_starts_soon"
-        && intent.occurrence_start.is_some_and(|start| start <= now);
-    let recipients = if stale_reminder {
+    // A queued occurrence may have been moved or removed since its snapshot.
+    // Revalidate the current event under a shared row lock before delivering;
+    // a reschedule's old intent is consumed, while its new occurrence is scanned.
+    let mut obsolete = false;
+    if let Some(start) = intent.occurrence_start {
+        let current: Option<(Value, bool)> = sqlx::query_as(
+            "SELECT e.raw,e.origin='local' FROM explore.event e
+             WHERE e.id=$1 AND e.approved
+               AND COALESCE(e.raw->>'rejected','false') <> 'true'
+               AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true'
+               AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true'
+               AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(
+                   CASE WHEN jsonb_typeof(e.raw->'recurrent_dates')='array'
+                        AND e.raw->'recurrent_dates' <> '[]'::jsonb THEN e.raw->'recurrent_dates'
+                        ELSE jsonb_build_array(e.raw->'start_at') END) d(value)
+                   WHERE CASE WHEN pg_input_is_valid(value,'timestamp with time zone')
+                         THEN value::timestamptz AT TIME ZONE 'UTC' END=$2)
+             FOR SHARE",
+        )
+        .bind(&intent.event_id)
+        .bind(start)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some((event, local)) = current {
+            intent.event = event;
+            intent.local_event = local;
+        } else {
+            obsolete = true;
+        }
+    }
+    let recipients = if obsolete || stale_occurrence(&intent, now) {
         Vec::new()
     } else {
         recipients(&mut tx, &intent).await?
@@ -263,25 +282,77 @@ async fn dispatch_page(
             })
         })
         .collect();
-    let inserted = insert_notifications(&mut *tx, &batch).await?;
+    let inserted = insert_event_notifications(&mut *tx, &batch).await?;
     let finished = recipients.len() < PAGE as usize;
-    sqlx::query("UPDATE explore.event_notification_intents SET recipient_after=$2,processed_at=CASE WHEN $3 THEN $4 ELSE NULL END,dispatch_at=$4 WHERE id=$1")
+    sqlx::query("UPDATE social.event_notification_intents SET recipient_after=$2,processed_at=CASE WHEN $3 THEN $4 ELSE NULL END,dispatch_at=timezone('UTC', clock_timestamp()) WHERE id=$1")
         .bind(intent.id).bind(recipients.last().map(|row| row.address.as_str()).unwrap_or(&intent.recipient_after))
         .bind(finished).bind(now).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Some(inserted))
 }
 
-/// One bounded pass. Clock input is explicit for rollover/restart tests.
+fn stale_occurrence(intent: &Intent, now: NaiveDateTime) -> bool {
+    let Some(start) = intent.occurrence_start else {
+        return false;
+    };
+    if intent.kind == "events_starts_soon" {
+        return start <= now;
+    }
+    let end = intent
+        .event
+        .get("duration")
+        .and_then(Value::as_i64)
+        .and_then(Span::try_milliseconds)
+        .and_then(|duration| start.checked_add_signed(duration));
+    intent.kind == "events_started" && end.is_none_or(|end| end <= now)
+}
+
+async fn cleanup(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<()> {
+    // Pending work is never purged. Completed keys outlive the one-hour scan
+    // window by 30 days, so cleanup cannot make an eligible occurrence new again.
+    sqlx::query(
+        "DELETE FROM social.event_notification_intents WHERE id IN (
+        SELECT id FROM social.event_notification_intents
+        WHERE processed_at < $1 AND occurred_at < $1
+        ORDER BY processed_at,id LIMIT 1000 FOR UPDATE SKIP LOCKED)",
+    )
+    .bind(now - Span::days(RETENTION_DAYS))
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Scan and dispatch within a wall-clock budget. A cancelled in-flight page
+/// rolls back; already committed queue and recipient progress survive retries.
 pub async fn run_once(pool: &PgPool, base: &str, now: NaiveDateTime) -> anyhow::Result<u64> {
-    scan_kind(pool, "events_starts_soon", 3600, now).await?;
-    scan_kind(pool, "events_started", 0, now).await?;
+    let started = tokio::time::Instant::now();
+    let deadline = started + PASS_BUDGET;
+    let scan_deadline = started + SCAN_BUDGET;
+    let scan = async {
+        loop {
+            let reminders = scan_kind(pool, "events_starts_soon", 3600, now).await?;
+            let starts = scan_kind(pool, "events_started", 0, now).await?;
+            if reminders < PAGE as u64 && starts < PAGE as u64 {
+                break;
+            }
+        }
+        Ok::<_, anyhow::Error>(())
+    };
+    if let Ok(result) = tokio::time::timeout_at(scan_deadline, scan).await {
+        result?;
+    }
     let mut emitted = 0;
-    for _ in 0..DISPATCH_PAGES {
-        let Some(inserted) = dispatch_page(pool, base, now).await? else {
-            break;
-        };
-        emitted += inserted;
+    loop {
+        match tokio::time::timeout_at(deadline, dispatch_page(pool, base, now)).await {
+            Ok(result) => match result? {
+                Some(inserted) => emitted += inserted,
+                None => break,
+            },
+            Err(_) => return Ok(emitted),
+        }
+    }
+    if let Ok(result) = tokio::time::timeout_at(deadline, cleanup(pool, now)).await {
+        result?;
     }
     Ok(emitted)
 }
@@ -350,7 +421,7 @@ mod tests {
             .await
             .unwrap();
         let pending: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_notification_intents WHERE event_id=$1",
+            "SELECT count(*) FROM social.event_notification_intents WHERE event_id=$1",
         )
         .bind(&event)
         .fetch_one(&pool)
@@ -487,7 +558,7 @@ mod tests {
         assert_eq!(count(&pool, &event, "event_rejected", HOST).await, 1);
 
         let queued: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_notification_intents WHERE event_id=$1",
+            "SELECT count(*) FROM social.event_notification_intents WHERE event_id=$1",
         )
         .bind(&event)
         .fetch_one(&pool)
@@ -505,7 +576,7 @@ mod tests {
         .unwrap();
         tx.rollback().await.unwrap();
         let after: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_notification_intents WHERE event_id=$1",
+            "SELECT count(*) FROM social.event_notification_intents WHERE event_id=$1",
         )
         .bind(&event)
         .fetch_one(&pool)
@@ -527,15 +598,18 @@ mod tests {
         sqlx::query("INSERT INTO explore.event_attendance_local (event_id,signer,action) SELECT $1,'0x'||lpad(to_hex(n),40,'0'),'going' FROM generate_series(1000,1104) n")
             .bind(&paged).execute(&pool).await.unwrap();
         let intent_id = Uuid::new_v4();
-        sqlx::query("INSERT INTO explore.event_notification_intents (id,event_id,kind,event,local_event,occurrence_start,occurred_at) SELECT $1,id,'events_started',raw,true,$3,$3 FROM explore.event WHERE id=$2")
-            .bind(intent_id).bind(&paged).bind(t0).execute(&pool).await.unwrap();
-        dispatch_page(&pool, base, t0).await.unwrap();
-        let pending: bool = sqlx::query_scalar("SELECT processed_at IS NULL AND recipient_after <> '' FROM explore.event_notification_intents WHERE id=$1")
+        let paged_start = chrono::DateTime::parse_from_rfc3339("2100-01-01T12:00:00Z")
+            .unwrap()
+            .naive_utc();
+        sqlx::query("INSERT INTO social.event_notification_intents (id,event_id,kind,event,local_event,occurrence_start,occurred_at) SELECT $1,id,'events_started',raw,true,$3,$3 FROM explore.event WHERE id=$2")
+            .bind(intent_id).bind(&paged).bind(paged_start).execute(&pool).await.unwrap();
+        dispatch_page(&pool, base, paged_start).await.unwrap();
+        let pending: bool = sqlx::query_scalar("SELECT processed_at IS NULL AND recipient_after <> '' FROM social.event_notification_intents WHERE id=$1")
             .bind(intent_id).fetch_one(&pool).await.unwrap();
         assert!(pending, "a full page persists its resume key");
         let (left, right) = tokio::join!(
-            dispatch_page(&pool, base, t0),
-            dispatch_page(&pool, base, t0)
+            dispatch_page(&pool, base, paged_start),
+            dispatch_page(&pool, base, paged_start)
         );
         left.unwrap();
         right.unwrap();
@@ -543,12 +617,224 @@ mod tests {
             .bind(&paged).fetch_one(&pool).await.unwrap();
         assert_eq!(count, 105);
         let finished: bool = sqlx::query_scalar(
-            "SELECT processed_at IS NOT NULL FROM explore.event_notification_intents WHERE id=$1",
+            "SELECT processed_at IS NOT NULL FROM social.event_notification_intents WHERE id=$1",
         )
         .bind(intent_id)
         .fetch_one(&pool)
         .await
         .unwrap();
         assert!(finished);
+        catch_up_pages_live_audiences_and_retention(&pool).await;
+    }
+
+    async fn catch_up_pages_live_audiences_and_retention(pool: &PgPool) {
+        let now = chrono::DateTime::parse_from_rfc3339("2101-06-01T18:00:00Z")
+            .unwrap()
+            .naive_utc();
+        let prefix = Uuid::new_v4().to_string();
+        let address = format!("0x{}", Uuid::new_v4().simple())
+            .chars()
+            .chain("00000000".chars())
+            .collect::<String>();
+        // 125 simultaneous starts with local consent, 1,000 live catalogue
+        // rows without local consent, and 1,000 expired rows with consent.
+        sqlx::query("INSERT INTO explore.event (id,name,approved,start_at,finish_at,next_finish_at,duration_ms,raw)
+            SELECT $1 || ':' || n,'Catchup',true,$2,$2 + interval '1 hour',$2 + interval '1 hour',3600000,
+                jsonb_build_object('name','Catchup','approved',true,'start_at',$2::timestamp,'duration',3600000,'user',$3)
+            FROM generate_series(1,1125) n")
+            .bind(&prefix).bind(now-Span::minutes(10)).bind(&address).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.event (id,name,approved,start_at,finish_at,next_finish_at,duration_ms,raw)
+            SELECT $1 || ':' || n,'Expired',true,$2,$2 + interval '1 hour',$2 + interval '1 hour',3600000,
+                jsonb_build_object('name','Expired','approved',true,'start_at',$2::timestamp,'duration',3600000,'user',$3)
+            FROM generate_series(1126,2125) n")
+            .bind(&prefix).bind(now-Span::hours(3)).bind(&address).execute(pool).await.unwrap();
+        sqlx::query(
+            "INSERT INTO explore.event_attendance_local(event_id,signer,action)
+            SELECT $1 || ':' || n,$2,'going' FROM generate_series(1,2125) n WHERE n<=125 OR n>1125",
+        )
+        .bind(&prefix)
+        .bind(&address)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("ANALYZE explore.event")
+            .execute(pool)
+            .await
+            .unwrap();
+        let plan: Value = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) {SCAN_SQL}"
+        )))
+        .bind("events_started")
+        .bind(0_i32)
+        .bind(now)
+        .bind(now - Span::hours(1))
+        .bind(PAGE)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        eprintln!(
+            "event scan smoke: 2125 rows, 125 eligible; execution_ms={}, plan={}",
+            plan[0]["Execution Time"], plan[0]["Plan"]
+        );
+        let before = std::time::Instant::now();
+        run_once(pool, "https://example.org", now).await.unwrap();
+        for _ in 0..3 {
+            run_once(pool, "https://example.org", now).await.unwrap();
+        }
+        let notices: i64=sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE metadata->>'eventId' LIKE $1 AND type='events_started'")
+            .bind(format!("{prefix}:%")).fetch_one(pool).await.unwrap();
+        assert_eq!(
+            notices, 125,
+            "all due-time ties across scan pages drain exactly once"
+        );
+        let queued: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.event_notification_intents WHERE event_id LIKE $1",
+        )
+        .bind(format!("{prefix}:%"))
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            queued, 125,
+            "expired and no-audience catalogue rows never enter the queue"
+        );
+        eprintln!(
+            "event queue smoke: drained 125 recipients in {:?}",
+            before.elapsed()
+        );
+
+        // A large community drains more than the previous ten-page cap in
+        // one budgeted pass; additional passes remain safe on slower runners.
+        let large_community = Uuid::new_v4();
+        let large_event = format!("{prefix}:large");
+        sqlx::query("INSERT INTO social.communities(id,name,owner_address) VALUES($1,'Large',$2)")
+            .bind(large_community)
+            .bind(&address)
+            .execute(pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO social.community_members(community_id,member_address,role)
+            SELECT $1,'0x'||lpad(to_hex(n),40,'0'),'member' FROM generate_series(20000,30004) n",
+        )
+        .bind(large_community)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO explore.event(id,name,approved,origin,community_id,start_at,finish_at,duration_ms,raw)
+            VALUES($1,'Large',true,'local',$2,$3,$3+interval '1 hour',3600000,
+            jsonb_build_object('name','Large','approved',true,'community_id',$2::text,'start_at',$3::timestamp,'duration',3600000,'user',$4::text))")
+            .bind(&large_event).bind(large_community.to_string()).bind(now+Span::hours(2)).bind(&address).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at)
+            SELECT $1,id,'event_created',raw,true,$3 FROM explore.event WHERE id=$2")
+            .bind(Uuid::new_v4()).bind(&large_event).bind(now).execute(pool).await.unwrap();
+        let large_before = std::time::Instant::now();
+        run_once(pool, "https://example.org", now).await.unwrap();
+        for _ in 0..3 {
+            run_once(pool, "https://example.org", now).await.unwrap();
+        }
+        let large_count:i64=sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE metadata->>'eventId'=$1 AND type='event_created'")
+            .bind(&large_event).fetch_one(pool).await.unwrap();
+        assert_eq!(large_count, 10005);
+        eprintln!(
+            "event queue smoke: drained 10005-member community in {:?}",
+            large_before.elapsed()
+        );
+
+        // An approval or new mirror arriving after the scan has passed its due
+        // time still gets a live started notice, and a late reminder is caught.
+        for (suffix, start) in [
+            ("late-start", now - Span::minutes(5)),
+            ("late-reminder", now + Span::minutes(20)),
+        ] {
+            let id = format!("{prefix}:{suffix}");
+            let body = json!({"id":id,"name":"Late","approved":false,"start_at":start.and_utc().to_rfc3339(),"finish_at":(start+Span::hours(1)).and_utc().to_rfc3339(),"duration":3600000});
+            crate::explore::events::mirror::upsert_event(pool, &body)
+                .await
+                .unwrap();
+            crate::explore::events::attendees::rsvp_going(pool, &id, &address, None)
+                .await
+                .unwrap();
+            run_once(pool, "https://example.org", now).await.unwrap();
+            sqlx::query("UPDATE explore.event SET approved=true,raw=raw || '{\"approved\":true}'::jsonb WHERE id=$1").bind(&id).execute(pool).await.unwrap();
+            run_once(pool, "https://example.org", now).await.unwrap();
+            let kind = if suffix == "late-start" {
+                "events_started"
+            } else {
+                "events_starts_soon"
+            };
+            assert_eq!(count(pool, &id, kind, &address).await, 1);
+        }
+        // Moving an already-scanned future event earlier creates a fresh due
+        // occurrence, without depending on a monotonically advancing cursor.
+        let moved = format!("{prefix}:moved");
+        let start = now + Span::hours(3);
+        let mut body = json!({"id":moved,"name":"Moved","approved":true,"start_at":start.and_utc().to_rfc3339(),"finish_at":(start+Span::hours(1)).and_utc().to_rfc3339(),"duration":3600000});
+        crate::explore::events::mirror::upsert_event(pool, &body)
+            .await
+            .unwrap();
+        crate::explore::events::attendees::rsvp_going(pool, &moved, &address, None)
+            .await
+            .unwrap();
+        run_once(pool, "https://example.org", now).await.unwrap();
+        let old_intent = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurrence_start,occurred_at) VALUES($1,$2,'events_starts_soon',$3,false,$4,$5)")
+            .bind(old_intent).bind(&moved).bind(&body).bind(start).bind(now).execute(pool).await.unwrap();
+        body["start_at"] = json!((now + Span::minutes(30)).and_utc().to_rfc3339());
+        body["finish_at"] = json!((now + Span::minutes(90)).and_utc().to_rfc3339());
+        crate::explore::events::mirror::upsert_event(pool, &body)
+            .await
+            .unwrap();
+        run_once(pool, "https://example.org", now).await.unwrap();
+        assert_eq!(count(pool, &moved, "events_starts_soon", &address).await, 1);
+
+        // A queued started notice can become stale during an outage, and is
+        // consumed without producing either an in-app row or email delivery.
+        let stale_id = Uuid::new_v4();
+        let stale_event = format!("{prefix}:1126");
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurrence_start,occurred_at)
+            SELECT $1,id,'events_started',raw,false,$3,$3 FROM explore.event WHERE id=$2")
+            .bind(stale_id).bind(&stale_event).bind(now-Span::hours(3)).execute(pool).await.unwrap();
+        run_once(pool, "https://example.org", now).await.unwrap();
+        assert_eq!(
+            count(pool, &stale_event, "events_started", &address).await,
+            0
+        );
+        let finished: bool = sqlx::query_scalar(
+            "SELECT processed_at IS NOT NULL FROM social.event_notification_intents WHERE id=$1",
+        )
+        .bind(stale_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert!(finished);
+        let recent = Uuid::new_v4();
+        let old = Uuid::new_v4();
+        let pending = Uuid::new_v4();
+        for (id, processed, occurred) in [
+            (recent, Some(now), now - Span::days(40)),
+            (old, Some(now - Span::days(40)), now - Span::days(40)),
+            (pending, None, now - Span::days(40)),
+        ] {
+            sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at,processed_at) VALUES($1,'retention','event_approved','{}',false,$2,$3)")
+                .bind(id).bind(occurred).bind(processed).execute(pool).await.unwrap();
+        }
+        cleanup(pool, now).await.unwrap();
+        let retained: Vec<Uuid> =
+            sqlx::query_scalar("SELECT id FROM social.event_notification_intents WHERE id=ANY($1)")
+                .bind(vec![recent, old, pending])
+                .fetch_all(pool)
+                .await
+                .unwrap();
+        assert!(retained.contains(&recent) && retained.contains(&pending));
+        assert!(!retained.contains(&old));
+        run_once(pool, "https://example.org", now + Span::days(40))
+            .await
+            .unwrap();
+        assert_eq!(
+            count(pool, &stale_event, "events_started", &address).await,
+            0,
+            "retention never makes old occurrences eligible again"
+        );
     }
 }

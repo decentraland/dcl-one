@@ -254,6 +254,24 @@ these are estimates, not measured throughput.
 
 ## Queries, ingest and derived state
 
+Event notification delivery is owned by Social in
+`social.event_notification_intents`. Explore inserts an event transition snapshot
+through qualified SQL in the same transaction as the event change; Social owns
+recipient progress and completion. This shared-database edge has no reverse Rust
+dependency or internal HTTP transport. No event foreign key is used: committed
+host notices must survive removal of a mirrored catalogue row.
+
+The lifecycle scanner considers live occurrences in a rolling one-hour catch-up
+window with a local audience. Stable occurrence keys and a unique queue index
+deduplicate repeated scans, including late approvals and equal due times. A
+recipient page commits its cursor with notification and email-outbox inserts.
+Completed queue rows have 30-day retention, exceeding the catch-up window;
+bounded cleanup retains unfinished work. Stale reminders and ended occurrences
+are suppressed before delivery. The worker uses a time budget rather than a
+fixed number of audience pages. Catalogue-scale capacity is not established by
+bounded result sizes alone. See the
+[event notification ADR](docs/adr/2026-11-01-event-notification-delivery.md).
+
 For Shop: keep explicit asset/chain/order identities, separate accounting
 facts from rebuildable projections, bound reconciliation, use exact currency
 units, reserve atomically with external work outside the transaction. The

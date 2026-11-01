@@ -684,7 +684,15 @@ pub async fn patch_event(
         raw.insert("trending".into(), json!(false));
     }
     raw.insert("updated_at".into(), json!(Utc::now().to_rfc3339()));
-    moderation::store_locked(&mut tx, &event_id, raw, &signer, json!({ "edit": edit })).await?;
+    moderation::store_locked(
+        &mut tx,
+        &event_id,
+        &before,
+        raw,
+        &signer,
+        json!({ "edit": edit }),
+    )
+    .await?;
     tx.commit().await?;
     answer(&state, &event_id).await
 }
@@ -742,6 +750,7 @@ pub async fn delete_event(
         tx.rollback().await?;
         return answer(&state, &event_id).await;
     }
+    let before = raw.clone();
     let now = Utc::now().to_rfc3339();
     let (provenance, payload) = match signer {
         None => {
@@ -784,9 +793,9 @@ pub async fn delete_event(
     raw.insert("deleted_at".into(), json!(now));
     raw.insert("updated_at".into(), json!(now));
     if mirrored {
-        moderation::hide_mirrored_locked(&mut tx, &event_id, raw, &provenance).await?;
+        moderation::hide_mirrored_locked(&mut tx, &event_id, &before, raw, &provenance).await?;
     } else {
-        moderation::store_locked(&mut tx, &event_id, raw, &provenance, payload).await?;
+        moderation::store_locked(&mut tx, &event_id, &before, raw, &provenance, payload).await?;
     }
     tx.commit().await?;
     answer(&state, &event_id).await
@@ -1843,6 +1852,84 @@ mod tests {
         assert!(!moderated_content_changed(&before, &after));
         after.insert("name".into(), json!("Changed"));
         assert!(moderated_content_changed(&before, &after));
+    }
+
+    #[tokio::test]
+    async fn locked_event_edits_and_deletes_capture_only_their_committed_transitions() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let owner = alloy::signers::local::PrivateKeySigner::random();
+        let address = format!("{:#x}", owner.address());
+        let communities = [uuid::Uuid::new_v4(), uuid::Uuid::new_v4()];
+        for community in communities {
+            sqlx::query("INSERT INTO social.communities(id,name,owner_address) VALUES($1,'Event transition fixture',$2)").bind(community).bind(&address).execute(&pool).await.unwrap();
+        }
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions,permissions_granted) VALUES ($1,'[\"approve_own_event\"]',true)").bind(&address).execute(&pool).await.unwrap();
+        let mut body = new_event();
+        body["community_id"] = json!(communities[0]);
+        let id = moderation::create_as(
+            &pool,
+            &serde_json::from_value(body).unwrap(),
+            &address,
+            &address,
+        )
+        .await
+        .unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("transition-admin".into()),
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let path = format!("/api/events/{id}");
+        for edit in [
+            json!({"approved":true}),
+            json!({"community_id":communities[1]}),
+            json!({"name":"Still approved"}),
+        ] {
+            let (status, body) = call_as(&app, "PATCH", &path, &owner, edit).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+        let created: Vec<String> = sqlx::query_scalar("SELECT event->>'community_id' FROM social.event_notification_intents WHERE event_id=$1 AND kind='event_created' ORDER BY occurred_at,id").bind(&id).fetch_all(&pool).await.unwrap();
+        assert_eq!(created, communities.map(|id| id.to_string()));
+        for _ in 0..2 {
+            let (status, body) = call(
+                &app,
+                "DELETE",
+                &path,
+                Some("transition-admin"),
+                Some(json!({"reason":"Removed","actor":"moderator"})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+        let deleted: Vec<Value> = sqlx::query_scalar("SELECT event FROM social.event_notification_intents WHERE event_id=$1 AND kind='event_deleted'").bind(&id).fetch_all(&pool).await.unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0]["deleted_reason"], "Removed");
+        assert_eq!(deleted[0]["name"], "Still approved");
+        let mirrored = uuid::Uuid::new_v4().to_string();
+        super::super::mirror::upsert_event(&pool,&json!({"id":mirrored,"name":"Mirrored transition","user":address,"approved":true,"start_at":"2099-06-01T18:00:00Z","duration":3600000})).await.unwrap();
+        for _ in 0..2 {
+            let (status, body) = call(
+                &app,
+                "DELETE",
+                &format!("/api/events/{mirrored}"),
+                Some("transition-admin"),
+                Some(json!({"reason":"Hidden","actor":"moderator"})),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+        }
+        let notices: Vec<(String,bool,Value)> = sqlx::query_as("SELECT kind,local_event,event FROM social.event_notification_intents WHERE event_id=$1").bind(&mirrored).fetch_all(&pool).await.unwrap();
+        assert_eq!(notices.len(), 1);
+        assert_eq!(notices[0].0, "event_deleted");
+        assert!(!notices[0].1);
+        assert_eq!(notices[0].2["deleted_reason"], "Hidden");
     }
 
     /// The events write surface over the real schema: a wallet creates,

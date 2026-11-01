@@ -321,6 +321,9 @@ CREATE INDEX event_coords_idx ON explore.event (coordinates_x, coordinates_y);
 -- orders by it (moderation_pending, DESC NULLS LAST) cannot use a btree in
 -- either direction, so the old event_next_start_idx served nothing.
 CREATE INDEX event_approved_live_idx ON explore.event (approved, next_finish_at);
+-- The notification scan bounds candidates by the final series finish before
+-- expanding occurrences. next_finish_at may be stale between mirror refreshes.
+CREATE INDEX event_notifications_live_idx ON explore.event (finish_at, id) WHERE approved;
 -- The sweep's fetched_at < $1 candidates and its ORDER BY fetched_at confirmation set.
 CREATE INDEX event_fetched_at_idx ON explore.event (fetched_at);
 
@@ -418,29 +421,6 @@ CREATE TABLE explore.event_attendance_local (
 -- (no event_id bound); the PK serves the per-event probes.
 CREATE INDEX event_attendance_local_signer_action_idx
     ON explore.event_attendance_local (signer, action);
-
--- Durable event notice intents, captured with their authoring/moderation
--- transaction, or by social's bounded occurrence scanner. No FK: the event
--- mirror may remove a catalogue row while an already-committed host notice
--- still needs delivery. Payload snapshots keep that dispatch recoverable.
-CREATE TABLE explore.event_notification_intents (
-    id uuid PRIMARY KEY,
-    event_id text NOT NULL,
-    kind text NOT NULL,
-    event jsonb NOT NULL,
-    local_event boolean NOT NULL,
-    occurrence_start timestamp without time zone,
-    occurred_at timestamp without time zone NOT NULL,
-    dispatch_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    recipient_after text NOT NULL DEFAULT '',
-    processed_at timestamp without time zone,
-    CONSTRAINT event_notification_intents_kind_check CHECK (kind IN ('event_approved', 'event_rejected', 'event_deleted', 'event_created', 'events_starts_soon', 'events_started')),
-    CONSTRAINT event_notification_intents_occurrence_check CHECK ((kind IN ('events_starts_soon', 'events_started')) = (occurrence_start IS NOT NULL))
-);
--- The social worker claims unfinished dispatches in bounded pages; locked
--- rows are skipped, and its recipient cursor advances with delivery inserts.
-CREATE INDEX event_notification_intents_pending_idx
-    ON explore.event_notification_intents (dispatch_at, id) WHERE processed_at IS NULL;
 
 CREATE TABLE explore.schedules_local (
     id            text PRIMARY KEY,

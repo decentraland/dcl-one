@@ -562,6 +562,63 @@ pub async fn get_schedule_by_id(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn signed_event_list_filters_use_current_trusted_admin_permissions() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let key = alloy_signer_local::PrivateKeySigner::random();
+        let address = format!("{:#x}", key.address());
+        let community = uuid::Uuid::new_v4().to_string();
+        let pending = uuid::Uuid::new_v4().to_string();
+        let public = uuid::Uuid::new_v4().to_string();
+        for (id, approved) in [(&pending, false), (&public, true)] {
+            super::super::mirror::upsert_event(&pool,&serde_json::json!({"id":id,"name":"Filter fixture","user":"0x1111111111111111111111111111111111111111","community_id":community,"approved":approved,"start_at":"2099-06-01T18:00:00Z","duration":3600000})).await.unwrap();
+        }
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions,permissions_granted) VALUES($1,'[\"edit_any_event\"]',false)").bind(&address).execute(&pool).await.unwrap();
+        let state = std::sync::Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings::for_tests(),
+            None,
+        ));
+        let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+            &key,
+            "get",
+            "/api/events",
+            "{}",
+            true,
+            &Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        let query = EventListQuery::from_pairs(&[
+            ("community_id".into(), community),
+            ("list".into(), "all".into()),
+            ("approved".into(), "false".into()),
+        ]);
+        for granted in [false, true, false] {
+            sqlx::query("UPDATE explore.event_profile_settings SET permissions_granted=$2 WHERE \"user\"=$1").bind(&address).bind(granted).execute(&pool).await.unwrap();
+            let Json(body) =
+                list_with(&state, &headers, "get", "/api/events", &query, vec![], None)
+                    .await
+                    .unwrap();
+            let body = serde_json::to_value(body).unwrap();
+            let ids: Vec<_> = body["data"]["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|event| event["id"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                ids,
+                vec![if granted {
+                    pending.as_str()
+                } else {
+                    public.as_str()
+                }]
+            );
+        }
+    }
+
     /// A community_id query selects the WithTotal envelope. The Unity client
     /// (EventWithPlaceIdDTOListResponse) parses exactly
     /// `{"ok":true,"data":{"events":[...],"total":n}}` for this query, so the
