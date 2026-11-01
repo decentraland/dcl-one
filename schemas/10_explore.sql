@@ -158,6 +158,12 @@ CREATE INDEX place_world_local_world_name_col_idx ON explore.place_world_local (
 CREATE INDEX place_world_local_positions_path_gin
     ON explore.place_world_local USING gin ((raw->'positions') jsonb_path_ops);
 
+-- Public owner-filtered world lists probe both catalogue legs through place_indexed.
+CREATE INDEX place_world_owner_idx ON explore.place
+    (lower(COALESCE(raw->>'owner', creator_address))) WHERE world IS TRUE;
+CREATE INDEX place_world_local_owner_idx ON explore.place_world_local
+    (lower(COALESCE(raw->>'owner', creator_address))) WHERE world IS TRUE;
+
 -- The read surface for every place/world query: the mirrored leg and the local leg.
 CREATE VIEW explore.place_indexed AS
     SELECT id, base_position, title, description, creator_address, content_rating,

@@ -356,8 +356,9 @@ impl State {
     }
 
     /// The old `PLACES_API_URL` `/api/destinations` ownership check as a
-    /// read of the mirrored catalogue: every distinct id (a place uuid or a
-    /// world name) must resolve to a place whose owner is the caller.
+    /// read of the catalogue identity and its authoritative ownership: every distinct
+    /// id (a place UUID or world name) must belong to the caller. Genesis ownership
+    /// is resolved from LAND state rather than creator-authored metadata.
     pub async fn validate_places_ownership(
         &self,
         place_ids: &[String],
@@ -372,24 +373,19 @@ impl State {
                 unique.push(id.clone());
             }
         }
-        let lowered: Vec<String> = unique.iter().map(|s| s.to_lowercase()).collect();
-        let owned: i64 = sqlx::query_scalar(
-            "SELECT COUNT(DISTINCT p.key) FROM ( \
-               SELECT CASE WHEN lower(id) = ANY($1) THEN lower(id) ELSE lower(world_name) END AS key, \
-                      lower(COALESCE(raw->>'owner', creator_address)) AS owner \
-               FROM explore.place_indexed \
-               WHERE lower(id) = ANY($1) OR lower(world_name) = ANY($1) \
-             ) p WHERE p.owner = $2",
-        )
-        .bind(&lowered)
-        .bind(signer)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "places ownership validation failed");
-            CommError::status(axum::http::StatusCode::BAD_GATEWAY, "failed to validate place ownership")
-        })?;
-        if owned as usize != unique.len() {
+        if !self
+            .explore
+            .places
+            .owns_places(&unique, signer.as_str())
+            .await
+            .map_err(|error| {
+                tracing::error!(?error, "places ownership validation failed");
+                CommError::status(
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    "failed to validate place ownership",
+                )
+            })?
+        {
             return Err(CommError::not_authorized(format!(
                 "The user {} doesn't own all the places",
                 signer
