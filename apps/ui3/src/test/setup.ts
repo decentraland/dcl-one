@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { configure } from "@testing-library/react";
 import { afterEach, beforeEach, expect, vi } from "vitest";
+import { primeRemoteFlags } from "../shop/discovery/lib/remoteFlags";
 import { FIXTURE_NOW } from "../shop/market/fixtureNow";
 
 configure({ asyncUtilTimeout: 10_000 });
@@ -13,3 +14,7 @@ beforeEach(() => {
 afterEach(() => {
   if (atFixtureTime()) vi.useRealTimers();
 });
+
+// The shop reads rollout flags from Decentraland's live feature-flags service; every test starts with all
+// of them off and primed, so none reaches the service and none changes when a flag is turned on there.
+beforeEach(() => primeRemoteFlags({}));
