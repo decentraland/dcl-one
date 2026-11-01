@@ -6,6 +6,7 @@ import {
   fetchSchedules,
   emptyDraft,
   scheduleToDraft,
+  buildScheduleSubmit,
   type Schedule,
   type ScheduleDraft,
 } from "@/data/lib/catalyst/landings/schedules";
@@ -22,6 +23,9 @@ import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
 
 import ScheduleWizard from "@/features/explorer/event-schedule/ScheduleWizard";
+import { useAuth } from "@/data/lib/auth/context";
+import { getIdentity } from "@/data/lib/auth/session";
+import { openSignIn } from "@/features/components/auth/signin-store";
 
 import type { Route } from "./+types/landings.event-schedule";
 import type { StoryId } from "@/core/lib/telemetry/story-id";
@@ -108,6 +112,7 @@ type LoaderData = {
 export default function EventScheduleRoute({ loaderData }: Route.ComponentProps) {
   const d = loaderData as LoaderData;
   const navigate = useNavigate();
+  const auth = useAuth();
 
   return (
     <LdEventSchedulePage
@@ -118,6 +123,7 @@ export default function EventScheduleRoute({ loaderData }: Route.ComponentProps)
       }}
     >
       <ScheduleWizard
+        key={`${auth.address ?? "signed-out"}:${d.mode}:${d.scheduleId ?? "new"}`}
         trackCtx={{
           sid: d.sid,
           story: STORY,
@@ -130,6 +136,9 @@ export default function EventScheduleRoute({ loaderData }: Route.ComponentProps)
         dayLabels={d.dayLabels}
         scheduleId={d.scheduleId ?? undefined}
         draft={d.draft ?? undefined}
+        submit={buildScheduleSubmit(getIdentity, d.schedules.find((schedule) => schedule.id === d.scheduleId))}
+        signedIn={auth.isConnected}
+        onSignIn={openSignIn}
       />
     </LdEventSchedulePage>
   );

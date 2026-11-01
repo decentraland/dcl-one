@@ -2837,10 +2837,6 @@
         "event_id": {
           "kind": "string",
           "optional": true
-        },
-        "stub": {
-          "kind": "unknown",
-          "optional": false
         }
       }
     },
@@ -3091,10 +3087,6 @@
         "schedule_id": {
           "kind": "string",
           "optional": true
-        },
-        "stub": {
-          "kind": "unknown",
-          "optional": false
         }
       }
     },
