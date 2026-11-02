@@ -49,8 +49,8 @@ impl SocialServiceImpl {
             });
         }
         let db = context.server_context.db();
-        match db.block_user_and_last(&me, &other).await {
-            Ok(Some(last)) => {
+        let blocked_at = match db.block_user_and_last(&me, &other).await {
+            Ok((blocked_at, Some(last))) => {
                 if let Err(e) = db
                     .apply_friendship_action(
                         &me,
@@ -64,8 +64,9 @@ impl SocialServiceImpl {
                 {
                     tracing::warn!(error = %e, "block: recording the friendship action failed");
                 }
+                blocked_at
             }
-            Ok(None) => {}
+            Ok((blocked_at, None)) => blocked_at,
             Err(e) => {
                 return Ok(BlockUserResponse {
                     response: Some(block_user_response::Response::InternalServerError(
@@ -73,7 +74,7 @@ impl SocialServiceImpl {
                     )),
                 });
             }
-        }
+        };
 
         let pubsub = context.server_context.pubsub();
         pubsub.publish(
@@ -99,7 +100,7 @@ impl SocialServiceImpl {
         let profile = context
             .server_context
             .profiles()
-            .blocked_profile(&other, Some(chrono::Utc::now().timestamp_millis()))
+            .blocked_profile(&other, Some(blocked_at.timestamp_millis()))
             .await;
         Ok(BlockUserResponse {
             response: Some(block_user_response::Response::Ok(block_user_response::Ok {
@@ -110,6 +111,7 @@ impl SocialServiceImpl {
 
     /// Removes the block; a friendship the block had deactivated is closed with
     /// a `delete` action (the pair starts over), and the other party is told.
+    /// Without a block to remove nothing is recorded or told.
     pub(crate) async fn unblock_user(
         &self,
         request: UnblockUserPayload,
@@ -141,7 +143,8 @@ impl SocialServiceImpl {
         let db = context.server_context.db();
         let pubsub = context.server_context.pubsub();
 
-        let last = match db.unblock_user_and_last(&me, &other).await {
+        // Nothing to lift: no action is recorded and no one is told.
+        let removed = match db.unblock_user_and_last(&me, &other).await {
             Ok(v) => v,
             Err(e) => {
                 return Ok(UnblockUserResponse {
@@ -151,40 +154,42 @@ impl SocialServiceImpl {
                 });
             }
         };
-        if let Some(last) = last
-            && db
-                .apply_friendship_action(
-                    &me,
+        if let Some(last) = removed {
+            if let Some(last) = last
+                && db
+                    .apply_friendship_action(
+                        &me,
+                        &other,
+                        "delete",
+                        false,
+                        Some(last.friendship_id),
+                        None,
+                    )
+                    .await
+                    .is_ok()
+            {
+                pubsub.publish(
                     &other,
-                    "delete",
-                    false,
-                    Some(last.friendship_id),
-                    None,
-                )
-                .await
-                .is_ok()
-        {
+                    SocialEvent::Friendship(FriendshipUpdate {
+                        update: Some(friendship_update::Update::Delete(
+                            friendship_update::DeleteResponse {
+                                user: Some(User {
+                                    address: me.clone(),
+                                }),
+                            },
+                        )),
+                    }),
+                );
+            }
+
             pubsub.publish(
                 &other,
-                SocialEvent::Friendship(FriendshipUpdate {
-                    update: Some(friendship_update::Update::Delete(
-                        friendship_update::DeleteResponse {
-                            user: Some(User {
-                                address: me.clone(),
-                            }),
-                        },
-                    )),
+                SocialEvent::Block(BlockUpdate {
+                    address: me.clone(),
+                    is_blocked: false,
                 }),
             );
         }
-
-        pubsub.publish(
-            &other,
-            SocialEvent::Block(BlockUpdate {
-                address: me.clone(),
-                is_blocked: false,
-            }),
-        );
         let profile = context
             .server_context
             .profiles()

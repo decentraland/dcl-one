@@ -166,6 +166,46 @@ async fn get_blocked_users_pages_and_counts_the_full_set() {
 }
 
 #[tokio::test]
+async fn friends_are_newest_first_and_blocked_pairs_are_left_out() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let db = Db::new(pool);
+    let (a, b) = (addr("fb20"), addr("fb21"));
+    let friends = [addr("fb22"), addr("fb23"), addr("fb24")];
+    for f in &friends {
+        db.apply_friendship_action(&a, f, "accept", true, None, None)
+            .await
+            .unwrap();
+        db.apply_friendship_action(&b, f, "accept", true, None, None)
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let newest_first: Vec<String> = friends.iter().rev().cloned().collect();
+    assert_eq!(db.get_friends(&a, 10, 0).await.unwrap(), (newest_first, 3));
+
+    // A block row next to an active friendship (its friendship write failed)
+    // hides that friend from both lists and both totals, whichever side blocked.
+    db.block_user(&friends[0], &a).await.unwrap();
+    db.block_user(&b, &friends[1]).await.unwrap();
+    assert_eq!(
+        db.get_friends(&a, 10, 0).await.unwrap(),
+        (vec![friends[2].clone(), friends[1].clone()], 2)
+    );
+    assert_eq!(db.count_friends(&a).await.unwrap(), 2);
+    assert_eq!(
+        db.get_mutual_friends(&a, &b, 10, 0).await.unwrap(),
+        (vec![friends[2].clone()], 1)
+    );
+    assert_eq!(db.count_mutual_friends(&a, &b).await.unwrap(), 1);
+    for f in &friends {
+        cleanup_pair(&db, &a, f).await;
+        cleanup_pair(&db, &b, f).await;
+    }
+}
+
+#[tokio::test]
 async fn friendship_action_outranks_a_block_row() {
     let Some(pool) = scratch_pool().await else {
         return;
@@ -335,21 +375,31 @@ async fn block_and_unblock_return_the_latest_action_in_one_statement() {
     };
     let db = Db::new(pool);
     let (a, b) = (addr("fb12"), addr("fb13"));
-    assert!(
-        db.block_user_and_last(&a, &b).await.unwrap().is_none(),
-        "no friendship row yet"
-    );
+    let (first_at, last) = db.block_user_and_last(&a, &b).await.unwrap();
+    assert!(last.is_none(), "no friendship row yet");
     assert!(db.is_blocked(&a, &b).await.unwrap());
-    db.block_user_and_last(&a, &b)
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (again_at, _) = db
+        .block_user_and_last(&a, &b)
         .await
         .expect("blocking twice is idempotent");
+    assert_eq!(again_at, first_at, "a repeat keeps the first block time");
 
     let (id, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, None)
         .await
         .unwrap();
-    let last = db.unblock_user_and_last(&a, &b).await.unwrap().unwrap();
+    let last = db
+        .unblock_user_and_last(&a, &b)
+        .await
+        .unwrap()
+        .expect("a block was removed")
+        .expect("the pair has a friendship row");
     assert_eq!((last.friendship_id, last.action.as_str()), (id, "request"));
+    assert!(
+        db.unblock_user_and_last(&a, &b).await.unwrap().is_none(),
+        "no block left to remove"
+    );
     assert!(!db.is_blocked(&a, &b).await.unwrap());
 
     let (blocked, blocked_by) = db.get_blocking_status(&a).await.unwrap();
