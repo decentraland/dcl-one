@@ -740,11 +740,46 @@ mod tests {
         assert!(finished);
         catch_up_pages_live_audiences_and_retention(&pool).await;
         bounded_work_preserves_fairness_cleanup_and_polling(&pool).await;
+        drain_waits_for_an_intent_claimed_by_another_transaction(&pool).await;
+    }
+
+    async fn drain_waits_for_an_intent_claimed_by_another_transaction(pool: &PgPool) {
+        let id = Uuid::new_v4();
+        let event_id = format!("claimed-{id}");
+        let now = Utc::now().naive_utc();
+        let address = format!("0x{}00000000", Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,'event_approved',$3,false,$4)")
+            .bind(id).bind(&event_id).bind(json!({"user":address})).bind(now).execute(pool).await.unwrap();
+        let mut held = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM social.event_notification_intents WHERE id=$1 FOR UPDATE")
+            .bind(id)
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        let claimable: Option<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM social.event_notification_intents WHERE id=$1 FOR UPDATE SKIP LOCKED",
+        )
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .unwrap();
+        assert!(
+            claimable.is_none(),
+            "the regression starts with a held queue claim"
+        );
+        let release = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            held.rollback().await.unwrap();
+        });
+        drain_until_complete(pool, now, &event_id, 1).await;
+        release.await.unwrap();
+        assert_eq!(count(pool, &event_id, "event_approved", &address).await, 1);
     }
 
     // The worker deliberately returns when its wall-clock budget expires.
-    // Assert eventual completion and durable progress across bounded passes,
-    // rather than requiring a particular runner to drain the queue in 5 seconds.
+    // Assert eventual completion and durable progress within an elapsed bound.
+    // SKIP LOCKED may finish a pass immediately while a cancelled SQL request
+    // still holds a claim until its server timeout/rollback completes.
     async fn drain_until_complete(
         pool: &PgPool,
         now: NaiveDateTime,
@@ -752,7 +787,10 @@ mod tests {
         expected_intents: usize,
     ) {
         let mut previous = std::collections::HashMap::<Uuid, (String, bool)>::new();
-        for pass in 0..=32 {
+        let started = tokio::time::Instant::now();
+        let deadline = started + Duration::from_secs(30);
+        let mut passes = 0;
+        loop {
             let progress: Vec<(Uuid, String, bool)> = sqlx::query_as(
                 "SELECT id,recipient_after,processed_at IS NOT NULL
                  FROM social.event_notification_intents WHERE event_id LIKE $1",
@@ -761,7 +799,9 @@ mod tests {
             .fetch_all(pool)
             .await
             .unwrap();
+            let mut made_progress = false;
             for (id, cursor, completed) in &progress {
+                made_progress |= previous.get(id) != Some(&(cursor.clone(), *completed));
                 if let Some((old_cursor, old_completed)) = previous.get(id) {
                     assert!(
                         cursor >= old_cursor,
@@ -777,10 +817,24 @@ mod tests {
             if progress.len() == expected_intents && progress.iter().all(|(_, _, done)| *done) {
                 return;
             }
-            if pass == 32 {
+            if tokio::time::Instant::now() >= deadline {
                 break;
             }
-            run_once(pool, "https://example.org", now).await.unwrap();
+            if !made_progress {
+                tokio::time::sleep_until(
+                    (tokio::time::Instant::now() + Duration::from_millis(10)).min(deadline),
+                )
+                .await;
+            }
+            passes += 1;
+            match tokio::time::timeout_at(deadline, run_once(pool, "https://example.org", now))
+                .await
+            {
+                Ok(result) => {
+                    result.unwrap();
+                }
+                Err(_) => break,
+            }
         }
         let matching: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(q) - 'event' FROM social.event_notification_intents q WHERE event_id LIKE $1 ORDER BY kind,occurrence_start,id")
             .bind(event_pattern).fetch_all(pool).await.unwrap();
@@ -790,8 +844,9 @@ mod tests {
             "SELECT timezone('UTC', clock_timestamp()), current_setting('TimeZone'), current_setting('transaction_isolation')",
         ).fetch_one(pool).await.unwrap();
         let actual_intents = matching.len();
+        let elapsed = started.elapsed();
         panic!(
-            "event notification queue did not complete within 32 resumable passes: pattern={event_pattern}, expected={expected_intents}, actual={actual_intents}, horizon={now}, database_clock={database_clock}, timezone={timezone}, isolation={isolation}, matching={matching:?}, pending_global={pending:?}"
+            "event notification queue did not complete within 30s: elapsed={elapsed:?}, passes={passes}, pattern={event_pattern}, expected={expected_intents}, actual={actual_intents}, horizon={now}, database_clock={database_clock}, timezone={timezone}, isolation={isolation}, matching={matching:?}, pending_global={pending:?}"
         );
     }
 
