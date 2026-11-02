@@ -351,16 +351,15 @@ fn dress_ghosts(
                 commands
                     .entity(entity)
                     .try_remove::<MeshMaterial3d<StandardMaterial>>()
-                    .try_insert((
-                        MeshMaterial3d(dressing.material.clone()),
-                        NotShadowCaster,
-                    ));
+                    .try_insert((MeshMaterial3d(dressing.material.clone()), NotShadowCaster));
                 if let Some(gt) = gt {
-                    commands.entity(entity).try_insert(crate::calculate_local_aabb(
-                        AVATAR_BOUNDS_MIN + root_gt.translation(),
-                        AVATAR_BOUNDS_MAX + root_gt.translation(),
-                        gt,
-                    ));
+                    commands
+                        .entity(entity)
+                        .try_insert(crate::calculate_local_aabb(
+                            AVATAR_BOUNDS_MIN + root_gt.translation(),
+                            AVATAR_BOUNDS_MAX + root_gt.translation(),
+                            gt,
+                        ));
                 }
             }
         }
@@ -682,11 +681,7 @@ mod tests {
             "{} animated bones",
             idle.curves().len()
         );
-        let missing = idle
-            .curves()
-            .keys()
-            .filter(|id| !ids.contains(*id))
-            .count();
+        let missing = idle.curves().keys().filter(|id| !ids.contains(*id)).count();
         assert_eq!(
             missing, 0,
             "{missing} animated bones are not in the ghost body"
