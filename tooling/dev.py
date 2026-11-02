@@ -27,6 +27,9 @@ ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / 'services/catalyst'
 STATE = ROOT / '.cache/dev'
 SETTINGS = STATE / 'settings.json'
+# mirror: mainnet catalogues; testnet: the same mirrors over Decentraland's testnet (.zone, Amoy and
+# Sepolia), for trading with testnet wallets; offline: empty, for local deployments.
+PROFILES = ('mirror', 'testnet', 'offline')
 DARWIN = platform.system() == 'Darwin'
 
 
@@ -111,8 +114,8 @@ def settings(create=False):
     if base > 65000 or not ports_free(base):
         raise RuntimeError('Development ports are occupied; choose FOUNDATION_DEV_PORT.')
     profile = os.environ.get('FOUNDATION_DEV_PROFILE', 'mirror')
-    if profile not in ('mirror', 'offline'):
-        raise ValueError('FOUNDATION_DEV_PROFILE must be mirror or offline')
+    if profile not in PROFILES:
+        raise ValueError('FOUNDATION_DEV_PROFILE must be mirror, testnet or offline')
     config = {'port': base, 'profile': profile, 'password': secrets.token_hex(24),
               'ENCRYPTION_KEY': secrets.token_hex(32), 'SESSION_SECRET': secrets.token_hex(32),
               **missing_secrets({})}
@@ -326,7 +329,32 @@ def runtime_env(config):
             'EXPLORER_MAP_SOURCE_URL': 'https://api.decentraland.org',
             'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/polygon',
         })
+    if config['profile'] == 'testnet':
+        env.update(testnet_env())
     return env
+
+
+def testnet_env():
+    """The mirror profile's upstreams on Decentraland's testnet: .zone services, Amoy and Sepolia.
+
+    The Shop settles on Amoy (VITE_SHOP_CHAIN_ID, read by the Sites dev server), its order book is the
+    .zone marketplace API's, and POST /v1/trades checks ownership over the testnet RPCs. Places, events
+    and the Explorer's lists stay on their production sources: only trading needs the testnet."""
+    return {
+        'ETH_NETWORK': 'sepolia',
+        'SYNC_SOURCE': 'https://peer.decentraland.zone/content',
+        'TRADES_SYNC_UPSTREAM_URL': 'https://marketplace-api.decentraland.zone/v1/trades',
+        'ETH_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-ethereum-sepolia',
+        'MATIC_COLLECTIONS_SUBGRAPH_URL': 'https://subgraph.decentraland.org/collections-matic-amoy',
+        'MARKETPLACE_SUBGRAPH_URL': 'https://subgraph.decentraland.org/marketplace-sepolia',
+        'LAND_SUBGRAPH_URL': 'https://subgraph.decentraland.org/land-manager-sepolia',
+        'ETH_RPC_URL': 'https://rpc.decentraland.org/sepolia',
+        'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/amoy',
+        'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',
+        # Gasless approvals and cancels: relayed by the .zone transactions API, which pays testnet gas.
+        'TRANSACTIONS_UPSTREAM_URL': 'https://transactions-api.decentraland.zone',
+        'VITE_SHOP_CHAIN_ID': '80002',
+    }
 
 
 def socket_path():
@@ -405,7 +433,7 @@ def project(config, postgres_only=False):
         'web-install': process('web-install'), 'sites': sites, 'livekit': livekit, 'pulse': pulse,
         'nats': nats,
     }
-    if config['profile'] == 'mirror':
+    if config['profile'] in ('mirror', 'testnet'):
         # The marketplace mirrors and chain indexes run in `catalyst index`, beside `serve`.
         processes['index'] = process('index', {'postgres': 'process_healthy',
                                                'api-build': 'process_completed_successfully'})
@@ -934,7 +962,7 @@ def main():
     wait_parser = commands.add_parser('wait')
     wait_parser.add_argument('--timeout', type=int, default=1800)
     wait_parser.add_argument('--postgres-only', action='store_true')
-    commands.add_parser('profile').add_argument('profile', choices=('mirror', 'offline'))
+    commands.add_parser('profile').add_argument('profile', choices=PROFILES)
     commands.add_parser('trades-snapshot', help="Write the mirrored trades to a gzipped SQL file").add_argument('out')
     commands.add_parser('_task', help='Internal supervised process').add_argument('task', choices=(
         'postgres', 'database-ready', 'api-build', 'api', 'api-run', 'web-install', 'sites', 'index', 'livekit', 'pulse', 'nats'))
@@ -967,6 +995,11 @@ def main():
         if supervisor_running():
             raise RuntimeError('Run foundation-dev down before changing profile.')
         config = settings()
+        data = STATE / 'postgres'
+        if (config['profile'] == 'testnet') != (args.profile == 'testnet') and data.exists() and any(data.iterdir()):
+            # Mainnet and testnet rows (trades, collections, owners) must never share a database.
+            raise RuntimeError('This stack already holds data of another network. Run the testnet profile in its '
+                               'own worktree (FOUNDATION_DEV_PROFILE=testnet on its first foundation-dev up).')
         config['profile'] = args.profile
         save_json(SETTINGS, config)
         print(f'Profile set to {args.profile}; run foundation-dev up. Existing data is preserved.')
