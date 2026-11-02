@@ -740,6 +740,22 @@ CREATE TABLE social.referral_progress_viewed (
     CONSTRAINT referral_progress_viewed_pkey PRIMARY KEY (referrer)
 );
 
+-- The contact emails a referrer who reached the IRL-swag tier (100 accepted
+-- invites) gave through POST /v1/referral-email; one row per submission, the
+-- newest per referrer gates the next (once per 24 hours).
+CREATE TABLE social.referral_emails (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    referrer text NOT NULL,
+    email text NOT NULL,
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT referral_emails_pkey PRIMARY KEY (id),
+    CONSTRAINT referral_emails_email_length_check CHECK (char_length(email) <= 254)
+);
+
+-- The referrer's newest submission (the 24-hour gate).
+CREATE INDEX referral_emails_referrer_idx ON social.referral_emails (referrer, updated_at DESC);
+
 -- ── media: translation cache ───────────────────────────────────────────────
 
 -- Cache of an external engine's answer per (backend, target_lang,

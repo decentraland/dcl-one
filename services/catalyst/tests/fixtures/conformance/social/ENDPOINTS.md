@@ -129,6 +129,55 @@ requested`, `Invalid callId`, ...), 403 `Forbidden`, 404 `Not Found`, 409
   the listing route, where upstream would treat `active` as a community id.
 - `docs/openapi.yaml`'s new paths are not in the served `/social-api/openapi.json`.
 
+### Community writes and notifications (read at `social-service-ea` @ `b6b2cef`)
+
+The write routes are not capturable; their behaviour was read from the
+upstream source (paths below are in `decentraland/social-service-ea` at
+`b6b2cef`, notification rows in `decentraland/notifications-workers` at
+`0f113fb`) and is pinned by the tests named per row (in
+`social/src/communities/tests/upstream_writes.rs` unless stated).
+
+| behaviour | upstream | local | tests |
+| --- | --- | --- | --- |
+| `PUT /v1/communities/{id}` `placeIds`: a JSON array of strings replaces the places, `[]` clears, an empty field changes nothing, anything else 400 "placeIds must be a valid JSON array"; only ids the community does not hold are ownership-checked (401 "The user {address} doesn't own all the places"); the answer carries `message: "Community updated successfully"` | `src/logic/community/communities.ts` `updateCommunity`, `fields-validator.ts`, `places.ts` `updatePlaces` | `social/src/communities/communities.rs:754`, `:822`, `write_support.rs:94` | `place_ids_replace_the_places_checking_only_the_new_ones`, `write_support.rs` `multipart_hands_the_validator_the_raw_case` |
+| private to public accepts every pending request to join of a wallet the community does not ban, in the update's transaction | `communities.ts` `updateCommunity`, `src/adapters/communities-db.ts` `acceptAllRequestsToJoin` | `communities.rs:845` | `going_public_accepts_the_pending_requests_to_join_of_unbanned_wallets` |
+| `PATCH /v1/communities/{id}/members/{address}` `role: "owner"` transfers ownership: owner only (401 "...doesn't have permission to transfer ownership in community {id}"), target a member (401 "The target user {address} is not a member of community {id}") holding a NAME (400 "The user {address} doesn't have any names"); the old owner becomes moderator | `src/logic/community/members.ts` `transferOwnership`, `roles.ts` `validatePermissionToTransferOwnership`, `communities-db.ts` `transferCommunityOwnership` | `social/src/communities/members.rs:702`, `:741` | `the_owner_role_transfers_ownership_to_a_named_member`, `tests.rs` `every_route_answers_its_contract` |
+| `onlyMemberOf=true` lists by role (owner, moderator, the rest), then name; every other listing by rank | `src/logic/queries.ts` `withSearchAndPagination` (`sortBy: 'role'`) | `social/src/communities/queries.rs:351` | `only_member_of_lists_by_role_then_name` |
+| `COMMUNITIES_PLACES_OWNERSHIP_CHECK` defaults to true: upstream always asks the places API (`PLACES_API_URL` is required); here the in-process catalogue and LAND authority answer | `src/logic/community/places.ts` `validateOwnership`, `src/adapters/places-api.ts` | `config/src/social.rs:31`, `social/src/communities/mod.rs:410` | `place_ids_replace_the_places_checking_only_the_new_ones` |
+| `GET /v1/community-voice-chats/active`: a non-member's room carries the positions and worlds of the community's places and is listed only when it has one; a member's carries none; a community that bans the caller is not listed | `src/logic/community-voice/community-voice.ts` `getActiveCommunityVoiceChatsForUser`, `src/utils/places.ts` | `social/src/communities/voice.rs:20`, `queries.rs:1225`, `places.rs:126` | `a_non_member_sees_a_room_only_through_its_places_and_never_when_banned`, `tests.rs` `voice_status_derives_from_the_presence_rows` |
+| bans rows: `bannedAt` with milliseconds and `Z`; v1 and v2 carry the caller's `friendshipStatus` | `communities-db.ts` `getBannedMembers`, `src/logic/community/utils.ts` `mapMembersWithProfiles` | `social/src/communities/dto.rs:266`, `members.rs:318` | `ban_rows_carry_millisecond_banned_at_and_the_friendship_status` |
+| `isHostingLiveEvent` on the signed `GET /v1/communities/{id}` and `/v2/communities/{id}` (absent from the public read), `false` on create; read from explore's events (`community_id`, live list) in process | `src/logic/community/events.ts` `isCurrentlyHostingEvents`, `communities.ts` `getCommunity` | `social/src/communities/communities.rs:369`, `:458`, `:467` | `a_signed_detail_says_whether_the_community_hosts_a_live_event` |
+| notification rows (`social.notifications`, an opted-out recipient skipped, one row per type, recipient and event key): `community_request_to_join_received` (owner and moderators), `_request_to_join_accepted`, `_invite_received`, `_post_added` (members but the author), `_member_removed` (kick), `_member_banned` (a member only, keyed per wallet), `_renamed` (every member), `_deleted` (members but the owner), `_deleted_content_violation` (the owner, when a global moderator deletes), `_ownership_transferred` (the new owner), `_voice_chat_started` (online members but the opener) | `src/logic/community/broadcaster.ts`, `requests.ts`, `posts.ts`, `members.ts`, `bans.ts`, `communities.ts`, `src/logic/community-voice/community-voice.ts`; `processor/src/logic/event-parser.ts` | `social/src/notifications/community.rs:108`, `communities/mod.rs:361`, `requests.rs:622`, `posts.rs:260`, `members.rs:653`, `:885`, `communities.rs:894`, `:1041`, `rpc/service/community_voice.rs:91` | `community_events_write_the_notification_rows_upstream_publishes`, `a_global_moderators_deletion_tells_the_owner_of_the_violation`, `the_owner_role_transfers_ownership_to_a_named_member`, `rpc/tests.rs` `community_voice_start_join_and_ban_semantics` |
+| `POST /v1/referral-email`: signed; 400 "You must have at least 100 accepted invites to set an email", "Email is required", "Email is too long", "Email contains invalid characters", "Invalid email format", then once per 24 hours ("Email can only be updated once per day. Last update was less than 24 hours ago for user: {address}"); 204, the lower-cased email kept in `social.referral_emails` | `src/logic/referral/referral.ts` `setReferralEmail`, `src/controllers/handlers/http/add-referral-email-handler.ts` | `social/src/communities/referral.rs:249`, `:270`, `schemas/40_social.sql:746` | `referral_email_is_checked_and_kept_once_a_day`, `referral.rs` `referral_emails_are_checked_in_upstreams_order` |
+
+Remaining differences, with their reason:
+
+- Referral checks that need a service or deployment value this node does
+  not have: the deny list (`assertReferrerNotBanned` and `setReferralEmail`
+  fetch `config.decentraland.org/denylist.json`), the same-IP rejection
+  (`REFERRAL_MAX_IP_MATCHES` and `invited_user_ip`, deployment configuration
+  with no value in the source), the `REFERRAL_REGISTRATION_DISABLED` 503 flag,
+  `finalizeReferral` (login-day count in Redis, tier rewards through the
+  rewards API, Slack alerts, and with it the `referral_invited_users_accepted`
+  and `referral_new_tier_reached` notifications) and the marketing email
+  `setReferralEmail` sends; the submitted email stays in
+  `social.referral_emails` for the operator.
+- `community_voice_chat_started` carries `thumbnailUrl: ""`: the rpc host has
+  no thumbnail base, as its `communityImage` on the room update is empty;
+  upstream sends the community image.
+- The ownership transfer's NAME check reads the target's profile
+  `hasClaimedName` (as create does); upstream asks the catalyst for owned names.
+- Bans rows keep the local `bannedBy` and `reason` keys and every row with
+  placeholder profile fields; upstream's v1 rows also carry
+  `lastFriendshipAction` and `actingUser` and drop a wallet without a profile.
+- The update answer's `data` is the community detail (role, members count,
+  voice status) where upstream returns the stored row (`id`, `name`,
+  `description`, `ownerAddress`, `privacy`, `visibility`, `active`).
+- A failed ownership lookup (catalogue or LAND authority) answers 502 "failed
+  to validate place ownership"; upstream's failed places API call is a 500.
+- Notification rows are written before the response, not through a queue;
+  `MEMBER_LEFT` writes none, as the processor has no row for it.
+
 ## rpc-social-service-ea.decentraland.org (Catalyst: `/social-rpc`)
 
 The uWS server (`src/controllers/routes/uws.routes.ts`). Every HTTP answer

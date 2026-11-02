@@ -2,9 +2,10 @@
 //! notifications.decentraland.org (`GET /notifications`, `PUT
 //! /notifications/read`, the subscription, email confirmation and opt-out
 //! routes), the bearer-gated broadcast, the `email` outbox worker
-//! (`delivery`), the `friend_first_wear` producer (`first_wear`) and the
+//! (`delivery`), the `friend_first_wear` producer (`first_wear`), the
 //! `land_transfer_received` producer over the land_authz index
-//! (`land_transfers`), all over the ONE pool and the ONE outbound client.
+//! (`land_transfers`) and the community events' rows (`community`), all
+//! over the ONE pool and the ONE outbound client.
 //! Tables: `social.notifications`, `notification_deliveries`,
 //! `subscriptions`, `unconfirmed_emails`, `subscription_opt_outs`,
 //! `notification_reader_seen`, `worn_history`, `first_wear_baseline`,
@@ -16,6 +17,7 @@
 //! `x-original-path` so the signature still verifies.
 
 pub mod admin;
+pub mod community;
 pub mod delivery;
 pub mod email;
 pub mod errors;
