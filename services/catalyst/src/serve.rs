@@ -514,6 +514,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         land_settings,
         Some(market.index.clone()),
     ));
+    explore.places.set_land_authz(land.clone());
 
     // The content validator of the local write path (src/content/validator):
     // the old catalyrst-validator rules over the ONE pool (the escrow
@@ -1986,8 +1987,7 @@ fn social_states(
             admin_token: non_empty(&config.social.catalyrst_social_rpc_admin_token),
             faces,
             writes_enabled: config.writes.social_writes_enabled,
-            commit_hash: non_empty(&config.node.commit_hash)
-                .or_else(|| option_env!("CATALYST_COMMIT_HASH").map(str::to_string)),
+            commit_hash: config.commit_hash(),
         },
         eip1654,
         comms.clone(),

@@ -20,6 +20,7 @@ import type { ShopTransport, TransportRequest } from "../api/signer";
 import { BOOK, ITEM, TOKEN } from "../payment/fixtures";
 import type { UnifiedListingRaw } from "./api";
 import { resetShopQueries } from "./query";
+import { primeRemoteFlags } from "./lib/remoteFlags";
 import type { RawCollectionItem } from "./lib/catalogItem";
 
 export type CatalogScenario = "ok" | "empty" | "error" | "outage" | "loading";
@@ -177,7 +178,8 @@ export function catalogRow(row: UnifiedListingRaw, onSale = true): RawCollection
     chainId: row.chainId,
     thumbnail: row.thumbnail,
     priceCredits: onSale ? row.priceCredits : 0,
-    price: onSale ? (row.manaWei ?? null) : null,
+    // A trade row carries its USD price in wei (one credit is $0.10); a store mint its MANA price.
+    price: onSale ? (row.manaWei ?? (row.tradeId && row.priceCredits > 0 ? String(BigInt(row.priceCredits) * 10n ** 17n) : null)) : null,
     tradeId: onSale ? row.tradeId : null,
     available: row.available,
     isOnSale: onSale,
@@ -337,15 +339,18 @@ export type HarnessProps = {
   offers?: OfferSource;
   host?: ShopWalletHost;
   cart?: CartStore;
+  /** The feature-flags service's answer (lib/remoteFlags.ts); every rollout flag is off unless named here. */
+  remoteFlags?: Record<string, boolean>;
 };
 
 /**
  * Mounts a Shop page the way a host does: its route inside a memory router, the wallet seam, the offer
  * seam and the document's Shop client (installed before the first render). Stories and tests share it.
  */
-export function ShopHarness({ children, path = "*", entry = "/", session = "signedOut", scenario = "ok", overrides, client, offers = missingOfferRoute, host, cart }: HarnessProps) {
+export function ShopHarness({ children, path = "*", entry = "/", session = "signedOut", scenario = "ok", overrides, client, offers = missingOfferRoute, host, cart, remoteFlags = {} }: HarnessProps) {
   const [installed] = useState(() => {
     resetShopQueries();
+    primeRemoteFlags(remoteFlags);
     setShopClient(client ?? catalogClient(scenario, overrides));
     return true;
   });

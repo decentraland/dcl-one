@@ -600,6 +600,8 @@ pub struct AppConfig {
     #[serde(skip)]
     pub dm_privacy: Option<DmPrivacy>,
     pub camera_smoothing: CameraSmoothing,
+    /// The language the player chose (BCP-47); `None` follows the system language.
+    pub language: Option<String>,
     // field-level default (0) so configs saved before this field existed read as outdated,
     // rather than taking the current generation from the container-level default
     #[serde(default)]
@@ -657,6 +659,7 @@ impl Default for AppConfig {
             point_at_marker_visibility: Default::default(),
             dm_privacy: None,
             camera_smoothing: Default::default(),
+            language: None,
             settings_generation: SETTINGS_GENERATION,
             inputs_generation: INPUTS_GENERATION,
             is_fresh_user_id: true,
@@ -2012,6 +2015,11 @@ mod tests {
         assert!(parse(r#"{"sizes":[],"satelliteView":{"version":1}}"#).is_none());
     }
 }
+
+/// The local player's language as a BCP-47 tag: the chosen one, else the system's. `None` where
+/// no player is present (headless).
+#[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
+pub struct PlayerLanguage(pub Option<String>);
 
 /// Who may DM a user.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

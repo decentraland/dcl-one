@@ -7,9 +7,29 @@ use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, Method};
 use serde::Serialize;
 
-use super::{CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow};
+use super::{
+    CategoryTarget, PlaceListFilters, PlaceOrderBy, PlaceRow, PlaceStatusRow, WorldRow, live,
+};
 use crate::SharedState;
 use crate::shared::errors::{ApiData, ApiDataTotal, ApiDataTotalMap, ApiError};
+
+/// Explicit favorites requests must not disguise a failed signed login as an empty list.
+/// Keep the legacy unsigned read empty; public optional viewer reads remain anonymous.
+pub(crate) async fn favorites_viewer(
+    state: &SharedState,
+    headers: &HeaderMap,
+    method: &str,
+    path: &str,
+    only_favorites: bool,
+) -> Result<Option<String>, ApiError> {
+    let has_auth = headers
+        .keys()
+        .any(|name| name.as_str().starts_with("x-identity-"));
+    if only_favorites && has_auth {
+        return state.signer(headers, method, path).await.map(Some);
+    }
+    Ok(state.viewer(headers, method, path).await)
+}
 
 pub async fn get_place(
     State(state): State<SharedState>,
@@ -26,6 +46,10 @@ pub async fn get_place(
         .await?
     {
         Some(mut p) => {
+            live::fill_user_counts(
+                std::slice::from_mut(&mut p),
+                &state.live.live_user_counts().await,
+            );
             p.apply_realms_detail(realms_detail_for(&state, &pairs));
             Ok(Json(ApiData::ok(p)))
         }
@@ -43,10 +67,17 @@ pub async fn get_place_list(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<ApiDataTotal<PlaceRow>>, ApiError> {
     let mut filters = parse_filters(&pairs);
-    let user = state.viewer(&headers, method.as_str(), uri.path()).await;
     let only_favorites = pairs
         .iter()
         .any(|(k, v)| k == "only_favorites" && matches!(v.as_str(), "true" | "1"));
+    let user = favorites_viewer(
+        &state,
+        &headers,
+        method.as_str(),
+        uri.path(),
+        only_favorites,
+    )
+    .await?;
     if !state
         .places
         .scope_to_viewer(&mut filters, user.as_deref(), only_favorites)
@@ -55,9 +86,13 @@ pub async fn get_place_list(
     }
     if let Some(owner) = pairs.iter().find(|(k, _)| k == "owner").map(|(_, v)| v) {
         filters.owner_filtered = true;
+        filters.owner = Some(owner.to_lowercase());
         filters.operated_positions = state.places.operated_positions(owner).await?;
     }
+    let counts = state.live.live_user_counts().await;
+    live::apply_count_order(&mut filters, &counts);
     let (mut data, total) = state.places.list_page(&filters).await?;
+    live::fill_user_counts(&mut data, &counts);
     let realms = realms_detail_for(&state, &pairs);
     for row in &mut data {
         row.apply_realms_detail(realms);
@@ -66,6 +101,17 @@ pub async fn get_place_list(
 }
 
 pub const MAX_BATCH_ITEMS: usize = 100;
+const MAX_WORLD_NAMES: usize = 1000;
+const MAX_WORLD_NAME_BYTES: usize = 255;
+
+fn validate_world_names(names: &[String]) -> Result<(), ApiError> {
+    if names.len() > MAX_WORLD_NAMES || names.iter().any(|name| name.len() > MAX_WORLD_NAME_BYTES) {
+        return Err(ApiError::bad_request(
+            "names accepts at most 1000 entries of 255 bytes each",
+        ));
+    }
+    Ok(())
+}
 
 fn ids_body(ids: serde_json::Value) -> Result<Vec<String>, ApiError> {
     let ids = ids
@@ -94,7 +140,8 @@ pub async fn post_place_list_by_id(
     let ids = ids_body(ids)?;
     let user = state.viewer(&headers, method.as_str(), uri.path()).await;
     // No LIMIT on an id lookup, so the page is the whole match set.
-    let data = state.places.find_by_ids_for(&ids, user.as_deref()).await?;
+    let mut data = state.places.find_by_ids_for(&ids, user.as_deref()).await?;
+    live::fill_user_counts(&mut data, &state.live.live_user_counts().await);
     let total = data.len() as i64;
     Ok(Json(ApiDataTotal::ok(data, total)))
 }
@@ -150,6 +197,7 @@ fn parse_filters(pairs: &[(String, String)]) -> PlaceListFilters {
         categories: get_all("categories"),
         only_highlighted: bool_q("only_highlighted"),
         only_excluded_from_ranking: bool_q("only_excluded_from_ranking"),
+        include_opted_out: bool_q("include_opted_out"),
         search: get("search"),
         creator_address: get("creator_address").map(|s| s.to_lowercase()),
         sdk: get("sdk"),
@@ -241,15 +289,25 @@ fn map_filters(pairs: &[(String, String)]) -> (PlaceListFilters, bool) {
 
 pub async fn get_map_places(
     State(state): State<SharedState>,
+    method: Method,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<ApiDataTotalMap<MapEntry>>, ApiError> {
     let (mut filters, only_favorites) = map_filters(&pairs);
-    if only_favorites {
+    let user = state.viewer(&headers, method.as_str(), uri.path()).await;
+    if !state
+        .places
+        .scope_to_viewer(&mut filters, user.as_deref(), only_favorites)
+    {
         return Ok(Json(ApiDataTotalMap::ok(BTreeMap::new(), 0)));
     }
     filters.only_places = !filters.only_highlighted;
     filters.only_categorized = true;
+    let counts = state.live.live_user_counts().await;
+    live::apply_count_order(&mut filters, &counts);
     let (mut data, total) = state.places.list_page(&filters).await?;
+    live::fill_user_counts(&mut data, &counts);
     let realms = realms_detail_for(&state, &pairs);
     let mut map: BTreeMap<String, MapEntry> = BTreeMap::new();
     for place in &mut data {
@@ -261,13 +319,23 @@ pub async fn get_map_places(
 
 pub async fn get_all_places_list(
     State(state): State<SharedState>,
+    method: Method,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<ApiDataTotal<PlaceRow>>, ApiError> {
-    let (filters, only_favorites) = map_filters(&pairs);
-    if only_favorites {
+    let (mut filters, only_favorites) = map_filters(&pairs);
+    let user = state.viewer(&headers, method.as_str(), uri.path()).await;
+    if !state
+        .places
+        .scope_to_viewer(&mut filters, user.as_deref(), only_favorites)
+    {
         return Ok(Json(ApiDataTotal::ok(vec![], 0)));
     }
+    let counts = state.live.live_user_counts().await;
+    live::apply_count_order(&mut filters, &counts);
     let (mut data, total) = state.places.list_page(&filters).await?;
+    live::fill_user_counts(&mut data, &counts);
     let realms = realms_detail_for(&state, &pairs);
     for place in &mut data {
         place.apply_realms_detail(realms);
@@ -288,7 +356,13 @@ pub async fn get_world(
         .find_world_by_id_for(&world_id, user.as_deref())
         .await?
     {
-        Some(w) => Ok(Json(ApiData::ok(WorldRow::from(w)))),
+        Some(mut w) => {
+            live::fill_user_counts(
+                std::slice::from_mut(&mut w),
+                &state.live.live_user_counts().await,
+            );
+            Ok(Json(ApiData::ok(WorldRow::from(w))))
+        }
         None => Err(ApiError::not_found(format!(
             "Not found world \"{world_id}\""
         ))),
@@ -310,13 +384,20 @@ pub async fn get_world_list(
             .map(|(_, v)| v.clone())
             .collect::<Vec<_>>()
     };
-    let user = state.viewer(&headers, method.as_str(), uri.path()).await;
     let bool_q = |k: &str| {
         get(k)
             .map(|v| matches!(v.as_str(), "true" | "1"))
             .unwrap_or(false)
     };
     let only_favorites = bool_q("only_favorites");
+    let user = favorites_viewer(
+        &state,
+        &headers,
+        method.as_str(),
+        uri.path(),
+        only_favorites,
+    )
+    .await?;
     let limit = get("limit")
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(100)
@@ -325,18 +406,20 @@ pub async fn get_world_list(
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(0)
         .max(0);
+    let names = get_all("names");
+    validate_world_names(&names)?;
     let mut filters = PlaceListFilters {
         limit,
         offset,
-        names: get_all("names"),
+        partial_names: names,
         categories: get_all("categories"),
         search: get("search"),
-        order_by: PlaceOrderBy::parse(get("order_by").as_deref()),
+        order_by: PlaceOrderBy::parse(Some(get("order_by").as_deref().unwrap_or("most_active"))),
         order_desc: !matches!(get("order").as_deref(), Some("asc")),
         only_highlighted: bool_q("only_highlighted"),
         only_excluded_from_ranking: bool_q("only_excluded_from_ranking"),
         only_worlds: true,
-        creator_address: get("owner").map(|s| s.to_lowercase()),
+        owner: get("owner").map(|s| s.to_lowercase()),
         ..Default::default()
     };
     if !state
@@ -345,7 +428,10 @@ pub async fn get_world_list(
     {
         return Ok(Json(ApiDataTotal::ok(vec![], 0)));
     }
-    let (data, total) = state.places.list_page(&filters).await?;
+    let counts = state.live.live_user_counts().await;
+    live::apply_count_order(&mut filters, &counts);
+    let (mut data, total) = state.places.list_page(&filters).await?;
+    live::fill_user_counts(&mut data, &counts);
     let worlds: Vec<WorldRow> = data.into_iter().map(WorldRow::from).collect();
     Ok(Json(ApiDataTotal::ok(worlds, total)))
 }
@@ -437,6 +523,186 @@ pub async fn get_place_categories(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use axum::body::{Body, to_bytes};
+    use axum::http::Request;
+    use serde_json::{Value, json};
+    use std::sync::Arc;
+    use tower::ServiceExt;
+
+    async fn response(state: SharedState, uri: &str) -> Value {
+        let response = crate::router(state)
+            .oneshot(Request::get(uri).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        serde_json::from_slice(&to_bytes(response.into_body(), 1024 * 1024).await.unwrap()).unwrap()
+    }
+
+    #[tokio::test]
+    async fn owner_pointer_opt_out_and_world_names_keep_their_independent_meanings() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let token = uuid::Uuid::new_v4().simple().to_string();
+        let owner = format!("0x{token}00000000");
+        let owned = uuid::Uuid::new_v4().to_string();
+        let opted_out = uuid::Uuid::new_v4().to_string();
+        let world = format!("{token}.dcl.eth");
+        for (id, pointer, disabled, raw) in [
+            (
+                &owned,
+                "1,2",
+                false,
+                json!({"owner": owner, "positions": ["1,2"]}),
+            ),
+            (
+                &opted_out,
+                "3,4",
+                true,
+                json!({"owner": owner, "positions": ["3,4"], "disabled_reason": "opt_out"}),
+            ),
+            (
+                &world,
+                "0,0",
+                false,
+                json!({"world": true, "world_name": world, "owner": owner, "user_count": 99}),
+            ),
+        ] {
+            sqlx::query("INSERT INTO explore.place (id, base_position, title, disabled, raw) VALUES ($1, $2, $3, $4, $5)")
+                .bind(id).bind(pointer).bind(&token).bind(disabled).bind(raw).execute(&pool).await.unwrap();
+        }
+        let state = Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings::for_tests(),
+            None,
+        ));
+        let body = response(state.clone(), &format!("/api/places?owner={owner}")).await;
+        assert_eq!(body["total"], 0, "raw owner is not LAND authority");
+        assert!(
+            state
+                .places
+                .owns_places(&[owned.clone()], &owner)
+                .await
+                .is_err()
+        );
+        let settings = crate::land_authz::Settings::for_tests();
+        sqlx::query("INSERT INTO land_authz.index_cursor (network, land_registry, estate_registry, last_block, folded_block, folded_at) VALUES ($1, $2, $3, 100, 100, timezone('UTC', now())) ON CONFLICT (network) DO UPDATE SET folded_at = EXCLUDED.folded_at, folded_block = 100, last_block = 100")
+            .bind(&settings.network).bind(&settings.land_registry).bind(&settings.estate_registry).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO land_authz.token_right (token_address, token_id, x, y, owner, updated_block, updated_log) VALUES ($1, 340282366920938463463374607431768211458, 1, 2, $2, 100, 0), ($1, 1020847100762815390390123822295304634372, 3, 4, $2, 100, 0) ON CONFLICT (token_address, token_id) DO UPDATE SET owner = EXCLUDED.owner")
+            .bind(&settings.land_registry).bind(&owner).execute(&pool).await.unwrap();
+        state
+            .places
+            .set_land_authz(Arc::new(crate::land_authz::LandAuthzState::new(
+                pool.clone(),
+                crate::http::Outbound::new(Default::default()).unwrap(),
+                settings,
+                None,
+            )));
+        assert!(
+            state
+                .places
+                .owns_places(&[owned.clone()], &owner)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !state
+                .places
+                .owns_places(
+                    &[owned.clone()],
+                    "0xffffffffffffffffffffffffffffffffffffffff"
+                )
+                .await
+                .unwrap()
+        );
+        let body = response(state.clone(), &format!("/api/places?owner={owner}")).await;
+        assert_eq!(body["data"].as_array().unwrap().len(), 1);
+        assert_eq!(body["data"][0]["id"], owned);
+        let body = response(
+            state.clone(),
+            &format!("/api/places?owner={owner}&positions=3,4"),
+        )
+        .await;
+        assert_eq!(body["total"], 0);
+        let body = response(
+            state.clone(),
+            &format!("/api/places?owner={owner}&positions=3,4&include_opted_out=true"),
+        )
+        .await;
+        assert_eq!(body["total"], 0, "opt-out inclusion requires names");
+        let body = response(state.clone(), &format!("/api/destinations?owner={owner}")).await;
+        assert_eq!(body["data"].as_array().unwrap().len(), 2);
+        let body = response(state.clone(), &format!("/api/worlds?names={token}")).await;
+        assert_eq!(body["data"][0]["id"], world);
+        let body = response(state.clone(), &format!("/api/destinations?names={token}")).await;
+        assert_eq!(body["data"][0]["id"], world);
+        let body = response(state.clone(), "/api/worlds?names=%25").await;
+        assert_eq!(body["total"], 0, "percent is literal, not a wildcard");
+        let body = response(state.clone(), "/api/worlds?names=%5F").await;
+        assert_eq!(body["total"], 0, "underscore is literal, not a wildcard");
+        let body = response(state, &format!("/api/destinations?world_names={token}")).await;
+        assert_eq!(body["total"], 0);
+    }
+
+    #[test]
+    fn world_name_patterns_are_bounded() {
+        assert!(validate_world_names(&vec!["name".into(); 1000]).is_ok());
+        assert!(validate_world_names(&vec!["name".into(); 1001]).is_err());
+        assert!(validate_world_names(&["x".repeat(255)]).is_ok());
+        assert!(validate_world_names(&["x".repeat(256)]).is_err());
+    }
+
+    #[tokio::test]
+    async fn scoped_opt_out_cannot_override_operator_moderation() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let id = uuid::Uuid::new_v4().to_string();
+        let name = format!("{id}.dcl.eth");
+        sqlx::query("INSERT INTO explore.place (id, base_position, disabled, raw) VALUES ($1, '0,0', true, $2)")
+            .bind(&id).bind(json!({"world":true,"world_name":name,"disabled_reason":"opt_out"})).execute(&pool).await.unwrap();
+        let places = super::super::PlacesComponent::new(pool.clone(), "/content");
+        let filters = PlaceListFilters {
+            names: vec![name],
+            include_opted_out: true,
+            ..Default::default()
+        };
+        assert_eq!(places.list_page(&filters).await.unwrap().1, 1);
+        super::super::moderation::apply(
+            &pool,
+            super::super::moderation::Target::World(&id),
+            &super::super::moderation::Decision::Disabled {
+                disabled: true,
+                reason: Some("policy".into()),
+            },
+            "operator",
+        )
+        .await
+        .unwrap();
+        assert_eq!(places.list_page(&filters).await.unwrap().1, 0);
+        sqlx::query("UPDATE explore.place_moderation SET reason = NULL WHERE place_id = $1")
+            .bind(&id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            places.list_page(&filters).await.unwrap().1,
+            0,
+            "an operator disable without a reason also overrides opt-out"
+        );
+        assert_eq!(
+            places
+                .list_page(&PlaceListFilters {
+                    ids: vec![id],
+                    include_opted_out: true,
+                    ..Default::default()
+                })
+                .await
+                .unwrap()
+                .1,
+            0
+        );
+    }
 
     fn pairs(kvs: &[(&str, &str)]) -> Vec<(String, String)> {
         kvs.iter()
@@ -536,5 +802,217 @@ mod tests {
             serde_json::to_value(&entry).unwrap()["realms_detail"],
             serde_json::json!([])
         );
+    }
+    // The client signFetch + personalSign shape, for the fixture's own wallet.
+    async fn hud_client_headers(
+        owner: &alloy_signer_local::PrivateKeySigner,
+        path: &str,
+        timestamp: &str,
+    ) -> HeaderMap {
+        use alloy_signer::Signer;
+        use alloy_signer_local::PrivateKeySigner;
+        use axum::http::{HeaderName, HeaderValue};
+        let ephemeral: PrivateKeySigner = format!("0x{}", "11".repeat(32)).parse().unwrap();
+        let delegation = format!(
+            "Decentraland Login\nEphemeral address: {:#x}\nExpiration: 2099-01-01T00:00:00.000Z",
+            ephemeral.address()
+        );
+        let delegation_signature = owner
+            .sign_message(delegation.as_bytes())
+            .await
+            .unwrap()
+            .to_string();
+        let payload = format!("GET:{path}:{timestamp}:{{}}").to_lowercase();
+        let signature = ephemeral
+            .sign_message(payload.as_bytes())
+            .await
+            .unwrap()
+            .to_string();
+        let links = [
+            serde_json::json!({"type":"SIGNER","payload":format!("{:#x}",owner.address()),"signature":""}),
+            serde_json::json!({"type":"ECDSA_EPHEMERAL","payload":delegation,"signature":delegation_signature}),
+            serde_json::json!({"type":"ECDSA_SIGNED_ENTITY","payload":payload,"signature":signature}),
+        ];
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            "x-identity-timestamp",
+            HeaderValue::from_str(timestamp).unwrap(),
+        );
+        headers.insert("x-identity-metadata", HeaderValue::from_static("{}"));
+        for (index, link) in links.iter().enumerate() {
+            headers.insert(
+                HeaderName::from_bytes(format!("x-identity-auth-chain-{index}").as_bytes())
+                    .unwrap(),
+                HeaderValue::from_str(&link.to_string()).unwrap(),
+            );
+        }
+        headers
+    }
+
+    #[tokio::test]
+    async fn hud_favorites_signature_matches_the_actual_client_vector() {
+        let owner = crate::shared::signed_fetch::test_support::KEY
+            .parse()
+            .unwrap();
+        let headers = hud_client_headers(&owner, "/places/api/destinations", "1793217600000").await;
+        let delegation: serde_json::Value =
+            serde_json::from_str(headers["x-identity-auth-chain-1"].to_str().unwrap()).unwrap();
+        assert_eq!(
+            delegation["signature"],
+            "0x9163f5d66c4554b3c3a4c0027a37ec781b89726320742ab6ffac9e368927d5e46642c1c14669675237fe96b6064d072e7f34352a8f61e2c827c3044a386728891c"
+        );
+        let link: serde_json::Value =
+            serde_json::from_str(headers["x-identity-auth-chain-2"].to_str().unwrap()).unwrap();
+        assert_eq!(
+            link["payload"],
+            "get:/places/api/destinations:1793217600000:{}"
+        );
+        assert_eq!(
+            link["signature"],
+            "0x30ad979298e9191c99c1f8de0580beefa79f73cd878f1524b494a59f074a90147dbf2912bda2ced98dd8f8efe9fb4ebcfee52105018c847b9db670c3a71d529b1b"
+        );
+    }
+
+    /// Full gateway path verifies through nesting; a stripping proxy needs its
+    /// original-path header. Failed authentication must not mimic an empty wallet.
+    #[tokio::test]
+    async fn hud_signed_favorites_roundtrip_preserves_gateway_path_and_reports_auth_failure() {
+        use alloy_signer_local::PrivateKeySigner;
+        use axum::{
+            Router,
+            body::{Body, to_bytes},
+            http::{Request, StatusCode},
+        };
+        use std::sync::Arc;
+        use tower::ServiceExt;
+        let pool = crate::db::scratch::pool(3)
+            .await
+            .expect("signed favorites roundtrip requires CATALYST_TEST_DATABASE_URL");
+        let state = Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings::for_tests(),
+            None,
+        ));
+        let local = crate::router(state);
+        let prefixed = Router::new().nest("/places", local.clone());
+        let owner = PrivateKeySigner::random();
+        let user = format!("{:#x}", owner.address());
+        for (id, position, world) in [
+            ("favorite-native", "23,24", false),
+            ("favorite-other", "25,26", false),
+            ("favorite-world", "27,28", true),
+        ] {
+            let name = world.then_some("favorite-world.dcl.eth");
+            sqlx::query("INSERT INTO explore.place (id,base_position,title,highlighted,raw) VALUES ($1,$2,$1,true,$3)")
+                .bind(id).bind(position).bind(serde_json::json!({"image":"https://native.example/cover.png","owner":user,"positions":[position],"world":world,"world_name":name}))
+                .execute(&pool).await.unwrap();
+        }
+        sqlx::query("INSERT INTO explore.user_favorites (\"user\",entity_id) VALUES ($1,'favorite-native'),($1,'favorite-world'),('0xother','favorite-other')")
+            .bind(&user).execute(&pool).await.unwrap();
+        let timestamp = chrono::Utc::now().timestamp_millis().to_string();
+        for (endpoint, expected_ids) in [
+            (
+                "api/destinations",
+                vec!["favorite-native", "favorite-world"],
+            ),
+            ("v1/destinations", vec!["favorite-native", "favorite-world"]),
+            ("api/places", vec!["favorite-native"]),
+            ("api/worlds", vec!["favorite-world"]),
+        ] {
+            let signed_path = format!("/places/{endpoint}");
+            let gateway_uri = format!("{signed_path}?only_favorites=true");
+            let local_uri = format!("/{endpoint}?only_favorites=true");
+            let signed = hud_client_headers(&owner, &signed_path, &timestamp).await;
+            for (app, uri, original) in [
+                (&prefixed, gateway_uri.as_str(), None),
+                (&local, local_uri.as_str(), Some(gateway_uri.as_str())),
+            ] {
+                let mut request = Request::builder().uri(uri).body(Body::empty()).unwrap();
+                *request.headers_mut() = signed.clone();
+                if let Some(original) = original {
+                    request
+                        .headers_mut()
+                        .insert("x-original-path", original.parse().unwrap());
+                }
+                let response = app.clone().oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::OK, "{endpoint}");
+                let body: serde_json::Value = serde_json::from_slice(
+                    &to_bytes(response.into_body(), 1024 * 1024).await.unwrap(),
+                )
+                .unwrap();
+                let mut ids: Vec<_> = body["data"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|row| {
+                        assert_eq!(row["user_favorite"], true, "{endpoint}: {row}");
+                        row["id"].as_str().unwrap()
+                    })
+                    .collect();
+                ids.sort_unstable();
+                assert_eq!(ids, expected_ids, "{endpoint}: {body}");
+                assert_eq!(body["total"], expected_ids.len(), "{endpoint}: {body}");
+            }
+            let mut corrupt = signed.clone();
+            let mut link: serde_json::Value =
+                serde_json::from_str(corrupt["x-identity-auth-chain-2"].to_str().unwrap()).unwrap();
+            link["signature"] = serde_json::json!(format!("0x{}", "00".repeat(65)));
+            corrupt.insert("x-identity-auth-chain-2", link.to_string().parse().unwrap());
+            for headers in [
+                corrupt.clone(),
+                hud_client_headers(&owner, &format!("/{endpoint}"), &timestamp).await,
+                hud_client_headers(
+                    &owner,
+                    &format!("/{}", endpoint.rsplit('/').next().unwrap()),
+                    &timestamp,
+                )
+                .await,
+                hud_client_headers(
+                    &owner,
+                    &signed_path,
+                    &(chrono::Utc::now().timestamp_millis() - 600_000).to_string(),
+                )
+                .await,
+                HeaderMap::from_iter([(
+                    axum::http::HeaderName::from_static("x-identity-timestamp"),
+                    "broken".parse().unwrap(),
+                )]),
+            ] {
+                let mut request = Request::builder()
+                    .uri(&gateway_uri)
+                    .body(Body::empty())
+                    .unwrap();
+                *request.headers_mut() = headers;
+                let response = prefixed.clone().oneshot(request).await.unwrap();
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{endpoint}");
+            }
+            let response = prefixed
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(&gateway_uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{endpoint}");
+            let body: serde_json::Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 1024).await.unwrap())
+                    .unwrap();
+            assert_eq!(body["total"], 0, "{endpoint}: {body}");
+            assert_eq!(body["data"], serde_json::json!([]), "{endpoint}: {body}");
+            // Optional viewer authentication remains anonymous for public reads.
+            let mut request = Request::builder()
+                .uri(&signed_path)
+                .body(Body::empty())
+                .unwrap();
+            *request.headers_mut() = corrupt;
+            assert_eq!(
+                prefixed.clone().oneshot(request).await.unwrap().status(),
+                StatusCode::OK,
+                "{endpoint}"
+            );
+        }
     }
 }

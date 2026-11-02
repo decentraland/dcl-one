@@ -38,7 +38,7 @@
           dev = pkgs.writeShellScriptBin "foundation-dev" ''
             exec python3 "''${FOUNDATION_DEV_ROOT:?Enter nix develop first}/tooling/dev.py" "$@"
           '';
-          default = pkgs.mkShell {
+          default = pkgs.mkShell ({
             packages = with pkgs; [
               rust nodejs_26 (pnpm.override { nodejs-slim = nodejs-slim_26; })
               postgresql_18 process-compose watchexec livekit nats-server python3 bashInteractive
@@ -49,7 +49,11 @@
             OPENSSL_NO_VENDOR = "1";
             LOCALE_ARCHIVE = pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux "${pkgs.glibcLocales}/lib/locale/locale-archive";
             shellHook = builtins.readFile ./infra/dev/shell-hook.sh;
-          };
+          } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            # The prebuilt V8 the image build links (infra/packages/catalyst.nix), so a dev
+            # build neither downloads it nor trusts a restored target cache to still hold it.
+            RUSTY_V8_ARCHIVE = "${pkgs.callPackage ./infra/packages/librusty-v8.nix { }}";
+          });
         in {
           inherit default;
           # foundation-dev desktop: the Tauri shell (apps/desktop). Linux needs

@@ -56,7 +56,7 @@ use self::{
     initialize_scene::{
         LiveScenes, PointerResult, SceneLifecyclePlugin, SceneLoading, ScenePointers, PARCEL_SIZE,
     },
-    renderer_context::{RendererSceneContext, SceneState},
+    renderer_context::{RendererSceneContext, SceneState, SCENE_FIRST_DISPATCH_TICK},
     update_scene::SceneInputPlugin,
     update_world::{CrdtExtractors, SceneOutputPlugin},
 };
@@ -877,6 +877,32 @@ pub fn realm_base_url_and_name(realm: &CurrentRealm) -> (String, String) {
     (base_url.to_owned(), realm_name)
 }
 
+/// Engine time since a scene's previous dispatch, sent with this dispatch as the scene's next
+/// tick dt. 0 for the first dispatch: before it, `last_sent` is the initialization stamp.
+fn dispatch_dt(tick_number: u32, last_sent: f64, now: f64) -> f64 {
+    if tick_number > SCENE_FIRST_DISPATCH_TICK {
+        now - last_sent
+    } else {
+        0.0
+    }
+}
+
+#[cfg(test)]
+mod dispatch_dt_tests {
+    use super::*;
+
+    #[test]
+    fn first_dispatch_is_zero_then_engine_interval() {
+        // up to and including the first dispatch, last_sent is the init stamp
+        assert_eq!(dispatch_dt(SCENE_FIRST_DISPATCH_TICK - 1, 1.0, 2.5), 0.0);
+        assert_eq!(dispatch_dt(SCENE_FIRST_DISPATCH_TICK, 1.0, 2.5), 0.0);
+        assert_eq!(
+            dispatch_dt(SCENE_FIRST_DISPATCH_TICK + 1, 2.5, 2.516),
+            2.516 - 2.5
+        );
+    }
+}
+
 fn send_scene_updates(
     mut scenes: Query<(
         Entity,
@@ -1151,9 +1177,13 @@ fn send_scene_updates(
         died: std::mem::take(&mut context.outbound_died),
     };
 
+    let now = time.elapsed_secs_f64();
+    let dt = dispatch_dt(context.tick_number, context.last_sent, now);
+
     if let Err(e) = sender.send(RendererResponse::Ok(
         context.crdt_store.take_updates(),
         census,
+        dt,
     )) {
         error!(
             "failed to send updates to scene {ent:?} [{:?}]: {e:?}",
@@ -1162,7 +1192,7 @@ fn send_scene_updates(
         context.state = SceneState::Broken;
     } else {
         context.set_in_flight(true);
-        context.last_sent = time.elapsed_secs_f64();
+        context.last_sent = now;
         dcl_assert!(!updates.jobs_in_flight.contains(&ent));
         updates.jobs_in_flight.insert(ent);
     }
