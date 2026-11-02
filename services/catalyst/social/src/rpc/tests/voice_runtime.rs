@@ -79,9 +79,9 @@ impl VoiceRooms for Faulty {
 
     async fn end_private_voice_chat(
         &self,
-        call_id: Uuid,
+        call_id: Option<Uuid>,
         address: &str,
-    ) -> Result<(), VoiceUnavailable> {
+    ) -> Result<Option<PrivateVoiceChatRow>, VoiceUnavailable> {
         self.inner.end_private_voice_chat(call_id, address).await
     }
 
@@ -255,6 +255,9 @@ async fn a_failed_private_grant_is_an_internal_error_without_accepted() {
         .await
         .unwrap()
         .response;
+    let heard = drained(&mut to_caller);
+    // Cleaned up before asserting: a failure leaves no call row to the sweep.
+    rig.forget_calls(&[&caller, &callee]).await;
     assert!(
         matches!(
             answer,
@@ -262,8 +265,7 @@ async fn a_failed_private_grant_is_an_internal_error_without_accepted() {
         ),
         "{answer:?}"
     );
-    assert_eq!(drained(&mut to_caller), 0);
-    rig.forget_calls(&[&caller, &callee]).await;
+    assert_eq!(heard, 0);
 }
 
 /// A community grant the runtime cannot mint answers an internal error on

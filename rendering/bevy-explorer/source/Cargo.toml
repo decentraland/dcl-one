@@ -23,7 +23,7 @@ required-features = ["headless"]
 # - wasm-pack build --target web --out-dir ./deploy/web/engine/pkg --no-default-features --features="livekit,social" (then serve via react-web; see react-web/README.md)
 
 [features]
-default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef"]
+default = ["livekit", "ffmpeg", "inspect", "social", "react-hud-cef", "remote"]
 # default = ["wasm"]
 console = []
 dcl-assert = ["common/dcl-assert"]
@@ -34,13 +34,15 @@ hot_reload = ["bevy/file_watcher", "bevy/embedded_watcher", "ipfs/hot_reload"]
 livekit = ["comms/livekit", "system_ui/livekit"]
 ffmpeg = ["av/ffmpeg"]
 social = ["social/social"]
+# The loopback console server (`--automation-token`, src/automation.rs `remote`): native only, in
+# every native build (`default` and `headless`), never in the wasm build.
 remote = ["bevy/bevy_remote"]
 bevy_mesh_picking_backend = ["bevy/bevy_mesh_picking_backend"]
 # Gates the experimental headless scene-server binary out of default/release builds.
 # configurable_error_handler lets the headless bin install a warn-and-continue error
 # handler (bevy's default panics). Pulled in only by this feature, so prod builds
 # (which never enable `headless`) are unaffected.
-headless = ["bevy/configurable_error_handler"]
+headless = ["bevy/configurable_error_handler", "remote"]
 # POC: render the react-web HUD via CEF offscreen rendering into an in-engine texture (desktop).
 # The CEF framework loads bundle-relative (Contents/Frameworks) with a dev fallback at
 # ~/.local/share/cef; the render-process helper builds as the sibling binary `decentra-bevy-cef`
@@ -165,6 +167,11 @@ bevy_transform = { version = "0.16.1", default-features = false }
 bevy_ecs = { version = "0.16.1", default-features = false, features = ["std"] }
 disqualified = "1.0"
 wgpu = "24"
+# Match wgpu-hal's ash/windows versions: the GPU memory queries use its native handles.
+ash = { version = "0.38", default-features = false }
+windows = { version = "0.58", default-features = false, features = [
+  "Win32_Graphics_Dxgi",
+] }
 cef = "139"
 cef-dll-sys = { version = "139.0", features = ["sandbox"] }
 # default-features = false drops the egui console window (we only use the
@@ -253,6 +260,11 @@ bevy_simple_text_input = { git = "https://github.com/robtfm/bevy_simple_text_inp
   "clipboard",
 ], branch = "0.16" }
 directories = "6"
+sys-locale = "0.3"
+sysinfo = { version = "0.34.2", default-features = false, features = [
+  "system",
+] }
+cap = "0.1.2"
 winreg = "0.50"
 uuid = { version = "1.23", features = ["v4"] }
 build-time = "0.1.3"
@@ -416,12 +428,20 @@ bevy_simple_text_input = { workspace = true }
 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sysinfo = { workspace = true }
 dcl_deno = { workspace = true }
 dcl_deno_ipc = { workspace = true }
 mimalloc = { workspace = true }
 cef_offscreen = { workspace = true, optional = true }
 
+[target.'cfg(any(windows, target_os = "linux"))'.dependencies]
+ash = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+cap = { workspace = true }
 # parking_lot only parks with Atomics.wait (instead of panicking on contention) behind its
 # `nightly` feature; bevy_asset's locks are contended once systems run on the compute workers.
 parking_lot = { version = "0.12", features = ["nightly"] }
@@ -448,6 +468,9 @@ winit = { version = "0.30", default-features = false }
 
 [build-dependencies]
 prost-build = "0.11.8"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = { workspace = true }
 
 [patch.crates-io]
 # livekit 0.9.7 plus two commits: participant_identity on RoomEvent::DataReceived (the sender

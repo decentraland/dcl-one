@@ -23,6 +23,7 @@ use super::write_support::{
     validate_like_unlike_access,
 };
 use super::{SharedState, queries, signed_path};
+use crate::notifications::community::Audience;
 
 macro_rules! try_resp {
     ($e:expr) => {
@@ -115,21 +116,40 @@ pub async fn get_posts_v2(
     Ok(Json(json!({ "data": { "posts": rows, "total": total } })))
 }
 
+/// Upstream's `CreateCommunityPostSchema`: exactly `{ content }`, 1 to 1000
+/// characters, the first one not whitespace.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PostBody {
     pub content: String,
 }
+
+const POST_CONTENT_MAX: usize = 1000;
 
 fn parse_post_id(raw: &str) -> Result<Uuid, Response> {
     Uuid::parse_str(raw).map_err(|_| err_json(StatusCode::BAD_REQUEST, "invalid post id"))
 }
 
-fn parse_content(body: &[u8]) -> Result<String, Response> {
+/// The post's content, trimmed. A new post follows upstream's schema and
+/// refuses leading whitespace; an edit (a local route) keeps trimming it.
+fn parse_content(body: &[u8], new_post: bool) -> Result<String, Response> {
     let parsed: PostBody = serde_json::from_slice(body)
         .map_err(|e| err_json(StatusCode::BAD_REQUEST, format!("invalid body: {e}")))?;
     let content = parsed.content.trim().to_string();
     if content.is_empty() {
         return Err(err_json(StatusCode::BAD_REQUEST, "content is required"));
+    }
+    if new_post && parsed.content.starts_with(char::is_whitespace) {
+        return Err(err_json(
+            StatusCode::BAD_REQUEST,
+            "content must not start with whitespace",
+        ));
+    }
+    if parsed.content.chars().count() > POST_CONTENT_MAX {
+        return Err(err_json(
+            StatusCode::BAD_REQUEST,
+            format!("content must be at most {POST_CONTENT_MAX} characters"),
+        ));
     }
     Ok(content)
 }
@@ -190,7 +210,7 @@ pub async fn create_post(
         )
         .await
     );
-    let content = match parse_content(&body) {
+    let content = match parse_content(&body, true) {
         Ok(content) => content,
         Err(response) => return response,
     };
@@ -233,12 +253,23 @@ pub async fn create_post(
             }
         },
     };
+    // upstream `createPost`: POST_ADDED to every member but the author (a
+    // replayed key is the same post, so the same notification rows)
+    state
+        .notify_community_event(
+            "community_post_added",
+            post_id.to_string(),
+            uuid,
+            json!({ "postId": post_id, "authorAddress": signer.as_str() }),
+            Audience::MembersExcept(&signer),
+        )
+        .await;
     let data = json!({
         "id": post_id,
         "communityId": uuid.as_uuid(),
         "authorAddress": signer.as_str(),
         "content": content,
-        "createdAt": super::dto::iso_ms::format(&created_at).to_string(),
+        "createdAt": crate::shared::as_of::wire(created_at.and_utc()),
     });
     (StatusCode::CREATED, Json(json!({ "data": data }))).into_response()
 }
@@ -268,7 +299,7 @@ pub async fn edit_post(
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
-    let content = match parse_content(&body) {
+    let content = match parse_content(&body, false) {
         Ok(content) => content,
         Err(r) => return r,
     };

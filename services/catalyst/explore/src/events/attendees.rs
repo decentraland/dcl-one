@@ -2,13 +2,13 @@
 //! ahead of the mirrored `latest_attendees`, deduplicated case-insensitively.
 //! The going/cancel writes (`events::writes`) upsert explicit local state,
 //! including a cancellation tombstone that overrides the mirrored preview.
-//! row and answer the list in the same transaction.
+//! Each write and its list response share one transaction.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 
-use super::EventAttendeeRecord;
+use super::{EventAttendeeRecord, LATEST_ATTENDEES_ARRAY_SQL};
 use crate::shared::errors::ApiError;
 
 const LOCAL_LIMIT: i64 = 500;
@@ -17,8 +17,8 @@ const LOCAL_LIMIT: i64 = 500;
 fn list_sql() -> String {
     format!(
         "SELECT a.signers, a.names, a.times, e.raw, e.fetched_at, \
-          ARRAY(SELECT lower(ua.address) FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(e.raw->'latest_attendees')='array' THEN e.raw->'latest_attendees' ELSE '[]' END) ua(address) \
-                WHERE EXISTS (SELECT 1 FROM explore.event_attendance_local cancelled WHERE cancelled.event_id=$1 AND cancelled.signer=lower(ua.address) AND cancelled.action='cancel')) \
+          ARRAY(SELECT lower(ua.address) FROM jsonb_array_elements_text({LATEST_ATTENDEES_ARRAY_SQL}) ua(address) \
+                WHERE ua.address IS NOT NULL AND EXISTS (SELECT 1 FROM explore.event_attendance_local cancelled WHERE cancelled.event_id=$1 AND cancelled.signer=lower(ua.address) AND cancelled.action='cancel')) \
          FROM (SELECT coalesce(array_agg(x.signer ORDER BY x.signed_at DESC), '{{}}') AS signers, \
                       coalesce(array_agg(x.user_name ORDER BY x.signed_at DESC), '{{}}') AS names, \
                       coalesce(array_agg(x.signed_at ORDER BY x.signed_at DESC), '{{}}') AS times \

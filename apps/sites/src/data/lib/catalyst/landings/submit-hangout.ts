@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { catalystBase, postJSON, signedGetJSON } from "../client";
+import { catalystBase, errorFromResponse, postJSON, signedGetJSON } from "../client";
 import { apiOkOf } from "../envelope";
 import { EventRecordSchema } from "../generated-schemas/events";
 import type { AuthIdentity } from "../../auth/types";
@@ -97,10 +97,11 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
     recurrent_month_mask: sameRecurrence ? original?.recurrent_month_mask ?? 0 : 0,
     recurrent_monthday: sameRecurrence ? original?.recurrent_monthday ?? null : null,
     recurrent_setpos: sameRecurrence ? original?.recurrent_setpos ?? null : null,
-    recurrent_count: draft.recurrent ? draft.recurrentCount ?? null : null,
+    recurrent_count: draft.recurrent && !until ? draft.recurrentCount ?? null : null,
     recurrent_until: until,
     categories: original?.categories[0] === draft.category ? original.categories : draft.category ? [draft.category] : [],
-    community_id: draft.communityId.trim() || null,
+    ...(!original || (original.community_id ?? "") !== draft.communityId.trim()
+      ? { community_id: draft.communityId.trim() || null } : {}),
     image: draft.imagePreviewUrl,
     image_vertical: draft.verticalImagePreviewUrl,
     ...(!original ? { contact: draft.contact.trim() || null, details: draft.details.trim() || null } : {}),
@@ -139,14 +140,15 @@ export function buildHangoutSubmit(identitySource: () => AuthIdentity | null, or
   };
 }
 
-export async function uploadHangoutPoster(identity: AuthIdentity, file: File, vertical: boolean): Promise<string> {
+export async function uploadHangoutPoster(identity: AuthIdentity, file: File, vertical: boolean, signal?: AbortSignal): Promise<string> {
   const types = vertical ? ["image/jpeg", "image/png", "image/webp"] : ["image/jpeg", "image/png", "image/webp", "image/gif"];
   if (!types.includes(file.type) || file.size === 0 || file.size > 500 * 1024) throw new Error("Choose an image of at most 500 KiB in a supported format.");
   const body = new FormData();
   body.append("poster", file);
   const base = catalystBase();
-  const response = await signedFetch(identity, `${base}/events/api/${vertical ? "poster-vertical" : "poster"}`, { method: "POST", body });
-  if (!response.ok) throw new Error(`Image upload failed (${response.status}). Please try again.`);
+  const url = `${base}/events/api/${vertical ? "poster-vertical" : "poster"}`;
+  const response = await signedFetch(identity, url, { method: "POST", body, signal });
+  if (!response.ok) throw await errorFromResponse(response, url);
   const Poster = z.object({ url: z.string() });
   const raw: unknown = await response.json();
   const poster = z.union([Poster, apiOkOf(Poster).transform((value) => value.data)]).parse(raw);
@@ -200,32 +202,11 @@ const SubmitResultSchema = z.object({
 });
 export type SubmitResult = z.infer<typeof SubmitResultSchema>;
 
-export async function simulateSubmitHangout(
-  draft: HangoutDraft,
-  opts: { signal?: AbortSignal; delayMs?: number } = {},
-): Promise<SubmitResult> {
-  const body = toCreateEventBody(draft);
-  if (!body.name) throw new Error("name is required");
-
-  await new Promise<void>((resolve, reject) => {
-    const t = setTimeout(resolve, opts.delayMs ?? 500);
-    opts.signal?.addEventListener("abort", () => {
-      clearTimeout(t);
-      reject(new Error("aborted"));
-    });
-  });
-
-  const id = `local-sim-${Math.abs(hashString(body.name + (body.start_at ?? ""))).toString(16).padStart(12, "0").slice(0, 12)}`;
-  return { id, approved: false };
-}
-
-function hashString(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;
-  return h;
-}
-
 export type SubmitFn = (args: {
   draft: HangoutDraft;
   signal?: AbortSignal;
 }) => Promise<SubmitResult>;
+
+export async function deleteHangout(identity: AuthIdentity, id: string, signal?: AbortSignal): Promise<void> {
+  await postJSON(`/events/api/events/${encodeURIComponent(id)}`, undefined, { identity, method: "DELETE", signal });
+}

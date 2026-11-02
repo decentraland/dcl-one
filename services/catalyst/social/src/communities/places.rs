@@ -12,6 +12,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::explore::places::destinations::Destination;
 use crate::{CommunityId, CommunityPermission};
 
 use super::dto::CommunityPlace;
@@ -91,28 +92,10 @@ async fn with_destinations(
         .iter()
         .map(|p| serde_json::to_value(p).unwrap_or(Value::Null))
         .collect();
-    let (uuids, names): (Vec<&str>, Vec<&str>) = (
-        places
-            .iter()
-            .map(|p| p.id.as_str())
-            .filter(|id| is_uuid_shaped(id))
-            .collect(),
-        places
-            .iter()
-            .map(|p| p.id.as_str())
-            .filter(|id| id.ends_with(".eth"))
-            .collect(),
-    );
-    if uuids.is_empty() && names.is_empty() {
+    if places.is_empty() {
         return rows;
     }
-    let ids = uuids.into_iter().chain(names).map(str::to_string).collect();
-    let destinations = match crate::explore::places::destinations::destinations_by_ids(
-        &state.explore,
-        ids,
-    )
-    .await
-    {
+    let destinations = match destinations_of(state, places.iter().map(|p| p.id.as_str())).await {
         Ok(d) => d,
         Err(e) => {
             tracing::warn!(error = %e, %community, "community places: destinations lookup failed; answering the bare rows");
@@ -133,6 +116,39 @@ async fn with_destinations(
         }
     }
     rows
+}
+
+/// The destinations of a community's place ids as upstream asks the places
+/// API for them (`places.ts`): the UUID-shaped ids and the `*.eth` names as
+/// one array (`POST /api/destinations`), here explore's
+/// [`destinations_by_ids`](crate::explore::places::destinations::destinations_by_ids)
+/// in process. No such id, no lookup.
+pub(super) async fn destinations_of<'a>(
+    state: &CommunitiesState,
+    ids: impl Iterator<Item = &'a str>,
+) -> Result<Vec<Destination>, crate::shared::errors::ApiError> {
+    let (uuids, names): (Vec<&str>, Vec<&str>) = ids
+        .filter(|id| is_uuid_shaped(id) || id.ends_with(".eth"))
+        .partition(|id| is_uuid_shaped(id));
+    if uuids.is_empty() && names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids = uuids.into_iter().chain(names).map(str::to_string).collect();
+    crate::explore::places::destinations::destinations_by_ids(&state.explore, ids).await
+}
+
+/// Upstream `separatePositionsAndWorlds` (`utils/places.ts`): a world
+/// destination gives its name, any other its parcels.
+pub(super) fn positions_and_worlds(destinations: &[Destination]) -> (Vec<String>, Vec<String>) {
+    let mut positions = Vec::new();
+    let mut worlds = Vec::new();
+    for d in destinations {
+        match d.world_name.as_deref().filter(|_| d.world) {
+            Some(name) if !name.is_empty() => worlds.push(name.to_string()),
+            _ => positions.extend(d.positions.iter().cloned()),
+        }
+    }
+    (positions, worlds)
 }
 
 #[derive(Debug, Deserialize)]

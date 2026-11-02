@@ -58,6 +58,25 @@ const REQUEST_ADDRESS_SELECT: &str = r#"CASE
   END AS address"#;
 const SENT_ACTOR_COND: &str = "f.last_actor = $1";
 const RECEIVED_ACTOR_COND: &str = "f.last_actor <> $1";
+/// `FROM … WHERE` of the friends `$1` and `$2` share: active friendships on
+/// both sides, minus any friend with a block in either direction to its side.
+fn mutual_friends_from() -> String {
+    let friends_of = |p: &str| {
+        format!(
+            "SELECT CASE WHEN f.address_requester = {p} THEN f.address_requested \
+                         ELSE f.address_requester END AS friend \
+             FROM social.friendships f \
+             WHERE f.is_active AND {p} IN (f.address_requester, f.address_requested) AND {}",
+            BLOCKING_CONDITION.replace("$1", p)
+        )
+    };
+    format!(
+        "FROM ({}) f1 JOIN ({}) f2 ON f1.friend = f2.friend WHERE f1.friend NOT IN ($1, $2)",
+        friends_of("$1"),
+        friends_of("$2")
+    )
+}
+
 const BLOCKING_CONDITION: &str = r#"NOT EXISTS (
     SELECT 1 FROM social.blocks b
     WHERE (b.blocker_address = $1 AND b.blocked_address = CASE
@@ -207,14 +226,18 @@ impl Db {
         self.voice_due.store(i64::MAX, Ordering::Relaxed);
     }
 
-    /// Milliseconds until the earliest call expires (negative when one already
-    /// has); `None` when the table is empty.
+    /// Milliseconds until the earliest pending call expires (negative when one
+    /// already has); `None` when there is none. An accepted call (it has
+    /// participant rows) never expires, so it does not arm the sweep.
     pub async fn private_voice_next_expiry_ms(
         &self,
         expiration_ms: i64,
     ) -> Result<Option<i64>, DbError> {
         let earliest: Option<NaiveDateTime> =
-            sqlx::query_scalar("SELECT MIN(created_at) FROM social.private_voice_chats")
+            sqlx::query_scalar(
+                "SELECT MIN(created_at) FROM social.private_voice_chats \
+                 WHERE NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id = private_voice_chats.id)",
+            )
                 .fetch_one(&self.pool)
                 .await?;
         Ok(earliest.map(|created| {
@@ -231,17 +254,18 @@ impl Db {
         offset: i64,
     ) -> Result<(Vec<String>, i64), DbError> {
         let addr = address.to_lowercase();
-        let rows = sqlx::query(
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
             r#"
-            SELECT CASE WHEN address_requester = $1 THEN address_requested
-                        ELSE address_requester END AS friend,
+            SELECT CASE WHEN f.address_requester = $1 THEN f.address_requested
+                        ELSE f.address_requester END AS friend,
                    COUNT(*) OVER () AS total
-            FROM social.friendships
-            WHERE is_active = TRUE AND (address_requester = $1 OR address_requested = $1)
-            ORDER BY friend
+            FROM social.friendships f
+            WHERE f.is_active = TRUE AND (f.address_requester = $1 OR f.address_requested = $1)
+              AND {BLOCKING_CONDITION}
+            ORDER BY f.created_at DESC, friend
             LIMIT $2 OFFSET $3
-            "#,
-        )
+            "#
+        )))
         .bind(&addr)
         .bind(limit)
         .bind(offset)
@@ -261,10 +285,11 @@ impl Db {
     }
 
     pub async fn count_friends(&self, address: &str) -> Result<i64, DbError> {
-        let n: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM social.friendships \
-             WHERE is_active = TRUE AND (address_requester = $1 OR address_requested = $1)",
-        )
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM social.friendships f \
+             WHERE f.is_active = TRUE AND (f.address_requester = $1 OR f.address_requested = $1) \
+               AND {BLOCKING_CONDITION}"
+        )))
         .bind(address.to_lowercase())
         .fetch_one(&self.pool)
         .await?;
@@ -280,21 +305,10 @@ impl Db {
     ) -> Result<(Vec<String>, i64), DbError> {
         let a = a.to_lowercase();
         let b = b.to_lowercase();
-        let rows = sqlx::query(
-            r#"
-            SELECT f1.friend, COUNT(*) OVER () AS total FROM (
-              SELECT CASE WHEN address_requester = $1 THEN address_requested ELSE address_requester END AS friend
-              FROM social.friendships WHERE is_active AND ($1 IN (address_requester, address_requested))
-            ) f1
-            JOIN (
-              SELECT CASE WHEN address_requester = $2 THEN address_requested ELSE address_requester END AS friend
-              FROM social.friendships WHERE is_active AND ($2 IN (address_requester, address_requested))
-            ) f2 ON f1.friend = f2.friend
-            WHERE f1.friend NOT IN ($1, $2)
-            ORDER BY f1.friend
-            LIMIT $3 OFFSET $4
-            "#,
-        )
+        let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
+            "SELECT f1.friend, COUNT(*) OVER () AS total {} ORDER BY f1.friend LIMIT $3 OFFSET $4",
+            mutual_friends_from()
+        )))
         .bind(&a)
         .bind(&b)
         .bind(limit)
@@ -315,19 +329,10 @@ impl Db {
     }
 
     pub async fn count_mutual_friends(&self, a: &str, b: &str) -> Result<i64, DbError> {
-        let n: i64 = sqlx::query_scalar(
-            r#"
-            SELECT COUNT(*) FROM (
-              SELECT CASE WHEN address_requester = $1 THEN address_requested ELSE address_requester END AS friend
-              FROM social.friendships WHERE is_active AND ($1 IN (address_requester, address_requested))
-            ) f1
-            JOIN (
-              SELECT CASE WHEN address_requester = $2 THEN address_requested ELSE address_requester END AS friend
-              FROM social.friendships WHERE is_active AND ($2 IN (address_requester, address_requested))
-            ) f2 ON f1.friend = f2.friend
-            WHERE f1.friend NOT IN ($1, $2)
-            "#,
-        )
+        let n: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) {}",
+            mutual_friends_from()
+        )))
         .bind(a.to_lowercase())
         .bind(b.to_lowercase())
         .fetch_one(&self.pool)
@@ -494,52 +499,74 @@ impl Db {
         })
     }
 
-    /// Records the block and returns the pair's latest friendship action in one statement.
+    /// Records the block and returns when it was first recorded (a repeat
+    /// keeps the original time) and the pair's latest friendship action, in
+    /// one statement.
     pub async fn block_user_and_last(
         &self,
         blocker: &str,
         blocked: &str,
-    ) -> Result<Option<LastAction>, DbError> {
+    ) -> Result<(DateTime<Utc>, Option<LastAction>), DbError> {
         let sql = format!(
             r#"WITH ins AS (
                  INSERT INTO social.blocks (blocker_address, blocked_address) VALUES ($1, $2)
                  ON CONFLICT (blocker_address, blocked_address) DO NOTHING
-               )
-               {LAST_ACTION_SELECT}"#
+                 RETURNING blocked_at
+               ), last AS ({LAST_ACTION_SELECT})
+               SELECT COALESCE(
+                        (SELECT blocked_at FROM ins),
+                        (SELECT blocked_at FROM social.blocks
+                          WHERE blocker_address = $1 AND blocked_address = $2)
+                      ) AS blocked_at,
+                      last.*
+               FROM (SELECT 1) one LEFT JOIN last ON TRUE"#
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(blocker.to_lowercase())
             .bind(blocked.to_lowercase())
-            .fetch_optional(&self.pool)
+            .fetch_one(&self.pool)
             .await?;
-        Ok(row.as_ref().map(last_action_from_row))
+        let blocked_at = row.get::<chrono::NaiveDateTime, _>("blocked_at").and_utc();
+        let has_friendship = row.try_get::<Option<Uuid>, _>("friendship_id")?.is_some();
+        Ok((
+            blocked_at,
+            has_friendship.then(|| last_action_from_row(&row)),
+        ))
     }
 
-    /// Removes the block and returns the pair's latest friendship action in one statement.
+    /// Removes the block and returns the pair's latest friendship action in one
+    /// statement; `None` when there was no block to remove.
     pub async fn unblock_user_and_last(
         &self,
         blocker: &str,
         blocked: &str,
-    ) -> Result<Option<LastAction>, DbError> {
+    ) -> Result<Option<Option<LastAction>>, DbError> {
         let sql = format!(
             r#"WITH del AS (
                  DELETE FROM social.blocks WHERE blocker_address = $1 AND blocked_address = $2
-               )
-               {LAST_ACTION_SELECT}"#
+                 RETURNING 1
+               ), last AS ({LAST_ACTION_SELECT})
+               SELECT EXISTS (SELECT 1 FROM del) AS removed, last.*
+               FROM (SELECT 1) one LEFT JOIN last ON TRUE"#
         );
         let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(blocker.to_lowercase())
             .bind(blocked.to_lowercase())
-            .fetch_optional(&self.pool)
+            .fetch_one(&self.pool)
             .await?;
-        Ok(row.as_ref().map(last_action_from_row))
+        if !row.get::<bool, _>("removed") {
+            return Ok(None);
+        }
+        let has_friendship = row.try_get::<Option<Uuid>, _>("friendship_id")?.is_some();
+        Ok(Some(has_friendship.then(|| last_action_from_row(&row))))
     }
 
     /// Upserts the friendship row and appends the action in one statement:
     /// `is_active`, `last_action`, `last_actor`, `last_action_at` and the
     /// action row move together, stamped with the statement's one `now()`.
     /// A concurrent insert on the same unordered pair resolves through
-    /// `friendships_unordered_pair_uidx`.
+    /// `friendships_unordered_pair_uidx`. Returns the friendship id, time and
+    /// action id from that statement; notifications use the committed action id.
     pub async fn apply_friendship_action(
         &self,
         acting_user: &str,
@@ -548,7 +575,7 @@ impl Db {
         is_active: bool,
         existing: Option<Uuid>,
         message: Option<&str>,
-    ) -> Result<(Uuid, DateTime<Utc>), DbError> {
+    ) -> Result<(Uuid, DateTime<Utc>, Uuid), DbError> {
         let acting_user = acting_user.to_lowercase();
         let other = other.to_lowercase();
         let metadata = message.map(|m| serde_json::json!({ "message": m }));
@@ -563,7 +590,7 @@ impl Db {
                        )
                        INSERT INTO social.friendship_actions (id, friendship_id, action, acting_user, metadata, "timestamp")
                        SELECT $3::uuid, f.id, $4::text, $5::text, $6::json, timezone('UTC', now()) FROM f
-                       RETURNING friendship_id, "timestamp""#,
+                       RETURNING friendship_id, "timestamp", id"#,
                 )
                 .bind(is_active)
                 .bind(id)
@@ -589,7 +616,7 @@ impl Db {
                        )
                        INSERT INTO social.friendship_actions (id, friendship_id, action, acting_user, metadata, "timestamp")
                        SELECT $5::uuid, f.id, $6::text, $7::text, $8::json, timezone('UTC', now()) FROM f
-                       RETURNING friendship_id, "timestamp""#,
+                       RETURNING friendship_id, "timestamp", id"#,
                 )
                 .bind(Uuid::new_v4())
                 .bind(&acting_user)
@@ -606,6 +633,7 @@ impl Db {
         Ok((
             row.get::<Uuid, _>("friendship_id"),
             row.get::<NaiveDateTime, _>("timestamp").and_utc(),
+            row.get::<Uuid, _>("id"),
         ))
     }
 
@@ -1158,14 +1186,14 @@ impl Db {
         Ok(rows)
     }
 
-    /// `(private, role of a, role of b)` in one read; `None` when the community
-    /// row is missing; roles are `None` for an inactive community.
+    /// Privacy, roles and bans in one read; `None` when the community row is
+    /// missing. Roles are `None` for an inactive community.
     pub async fn community_voice_roles(
         &self,
         community_id: &str,
         a: &str,
         b: &str,
-    ) -> Result<Option<(bool, Option<String>, Option<String>)>, DbError> {
+    ) -> Result<Option<(bool, Option<String>, Option<String>, bool, bool)>, DbError> {
         let Ok(cid) = Uuid::parse_str(community_id) else {
             return Ok(None);
         };
@@ -1174,7 +1202,11 @@ impl Db {
                     CASE WHEN c.active THEN (SELECT role FROM social.community_members \
                                              WHERE community_id = c.id AND member_address = $2) END AS role_a, \
                     CASE WHEN c.active THEN (SELECT role FROM social.community_members \
-                                             WHERE community_id = c.id AND member_address = $3) END AS role_b \
+                                             WHERE community_id = c.id AND member_address = $3) END AS role_b, \
+                    EXISTS (SELECT 1 FROM social.community_bans WHERE community_id = c.id \
+                            AND banned_address = $2 AND active) AS banned_a, \
+                    EXISTS (SELECT 1 FROM social.community_bans WHERE community_id = c.id \
+                            AND banned_address = $3 AND active) AS banned_b \
              FROM social.communities c WHERE c.id = $1",
         )
         .bind(cid)
@@ -1182,30 +1214,38 @@ impl Db {
         .bind(b.to_lowercase())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| (r.get("private"), r.get("role_a"), r.get("role_b"))))
+        Ok(row.map(|r| {
+            (
+                r.get("private"),
+                r.get("role_a"),
+                r.get("role_b"),
+                r.get("banned_a"),
+                r.get("banned_b"),
+            )
+        }))
     }
 
-    /// `(role, banned)` of one address; `None` when the community row is missing.
+    /// `(private, role, banned)` of one address in an active community.
     pub async fn community_membership(
         &self,
         community_id: &str,
         address: &str,
-    ) -> Result<Option<(Option<String>, bool)>, DbError> {
+    ) -> Result<Option<(bool, Option<String>, bool)>, DbError> {
         let Ok(cid) = Uuid::parse_str(community_id) else {
             return Ok(None);
         };
         let row = sqlx::query(
-            "SELECT CASE WHEN c.active THEN m.role END AS role, COALESCE(b.active, FALSE) AS banned \
+            "SELECT c.private, m.role, COALESCE(b.active, FALSE) AS banned \
              FROM social.communities c \
              LEFT JOIN social.community_members m ON m.community_id = c.id AND m.member_address = $2 \
              LEFT JOIN social.community_bans b ON b.community_id = c.id AND b.banned_address = $2 \
-             WHERE c.id = $1",
+             WHERE c.id = $1 AND c.active",
         )
         .bind(cid)
         .bind(address.to_lowercase())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| (r.get("role"), r.get("banned"))))
+        Ok(row.map(|r| (r.get("private"), r.get("role"), r.get("banned"))))
     }
 
     /// `(name, member addresses)` for a voice fan-out; `None` when the
@@ -1241,7 +1281,8 @@ impl Db {
         };
         let row = sqlx::query(
             "SELECT c.name, \
-                    CASE WHEN c.active THEN m.role END AS role, \
+                    CASE WHEN c.active AND NOT EXISTS (SELECT 1 FROM social.community_bans \
+                         WHERE community_id = c.id AND banned_address = $2 AND active) THEN m.role END AS role, \
                     CASE WHEN c.active AND m.role IN ('owner', 'moderator') THEN \
                       COALESCE((SELECT array_agg(member_address) FROM social.community_members \
                                 WHERE community_id = c.id), '{}'::text[]) \
