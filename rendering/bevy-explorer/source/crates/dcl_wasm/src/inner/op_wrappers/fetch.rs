@@ -1,5 +1,4 @@
 use crate::{serde_result, WasmError, WorkerContext};
-use dcl_js::State;
 use dcl_types::RpcCalls;
 use wasm_bindgen::prelude::*;
 
