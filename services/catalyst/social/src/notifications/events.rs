@@ -782,7 +782,17 @@ mod tests {
             }
             run_once(pool, "https://example.org", now).await.unwrap();
         }
-        panic!("event notification queue did not complete within 32 resumable passes");
+        let matching: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(q) - 'event' FROM social.event_notification_intents q WHERE event_id LIKE $1 ORDER BY kind,occurrence_start,id")
+            .bind(event_pattern).fetch_all(pool).await.unwrap();
+        let pending: Vec<Value> = sqlx::query_scalar("SELECT to_jsonb(q) - 'event' FROM social.event_notification_intents q WHERE processed_at IS NULL ORDER BY dispatch_at,id LIMIT 20")
+            .fetch_all(pool).await.unwrap();
+        let (database_clock, timezone, isolation): (NaiveDateTime, String, String) = sqlx::query_as(
+            "SELECT timezone('UTC', clock_timestamp()), current_setting('TimeZone'), current_setting('transaction_isolation')",
+        ).fetch_one(pool).await.unwrap();
+        let actual_intents = matching.len();
+        panic!(
+            "event notification queue did not complete within 32 resumable passes: pattern={event_pattern}, expected={expected_intents}, actual={actual_intents}, horizon={now}, database_clock={database_clock}, timezone={timezone}, isolation={isolation}, matching={matching:?}, pending_global={pending:?}"
+        );
     }
 
     async fn catch_up_pages_live_audiences_and_retention(pool: &PgPool) {
