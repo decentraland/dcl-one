@@ -27,7 +27,7 @@ export async function loadEventProfile(identity: AuthIdentity, signal?: AbortSig
 export async function loadManagedEvents(identity: AuthIdentity, options: { own: boolean; offset: number; limit: number; search?: string }, signal?: AbortSignal) {
   const raw = await signedGetJSON("/events/api/events", {
     identity, signal,
-    query: { list: "all", owner: options.own || undefined, limit: options.limit, offset: options.offset, search: options.search || undefined, order: "desc", ...(!options.own ? { approved: false, rejected: false } : {}) },
+    query: { list: options.own ? "all" : "active", owner: options.own || undefined, limit: options.limit, offset: options.offset, search: options.search || undefined, order: "desc", ...(!options.own ? { approved: false, rejected: false, deleted: false } : {}) },
   });
   const envelope = EventList.parse(raw);
   const events = Array.isArray(envelope.data) ? envelope.data : envelope.data.events;
@@ -37,7 +37,10 @@ export async function loadManagedEvents(identity: AuthIdentity, options: { own: 
 
 export async function moderateEvent(identity: AuthIdentity, id: string, action: "approve" | "reject", reason?: string): Promise<void> {
   const body = action === "approve" ? { approved: true } : { rejected: true, rejection_reason: reason?.trim().slice(0, 500) || null };
-  await postJSON(`/events/api/events/${encodeURIComponent(id)}`, body, { identity, method: "PATCH" });
+  const result = apiOkOf(z.object({ approved: z.boolean(), rejected: z.boolean() })).parse(await postJSON(`/events/api/events/${encodeURIComponent(id)}`, body, { identity, method: "PATCH" })).data;
+  if (action === "approve" ? !result.approved || result.rejected : !result.rejected) {
+    throw new Error("The hangout changed before this action was applied. Refresh the list and try again.");
+  }
 }
 
 export async function loadEventProfiles(identity: AuthIdentity, signal?: AbortSignal): Promise<EventProfile[]> {

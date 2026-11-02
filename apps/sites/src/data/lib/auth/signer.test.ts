@@ -50,4 +50,18 @@ describe("when signing a plain JSON schedule mutation", () => {
     });
   });
 
+  describe.each(["/events/api/profiles/me/settings", "/api/profiles/0x1111111111111111111111111111111111111111/settings"])("and a profile PATCH uses %s", (path) => {
+    it("should sign the exact profile body and a unique canonical nonce", async () => {
+      await signedFetch(identity, `https://node.test${path}`, { method: "PATCH", body });
+      await signedFetch(identity, `https://node.test${path}`, { method: "PATCH", body });
+      expect(JSON.parse(new Headers(requests[0].headers).get("x-identity-metadata")!)).toMatchObject({ body_sha256: bytesToHex(sha256(new TextEncoder().encode(body))), nonce: expect.stringMatching(/^[\da-f-]{36}$/) });
+      expect(new Headers(requests[0].headers).get("x-identity-metadata")).not.toEqual(new Headers(requests[1].headers).get("x-identity-metadata"));
+      await expect(verifyMessage({ address: identity.ephemeral.address as `0x${string}`, message: JSON.parse(new Headers(requests[0].headers).get("x-identity-auth-chain-2")!).payload, signature: JSON.parse(new Headers(requests[0].headers).get("x-identity-auth-chain-2")!).signature })).resolves.toBe(true);
+    });
+    it("should refuse a profile body that cannot be signed as serialized JSON", async () => {
+      await expect(signedFetch(identity, `https://node.test${path}`, { method: "PATCH", body: new Blob([body]) })).rejects.toThrow("serialized JSON");
+      expect(requests).toEqual([]);
+    });
+  });
+
 });

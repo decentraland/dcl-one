@@ -10,7 +10,7 @@ describe("when managing authenticated hangouts", () => {
   beforeEach(() => {
     identity = { signer: "0x1111111111111111111111111111111111111111", ephemeral: { address: "0x2222222222222222222222222222222222222222", privateKey: "0x01" }, expiration: "2099-01-01T00:00:00Z", authChain: [] };
     vi.mocked(signedGetJSON).mockResolvedValue({ ok: true, data: [] });
-    vi.mocked(postJSON).mockResolvedValue({ ok: true, data: { user: identity.signer, permissions: ["approve_any_event"] } });
+    vi.mocked(postJSON).mockResolvedValue({ ok: true, data: { user: identity.signer, permissions: ["approve_any_event"], approved: true, rejected: false } });
   });
 
   afterEach(() => vi.resetAllMocks());
@@ -22,7 +22,7 @@ describe("when managing authenticated hangouts", () => {
 
   it("should request only pending events for moderation", async () => {
     await loadManagedEvents(identity, { own: false, limit: 25, offset: 0 });
-    expect(signedGetJSON).toHaveBeenCalledWith("/events/api/events", expect.objectContaining({ identity, query: expect.objectContaining({ approved: false, rejected: false }) }));
+    expect(signedGetJSON).toHaveBeenCalledWith("/events/api/events", expect.objectContaining({ identity, query: expect.objectContaining({ list: "active", approved: false, rejected: false, deleted: false }) }));
   });
 
   it("should send a signed approval to the selected event", async () => {
@@ -31,6 +31,7 @@ describe("when managing authenticated hangouts", () => {
   });
 
   it("should send the rejection reason to the selected event", async () => {
+    vi.mocked(postJSON).mockResolvedValueOnce({ ok: true, data: { approved: false, rejected: true } });
     await moderateEvent(identity, "event-one", "reject", "  Image needs revision  ");
     expect(postJSON).toHaveBeenCalledWith("/events/api/events/event-one", { rejected: true, rejection_reason: "Image needs revision" }, { identity, method: "PATCH" });
   });
@@ -49,4 +50,24 @@ describe("when managing authenticated hangouts", () => {
     await expect(saveEventPermissions(identity, "invalid", ["approve_any_event"])).rejects.toThrow("valid wallet address");
     expect(postJSON).not.toHaveBeenCalled();
   });
+  describe("and moderation was not applied", () => {
+    beforeEach(() => { vi.mocked(postJSON).mockResolvedValue({ ok: true, data: { approved: false, rejected: true } }); });
+    it("should reject an approval superseded by rejection", async () => {
+      await expect(moderateEvent(identity, "event-one", "approve")).rejects.toThrow("changed before this action");
+    });
+  });
+
+  describe.each([
+    { shape: "bare array", data: [], total: 50 },
+    { shape: "events object", data: { events: [], total: 50 }, total: undefined },
+  ])("and the list uses $shape", ({ data, total }) => {
+    beforeEach(() => { vi.mocked(signedGetJSON).mockResolvedValue({ ok: true, data, total }); });
+    it("should honor the total beyond this page", async () => {
+      await expect(loadManagedEvents(identity, { own: true, offset: 25, limit: 25 })).resolves.toEqual({ events: [], hasMore: true });
+    });
+    it("should stop at the total", async () => {
+      await expect(loadManagedEvents(identity, { own: true, offset: 50, limit: 25 })).resolves.toEqual({ events: [], hasMore: false });
+    });
+  });
+
 });
