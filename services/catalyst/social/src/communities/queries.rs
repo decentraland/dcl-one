@@ -288,6 +288,15 @@ pub async fn list(
     ) {
         where_clauses.push(clause);
     }
+    // upstream `getCommunities`/`getCommunitiesCount`: a signed viewer never
+    // lists a community that bans them (a `community_bans` primary-key probe)
+    if viewer.is_some() {
+        where_clauses.push(
+            "NOT EXISTS (SELECT 1 FROM social.community_bans b WHERE b.community_id = c.id \
+             AND b.banned_address = $USER AND b.active)"
+                .to_string(),
+        );
+    }
     if let Some(s) = search {
         params.push(format!("%{}%", escape_like(s)));
         let i = params.len();
@@ -851,7 +860,8 @@ pub async fn list_requests_by_community(
     kind: Option<&str>,
     pagination: &Pagination,
 ) -> sqlx::Result<(Vec<CommunityRequest>, i64)> {
-    let mut where_sql = "community_id = $1".to_string();
+    // a decided request is history: upstream deletes it, so only pending ones list
+    let mut where_sql = "community_id = $1 AND status = 'pending'".to_string();
     if kind.is_some() {
         where_sql.push_str(" AND type = $2");
     }
@@ -905,18 +915,20 @@ type AggregatedRequestRow = (
     bool,
 );
 
-/// The wallet's own requests/invites with the community summary the client
-/// renders them with; `_hasThumbnail` is a private marker the handler
-/// replaces with `thumbnailUrl`.
+/// The wallet's own pending requests/invites with the community summary the
+/// client renders them with; `_hasThumbnail` is a private marker the handler
+/// replaces with `thumbnailUrl`. As upstream (`aggregateRequestsWithCommunities`),
+/// the page is cut from every pending request and then drops the ones whose
+/// community is inactive or bans the wallet; the total counts them all.
 pub async fn list_requests_by_member(
     pool: &PgPool,
     member: &Address,
     kind: Option<&str>,
     pagination: &Pagination,
 ) -> sqlx::Result<(Vec<serde_json::Value>, i64)> {
-    let mut where_sql = "r.member_address = $1".to_string();
+    let mut where_sql = "member_address = $1 AND status = 'pending'".to_string();
     if kind.is_some() {
-        where_sql.push_str(" AND r.type = $2");
+        where_sql.push_str(" AND type = $2");
     }
     let limit_idx = if kind.is_some() { 3 } else { 2 };
     let offset_idx = limit_idx + 1;
@@ -925,12 +937,14 @@ pub async fn list_requests_by_member(
                 c.name, c.description, c.owner_address, c.private, c.active, \
                 (SELECT COUNT(*) FROM social.community_members m WHERE m.community_id = c.id) AS members_count, \
                 EXISTS (SELECT 1 FROM social.community_thumbnails t WHERE t.community_id = c.id) AS has_thumbnail \
-         FROM social.community_requests r JOIN social.communities c ON c.id = r.community_id \
-         WHERE {where_sql} ORDER BY r.created_at DESC LIMIT ${limit_idx} OFFSET ${offset_idx}"
+         FROM (SELECT * FROM social.community_requests WHERE {where_sql} \
+               ORDER BY created_at DESC LIMIT ${limit_idx} OFFSET ${offset_idx}) r \
+         JOIN social.communities c ON c.id = r.community_id \
+         WHERE c.active AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
+               WHERE b.community_id = c.id AND b.banned_address = $1 AND b.active) \
+         ORDER BY r.created_at DESC"
     );
-    let count_sql = format!(
-        "SELECT COUNT(*) FROM social.community_requests r JOIN social.communities c ON c.id = r.community_id WHERE {where_sql}"
-    );
+    let count_sql = format!("SELECT COUNT(*) FROM social.community_requests WHERE {where_sql}");
     let mut q =
         sqlx::query_as::<_, AggregatedRequestRow>(sqlx::AssertSqlSafe(select_sql)).bind(member);
     let mut cq = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql)).bind(member);
@@ -1091,7 +1105,7 @@ pub async fn list_bans(
     Ok((bans, total))
 }
 
-/// The inviter's communities the invitee is not yet in.
+/// The communities the inviter owns or moderates that the invitee is not yet in.
 pub async fn list_invites(
     pool: &PgPool,
     inviter: &Address,
@@ -1100,6 +1114,7 @@ pub async fn list_invites(
     let rows = sqlx::query_as::<_, (Uuid, String)>(
         "SELECT c.id, c.name FROM social.communities c \
          JOIN social.community_members m ON m.community_id = c.id AND m.member_address = $1 \
+              AND m.role IN ('owner', 'moderator') \
          WHERE c.active \
            AND NOT EXISTS (SELECT 1 FROM social.community_members m2 WHERE m2.community_id = c.id AND m2.member_address = $2) \
          ORDER BY c.name ASC",

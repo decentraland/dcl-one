@@ -44,7 +44,7 @@ use bevy::{
     reflect::TypePath,
     tasks::{ConditionalSendFuture, IoTaskPool, Task},
 };
-use tokio::sync::{oneshot, watch};
+use tokio::sync::watch;
 
 #[cfg(not(target_arch = "wasm32"))]
 use bevy::asset::io::file::FileAssetReader;
@@ -1965,20 +1965,14 @@ impl IpfsIo {
         }
         let name = remote.clone();
         let (sender, result) = watch::channel(None);
-        let (cancel, cancelled) = oneshot::channel::<()>();
         let ipfs = self.clone();
         let entry = remote.clone();
         let download_scenes = scenes.clone();
         let task = IoTaskPool::get().spawn_compat(async move {
-            let download = ipfs
+            let result = ipfs
                 .clone()
-                .download(token, path, remote, Some(key), download_scenes);
-            let result = tokio::select! {
-                result = download => result,
-                // the last reader dropped the sender: stop, and the request slot goes with
-                // the fetch (on web, dropping the task handle alone doesn't end the task)
-                _ = cancelled => return,
-            };
+                .download(token, path, remote, Some(key), download_scenes)
+                .await;
             // over, so a later reader starts afresh (from the cache, now it is written). Only
             // this download's own entry goes: cancelled, it was replaced by a newer one
             if let Ok(mut in_flight) = ipfs.in_flight.lock() {
@@ -1990,7 +1984,6 @@ impl IpfsIo {
         });
         let download = Arc::new(SharedDownload {
             _task: task,
-            _cancel: cancel,
             result,
             scenes,
         });
@@ -2216,7 +2209,6 @@ impl std::ops::Deref for SharedBytes {
 /// A download, shared by every reader of its url and cancelled with the last of them.
 struct SharedDownload {
     _task: Task<()>,
-    _cancel: oneshot::Sender<()>,
     result: watch::Receiver<Option<Result<SharedBytes, AssetReaderError>>>,
     // the scenes of every reader, shared with the download's request-slot waiter
     scenes: WaiterScenes,

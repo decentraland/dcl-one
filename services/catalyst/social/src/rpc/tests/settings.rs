@@ -170,9 +170,11 @@ async fn private_message_settings_read_per_address_with_friendship() {
                 .unwrap()
         }
     };
+    // A repeated address (in any case) answers once, at its first position.
     match ask(vec![
         friend.clone(),
         strict.to_uppercase().replacen("0X", "0x", 1),
+        friend.to_uppercase().replacen("0X", "0x", 1),
     ])
     .await
     {

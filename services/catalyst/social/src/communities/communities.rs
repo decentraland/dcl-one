@@ -15,7 +15,7 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::{Address, CommunityId, CommunityPermission, CommunityStanding};
+use crate::{Address, CommunityId, CommunityPermission};
 
 use super::dto::{CommunityDetail, CommunityListItem};
 use super::friendship::community_friends;
@@ -26,8 +26,8 @@ use super::http::{
 use super::profiles::ProfileInfo;
 use super::thumbnail::{detect_image_mime_type, store_thumbnail, validate_thumbnail};
 use super::write_support::{
-    ClientCommunityWriteAuthority, Refusal, boundary, map_db, parse_community_id, parse_multipart,
-    refuse,
+    ClientCommunityWriteAuthority, Refusal, boundary, load_client_standing, map_db,
+    parse_community_id, parse_multipart, refuse,
 };
 use super::{SharedState, queries, signed_path, validate};
 
@@ -685,29 +685,6 @@ pub async fn update_community(
     if let Err(e) = validate::validate_description_opt(description.as_deref()) {
         return err_json(StatusCode::BAD_REQUEST, e);
     }
-    // EditName is owner-only in the capability matrix (the old client route
-    // checked EditInfo alone and left the cell to the federation write path,
-    // which is not ported): a name that differs from the stored one needs it.
-    if let Some(new_name) = name.as_deref() {
-        let current: Option<String> = try_resp!(map_db(
-            sqlx::query_scalar("SELECT name FROM social.communities WHERE id = $1")
-                .bind(uuid)
-                .fetch_optional(&state.pool)
-                .await
-        ));
-        if current.as_deref() != Some(new_name) {
-            try_resp!(
-                ClientCommunityWriteAuthority::resolve_requiring_capability(
-                    &state,
-                    uuid,
-                    &signer,
-                    CommunityPermission::EditName,
-                    "edit the community name"
-                )
-                .await
-            );
-        }
-    }
     let privacy: Option<bool> = match fields.privacy {
         Some(p) => Some(try_resp!(parse_privacy(p)) == "private"),
         None => None,
@@ -716,6 +693,45 @@ pub async fn update_community(
         Some(v) => Some(try_resp!(parse_visibility(v)) == "unlisted"),
         None => None,
     };
+    // EditName and EditSettings are owner-only in the capability matrix: a
+    // name, privacy or visibility that differs from the stored one needs the
+    // matching cell (upstream `updateCommunity`, `communities.ts` at `fb3dcb8`).
+    let current: Option<(String, bool, bool)> = try_resp!(map_db(
+        sqlx::query_as("SELECT name, private, unlisted FROM social.communities WHERE id = $1")
+            .bind(uuid)
+            .fetch_optional(&state.pool)
+            .await
+    ));
+    let current = current.as_ref();
+    if name
+        .as_deref()
+        .is_some_and(|n| current.map(|c| c.0.as_str()) != Some(n))
+    {
+        try_resp!(
+            ClientCommunityWriteAuthority::resolve_requiring_capability(
+                &state,
+                uuid,
+                &signer,
+                CommunityPermission::EditName,
+                "edit the community name"
+            )
+            .await
+        );
+    }
+    if privacy.is_some_and(|p| current.map(|c| c.1) != Some(p))
+        || visibility.is_some_and(|v| current.map(|c| c.2) != Some(v))
+    {
+        try_resp!(
+            ClientCommunityWriteAuthority::resolve_requiring_capability(
+                &state,
+                uuid,
+                &signer,
+                CommunityPermission::EditSettings,
+                "update the community privacy"
+            )
+            .await
+        );
+    }
     let thumbnail = fields.thumbnail;
     if let Some(bytes) = thumbnail.as_deref()
         && let Err(e) = validate_thumbnail(bytes)
@@ -762,13 +778,16 @@ pub async fn update_community(
     (StatusCode::OK, Json(json!({ "data": data }))).into_response()
 }
 
+/// Upstream's `UpdateCommunityPartiallySchema`: exactly `{ editorsChoice: bool }`.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct PatchBody {
-    #[serde(rename = "editorsChoice", default)]
-    pub editors_choice: Option<bool>,
+    #[serde(rename = "editorsChoice")]
+    pub editors_choice: bool,
 }
 
-/// Owner only; the one field is `editorsChoice`, the listing's first sort key.
+/// Global moderators only; the one field is `editorsChoice`, the listing's
+/// first sort key (upstream `updateEditorChoice`).
 pub async fn update_community_partially(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -788,28 +807,37 @@ pub async fn update_community_partially(
         Ok(s) => s,
         Err(r) => return r,
     };
-    try_resp!(
-        ClientCommunityWriteAuthority::resolve_requiring_at_least(
-            &state,
-            uuid,
-            &signer,
-            CommunityStanding::Owner
-        )
-        .await
-    );
-    let parsed: PatchBody = serde_json::from_slice(&body).unwrap_or(PatchBody {
-        editors_choice: None,
-    });
-    if let Some(ec) = parsed.editors_choice {
-        try_resp!(map_db(
-            sqlx::query("UPDATE social.communities SET editors_choice = $2, updated_at = timezone('UTC', now()) WHERE id = $1")
-                .bind(uuid)
-                .bind(ec)
-                .execute(&state.pool)
-                .await
-        ));
+    let parsed: PatchBody = match serde_json::from_slice(&body) {
+        Ok(b) => b,
+        Err(e) => return err_json(StatusCode::BAD_REQUEST, format!("invalid body: {e}")),
+    };
+    if !try_resp!(active_community_exists(&state, uuid).await) {
+        return CommError::not_found(format!("Community not found: {id}")).into_response();
     }
+    if !state.is_global_moderator(&signer) {
+        return CommError::not_authorized("Only global moderators can update Editor's Choice flag")
+            .into_response();
+    }
+    try_resp!(map_db(
+        sqlx::query("UPDATE social.communities SET editors_choice = $2, updated_at = timezone('UTC', now()) WHERE id = $1")
+            .bind(uuid)
+            .bind(parsed.editors_choice)
+            .execute(&state.pool)
+            .await
+    ));
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// Upstream's `getCommunity`: active, suspended or not.
+async fn active_community_exists(state: &SharedState, id: CommunityId) -> Result<bool, Refusal> {
+    map_db(
+        sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM social.communities WHERE id = $1 AND active)",
+        )
+        .bind(id)
+        .fetch_one(&state.pool)
+        .await,
+    )
 }
 
 pub async fn delete_community(
@@ -830,16 +858,20 @@ pub async fn delete_community(
         Ok(s) => s,
         Err(r) => return r,
     };
-    try_resp!(
-        ClientCommunityWriteAuthority::resolve_requiring_capability(
-            &state,
-            uuid,
-            &signer,
-            CommunityPermission::DeleteCommunity,
-            "delete the community"
+    // upstream `deleteCommunity`: a missing community is a 404 first; the
+    // owner or a global moderator may delete it
+    if !try_resp!(active_community_exists(&state, uuid).await) {
+        return CommError::not_found(format!("Community not found: {id}")).into_response();
+    }
+    if !state.is_global_moderator(&signer)
+        && !try_resp!(load_client_standing(&state, uuid, &signer).await)
+            .has(CommunityPermission::DeleteCommunity)
+    {
+        return CommError::not_authorized(
+            "The user doesn't have permission to delete this community",
         )
-        .await
-    );
+        .into_response();
+    }
     try_resp!(map_db(
         sqlx::query("UPDATE social.communities SET active = FALSE, updated_at = timezone('UTC', now()) WHERE id = $1")
             .bind(uuid)
