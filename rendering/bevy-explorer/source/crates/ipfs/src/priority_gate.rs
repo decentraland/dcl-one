@@ -14,6 +14,7 @@ use tokio::sync::oneshot;
 /// same download. Empty means not a scene's, which is top priority.
 pub type WaiterScenes = Arc<Mutex<Vec<String>>>;
 
+// lock order: `state`, then `priorities`, then a waiter's scenes; none held across an await
 pub struct PriorityGate {
     state: Mutex<GateState>,
     priorities: RwLock<HashMap<String, LoadPriority>>,
@@ -120,8 +121,20 @@ impl PriorityGate {
         freed
     }
 
-    pub fn set_priorities(&self, priorities: HashMap<String, LoadPriority>) {
-        *self.priorities.write().unwrap() = priorities;
+    /// Replace the published keys. A scene that was published before and is not any more
+    /// (despawned, out of range) keeps the bottom key for as long as a waiter names it, so
+    /// its queued downloads do not count as unknown and jump to the top.
+    pub fn set_priorities(&self, mut priorities: HashMap<String, LoadPriority>) {
+        let state = self.state.lock().unwrap();
+        let mut current = self.priorities.write().unwrap();
+        for waiter in &state.waiters {
+            for scene in waiter.scenes.lock().unwrap().iter() {
+                if !priorities.contains_key(scene) && current.contains_key(scene) {
+                    priorities.insert(scene.clone(), LoadPriority::BOTTOM);
+                }
+            }
+        }
+        *current = priorities;
     }
 
     pub fn scene_priority(&self, scene: &str) -> Option<LoadPriority> {
@@ -374,5 +387,46 @@ mod tests {
         }
 
         assert_eq!(*log.lock().unwrap(), vec!["far-download", "mid-download"]);
+    }
+
+    #[tokio::test]
+    async fn a_departed_scenes_downloads_sink_to_the_bottom() {
+        let gate = PriorityGate::new(1);
+        gate.set_priorities(priorities(&[
+            ("left", key(1, false, 100.0)),
+            ("ahead", key(2, false, 1000.0)),
+        ]));
+        let holder = gate.try_acquire().unwrap();
+        let log = Log::default();
+        let tasks = ["left", "ahead"].map(|name| reader(&gate, name, scenes(&[name]), &log));
+        settle(&gate, 2).await;
+
+        // the player walked out of "left": it is no longer a live scene
+        gate.set_priorities(priorities(&[("ahead", key(2, false, 1000.0))]));
+        drop(holder);
+        for task in tasks {
+            task.await.unwrap();
+        }
+
+        assert_eq!(*log.lock().unwrap(), vec!["ahead", "left"]);
+    }
+
+    #[tokio::test]
+    async fn an_unknown_scene_stays_on_top_after_a_refresh() {
+        let gate = PriorityGate::new(1);
+        gate.set_priorities(priorities(&[("ahead", key(2, false, 1000.0))]));
+        let holder = gate.try_acquire().unwrap();
+        let log = Log::default();
+        let tasks = ["ahead", "unknown"].map(|name| reader(&gate, name, scenes(&[name]), &log));
+        settle(&gate, 2).await;
+
+        // a refresh that never knew "unknown" leaves it on top
+        gate.set_priorities(priorities(&[("ahead", key(2, false, 1000.0))]));
+        drop(holder);
+        for task in tasks {
+            task.await.unwrap();
+        }
+
+        assert_eq!(*log.lock().unwrap(), vec!["unknown", "ahead"]);
     }
 }

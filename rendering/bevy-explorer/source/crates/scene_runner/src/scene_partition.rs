@@ -17,20 +17,24 @@ pub struct ScenePartition(pub ScenePartitionData);
 /// A scene behind the camera is sent at most this often (unity-explorer's `behindFps = 1`).
 pub const BEHIND_SCENE_TICK_INTERVAL: Duration = Duration::from_secs(1);
 
-/// The camera's position and forward, or the player's when there is no camera (headless).
+/// Where partitions are measured from: the rendering camera's position and forward, or
+/// the player's position and no forward (zero: nothing is behind) when nothing renders. The
+/// headless server has a stand-in `PrimaryCamera` without a `Camera` that never turns.
 pub fn sampling_transform(
-    camera: &Query<&GlobalTransform, With<PrimaryCamera>>,
+    camera: &Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
     player: &Query<&GlobalTransform, With<PrimaryUser>>,
 ) -> Option<(Vec3, Vec3)> {
-    camera
+    if let Ok(camera) = camera.single() {
+        return Some((camera.translation(), camera.forward().as_vec3()));
+    }
+    player
         .single()
         .ok()
-        .or_else(|| player.single().ok())
-        .map(|transform| (transform.translation(), transform.forward().as_vec3()))
+        .map(|player| (player.translation(), Vec3::ZERO))
 }
 
 pub fn update_scene_partitions(
-    camera: Query<&GlobalTransform, With<PrimaryCamera>>,
+    camera: Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
     player: Query<&GlobalTransform, With<PrimaryUser>>,
     mut scenes: Query<(Entity, &RendererSceneContext, Option<&mut ScenePartition>)>,
     mut commands: Commands,
@@ -117,6 +121,7 @@ mod tests {
         if let Some(forward) = camera_forward {
             world.spawn((
                 PrimaryCamera::default(),
+                Camera::default(),
                 GlobalTransform::from(
                     Transform::from_translation(PLAYER_POS).looking_to(forward, Vec3::Y),
                 ),
@@ -164,16 +169,37 @@ mod tests {
     }
 
     #[test]
-    fn uses_the_player_when_there_is_no_camera() {
+    fn uses_the_players_position_when_there_is_no_camera() {
         let mut world = world_with_player(None);
-        // the player's default rotation looks along -z, which is parcel +y
+        // the player looks along -z (parcel +y), so this scene is behind them; with no
+        // rendering camera no facing is known and nothing is behind
         let scene = scene_with_parcels(&mut world, &[IVec2::new(0, -3)]);
 
         world.run_system_once(update_scene_partitions).unwrap();
 
         let partition = world.get::<ScenePartition>(scene).unwrap().0;
-        assert!(partition.is_behind);
+        assert!(!partition.is_behind);
         assert_eq!(partition.parcel_distance, 3);
+    }
+
+    #[test]
+    fn a_camera_that_does_not_render_gives_no_facing() {
+        // the headless server's stand-in camera: a PrimaryCamera with no Camera, never turned
+        let mut world = world_with_player(None);
+        world.spawn((
+            PrimaryCamera::default(),
+            GlobalTransform::from(
+                Transform::from_translation(PLAYER_POS).looking_to(Vec3::X, Vec3::Y),
+            ),
+        ));
+        let scene = scene_with_parcels(&mut world, &[IVec2::new(-3, 0)]);
+
+        world.run_system_once(update_scene_partitions).unwrap();
+
+        let partition = world.get::<ScenePartition>(scene).unwrap().0;
+        assert!(!partition.is_behind);
+        assert_eq!(partition.parcel_distance, 3);
+        assert_eq!(partition.sqr_distance, 1600.0);
     }
 
     #[test]

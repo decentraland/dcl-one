@@ -49,9 +49,17 @@ impl LoadPriority {
         is_behind: false,
         sqr_distance: FloatOrd(0.0),
     };
+
+    /// After every live scene: the key of a scene that has left while its downloads wait.
+    pub const BOTTOM: Self = Self {
+        parcel_distance: u16::MAX,
+        is_behind: true,
+        sqr_distance: FloatOrd(f32::INFINITY),
+    };
 }
 
-/// `camera_pos` and `camera_forward` in world space; parcel y grows toward -z.
+/// `camera_pos` and `camera_forward` in world space; parcel y grows toward -z. A zero
+/// `camera_forward` means no facing is known (no rendering camera), and nothing is behind.
 pub fn scene_partition(
     camera_pos: Vec3,
     camera_forward: Vec3,
@@ -168,6 +176,14 @@ mod tests {
     }
 
     #[test]
+    fn no_forward_means_nothing_is_behind() {
+        // the same camera as `behind_when_every_corner_is_behind`, but no facing is known
+        let partition = scene_partition(Vec3::new(40.0, 0.0, -8.0), Vec3::ZERO, [IVec2::ZERO]);
+        assert!(!partition.is_behind);
+        assert_eq!(partition.sqr_distance, 576.0);
+    }
+
+    #[test]
     fn no_parcels_is_nearest_and_in_front() {
         assert_eq!(
             scene_partition(CENTRE, EAST, []),
@@ -188,6 +204,7 @@ mod tests {
             key(1, false, 1000.0),
             key(1, true, 0.0),
             key(2, false, 0.0),
+            LoadPriority::BOTTOM,
         ];
         for pair in ordered.windows(2) {
             assert!(

@@ -1578,7 +1578,7 @@ pub fn process_scene_lifecycle(
     mut commands: Commands,
     portables: Res<PortableScenes>,
     focus: Query<&GlobalTransform, With<PrimaryUser>>,
-    camera: Query<&GlobalTransform, With<PrimaryCamera>>,
+    camera: Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
     scene_entities: Query<
         (
             Entity,
@@ -2185,6 +2185,7 @@ mod tests {
         ));
         world.spawn((
             PrimaryCamera::default(),
+            Camera::default(),
             GlobalTransform::from(
                 Transform::from_translation(position).looking_to(camera_forward, Vec3::Y),
             ),

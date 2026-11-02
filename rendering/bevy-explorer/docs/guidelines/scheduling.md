@@ -68,7 +68,7 @@ scenes or replies outstanding. Priority: a scene the player stands in is 0; any 
 its squared distance from the camera to the nearest point of its nearest parcel; both are
 divided by the time since the scene was last sent, so a starved scene rises. A scene behind
 the camera (every parcel corner behind it) is sent at most once a second, unless it is the
-player's or a system scene. A scene is skipped while in
+player's or a system scene; without a rendering camera (headless) nothing is behind. A scene is skipped while in
 flight, broken, or blocked (unless it is the system scene), and is not sent twice in one frame.
 A scene that has not replied for ten seconds is marked broken and its slot freed.
 
