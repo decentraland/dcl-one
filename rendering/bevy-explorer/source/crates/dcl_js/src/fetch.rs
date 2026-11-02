@@ -7,6 +7,9 @@ use common::rpc::{RpcCall, RpcResultReceiver, RpcResultSender};
 use crate::State;
 use dcl_types::RpcCalls;
 
+pub type SignedFetchResult = Result<Vec<(String, String)>, String>;
+pub type SignedFetchReceiver = RpcResultReceiver<SignedFetchResult>;
+
 pub async fn op_signed_fetch_headers(
     state: Rc<RefCell<impl State>>,
     uri: String,
@@ -23,7 +26,7 @@ pub fn start_signed_fetch_headers(
     uri: String,
     method: Option<String>,
     body: Option<String>,
-) -> Result<RpcResultReceiver<Result<Vec<(String, String)>, String>>, anyhow::Error> {
+) -> Result<SignedFetchReceiver, anyhow::Error> {
     debug!("op_signed_fetch_headers");
     let (sx, rx) = RpcResultSender::channel();
 
@@ -41,7 +44,7 @@ pub fn start_signed_fetch_headers(
 }
 
 pub async fn finish_signed_fetch_headers(
-    rx: RpcResultReceiver<Result<Vec<(String, String)>, String>>,
+    rx: SignedFetchReceiver,
 ) -> Result<Vec<(String, String)>, anyhow::Error> {
     rx.await?.map_err(|e| anyhow!(e))
 }
