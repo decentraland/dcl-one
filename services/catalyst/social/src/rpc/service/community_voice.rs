@@ -21,10 +21,8 @@ pub(crate) fn resource_not_found(community_id: &str) -> Refusal {
     ))
 }
 
-/// The room actions stay fire-and-forget against the runtime (a failure is
-/// logged and the action answers ok, as the old gatekeeper calls did), but a
-/// room or participant the runtime does not hold is the action's not-found
-/// (upstream #503's gatekeeper 404 mapping).
+/// Missing room resources are not-found; other executor failures reach the
+/// caller as an internal error rather than acknowledging an action that failed.
 fn runtime(
     action: &str,
     community_id: &str,
@@ -35,7 +33,7 @@ fn runtime(
         Err(VoiceUnavailable::NotFound) => Err(resource_not_found(community_id)),
         Err(e) => {
             tracing::warn!(error = %e, %community_id, "voice runtime: {action}");
-            Ok(())
+            Err(Refusal::Internal(e.to_string()))
         }
     }
 }
@@ -109,27 +107,41 @@ pub(crate) async fn start_community_voice_chat(
     Ok(conn)
 }
 
-/// A member of an active community joins; a banned wallet is refused
-/// before any grant is minted, from the same read as the role.
+/// An active public community admits guests; private communities require
+/// membership. A ban racing the grant is refused by a second check, which
+/// attempts to evict the newly created seat before returning.
 pub(crate) async fn join_community_voice_chat(
     ctx: &Context,
     me: &str,
     community_id: &str,
 ) -> Result<String, Refusal> {
     let role = match ctx.db().community_membership(community_id, me).await? {
-        Some((Some(_), true)) => {
+        Some((_, _, true)) => {
             return Err(Refusal::Forbidden("banned from this community".into()));
         }
-        Some((Some(role), false)) => role,
-        _ => return Err(Refusal::Forbidden(NOT_A_MEMBER.into())),
+        Some((_, Some(role), false)) => role,
+        Some((false, None, false)) => "none".into(),
+        Some((true, None, false)) => return Err(Refusal::Forbidden(NOT_A_MEMBER.into())),
+        None => return Err(resource_not_found(community_id)),
     };
     let Some(cid) = community_uuid(community_id) else {
         return Err(Refusal::Forbidden(NOT_A_MEMBER.into()));
     };
-    ctx.voice()
+    let credentials = ctx
+        .voice()
         .community_voice_credentials(cid, me, &role, CommunityVoiceAction::Join)
         .await
-        .map_err(|e| Refusal::Internal(format!("community voice credentials: {e}")))
+        .map_err(|e| match e {
+            VoiceUnavailable::NotFound => resource_not_found(community_id),
+            other => Refusal::Internal(format!("community voice credentials: {other}")),
+        })?;
+    if ctx.db().is_member_banned(community_id, me).await? {
+        if let Err(e) = ctx.voice().kick_player(cid, me).await {
+            tracing::warn!(error = %e, %community_id, "voice runtime: evict join racing a ban");
+        }
+        return Err(Refusal::Forbidden("banned from this community".into()));
+    }
+    Ok(credentials)
 }
 
 /// Raising a hand needs participation; lowering it is idempotent and never
@@ -168,16 +180,26 @@ pub(crate) async fn set_speaker(
     } else {
         "demote other speakers"
     };
-    require_moderator_over_member(ctx.db(), community_id, me, target, action)
-        .await?
-        .map_err(forbidden)?;
+    let target = normalize(target);
+    if !promote && target == me {
+        let Some((private, role, _)) = ctx.db().community_membership(community_id, me).await?
+        else {
+            return Err(resource_not_found(community_id));
+        };
+        if private
+            && CommunityStanding::from_rows(false, role.as_deref()) == CommunityStanding::NotAMember
+        {
+            return Err(Refusal::Forbidden(NOT_A_MEMBER.into()));
+        }
+    } else {
+        require_moderator_over_member(ctx.db(), community_id, me, &target, action, true)
+            .await?
+            .map_err(forbidden)?;
+    }
     let Some(cid) = community_uuid(community_id) else {
         return Ok(());
     };
-    let outcome = ctx
-        .voice()
-        .set_speaker(cid, &normalize(target), promote)
-        .await;
+    let outcome = ctx.voice().set_speaker(cid, &target, promote).await;
     runtime(action, community_id, outcome)
 }
 
@@ -203,9 +225,16 @@ pub(crate) async fn reject_speak_request(
     community_id: &str,
     target: &str,
 ) -> Result<(), Refusal> {
-    require_moderator_over_member(ctx.db(), community_id, me, target, "reject speak requests")
-        .await?
-        .map_err(forbidden)?;
+    require_moderator_over_member(
+        ctx.db(),
+        community_id,
+        me,
+        target,
+        "reject speak requests",
+        false,
+    )
+    .await?
+    .map_err(forbidden)?;
     let Some(cid) = community_uuid(community_id) else {
         return Ok(());
     };
@@ -225,10 +254,12 @@ pub(crate) async fn end_community_voice_chat(
     require_moderator(ctx.db(), community_id, me)
         .await?
         .map_err(forbidden)?;
-    if let Some(cid) = community_uuid(community_id)
-        && let Err(e) = ctx.voice().end_community_voice_chat(cid, me).await
-    {
-        tracing::warn!(error = %e, %community_id, "voice runtime: end community voice chat");
+    if let Some(cid) = community_uuid(community_id) {
+        runtime(
+            "end community voice chat",
+            community_id,
+            ctx.voice().end_community_voice_chat(cid, me).await,
+        )?;
     }
     fan_community_voice(
         ctx,
@@ -508,5 +539,27 @@ impl SocialServiceImpl {
             .await,
             |()| mute_speaker_from_community_voice_chat_response::Ok { muted }
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn executor_failures_are_not_acknowledged_as_success() {
+        for error in [
+            VoiceUnavailable::NotConfigured,
+            VoiceUnavailable::Failed("executor failed".into()),
+        ] {
+            assert!(matches!(
+                runtime("mute", "community", Err(error)),
+                Err(Refusal::Internal(_))
+            ));
+        }
+        assert_eq!(
+            runtime("mute", "community", Err(VoiceUnavailable::NotFound)),
+            Err(resource_not_found("community"))
+        );
     }
 }

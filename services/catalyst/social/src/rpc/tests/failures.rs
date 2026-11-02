@@ -182,3 +182,76 @@ async fn an_internal_refusal_carries_no_database_text() {
         assert_eq!(remote.error_message, "Internal Server Error", "{name}");
     }
 }
+
+/// Gatekeeper execution errors propagate through all shared operations. An
+/// unsuccessful end publishes no ENDED notification (upstream
+/// community-voice.ts:323-366; moderation.ts awaits every executor call).
+#[tokio::test]
+async fn community_executor_failures_are_reported_and_do_not_announce_an_end() {
+    use crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime;
+    use crate::rpc::service::{Refusal, ops};
+
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let owner = addr("vfowner");
+    let community = seed_community(&pool, true, &owner, "owner").await;
+    let cid = community.to_string();
+    let ctx = test_ctx(Db::new(pool.clone()), Arc::new(NoVoiceRuntime));
+    let mut updates = ctx.pubsub().subscribe(&owner);
+    for (action, result) in [
+        (
+            "raise",
+            ops::request_to_speak(&ctx, &owner, &cid, true).await,
+        ),
+        (
+            "lower",
+            ops::request_to_speak(&ctx, &owner, &cid, false).await,
+        ),
+        (
+            "promote",
+            ops::set_speaker(&ctx, &owner, &cid, &owner, true).await,
+        ),
+        (
+            "demote",
+            ops::set_speaker(&ctx, &owner, &cid, &owner, false).await,
+        ),
+        ("kick", ops::kick_player(&ctx, &owner, &cid, &owner).await),
+        (
+            "mute",
+            ops::mute_speaker(&ctx, &owner, &cid, &owner, true).await,
+        ),
+        (
+            "reject",
+            ops::reject_speak_request(&ctx, &owner, &cid, &owner).await,
+        ),
+        (
+            "end",
+            ops::end_community_voice_chat(&ctx, &owner, &cid).await,
+        ),
+    ] {
+        assert!(
+            matches!(result, Err(Refusal::Internal(_))),
+            "{action}: {result:?}"
+        );
+    }
+    let end = SocialServiceImpl
+        .end_community_voice_chat(
+            EndCommunityVoiceChatPayload { community_id: cid },
+            procedure_ctx(&ctx, &owner, 71),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            end.response,
+            Some(end_community_voice_chat_response::Response::InternalServerError(_))
+        ),
+        "{end:?}"
+    );
+    assert!(
+        updates.try_recv().is_err(),
+        "failed execution announced an end"
+    );
+    drop_community(&pool, community).await;
+}

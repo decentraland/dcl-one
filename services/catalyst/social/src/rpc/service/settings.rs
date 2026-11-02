@@ -54,6 +54,36 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<UpsertSocialSettingsResponse, SocialError> {
         let me = Self::caller(&context)?;
+        let invalid = if request.private_messages_privacy.is_none()
+            && request.blocked_users_messages_visibility.is_none()
+            && request.show_situation_reactions.is_none()
+        {
+            Some("At least one setting to update must be provided")
+        } else if request
+            .private_messages_privacy
+            .is_some_and(|value| PrivateMessagePrivacySetting::try_from(value).is_err())
+        {
+            Some("Unknown private messages privacy setting")
+        } else if request
+            .blocked_users_messages_visibility
+            .is_some_and(|value| BlockedUsersMessagesVisibilitySetting::try_from(value).is_err())
+        {
+            Some("Unknown blocked users messages visibility setting")
+        } else if request
+            .show_situation_reactions
+            .is_some_and(|value| SituationReactionsVisibility::try_from(value).is_err())
+        {
+            Some("Unknown situation reactions visibility setting")
+        } else {
+            None
+        };
+        if let Some(message) = invalid {
+            return Ok(UpsertSocialSettingsResponse {
+                response: Some(upsert_social_settings_response::Response::InvalidRequest(
+                    invalid_req(message),
+                )),
+            });
+        }
         let pmp = request
             .private_messages_privacy
             .map(|_| pmp_to_db(request.private_messages_privacy()));

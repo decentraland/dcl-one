@@ -16,6 +16,7 @@ use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use tokio::sync::Notify;
+use tokio_util::sync::CancellationToken;
 
 pub use crate::rpc::limits::PairScope;
 
@@ -48,6 +49,7 @@ pub struct ContextInner {
     friendship_limiter: FriendshipMutationLimiter,
     admission: Admission,
     identities: DashMap<u32, String>,
+    subscriptions: DashMap<(u32, &'static str), Arc<CancellationToken>>,
     presence: DashMap<String, u32>,
     topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
     connectivity_operations: tokio::sync::Semaphore,
@@ -70,6 +72,29 @@ pub(crate) struct ConnectivityCursor {
 #[derive(Clone)]
 pub struct Context(Arc<ContextInner>);
 
+/// Releases only the subscription it acquired, including after transport-id reuse.
+pub(crate) struct SubscriptionGuard {
+    context: Context,
+    key: (u32, &'static str),
+    token: Arc<CancellationToken>,
+}
+
+impl SubscriptionGuard {
+    pub(crate) fn cancellation(&self) -> CancellationToken {
+        self.token.as_ref().clone()
+    }
+}
+
+impl Drop for SubscriptionGuard {
+    fn drop(&mut self) {
+        self.token.cancel();
+        self.context
+            .0
+            .subscriptions
+            .remove_if(&self.key, |_, token| Arc::ptr_eq(token, &self.token));
+    }
+}
+
 impl Context {
     pub fn new(
         voice_settings: VoiceSettings,
@@ -86,6 +111,7 @@ impl Context {
             friendship_limiter: FriendshipMutationLimiter::new(),
             admission: Admission::default(),
             identities: DashMap::new(),
+            subscriptions: DashMap::new(),
             presence: DashMap::new(),
             topology: std::sync::OnceLock::new(),
             connectivity_operations: tokio::sync::Semaphore::new(4),
@@ -153,6 +179,35 @@ impl Context {
     pub fn forget_identity(&self, transport_id: u32) {
         self.0.identities.remove(&transport_id);
         self.0.kill_handles.remove(&transport_id);
+        self.0.subscriptions.retain(|(id, _), token| {
+            if *id == transport_id {
+                token.cancel();
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    /// One active RPC stream of each kind per connection, across all its ports.
+    pub(crate) fn try_subscription(
+        &self,
+        transport_id: u32,
+        procedure: &'static str,
+    ) -> Option<SubscriptionGuard> {
+        let key = (transport_id, procedure);
+        match self.0.subscriptions.entry(key) {
+            dashmap::mapref::entry::Entry::Occupied(_) => None,
+            dashmap::mapref::entry::Entry::Vacant(entry) => {
+                let token = Arc::new(CancellationToken::new());
+                entry.insert(token.clone());
+                Some(SubscriptionGuard {
+                    context: self.clone(),
+                    key,
+                    token,
+                })
+            }
+        }
     }
 
     pub fn identity(&self, transport_id: u32) -> Option<String> {
@@ -396,6 +451,7 @@ impl Context {
                                 friend,
                                 SocialEvent::TopologyFriendConnectivity(
                                     FriendConnectivityUpdate {
+                                        stream_closed: None,
                                         friend: Some(profile.clone()),
                                         status,
                                     },
@@ -425,6 +481,7 @@ impl Context {
                         member,
                         SocialEvent::TopologyCommunityMember(
                             CommunityMemberConnectivityUpdate {
+                                stream_closed: None,
                                 community_id: community_id.to_string(),
                                 member: Some(User {
                                     address: address.clone(),
@@ -484,6 +541,7 @@ impl Context {
         status: PrivateVoiceChatStatus,
     ) {
         let update = PrivateVoiceChatUpdate {
+            stream_closed: None,
             call_id: chat.id.to_string(),
             status: status as i32,
             caller: Some(User {
