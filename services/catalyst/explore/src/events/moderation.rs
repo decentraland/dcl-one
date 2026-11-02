@@ -587,13 +587,6 @@ pub fn validate_create(body: &CreateEvent, now: DateTime<Utc>) -> Result<DateTim
     Ok(start_at)
 }
 
-fn jump_in_url(world: bool, server: Option<&str>, x: i32, y: i32) -> String {
-    match server {
-        Some(s) if world && !s.is_empty() => format!("https://decentraland.org/play/?realm={s}"),
-        _ => format!("https://decentraland.org/play/?position={x}%2C{y}"),
-    }
-}
-
 /// The old `build_create_raw`: the event document a create stores, pending
 /// approval, its one occurrence the start.
 pub fn build_create_raw(
@@ -615,7 +608,9 @@ pub fn build_create_raw(
         .url
         .clone()
         .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| jump_in_url(world, body.server.as_deref(), body.x, body.y));
+        .unwrap_or_else(|| {
+            super::metadata::jump_in_url(world, body.server.as_deref(), body.x, body.y)
+        });
     let mut seen = std::collections::HashSet::new();
     let schedules: Vec<String> = body
         .schedules
@@ -845,6 +840,10 @@ pub async fn create_as(
     let id = generate_id();
     let mut doc = build_create_raw(body, creator, start_at, place_id.as_deref(), world, now)?;
     doc["id"] = json!(id);
+    if let Some(raw) = doc.as_object_mut() {
+        let mut conn = pool.acquire().await?;
+        super::metadata::enrich(&mut conn, raw, None, true).await?;
+    }
     if creator != ADMIN_CREATOR {
         if let Some(community) = body.community_id.as_deref() {
             validate_community(pool, community, creator).await?;
@@ -896,9 +895,8 @@ pub async fn create_as(
     Ok(id)
 }
 
-/// Writes `raw` as the event's document and its projected columns, with
-/// `signer`'s overlay (`payload` as received), in one transaction: an edit,
-/// a delete or a moderation of a stored event.
+/// Store an edit/delete using the caller's already locked row and transaction.
+/// `before` is that locked snapshot, not a document read outside the lock.
 pub(super) async fn store_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
