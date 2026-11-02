@@ -34,9 +34,13 @@ Stable occurrence identifiers and a unique occurrence constraint retain durable
 scan progress, including due-time ties and late arrivals; there is no separate
 timestamp cursor that could permanently skip a newly approved event.
 
-The worker drains recipient pages within a five-second time budget. Cleanup runs
+The worker drains recipient pages within a five-second dispatch budget. Cleanup runs
 first with its own bounded opportunity, independent of dispatch backlog. Reminder
-and start scans receive separate budgets so one cannot starve the other.
+and start scans receive separate three-second budgets so one cannot starve the other;
+scan statements have a two-second server timeout. Scan failures are returned to
+the periodic job after queued delivery gets its turn, making failures visible
+through the job's error reporting and backoff. Cleanup failures are logged and
+do not prevent scanning or delivery.
 Transaction-local PostgreSQL statement and lock timeouts bound server work as
 well as client waits. Each claim commits a queue-order rotation before processing;
 a timed-out page therefore retains its recipient cursor without keeping the
@@ -49,7 +53,9 @@ catch-up window, preventing cleanup from making old lifecycle events eligible
 again. Unfinished entries are retained. Reminder and start delivery checks reject
 stale occurrences and recheck the current event schedule and payload under a
 shared event-row lock before each page, so an old queued start is suppressed after
-rescheduling. An already processed or
+rescheduling. Committed suppression emits a structured warning identifying the
+intent, event, kind and reason, including notices that expired while deferred by
+lock contention. An already processed or
 suppressed occurrence remains deduplicated if the same occurrence is later
 reapproved. Outage recovery does not promise delivery of every missed historical
 notice. New notification rows use the database delivery clock for `occurred_at`,
@@ -60,7 +66,9 @@ remains in the notification metadata. Reminder wording says “starts soon” ra
 than assuming that exactly one hour remains.
 
 Event notification channel preferences come from Social subscriptions, including
-per-type settings and community opt-outs. Legacy Explore profile notification
+per-type settings and community opt-outs. Community UUID scopes are normalized
+on write and lookup; delivery also recognizes existing non-canonical UUID scopes.
+Legacy Explore profile notification
 settings remain a separate contract. Event-only in-app suppression does not
 change unrelated producers. Suppressed event rows are stored as read with a
 read timestamp, keeping them out of the unread index while preserving independent

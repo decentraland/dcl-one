@@ -562,7 +562,9 @@ impl NotificationsStore {
             r#"
             SELECT EXISTS (
               SELECT 1 FROM social.subscription_opt_outs
-              WHERE address = $1 AND scope = $2 AND scope_id = $3
+              WHERE address = $1 AND scope = $2 AND (scope_id = $3
+                OR ($2='community' AND CASE WHEN pg_input_is_valid(scope_id,'uuid')
+                    THEN scope_id::uuid END = CASE WHEN pg_input_is_valid($3,'uuid') THEN $3::uuid END))
             )
             "#,
         )
@@ -580,6 +582,12 @@ impl NotificationsStore {
         scope: &str,
         scope_id: &str,
     ) -> Result<(), ApiError> {
+        // Keep opaque legacy IDs compatible; UUID community IDs have one spelling.
+        let canonical = (scope == "community")
+            .then(|| Uuid::parse_str(scope_id).ok())
+            .flatten()
+            .map(|id| id.to_string());
+        let scope_id = canonical.as_deref().unwrap_or(scope_id);
         sqlx::query(
             r#"
             INSERT INTO social.subscription_opt_outs (address, scope, scope_id, created_at)
@@ -605,7 +613,9 @@ impl NotificationsStore {
         let res = sqlx::query(
             r#"
             DELETE FROM social.subscription_opt_outs
-            WHERE address = $1 AND scope = $2 AND scope_id = $3
+            WHERE address = $1 AND scope = $2 AND (scope_id = $3
+                OR ($2='community' AND CASE WHEN pg_input_is_valid(scope_id,'uuid')
+                    THEN scope_id::uuid END = CASE WHEN pg_input_is_valid($3,'uuid') THEN $3::uuid END))
             "#,
         )
         .bind(address)

@@ -17,7 +17,7 @@ use crate::identity::Address;
 const PAGE: i64 = 100;
 const CATCH_UP_SECONDS: i64 = 3600;
 const PASS_BUDGET: Duration = Duration::from_secs(5);
-const SCAN_BUDGET: Duration = Duration::from_secs(1);
+const SCAN_BUDGET: Duration = Duration::from_secs(3);
 const CLEANUP_BUDGET: Duration = Duration::from_millis(500);
 const RETENTION_DAYS: i64 = 30;
 
@@ -82,7 +82,7 @@ const SCAN_SQL: &str = "
                WHERE c.id=CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END
                  AND c.origin='local' AND c.active AND NOT c.suspended
                  AND NOT EXISTS (SELECT 1 FROM social.subscription_opt_outs o
-                     WHERE o.address=m.member_address AND o.scope='community' AND o.scope_id=c.id::text))))
+                     WHERE o.address=m.member_address AND o.scope='community' AND CASE WHEN pg_input_is_valid(o.scope_id,'uuid') THEN o.scope_id::uuid END=c.id))))
       AND d.starts_at - $2::int4 * interval '1 second' >= $4
       AND d.starts_at - $2::int4 * interval '1 second' <= $3
       AND CASE WHEN $1='events_starts_soon' THEN d.starts_at > $3
@@ -98,6 +98,9 @@ async fn scan_kind(
     now: NaiveDateTime,
 ) -> anyhow::Result<u64> {
     let mut tx = timed_transaction(pool).await?;
+    sqlx::query("SET LOCAL statement_timeout = '2s'")
+        .execute(&mut *tx)
+        .await?;
     let rows: Vec<Occurrence> = sqlx::query_as(SCAN_SQL)
         .bind(kind)
         .bind(ahead)
@@ -154,7 +157,7 @@ async fn recipients(
               AND COALESCE(e.raw->>'rejected','false') <> 'true' \
               AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true' AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true' \
               AND NOT EXISTS (SELECT 1 FROM social.subscription_opt_outs o \
-                  WHERE o.address=m.member_address AND o.scope='community' AND o.scope_id=$5::uuid::text) \
+                  WHERE o.address=m.member_address AND o.scope='community' AND CASE WHEN pg_input_is_valid(o.scope_id,'uuid') THEN o.scope_id::uuid END=$5::uuid) \
             ORDER BY m.member_address LIMIT $7) \
         ) SELECT address,bool_or(community) AS community,max(community_name) AS community_name \
           FROM candidates WHERE address > $6 GROUP BY address ORDER BY address LIMIT $7",
@@ -298,15 +301,19 @@ async fn dispatch_page(
             obsolete = true;
         }
     }
-    let recipients = if obsolete || stale_occurrence(&intent, now) {
-        Vec::new()
-    } else {
-        recipients(&mut tx, &intent).await?
-    };
     let delivered_at: NaiveDateTime =
         sqlx::query_scalar("SELECT timezone('UTC', clock_timestamp())")
             .fetch_one(&mut *tx)
             .await?;
+    // Recheck expiry after lock waits and scans, not only at pass start. The
+    // supplied horizon can be ahead of the wall clock for deterministic replay.
+    let checked_at = now.max(delivered_at);
+    let suppression = suppression_reason(&intent, checked_at, obsolete);
+    let recipients = if suppression.is_some() {
+        Vec::new()
+    } else {
+        recipients(&mut tx, &intent).await?
+    };
     let batch: Vec<NewNotification> = recipients
         .iter()
         .filter_map(|recipient| {
@@ -324,9 +331,26 @@ async fn dispatch_page(
     let finished = recipients.len() < PAGE as usize;
     sqlx::query("UPDATE social.event_notification_intents SET recipient_after=$2,processed_at=CASE WHEN $3 THEN $4 ELSE NULL END,dispatch_at=timezone('UTC', clock_timestamp()) WHERE id=$1")
         .bind(intent.id).bind(recipients.last().map(|row| row.address.as_str()).unwrap_or(&intent.recipient_after))
-        .bind(finished).bind(now).execute(&mut *tx).await?;
+        .bind(finished).bind(checked_at).execute(&mut *tx).await?;
     tx.commit().await?;
+    if let Some(reason) = suppression {
+        tracing::warn!(intent_id=%intent.id,event_id=%intent.event_id,kind=%intent.kind,reason,suppressed_intents=1,"event notification intent suppressed");
+    }
     Ok(Some(inserted))
+}
+
+fn suppression_reason(intent: &Intent, now: NaiveDateTime, obsolete: bool) -> Option<&'static str> {
+    if obsolete {
+        Some("obsolete_occurrence")
+    } else if stale_occurrence(intent, now) {
+        Some(if intent.kind == "events_started" {
+            "event_ended"
+        } else {
+            "reminder_expired"
+        })
+    } else {
+        None
+    }
 }
 
 fn stale_occurrence(intent: &Intent, now: NaiveDateTime) -> bool {
@@ -372,34 +396,29 @@ async fn scan_with_budget(
         while scan_kind(pool, kind, ahead, now).await? == PAGE as u64 {}
         Ok::<_, anyhow::Error>(())
     };
-    match tokio::time::timeout(SCAN_BUDGET, scan).await {
-        Ok(Err(error)) if timed_out(&error) => {
-            tracing::warn!(%error, kind, "event occurrence scan deferred");
-            Ok(())
-        }
-        Ok(result) => result,
-        Err(_) => Ok(()),
-    }
+    tokio::time::timeout(SCAN_BUDGET, scan)
+        .await
+        .map_err(|_| anyhow::anyhow!("{kind} occurrence scan exceeded its budget"))?
+        .map_err(|error| error.context(format!("{kind} occurrence scan failed")))
 }
 
 /// Cleanup always receives a turn before scanning/dispatch. Independent scan
 /// budgets prevent one occurrence kind starving the other. Committed rotation
-/// survives a timed-out page; only timeout/lock errors are deferred.
+/// survives a timed-out page. Scan failures surface after dispatch; maintenance
+/// errors are logged without blocking delivery.
 pub async fn run_once(pool: &PgPool, base: &str, now: NaiveDateTime) -> anyhow::Result<u64> {
-    let deadline = tokio::time::Instant::now() + PASS_BUDGET;
     match tokio::time::timeout(CLEANUP_BUDGET, cleanup(pool, now)).await {
-        Ok(Err(error)) if timed_out(&error) => {
+        Ok(Err(error)) => {
             tracing::warn!(%error, "event intent cleanup deferred")
         }
-        Ok(result) => result?,
+        Ok(Ok(())) => {}
         Err(_) => {}
     }
     let (reminders, starts) = tokio::join!(
         scan_with_budget(pool, "events_starts_soon", 3600, now),
         scan_with_budget(pool, "events_started", 0, now),
     );
-    reminders?;
-    starts?;
+    let deadline = tokio::time::Instant::now() + PASS_BUDGET;
     let mut emitted = 0;
     loop {
         match tokio::time::timeout_at(deadline, dispatch_page(pool, base, now)).await {
@@ -413,6 +432,8 @@ pub async fn run_once(pool: &PgPool, base: &str, now: NaiveDateTime) -> anyhow::
             Err(_) => break,
         }
     }
+    reminders?;
+    starts?;
     Ok(emitted)
 }
 
@@ -1031,8 +1052,19 @@ mod tests {
             "cleanup runs even while a blocked pending intent exhausts the dispatch budget"
         );
         held.rollback().await.unwrap();
-        drain_until_complete(pool, now, &slow, 1).await;
-        assert_eq!(count(pool, &slow, "events_started", &address).await, 1);
+        let expired_now = now + Span::hours(2);
+        let intent: Intent = sqlx::query_as("SELECT id,event_id,kind,event,local_event,occurrence_start,occurred_at,recipient_after FROM social.event_notification_intents WHERE id=$1")
+            .bind(slow_intent).fetch_one(pool).await.unwrap();
+        assert_eq!(
+            suppression_reason(&intent, expired_now, false),
+            Some("event_ended")
+        );
+        drain_until_complete(pool, expired_now, &slow, 1).await;
+        assert_eq!(
+            count(pool, &slow, "events_started", &address).await,
+            0,
+            "contention followed by expiry records suppression rather than delivering stale work"
+        );
 
         let baseline: String = sqlx::query_scalar("SHOW statement_timeout")
             .fetch_one(pool)
@@ -1068,7 +1100,7 @@ mod tests {
         add_event(pool, &started, &address, now - Span::minutes(10)).await;
         let function = format!("delay_reminder_{prefix}");
         let trigger = format!("delay_reminder_trigger_{prefix}");
-        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_id='{reminder}' AND NEW.kind='events_starts_soon' THEN PERFORM pg_sleep(2); END IF; RETURN NEW; END $$")))
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_id='{reminder}' AND NEW.kind='events_starts_soon' THEN PERFORM pg_sleep(4); END IF; RETURN NEW; END $$")))
             .execute(pool).await.unwrap();
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {trigger} BEFORE INSERT ON social.event_notification_intents FOR EACH ROW EXECUTE FUNCTION social.{function}()")))
             .execute(pool).await.unwrap();
@@ -1085,7 +1117,12 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
-        result.unwrap();
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("events_starts_soon occurrence scan")
+        );
         assert_eq!(count(pool, &started, "events_started", &address).await, 1);
         assert_eq!(
             count(pool, &reminder, "events_starts_soon", &address).await,
@@ -1121,7 +1158,7 @@ mod tests {
         .await
         .unwrap();
         sqlx::query("INSERT INTO social.community_members(community_id,member_address,role) VALUES($1,$2,'member')").bind(community).bind(&address).execute(pool).await.unwrap();
-        sqlx::query("INSERT INTO social.subscription_opt_outs(address,scope,scope_id) VALUES($1,'community',$2)").bind(&address).bind(community.to_string()).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO social.subscription_opt_outs(address,scope,scope_id) VALUES($1,'community',$2)").bind(&address).bind(community.to_string().to_uppercase()).execute(pool).await.unwrap();
         let upper = community.to_string().to_uppercase();
         sqlx::query("INSERT INTO explore.event(id,name,approved,origin,community_id,start_at,finish_at,duration_ms,raw)
             VALUES($1,'Canonical',true,'local',$2,$3,$3+interval '1 hour',3600000,
@@ -1138,6 +1175,99 @@ mod tests {
         assert!(
             !queued,
             "canonical opt-out prevents noncanonical event IDs creating empty work"
+        );
+        // An already queued notice must also honor a legacy uppercase opt-out.
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) SELECT $1,id,'event_created',raw,true,$3 FROM explore.event WHERE id=$2")
+            .bind(Uuid::new_v4()).bind(&community_event).bind(now).execute(pool).await.unwrap();
+        drain_until_complete(pool, now, &community_event, 1).await;
+        assert_eq!(
+            count(pool, &community_event, "event_created", &address).await,
+            0
+        );
+        let store = super::super::NotificationsStore::new(pool.clone());
+        let parsed_address = address.parse().unwrap();
+        assert!(
+            store
+                .is_opted_out(&parsed_address, "community", &community.to_string())
+                .await
+                .unwrap()
+        );
+        assert!(
+            store
+                .delete_opt_out(&parsed_address, "community", &community.to_string())
+                .await
+                .unwrap()
+        );
+        store
+            .create_opt_out(
+                &parsed_address,
+                "community",
+                &community.to_string().to_uppercase(),
+            )
+            .await
+            .unwrap();
+        let stored: String = sqlx::query_scalar("SELECT scope_id FROM social.subscription_opt_outs WHERE address=$1 AND scope='community'")
+            .bind(&address).fetch_one(pool).await.unwrap();
+        assert_eq!(stored, community.to_string());
+        assert!(
+            store
+                .delete_opt_out(
+                    &parsed_address,
+                    "community",
+                    &community.to_string().to_uppercase()
+                )
+                .await
+                .unwrap()
+        );
+        // Ordinary maintenance failures must not block already queued delivery.
+        let cleanup_event = format!("{prefix}-cleanup-error");
+        let delivery_event = format!("{prefix}-cleanup-delivery");
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at,processed_at) VALUES($1,$2,'event_approved','{}',false,$3,$3)")
+            .bind(Uuid::new_v4()).bind(&cleanup_event).bind(now-Span::days(40)).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,'event_approved',$3,false,$4)")
+            .bind(Uuid::new_v4()).bind(&delivery_event).bind(json!({"name":"Cleanup delivery","user":address})).bind(now).execute(pool).await.unwrap();
+        let function = format!("fail_cleanup_{prefix}");
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF OLD.event_id='{cleanup_event}' THEN RAISE EXCEPTION 'test cleanup failure'; END IF; RETURN OLD; END $$"))).execute(pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {function} BEFORE DELETE ON social.event_notification_intents FOR EACH ROW EXECUTE FUNCTION social.{function}()"))).execute(pool).await.unwrap();
+        let result = run_once(pool, "https://example.org", now).await;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TRIGGER {function} ON social.event_notification_intents"
+        )))
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP FUNCTION social.{function}()"
+        )))
+        .execute(pool)
+        .await
+        .unwrap();
+        result.unwrap();
+        assert_eq!(
+            count(pool, &delivery_event, "event_approved", &address).await,
+            1
+        );
+        let retained: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social.event_notification_intents WHERE event_id=$1)",
+        )
+        .bind(&cleanup_event)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert!(
+            retained,
+            "failed cleanup rolls back without preventing delivery"
+        );
+        // A pass-start horizon must not permit a notice that expires during work.
+        let expired_reminder = format!("{prefix}-expired-during-pass");
+        let event_start = now - Span::minutes(1);
+        add_event(pool, &expired_reminder, &address, event_start).await;
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurrence_start,occurred_at) SELECT $1,id,'events_starts_soon',raw,false,$3,$3-interval '1 hour' FROM explore.event WHERE id=$2")
+            .bind(Uuid::new_v4()).bind(&expired_reminder).bind(event_start).execute(pool).await.unwrap();
+        drain_until_complete(pool, now - Span::minutes(2), &expired_reminder, 1).await;
+        assert_eq!(
+            count(pool, &expired_reminder, "events_starts_soon", &address).await,
+            0
         );
     }
 }

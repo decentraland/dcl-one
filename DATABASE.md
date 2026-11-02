@@ -273,8 +273,15 @@ including when there is a backlog. Claims rotate queue order durably before page
 work; transaction-local database timeouts bound slow queries and lock waits.
 Recipient branches are bounded before merging the page. Notification timestamps
 use the delivery clock so incremental polling sees catch-up deliveries; source
-timing remains in metadata. The worker uses a time budget rather than a
-fixed number of audience pages. Catalogue-scale capacity is not established by
+timing remains in metadata. The worker uses a five-second dispatch budget rather than a
+fixed number of audience pages. Independent three-second scan budgets and
+two-second scan statement timeouts allow more time for catalogue discovery than
+for recipient pages. Scan failures reach job error reporting after dispatch;
+cleanup failures are logged without stopping delivery. Committed stale or
+obsolete suppression logs the intent and reason, including expiry after lock
+contention. Community opt-out UUIDs are canonicalized on write and lookup;
+delivery recognizes existing non-canonical UUID scopes too.
+Catalogue-scale capacity is not established by
 bounded result sizes alone. See the
 [event notification ADR](docs/adr/2026-11-01-event-notification-delivery.md).
 
