@@ -5,7 +5,7 @@
 
 use crate::comms::gatekeeper::voice::rooms::VoiceRooms;
 use crate::rpc::db::Db;
-use crate::rpc::limits::FriendshipMutationLimiter;
+use crate::rpc::limits::{Admission, FriendshipMutationLimiter};
 use crate::rpc::profiles::Profiles;
 use crate::rpc::proto::v2::{
     CommunityMemberConnectivityUpdate, ConnectivityStatus, FriendConnectivityUpdate,
@@ -46,6 +46,7 @@ pub struct ContextInner {
     pub voice: Arc<dyn VoiceRooms>,
     pub profiles: Profiles,
     friendship_limiter: FriendshipMutationLimiter,
+    admission: Admission,
     identities: DashMap<u32, String>,
     presence: DashMap<String, u32>,
     topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
@@ -83,6 +84,7 @@ impl Context {
             voice,
             profiles,
             friendship_limiter: FriendshipMutationLimiter::new(),
+            admission: Admission::default(),
             identities: DashMap::new(),
             presence: DashMap::new(),
             topology: std::sync::OnceLock::new(),
@@ -118,6 +120,10 @@ impl Context {
     }
     pub fn friendship_limiter(&self) -> &FriendshipMutationLimiter {
         &self.0.friendship_limiter
+    }
+    /// The per-address socket cap and subscription bucket of both sockets.
+    pub fn admission(&self) -> &Admission {
+        &self.0.admission
     }
 
     /// The identity of a transport is fixed at the handshake; a procedure
@@ -444,32 +450,30 @@ impl Context {
     /// user's call, so the other party keeps ringing until the TTL elapses.
     /// The ENDED notification is symmetric, so the still-online party is told
     /// regardless of which side dropped.
+    /// An accepted call ends through the voice runtime (row, then room);
+    /// otherwise the address's latest pending call is deleted.
     pub async fn end_private_voice_chat_on_disconnect(&self, address: &str) {
-        let chat = match self
-            .0
-            .voice
-            .finish_pending_private_call(
-                crate::comms::gatekeeper::voice::db::PendingPrivateCall::Address(
-                    address.to_string(),
-                ),
-            )
+        let voice = &self.0.voice;
+        let ended = match voice
+            .end_private_voice_chat(None, &address.to_lowercase())
             .await
         {
+            Ok(None) => {
+                let pending = crate::comms::gatekeeper::voice::db::PendingPrivateCall::Address(
+                    address.to_string(),
+                );
+                voice.finish_pending_private_call(pending).await
+            }
+            accepted => accepted,
+        };
+        let chat = match ended {
             Ok(Some(c)) => c,
             Ok(None) => return,
             Err(e) => {
-                tracing::warn!(error = %e, %address, "disconnect voice-cleanup delete failed");
+                tracing::warn!(error = %e, %address, "disconnect voice-cleanup failed");
                 return;
             }
         };
-        if let Err(e) = self
-            .0
-            .voice
-            .end_private_voice_chat(chat.id, &address.to_lowercase())
-            .await
-        {
-            tracing::warn!(error = %e, call_id = %chat.id, "voice runtime: ending the private room on disconnect");
-        }
         self.publish_private_voice(&chat, PrivateVoiceChatStatus::VoiceChatEnded);
     }
 

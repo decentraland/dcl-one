@@ -10,7 +10,7 @@ describe('when browsing additional destinations', () => {
   let firstPage: DiscoverPlace[]
   let lastPlace: DiscoverPlace
   let filteredPlace: DiscoverPlace
-  let hook: { result: { current: UsePlaces } }
+  let hook: { result: { current: UsePlaces }; rerender: (props: { account: string | null }) => void }
   let resolveLatePage: (response: Response) => void
 
   beforeEach(() => {
@@ -26,7 +26,7 @@ describe('when browsing additional destinations', () => {
       const data = filtered ? [filteredPlace] : url.searchParams.get('offset') === '48' ? [lastPlace] : firstPage
       return Promise.resolve(new Response(JSON.stringify({ ok: true, total: filtered ? 1 : 49, data })))
     }))
-    hook = renderHook(() => usePlaces())
+    hook = renderHook(({ account }) => usePlaces(account), { initialProps: { account: null as string | null } })
   })
 
   afterEach(() => {
@@ -60,6 +60,24 @@ describe('when browsing additional destinations', () => {
     })
     expect(hook.result.current.places).toHaveLength(49)
     expect(hook.result.current.loading).toBe(false)
+  })
+
+  describe('and the engine account resolves after pagination', () => {
+    beforeEach(async () => {
+      await waitFor(() => expect(hook.result.current.hasMore).toBe(true))
+      act(() => hook.result.current.loadMore())
+      await waitFor(() => expect(hook.result.current.places).toHaveLength(49))
+      vi.mocked(fetch).mockClear()
+      hook.rerender({ account: '0x1111111111111111111111111111111111111111' })
+    })
+
+    it('should retain every loaded public destination', () => {
+      expect(hook.result.current.places).toEqual([...firstPage, lastPlace])
+    })
+
+    it('should not refetch the public grid', () => {
+      expect(fetch).not.toHaveBeenCalled()
+    })
   })
 
   it('should drop a late second page after a filter change', async () => {

@@ -17,6 +17,9 @@ pub mod fake {
     pub struct FakeVoiceRooms {
         db: crate::comms::gatekeeper::voice::db::VoiceDb,
         pub calls: Mutex<Vec<String>>,
+        /// Addresses the live room does not hold: an action on one is the
+        /// runtime's not-found.
+        pub absent: Mutex<Vec<String>>,
     }
 
     impl FakeVoiceRooms {
@@ -24,11 +27,20 @@ pub mod fake {
             Self {
                 db: crate::comms::gatekeeper::voice::db::VoiceDb::new(pool, Default::default()),
                 calls: Mutex::new(Vec::new()),
+                absent: Mutex::new(Vec::new()),
             }
         }
 
         fn note(&self, line: String) {
             self.calls.lock().push(line);
+        }
+
+        fn present(&self, address: &str) -> Result<(), VoiceUnavailable> {
+            if self.absent.lock().iter().any(|a| a == address) {
+                Err(VoiceUnavailable::NotFound)
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -84,13 +96,19 @@ pub mod fake {
                 .collect())
         }
 
+        /// Records the ask; a fake call has no participant rows, so it is
+        /// never accepted and ends as a pending call.
         async fn end_private_voice_chat(
             &self,
-            call_id: Uuid,
+            call_id: Option<Uuid>,
             address: &str,
-        ) -> Result<(), VoiceUnavailable> {
-            self.note(format!("end-private {call_id} {address}"));
-            Ok(())
+        ) -> Result<
+            Option<crate::comms::gatekeeper::voice::db::PrivateVoiceChatRow>,
+            VoiceUnavailable,
+        > {
+            let call = call_id.map_or_else(|| "latest".to_string(), |id| id.to_string());
+            self.note(format!("end-private {call} {address}"));
+            Ok(None)
         }
 
         async fn community_voice_credentials(
@@ -127,7 +145,7 @@ pub mod fake {
             self.note(format!(
                 "request-to-speak {community_id} {address} {raising_hand}"
             ));
-            Ok(())
+            self.present(address)
         }
 
         async fn reject_speak_request(
@@ -136,7 +154,7 @@ pub mod fake {
             address: &str,
         ) -> Result<(), VoiceUnavailable> {
             self.note(format!("reject-speak-request {community_id} {address}"));
-            Ok(())
+            self.present(address)
         }
 
         async fn set_speaker(
@@ -146,7 +164,7 @@ pub mod fake {
             promote: bool,
         ) -> Result<(), VoiceUnavailable> {
             self.note(format!("set-speaker {community_id} {address} {promote}"));
-            Ok(())
+            self.present(address)
         }
 
         async fn kick_player(
@@ -155,7 +173,7 @@ pub mod fake {
             address: &str,
         ) -> Result<(), VoiceUnavailable> {
             self.note(format!("kick {community_id} {address}"));
-            Ok(())
+            self.present(address)
         }
 
         async fn mute_speaker(
@@ -165,7 +183,7 @@ pub mod fake {
             muted: bool,
         ) -> Result<(), VoiceUnavailable> {
             self.note(format!("mute {community_id} {address} {muted}"));
-            Ok(())
+            self.present(address)
         }
     }
 }

@@ -26,8 +26,9 @@ pub struct SocialConfig {
     #[arg(long, env = "ARCHIPELAGO_STATS_URL")]
     pub archipelago_stats_url: Option<String>,
 
-    /// Require places added to a community to be owned by the caller per the mirrored places catalogue.
-    #[arg(long, env = "COMMUNITIES_PLACES_OWNERSHIP_CHECK", default_value_t = false, action = clap::ArgAction::Set)]
+    /// Require places added to a community to be owned by the caller per the mirrored places catalogue
+    /// (on by default, as upstream always checks; `false` skips the check).
+    #[arg(long, env = "COMMUNITIES_PLACES_OWNERSHIP_CHECK", default_value_t = true, action = clap::ArgAction::Set)]
     pub communities_places_ownership_check: bool,
 
     /// Mirror the public community listing from `COMMUNITIES_UPSTREAM_URL`

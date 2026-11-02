@@ -26,7 +26,6 @@ import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { bootMode } from '../../lib/bootMode'
-import { isEditorScene } from '../../lib/editorEmbed'
 import { isCancelKey, isEditableTarget, setBindingsSnapshot, useBindingsSnapshot } from '../../lib/bindingLabels'
 import { dispatchCancelLayer } from '../../lib/cancelLayers'
 import { isInputLocked, subscribeInputLock } from '../../lib/inputLock'
@@ -36,6 +35,7 @@ import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '../pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { formatConsoleReply, parseChatCommand } from '../chat/chatCommands'
+import { applyLanguageSetting } from '../chat/translation'
 import { PARCEL_METERS, isGenesisSatelliteView } from '../map/atlas'
 import { EDITOR_BUILD } from '../editorHost/config'
 import { editorEntry } from '../editorHost/source'
@@ -726,11 +726,6 @@ export function photoTime(dateTime: string): number {
   return Number.isNaN(t) ? 0 : t
 }
 
-/** A `?systemScene=` that runs no bridge: none, or the scene editor's own. */
-function runsNoBridge(systemScene: string | null): boolean {
-  return systemScene != null && (systemScene.trim().toLowerCase() === 'none' || isEditorScene(systemScene))
-}
-
 function initialMessages(): ChatLine[] {
   return [{ sender: '', message: 'Type /help for available commands.', channel: 'Nearby', messageId: '', id: -1, ts: Date.now() }]
 }
@@ -1196,6 +1191,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'settings':
           setSettings(msg.settings)
+          applyLanguageSetting(msg.settings)
           break
         case 'bindings':
           setBindingsSnapshot(msg.bindings)
@@ -1213,9 +1209,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'bridgeUnavailable':
           // Every panel behind the bridge would stay empty with nothing to explain why. Not a crash:
           // the engine and the world itself are fine, so it opens as an ordinary dialog (issue #1233).
-          // The scene editor's own ui scene, or none at all, never runs the bridge, so there is
-          // nothing to report; any other substituted ui scene may run it and keeps the dialog.
-          if (runsNoBridge(bootMode().systemScene)) break
+          // With the HUD hidden (?hud=0, or a substituted ui scene) there are no panels to explain.
+          if (bootMode().hideHud) break
           setFatalError((prev) => prev ?? {
             message: 'The HUD could not reach the explorer bridge, so panels may stay empty. Restarting usually fixes it.',
             source: 'bridge'

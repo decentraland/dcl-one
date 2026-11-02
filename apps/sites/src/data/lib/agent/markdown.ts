@@ -273,6 +273,7 @@ function inlineParts(parts: Array<string | null | undefined>): string {
 }
 
 type AgentWhatsOnData = {
+  tab?: "my";
   live?: Event[];
   upcoming?: Event[];
   filter?: string;
@@ -292,6 +293,14 @@ function eventLine(e: Event): string {
 }
 
 export function whatsOnToMarkdown(data: AgentWhatsOnData): string {
+  if (data.tab === "my") {
+    return joinBlocks([
+      heading(1, "My Hangouts"),
+      "Open My Hangouts in a browser and sign in to load your private hangout catalogue and manage authorized approvals.",
+      "[Open My Hangouts](/whats-on?tab=my)",
+      "[Browse public hangouts](/whats-on)",
+    ]);
+  }
   const live = data.live ?? [];
   const upcoming = data.upcoming ?? [];
   const note = inlineParts([

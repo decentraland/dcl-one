@@ -2,7 +2,7 @@
 //! ahead of the mirrored `latest_attendees`, deduplicated case-insensitively.
 //! The going/cancel writes (`events::writes`) upsert explicit local state,
 //! including a cancellation tombstone that overrides the mirrored preview.
-//! row and answer the list in the same transaction.
+//! Each write and its list response share one transaction.
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde_json::Value;

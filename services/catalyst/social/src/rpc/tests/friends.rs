@@ -600,6 +600,62 @@ async fn unblocking_a_stranger_only_lifts_the_block() {
     cleanup_pair(&rig.db, &a, &b).await;
 }
 
+/// Unblocking someone who isn't blocked records nothing and tells no one, so a
+/// friendship survives it (`decentraland/social-service-ea` `bdb14ce`).
+#[tokio::test]
+async fn unblocking_an_unblocked_friend_changes_nothing() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let (a, b) = (addr("ub5"), addr("ub6"));
+    rig.befriend(&a, &b).await;
+    let mut to_b = rig.events(&b);
+    assert!(matches!(
+        rig.unblock(&a, &b).await,
+        unblock_user_response::Response::Ok(_)
+    ));
+    let events = drained(&mut to_b);
+    assert!(events.is_empty(), "{} events", events.len());
+    assert_eq!(
+        status_of(&rig.status(&a, Some(&b)).await),
+        FriendshipStatus::Accepted
+    );
+    assert_eq!(rig.friends_of(&a).await, [b.clone()]);
+    cleanup_pair(&rig.db, &a, &b).await;
+}
+
+/// A request message is capped at 256 characters (code points, not bytes);
+/// a longer one is refused before anything is written.
+#[tokio::test]
+async fn a_request_message_over_256_characters_is_refused() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let (a, b) = (addr("rm1"), addr("rm2"));
+    let with = |message: String| {
+        upsert_friendship_payload::Action::Request(upsert_friendship_payload::RequestPayload {
+            user: user(&b),
+            message: Some(message),
+        })
+    };
+    match rig.upsert(&a, with("ñ".repeat(257))).await {
+        upsert_friendship_response::Response::InvalidRequest(e) => assert_eq!(
+            e.message.as_deref(),
+            Some("The friendship request message cannot be longer than 256 characters")
+        ),
+        other => panic!("expected invalidRequest, got {other:?}"),
+    }
+    assert_eq!(
+        status_of(&rig.status(&a, Some(&b)).await),
+        FriendshipStatus::None
+    );
+    assert!(matches!(
+        rig.upsert(&a, with("ñ".repeat(256))).await,
+        upsert_friendship_response::Response::Accepted(_)
+    ));
+    cleanup_pair(&rig.db, &a, &b).await;
+}
+
 #[tokio::test]
 async fn blocking_yourself_is_an_invalid_request() {
     let Some(rig) = Rig::new().await else {

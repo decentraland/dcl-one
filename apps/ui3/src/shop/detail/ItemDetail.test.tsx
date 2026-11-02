@@ -63,7 +63,7 @@ describe("the item route (a collection item, sold by its creator)", () => {
   it("loading: the preview and the info column hold skeletons", async () => {
     itemPage({ scenario: "loading" });
     await act(async () => {});
-    expect(screen.getByTestId("item-detail")).toBeTruthy();
+    expect(document.querySelector(".shop-pdp[data-route]")).toBeTruthy();
     expect(screen.getByLabelText("Loading preview").getAttribute("aria-busy")).toBe("true");
   });
 
@@ -329,6 +329,6 @@ describe("the seed a card passes", () => {
     await act(async () => {
       itemPage({ offers: { kind: "creatorOrder" } });
     });
-    expect(screen.getByTestId("item-detail").dataset.route).toBe("item");
+    expect(document.querySelector<HTMLElement>(".shop-pdp[data-route]")!.dataset.route).toBe("item");
   });
 });

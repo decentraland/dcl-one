@@ -3,7 +3,27 @@
     mesh_view_bindings::{view, globals},
     prepass_utils::{prepass_depth, prepass_normal},
     pbr_types,
+    mesh_functions,
 }
+
+// an avatar being revealed bottom-up from its ghost (avatar/src/ghost.rs): the tag's low byte is
+// the reveal height above the mesh origin (the feet), 0 for no reveal and 1..=255 spanning the
+// hide-to-full range, and fragments above it are discarded. the encoding comes from
+// scene_material::reveal_shader_defs: a pipeline importing this needs those defs, and one importing
+// only the rest of this file (the ghost, shell texturing) gets by without them
+#ifdef REVEAL_MESH_TAG_MASK
+fn reveal_discard(mesh_tag: u32, world_y: f32, instance_index: u32) -> bool {
+    let step = mesh_tag & #{REVEAL_MESH_TAG_MASK};
+    if step == 0u {
+        return false;
+    }
+    let hide = f32(#{REVEAL_HIDE_MILLIMETRES}) * 0.001;
+    let full = f32(#{REVEAL_FULL_MILLIMETRES}) * 0.001;
+    let reveal_height = hide + (full - hide) * f32(step - 1u) / f32(#{REVEAL_MESH_TAG_MASK} - 1u);
+    let feet_y = mesh_functions::get_world_from_local(instance_index)[3].y;
+    return world_y - feet_y > reveal_height;
+}
+#endif
 
 #ifdef DEPTH_PREPASS
 fn get_depth(pos: vec4<f32>, si: u32) -> f32 {

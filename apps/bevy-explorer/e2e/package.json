@@ -1,0 +1,24 @@
+{
+  "name": "bevy-explorer-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "End-to-end tests of the Bevy Explorer through its console, on the web and on the standalone",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "e2e": "node scripts/e2e.ts",
+    "build-scenes": "node scripts/build-scenes.ts"
+  },
+  "dependencies": {
+    "@noble/curves": "2.4.0",
+    "@noble/hashes": "2.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.11.1",
+    "typescript": "7.0.2"
+  }
+}

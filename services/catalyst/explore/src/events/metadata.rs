@@ -13,15 +13,19 @@ fn text<'a>(raw: &'a Map<String, Value>, key: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty())
 }
 
-fn refresh_target(raw: &mut Map<String, Value>) {
+fn refresh_target(raw: &mut Map<String, Value>, previous: &Map<String, Value>) {
     let generated = text(raw, "url").is_none_or(|value| {
-        url::Url::parse(value).is_ok_and(|url| {
-            url.host_str() == Some("decentraland.org") && matches!(url.path(), "/play" | "/play/")
-        })
+        let mut expected = previous.clone();
+        expected.remove("url");
+        write_target(&mut expected);
+        text(&expected, "url") == Some(value)
     });
-    if !generated {
-        return;
+    if generated {
+        write_target(raw);
     }
+}
+
+fn write_target(raw: &mut Map<String, Value>) {
     let x = raw.get("x").and_then(Value::as_i64).unwrap_or(0);
     let y = raw.get("y").and_then(Value::as_i64).unwrap_or(0);
     let target = if raw.get("world").and_then(Value::as_bool) == Some(true)
@@ -40,8 +44,11 @@ fn refresh_target(raw: &mut Map<String, Value>) {
 pub(super) async fn enrich(
     conn: &mut PgConnection,
     raw: &mut Map<String, Value>,
+    previous: Option<&Map<String, Value>>,
 ) -> Result<(), ApiError> {
-    refresh_target(raw);
+    if let Some(previous) = previous {
+        refresh_target(raw, previous);
+    }
     let user = text(raw, "user").unwrap_or_default().to_lowercase();
     let name: Option<String> = sqlx::query_scalar(
         "SELECT d.entity_metadata->'avatars'->0->>'name' \
@@ -98,17 +105,28 @@ mod tests {
             .as_object()
             .unwrap()
             .clone();
-        refresh_target(&mut raw);
+        let previous = json!({"x":1,"y":2}).as_object().unwrap().clone();
+        refresh_target(&mut raw, &previous);
         assert_eq!(raw["url"], "https://decentraland.org/play/?position=4%2C-5");
+        let previous = raw.clone();
         raw.insert("world".into(), json!(true));
         raw.insert("server".into(), json!("hello.dcl.eth&position=1,2"));
-        refresh_target(&mut raw);
+        refresh_target(&mut raw, &previous);
         assert_eq!(
             raw["url"],
             "https://decentraland.org/play/?realm=hello.dcl.eth%26position%3D1%2C2"
         );
         raw.insert("url".into(), json!("https://example.org/event"));
-        refresh_target(&mut raw);
+        refresh_target(&mut raw, &previous);
         assert_eq!(raw["url"], "https://example.org/event");
+        raw.insert(
+            "url".into(),
+            json!("https://decentraland.org/play/?realm=custom.dcl.eth&position=1,2"),
+        );
+        refresh_target(&mut raw, &previous);
+        assert_eq!(
+            raw["url"],
+            "https://decentraland.org/play/?realm=custom.dcl.eth&position=1,2"
+        );
     }
 }

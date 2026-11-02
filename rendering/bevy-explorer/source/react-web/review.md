@@ -1,0 +1,289 @@
+# review.md — how we keep the HUD working
+
+> **Suite availability:** this public tree includes the unit-test sources but omits
+> the visual/engine gate specs, screenshot baselines and Playwright gate/visual
+> configs described below. Those procedures apply only in an authorized test
+> workspace that supplies them. Inspect the files at the target revision before
+> running a tier; a package script alone does not prove its suite is present.
+> Report unavailable tiers as **not run** and keep their evidence in the task report.
+
+The single place to look before merging anything in `react-web/`. It defines the **test harness**
+(what proves "everything still works"), the **per-domain expectations**, and the **pre-merge
+checklist**. Keep it current: when you add a domain or a rule, add it here.
+
+---
+
+## 0. TL;DR — run this before you push
+
+```bash
+# from react-web/ — Node 24 (`.nvmrc`); on Node 20 vitest reports "no tests" and the SDK build fails
+npm run typecheck          # tsc, the app
+npm test                   # tier 1 — the unit tests present at this revision
+# With the authorized visual suite and configuration present:
+npm run test:visual        # tier 1.5 — visual regression (headless, no engine)
+(cd bridge-scene && npm run build && npm run lint)   # the SDK's type check + eslint (must be 0 errors)
+```
+
+The bridge scene is type-checked by `sdk-commands build`, not bare `tsc` — its tsconfig trips
+TypeScript's deprecation errors under the installed compiler.
+
+`test:visual` reuses whatever is already serving `:5173` (and `npm run dev` reuses `:8100`), so in a
+worktree make sure those aren't another checkout's servers, or run your own on other ports
+(`E2E_URL=http://localhost:5174`).
+
+If `test:visual` reports diffs, open the Playwright HTML report (`npx playwright show-report`) and
+look at the **expected vs actual vs diff** images. Either it's a real regression (fix it) or an
+intended change (refresh the baseline — see §2).
+
+The real engine + the world-space UI it draws (3D nametags, crosshair) can't be screenshotted
+deterministically — they have their own tiers (§3, §4).
+
+---
+
+## 1. The testing tiers (why three)
+
+| Tier | Command | What it proves | Engine? | Deterministic? |
+|------|---------|----------------|---------|----------------|
+| **1 — contract** | `npm test` | Every page→scene API call posts the exact wire message, and every scene→page message updates state. Component clicks fire the right action. | no (FakeDriver) | yes |
+| **1.5 — visual** | `npm run test:visual` | Every DOM **domain renders correctly** — layout, colour, tokens, spacing — diffed against a committed baseline PNG. | no (`?mock=1`) | yes |
+| **2 — engine** | `npm run test:e2e` | The guest-reachable calls actually **round-trip through the real bevy engine + bridge scene**. | yes (headed, WebGPU) | partly |
+
+Tier 1 is the contract net (every call, including ones a guest can't reach). Tier 1.5 is the
+*appearance* net (the thing humans notice). Tier 2 is the *it-actually-talks-to-the-engine* net.
+They're complementary; none replaces another.
+
+> **Why visual regression over an "agent drives Chrome and looks" approach?** A committed-baseline
+> Playwright suite is repeatable, runs in CI, pins the exact pixels, and needs no human/agent in the
+> loop to pass. The agent-driven flow is great for *exploring* a new bug, but it can't be a
+> regression gate. So: Playwright for the gate, agent checklist (§4) only for what can't be mocked.
+
+---
+
+## 2. Tier 1.5 — the visual harness (`e2e/visual.spec.ts`)
+
+Renders the HUD in **mock mode** (`?mock=1`: fake bridge, fixed data, no engine/GPU) and screenshots
+each domain. Config: `playwright.visual.config.ts` (headless, 1600×900, `maxDiffPixelRatio: 0.01`).
+
+**Determinism is engineered, not hoped for** (`prepare()` in the spec):
+- **Frozen clock** (`page.clock.setFixedTime`) → relative times ("2h ago", "Yesterday") are stable.
+- **External images stubbed** → every non-localhost avatar/thumbnail becomes a 1×1 transparent PNG,
+  so the network can't make a screenshot flake (layout is preserved; only the bitmap is blanked).
+- **Animations disabled** at capture time; **fixed viewport + `deviceScaleFactor: 1`**.
+
+**Domains covered** (one baseline each, in `e2e/visual.spec.ts-snapshots/`):
+`showcase` · `login-fresh` · `lobby` · `mobile-gate` · `browser-gate` · `gpu-gate` ·
+`engine-error` · `realm-error` · `world-hud` · `profile-card` · `passport` · `hover-tooltips` ·
+`permission-dialog` · `permissions-popover` · `world-password-dialog` · `community-modal` · `community-create-modal` ·
+`panel-friends` · `panel-settings` · `panel-settings-keybindings` · `panel-profile` ·
+`panel-notifications` · `panel-emote-wheel` · `panel-communities` · `panel-map` ·
+`minimap-settings` · `backpack-wearables` · `backpack-emotes` · `passport-edit` · `name-edit`.
+
+**Updating baselines** (only when the change is intentional):
+```bash
+npm run test:visual:update      # regenerates the PNGs
+git add e2e/visual.spec.ts-snapshots && git diff --cached --stat   # then EYEBALL the new PNGs
+```
+Never blind-update. A baseline refresh in a PR must be reviewed image-by-image.
+
+**Caveats / known limits**
+- **Baselines are platform-specific** (`*-chromium-darwin.png`). Font hinting differs across OSes, so
+  generate/verify on the same platform CI uses (or add a Linux baseline set when CI is wired).
+- **Mock data is the ceiling.** A panel can only be as rich as `src/engine/mockBridge.ts` makes it.
+  - Enrich mock `getEmotes` with an OWNED collection (some with `slot`, varied `rarity`/`count`) so
+    the new owned-grid + assign-to-slot are exercised, not just the 10 base emotes.
+- **Captures are viewport-sized, hover-free.** A scrolling panel is pinned only above the fold: the
+  `passport` baseline shows About Me + the Equipped Wearables grid; Equipped Emotes, Badges, the
+  About → Equipped → Badges order and the SHOP-link rule are tier-1 (`profile.passport.test.tsx`).
+
+---
+
+## 3. Tier 2 — real engine (`e2e/engine.spec.ts` + `e2e/engine-clicks.spec.ts`)
+
+See `e2e/README.md`. Needs a real GPU + a local engine build (`../deploy/web`). Run before a release
+or when touching the bridge protocol.
+
+- **`engine.spec.ts`** — every panel *opens* and *fetches* (the call crosses the bridge).
+- **`engine-clicks.spec.ts`** — the controls *inside* panels do something the **engine** sees,
+  verified **through the bevy console API** where the engine exposes state, bridge-spy otherwise:
+
+  | Click | Verified by |
+  |-------|-------------|
+  | move / teleport | `/player_position` lands at the exact coords (`helpers.position`) |
+  | equip a wearable | `/get_user_data` profile **`vN` bumps** (`helpers.profileVersion`) + `equip` on the bridge |
+  | assign an emote to a slot | `equipEmote` on the bridge |
+  | play a wheel emote | `triggerEmote` on the bridge |
+  | change a setting (slider) | `setSetting` on the bridge |
+  | (sanity) profile + roster reachable | `/get_user_data`, `/connected_players` |
+
+  Console helpers live in `e2e/helpers.ts` (`position`, `getUserData`, `profileVersion`,
+  `connectedPlayers`). Available bevy commands: `move_player_to`, `walk_player_to`, `teleport`,
+  `player_position`, `get_user_data`, `connected_players`, `live_scenes`, `list_portables`, `emote`,
+  plus `/login_*`, `/logout`, `/chat`.
+
+**Still tier-1-only** (a fresh guest can't reach them, so they can't round-trip here): accepting a
+friend request, leaving a community, marking notifications read — these need seeded data and are
+covered deterministically in tier 1. **TODO to deepen tier 2** (would need engine query commands or
+fixtures): map *UI* teleport by clicking a parcel, a `/mic_state` query to confirm the mic toggle,
+logout via the profile chip.
+
+---
+
+## 4. World-space UI — agent / manual checklist (can't be mocked)
+
+The 3D nametags, the pointer-lock crosshair, and projected proximity tips are drawn **in the engine
+scene**, not the DOM, so `?mock=1` can't show them and screenshots can't be deterministic. Verify
+these by hand (or have an agent drive the Chrome extension against a live world) after any change to
+`bridge-scene/src/domains/{nametags,pointer,proximity,avatarPointer}.*`:
+
+- [ ] **Nametags** appear above every avatar's head, follow them while walking, and **face the camera**.
+- [ ] Name **colour** = profile custom colour if set, else the address-hash palette; **claimed** names
+      show the verified seal, **unclaimed** show `#abcd` tight to the name.
+- [ ] **Fixed world scale — never a giant.** A tag is a constant *world* size (it shrinks with distance,
+      like the old SDK scene); it must NEVER balloon into a screen-filling pill when the camera pulls back
+      or when its `AvatarAttach` fails to bind. (We dropped the old constant-on-screen scaling precisely
+      because it turned a stranded tag into a giant.)
+- [ ] **Exactly one tag per address — no duplicates / orphans / pile-up.** None accumulate over a long
+      session, after alt-tabbing away and back, or across a comms/livekit blip's leave→enter churn (the
+      classic regression). They're pooled — one reusable entity per wallet, never destroyed (engine entity
+      removal is unreliable for attached entities; we show/hide instead).
+- [ ] Tags **fade out** past ~20–40 m. Your **own** tag shows above your head in third person and is
+      hidden in first person.
+- [ ] **Crosshair** shows when the camera is locked (mouse hidden) and hides when the cursor is free.
+- [ ] **Hover / proximity prompts** ("Press E…") show on interactables and sit on the right entity.
+- [ ] **Lobby stage** (`bridge-scene/src/domains/avatarPreview.tsx`, lobby region): after sign-in the
+      page's stand-in (backdrop + snapshot) crossfades to the engine stage with the live avatar centred;
+      Customize opens the Backpack modal with the avatar through its hole and hands the stage back on
+      close; Jump In loads the world (the hold is released) and a failed trip returns to the lobby.
+      The `lobby` baseline only shows the stand-in (mock has no engine).
+
+---
+
+## 5. Pre-merge review checklist
+
+Run through this on every diff (it encodes `AGENTS.md`):
+
+- [ ] **Design system** — no new hardcoded brand/status hex, `rgba()`, radius, or type size in a
+      component (`grep` your diff for `#` and `rgba(`); each must be a `tokens.css` var or justified.
+      No bespoke `<button>`/control where a `src/design/` primitive exists.
+- [ ] **No dead code** — no unused exports/CSS classes/imports; no commented-out blocks; comments are
+      sparse and explain *why*, not *what*.
+- [ ] **Structure** — one concern per file; reuse a primitive or *create* one rather than inlining a
+      recurring pattern; bridge logic in one `domains/*` file.
+- [ ] **Perf** — catalyst fetches cached (per address); per-frame engine systems are change-gated /
+      throttled, not doing work every frame for free.
+- [ ] **Tests** — tier 1 still green; **a new/changed domain has a tier-1.5 baseline**; world-space
+      changes ran the §4 checklist.
+- [ ] **Both projects typecheck** (`npm run typecheck` + `cd bridge-scene && npm run build`), and the
+      bridge scene lints clean (`npm run lint` there).
+- [ ] **No secrets / `.env` or working reports** staged; review the staged paths under the
+      repository-root `AGENTS.md` rules. Use an imperative commit subject without AI attribution.
+
+- [ ] **Input routing** — follows the §7 contracts (no hand-rolled Escape/hotkey handlers).
+- [ ] **No native popups** — no `<select>`, no `<input type="date|time|color">`, no
+      `alert`/`confirm`/`prompt`. On native the HUD is rendered offscreen and CEF paints popup
+      widgets as a separate surface the engine never composites (`update_hud_texture` takes whatever
+      paint arrives), so opening one replaces the whole HUD with the widget's bitmap. Use `Select`,
+      `DateField` and `showConfirm`/`showDialog` from `src/design/`.
+
+---
+
+## 6. Adding a domain
+
+1. Build it (token-driven, reusing `src/design/` primitives).
+2. Add the mock data in `src/engine/mockBridge.ts` so `?mock=1` renders it richly.
+3. Add a tier-1 test (`src/test/<domain>.test.tsx`) for its API contract + clicks.
+4. Add a screenshot to `e2e/visual.spec.ts` and run `npm run test:visual:update`.
+5. If it's world-space (engine-drawn), add a line to the §4 checklist instead of a screenshot.
+6. List its expectations here.
+
+---
+
+## 7. Input routing contracts
+
+The ENGINE resolves input to actions; the HUD reacts to the action stream and declares its
+focus back (`uiFocus`). Keep it that way — the AZERTY bug and the CEF double-fire both came
+from HUD-side key matching. The rules:
+
+- **Never add a DOM hotkey or Escape handler.** Panel/menu keys arrive as `systemAction`
+  messages (dispatcher in `useEngineSession`); add a `case` there. Cancel/close behaviour
+  for leaf UI (a lightbox, an open dropdown) = register on the **cancel-layer stack**
+  (`src/lib/cancelLayers.ts`) while open — the dispatcher peels popup → layer → panels, one
+  per press, keyboard and gamepad alike.
+- **The only DOM key handling allowed is inside a focused text field** (chat, map search),
+  where the engine deliberately resolves nothing (`UiText`). There: match with
+  `isCancelKey`, and `stopPropagation()` anything you consumed so the blur rule doesn't
+  also fire on the same press.
+- **A new panel/popup/overlay must be visible to `uiFocus`** — panels via the session's
+  `anyPanelOpen`, dialogs via the popup stack (`openPopup`), full-screen input freezes via
+  `inputLock`. If the engine can't see that your surface is active, scenes keep receiving
+  input behind it.
+- **The scene editor stands the HUD down through `session.editor.setMode`** (Create or `?editor`,
+  `src/features/editorHost`): in `edit` the dispatcher acts on `Cancel` only and App unmounts the
+  sidebar, minimap, chat and pointer; `play` adds the reticle and the emote wheel. Not through
+  `inputLock`: that declares `ui` focus, which would take the viewport's input from the editor's
+  own scene. A new hotkey or persistent surface must respect the mode (`hudActsOn`).
+- **Scrollable HUD content** just needs real `overflow: auto` — hover detection, the
+  engine-side reservation and gamepad scrolling all key off that.
+- Key **labels** come from `bindingLabels` (`keyHintFor`/`labelForInput`), never hardcoded
+  letters — they follow the user's rebinds and keyboard layout.
+
+## Analytics
+
+The page reports the screens and clicks mobile does, with mobile's names and property shapes
+(`lib/analytics.ts`). Nothing is sent from the page: each event is stamped when it happens, waits
+in prefs (`PREF.analyticsQueue`, newest 200) and goes to the engine's `/track` console command once
+the engine is up (`EngineDriver.launch` attaches the console); a send the console rejected is kept
+for the next one. The engine batches the Segment posts, with its own events, and adds the common fields
+as it does for those (`crates/analytics/README.md`), including `campaign_anon_user_id`, the
+landing page's Segment anonymous id that the shell reads from the `ajs_anonymous_id` cookie and
+hands the app as `anon_user_id` (`shell/main.ts`). The session id goes to the engine at launch (`EngineDriver.launch`), and the
+return from the sign-in redirect continues it (the shell keeps it in sessionStorage and hands it
+back as `analyticsSession`). Expectations:
+
+- **Boot** (`bootAnalytics`, `main.tsx`): `App Opened` then `Screen Viewed` START, except on the
+  return from the sign-in redirect. Between them, when the link carries a campaign (`utm_*`,
+  `gad_*`, ad click ids; GA's cross-domain `_gl` alone does not count), `Install Attribution` in
+  mobile's install-referrer shape, told apart from mobile's by `platform` `web` and
+  `attribution_source` `url` (one per page load with a campaign, not per install): `referrer` the
+  raw campaign params, the `utm_*`, `gclid`, `gbraid` and `wbraid` columns, and `page_session_id`,
+  this load's session (mobile's column). Every page event carries `session_id`, the session of the
+  load that created it: the queue outlives a load that bounces before the engine is up, and the
+  engine keeps the page's value over its own, and drops an event held over 36 h by its own time
+  (`crates/analytics/README.md`).
+- **Sign-in link** (`authLoginUrl`): the entry's `utm_*` params ride along, so the auth site's
+  own Segment calls carry the campaign and tie it to the address it signs in. Once read, the
+  shell and the app take the attribution params (`utm_*`, `gad_*`, ad click ids such as `gclid`,
+  the landing page's anonymous id) off the address bar (`dropAttributionParams`), so a copied link
+  or a reload does not attribute again; the Google tag gets them from what the shell kept at load.
+- **Sign-in** (`useEngineSession`): with no session the guest start page (`GuestStartPage`) is
+  AVATAR_NAMING, its ACCEPT AND PLAY a LETS_GO click and CONTINUE WITH AN ACCOUNT (sign in or
+  sign up) a SIGN_IN click; the guest account is created only on that click, and the welcome page
+  it then needs is answered with the picked name instead of shown. COMEBACK (after a failed stored
+  sign-in), ACCOUNT_GUEST_CREATE, AUTH_BROWSER_OPEN, AUTH_SUCCESS {login_type}, AUTH_ERROR {error};
+  clicks lets_go, use_another_account, try_again. `Guest Wallet Creation` wraps the
+  thirdweb guest step (`features/auth/guestWalletEvent.ts`).
+- **Welcome / lobby**: WELCOME or AVATAR_NAMING, AUTH_DEPLOY_SUCCESS; clicks LETS_GO,
+  NAME_RANDOMIZE; LOBBY, PLACES_PICKER; clicks JUMP_IN {kind, place_id|event_id}, CUSTOMIZE,
+  NOTIFICATIONS, CLOSE (`LobbyHome.tsx`).
+- **Loading**: the engine's, not the page's. LOADING_START {position, realm, when}, LOADING_END
+  {position, status} and LOADING_TIMEOUT after 90 s follow its own loading screen
+  (`crates/analytics/src/loading.rs`), the one `sceneLoading` mirrors here.
+- **Social**: Friend Request, Friend Accept, Unfriend, Block User on the action.
+- **In world**: the engine's First Move In World (an `analytics` message over the bridge, which
+  relays the engine's own Segment events by name; a metre walked since logging in), once per page load, with the terms accepted (the welcome
+  flow's answer, or the engine's persisted config), posts `bevy-shell:in-world` {login_type,
+  session_id} to the shell, the one message that leaves the page for anyone but the engine. On decentraland.org
+  only, never for a `preview=true` page, once per tab session, the shell then loads the Google
+  tag for the Explorer GA4 stream and sends `bevy_first_move_in_world`, the Google Ads conversion,
+  with the user property `login_type` `guest` or `web3`, the event param `dcl_session_id` (the
+  Segment session), and as its page the url the tab arrived
+  with, keeping only its `utm_*` and ad click ids (`shell/googleTag.ts`). Nothing of Google's loads before that moment.
+  Once gtag.js is up the shell posts GA4's ids back (`bevy-shell:google-tag` {client_id, session_id}),
+  and the app sends them as `Google Tag Linked` {ga_client_id, ga_session_id (null when GA4 gives
+  none)}: the GA4 export's `user_pseudo_id` / `ga_session_id` on the Segment session, taken at the
+  conversion (`shell/googleTag.ts` `onInWorld`, `listenForGoogleTag` over `lib/shell.ts`
+  `onShellMessage`).
+- Tests: `src/test/analytics.test.ts` (stamping, the handoff, the rejected send, `Google Tag Linked`),
+  `src/test/analytics.boot.test.ts` (the boot events, `Install Attribution`),
+  `src/test/analytics.session.test.tsx` (the sequences above), `engineDriver.test.ts` (the session
+  id at launch), `entryParams.test.ts` (campaign params).

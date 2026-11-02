@@ -90,11 +90,17 @@ pub struct States {
 /// [`writes::guard`] with the process's `SOCIAL_WRITES_ENABLED`.
 pub fn router(states: &States, writes_enabled: bool) -> Router {
     let guard = |r: Router| writes::guard(r, writes_enabled);
+    // The social-api host: the communities routes and the HTTP twins of the
+    // social RPC procedures (`rpc::http`).
+    let social_api = || {
+        guard(communities::router(states.communities.clone()))
+            .merge(guard(rpc::http::router(states.rpc.clone())))
+    };
     Router::new()
-        .merge(guard(communities::router(states.communities.clone())))
+        .merge(social_api())
         .nest(
             "/social-api",
-            guard(communities::router(states.communities.clone()))
+            social_api()
                 .route(
                     "/openapi.json",
                     axum::routing::get(|| async {

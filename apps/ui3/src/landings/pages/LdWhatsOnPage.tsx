@@ -53,17 +53,17 @@ export default function LdWhatsOnPage({
         dayLabels={dayLabels}
         filterBar={
           <>
-          {navigationSlot}
-          <div className="whatson-route__cats" role="tablist" aria-label="Event filters">
-            {filters.map((f) => (
-              <CategoryPill
-                key={f.id || "all"}
-                label={f.label}
-                active={activeFilter === f.id}
-                onSelect={() => onFilterSelect?.(f.id)}
-              />
-            ))}
-          </div>
+            {navigationSlot}
+            <div className="whatson-route__cats" role="tablist" aria-label="Event filters">
+              {filters.map((f) => (
+                <CategoryPill
+                  key={f.id || "all"}
+                  label={f.label}
+                  active={activeFilter === f.id}
+                  onSelect={() => onFilterSelect?.(f.id)}
+                />
+              ))}
+            </div>
           </>
         }
       />
