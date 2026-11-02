@@ -2,8 +2,7 @@
 
 The Unity explorer is the reference client. A port carries its observable behaviour and its
 numbers over verbatim, reshapes the code to this engine's rules, and names every divergence.
-Most review rounds on ports come from the shape, not the behaviour, so read
-[decisions](decisions.md), [code style](code-style.md), [scheduling](scheduling.md) and
+Read [decisions](decisions.md), [code style](code-style.md), [scheduling](scheduling.md) and
 [platforms](platforms.md) before designing, and read the Unity assets, not only its C#.
 
 Unity paths below are relative to the root of the `unity-explorer` repository. That checkout is
@@ -71,9 +70,9 @@ checking its licence and provenance.
 
 ## Porting a shader
 
-HLSL to WGSL is the easy part. What breaks ports is the rendering model: materials are shared
-assets, the scene is lit in physical units, the fork's transparent pass has a second output, and
-constants come from Rust. Copy a template, then translate. Templates in
+The rendering model differs from Unity's: materials are shared assets, the scene is lit in
+physical units, the fork's transparent pass has a second output, and constants come from Rust.
+Copy a template, then translate. Templates in
 `crates/assets/src/assets/shaders/`: `bound_material.wgsl` with `bound_prepass.wgsl` (the lit
 scene material extension), `toon.wgsl` (avatar lighting), `mask_material.wgsl` (face masks).
 Shaders load as `embedded://shaders/<file>.wgsl`.
@@ -102,15 +101,14 @@ pipeline-compile test each have a recipe in [recipes](recipes.md).
 
 - Designing from the C# alone and getting the rendered thing wrong: static where Unity is
   skinned, a pass the shader does not have, a material the renderer does not carry.
-- Rounding Unity's constants or widening a range "to be safe" without naming it as a
-  divergence.
-- Treating the transition as the only path. Rebuilds, despawns and setting toggles mid-way are
-  where the bugs are.
+- Rounding Unity's constants or widening a range without naming it as a divergence.
+- Testing only the transition's happy path, not the rebuilds, despawns and setting toggles
+  that can land mid-way.
 - Per-avatar material properties on a shared, cached material: breaks the cache and the
   batching that `material_cache.rs` exists for.
 - An unscaled colour (no `BRIGHTNESS * view.exposure`): invisible in-world though it looks
   right in a unit test.
 - `pbr_input_from_vertex_output` and `main_pass_post_lighting_processing` in an unlit shader:
-  pulls in UV and lighting requirements for nothing.
+  they add UV and lighting requirements the shader does not use.
 - The discard only in the main pass; the prepass still writes depth and shadows.
 - Verifying only on native. The fork's transparent pass and derivative rules fail on web only.

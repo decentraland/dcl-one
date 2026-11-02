@@ -82,7 +82,7 @@ the layout: the top byte is flags (`SCENE_MATERIAL_*_MESH_TAG`), the low 24 bits
 
 - **Budget the bits to the effect.** Work out the step the bits give against what the eye can
   see in one frame, and write the arithmetic in the PR. A value that moves centimetres per
-  frame does not need millimetre steps; one byte is usually enough.
+  frame does not need millimetre steps.
 - **No flag bit beside a value field.** For a range, 0 means none and `1..=255` spans the
   range. Encode both ends of the range, so a "hidden" value sits past the mesh rather than at
   a boundary where a strict comparison in the shader leaves a sliver.
