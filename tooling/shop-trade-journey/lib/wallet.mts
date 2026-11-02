@@ -2,7 +2,8 @@
 // The page gets a thin `window.ethereum` that forwards each request over a Playwright binding; signing
 // and sending happen here, with viem, and every other call goes to the chain's public RPC.
 //
-// It refuses any chain but Amoy and Sepolia, so a key handed to it can never move mainnet funds.
+// It refuses any chain but Amoy and Sepolia, typed data whose domain (chainId or salt) names another
+// chain or none, and transactions for a chain other than the current one.
 import { createPublicClient, createWalletClient, http, type Chain, type Hex, type Transport } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { polygonAmoy, sepolia } from "viem/chains";
@@ -14,8 +15,14 @@ export const DEFAULT_RPC: Record<number, string> = {
   [sepolia.id]: "https://rpc.decentraland.org/sepolia",
 };
 
+/** A request the wallet will not carry out, with its EIP-1193 code: 4902 for a chain it does not know,
+ * 4200 for a method it does not support, 4001 (rejected) for everything else. */
 export class WalletRefusal extends Error {
-  code = 4001;
+  code: 4001 | 4200 | 4902;
+  constructor(message: string, code: 4001 | 4200 | 4902 = 4001) {
+    super(message);
+    this.code = code;
+  }
 }
 
 type Request = { method: string; params?: unknown[] };
@@ -32,8 +39,21 @@ export type TestnetWallet = {
 
 function testnet(chainId: number): Chain {
   const chain = TESTNETS[chainId];
-  if (!chain) throw new WalletRefusal(`refused: chain ${chainId} is not a testnet this journey may use (Amoy 80002, Sepolia 11155111)`);
+  if (!chain) throw new WalletRefusal(`refused: chain ${chainId} is not a testnet this journey may use (Amoy 80002, Sepolia 11155111)`, 4902);
   return chain;
+}
+
+/**
+ * The chain a typed-data domain binds its signature to. Decentraland's own domains (trades, meta
+ * transactions) carry it in `salt` as a uint256 rather than in `chainId`; a domain with neither is valid
+ * on every chain, so it is refused too.
+ */
+export function domainChain(domain: { chainId?: number | string | bigint; salt?: string }): number {
+  const ids = [domain.chainId != null ? Number(domain.chainId) : null, domain.salt != null ? Number(BigInt(domain.salt)) : null].filter((x): x is number => x != null);
+  if (!ids.length) throw new WalletRefusal("refused: typed data whose domain names no chain (neither chainId nor salt) is valid on mainnet too");
+  for (const id of ids) testnet(id);
+  if (new Set(ids).size > 1) throw new WalletRefusal(`refused: the domain's chainId and salt disagree (${ids.join(" vs ")})`);
+  return ids[0]!;
 }
 
 export function testnetWallet(opts: { key: Hex; chainId?: number; transport?: (chainId: number) => Transport }): TestnetWallet {
@@ -87,16 +107,18 @@ export function testnetWallet(opts: { key: Hex; chainId?: number; transport?: (c
         case "eth_signTypedData_v4": {
           const [from, json] = params as [string, string];
           own(from);
-          const data = JSON.parse(json) as { domain: { chainId?: number | string }; types: Record<string, unknown>; primaryType: string; message: Record<string, unknown> };
-          // A typed-data domain names the chain the signature is valid on: a testnet's, or nothing.
-          if (data.domain.chainId != null) testnet(Number(data.domain.chainId));
+          const data = JSON.parse(json) as { domain: { chainId?: number | string; salt?: string }; types: Record<string, unknown>; primaryType: string; message: Record<string, unknown> };
+          domainChain(data.domain);
           const { EIP712Domain: _domain, ...types } = data.types;
           return account.signTypedData({ domain: data.domain, types, primaryType: data.primaryType, message: data.message } as never);
         }
         case "eth_sendTransaction": {
           const [tx] = params as [{ from?: string; to?: Hex; data?: Hex; value?: Hex; gas?: Hex; chainId?: Hex }];
           own(tx.from);
-          if (tx.chainId != null) testnet(Number(tx.chainId));
+          if (tx.chainId != null && Number(tx.chainId) !== current) {
+            testnet(Number(tx.chainId));
+            throw new WalletRefusal(`refused: a transaction for chain ${Number(tx.chainId)} while the wallet is on ${current}`);
+          }
           const { wallet: w } = client(current);
           const hash = await w.sendTransaction({
             account,
@@ -112,7 +134,7 @@ export function testnetWallet(opts: { key: Hex; chainId?: number; transport?: (c
         case "eth_sign":
         case "eth_signTransaction":
         case "eth_sendRawTransaction":
-          throw new WalletRefusal(`refused: ${method} is not something the Shop should ask for`);
+          throw new WalletRefusal(`refused: ${method} is not something the Shop should ask for`, 4200);
         default:
           return client(current).pub.request({ method, params } as never);
       }

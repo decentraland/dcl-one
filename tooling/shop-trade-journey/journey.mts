@@ -4,15 +4,15 @@
 //   node journey.mts --preflight   the stack, sign-in and the wallets' balances; signs nothing on chain
 //   node journey.mts               the whole loop (README: what each step costs and who pays)
 //
-// The loop leaves the token where it started, so it can run again: the seller lists, reprices and
+// A complete run leaves the token where it started, so it can run again: the seller lists, reprices and
 // cancels; the buyer bids, cancels and bids again; the seller accepts (the buyer now owns the token);
 // the buyer lists it and the seller buys it back with MANA through the cart.
 import { mkdirSync } from "node:fs";
-import { createPublicClient, erc721Abi, erc20Abi, formatEther, http, type Hex } from "viem";
+import { createPublicClient, erc721Abi, erc20Abi, formatEther, http, parseEther, type Hex } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { polygonAmoy } from "viem/chains";
 import type { Browser, BrowserContext, Page } from "playwright-core";
-import { launch } from "../shop-parity/lib/browser.mts";
+import { launch } from "./lib/browser.mts";
 import { journeyEnv, parseToken } from "./lib/env.mts";
 import { answer, DEFAULT_RPC, keyFrom, PAGE_PROVIDER, testnetWallet, type TestnetWallet } from "./lib/wallet.mts";
 
@@ -24,6 +24,9 @@ const env = journeyEnv();
 const preflightOnly = process.argv.includes("--preflight");
 const sites = (env.E2E_SITES_URL ?? env.FOUNDATION_DEV_SITES_URL ?? "").replace(/\/$/, "");
 if (!sites) throw new Error("Set E2E_SITES_URL, or run under eval \"$(foundation-dev env)\" so FOUNDATION_DEV_SITES_URL names the stack");
+if (env.FOUNDATION_DEV_STACK_PROFILE && env.FOUNDATION_DEV_STACK_PROFILE !== "testnet") {
+  throw new Error(`The stack runs the ${env.FOUNDATION_DEV_STACK_PROFILE} profile; the journey needs a testnet stack (README)`);
+}
 const price = env.E2E_PRICE ?? "1";
 const repriced = env.E2E_REPRICE ?? "2";
 const bid = env.E2E_BID ?? "1";
@@ -37,7 +40,13 @@ async function actor(browser: Browser, name: string, key: Hex): Promise<Actor> {
   const wallet = testnetWallet({ key, chainId: polygonAmoy.id });
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   await context.addInitScript(`window.__SHOP_CHAIN__ = { settlementChainId: ${polygonAmoy.id} };`);
-  await context.exposeBinding("__e2eWallet", (_source, req: { method: string; params?: unknown[] }) => answer(wallet, req));
+  // Only the Shop's own top-level page may reach the wallet: no iframe, no other origin.
+  await context.exposeBinding("__e2eWallet", (source, req: { method: string; params?: unknown[] }) => {
+    if (source.frame !== source.page.mainFrame() || new URL(source.frame.url()).origin !== new URL(sites).origin) {
+      return { error: { code: 4100, message: `refused: ${source.frame.url()} is not the Shop's page` } };
+    }
+    return answer(wallet, req);
+  });
   await context.addInitScript(PAGE_PROVIDER);
   const page = await context.newPage();
   wallet.onChainChanged = (id) => void page.evaluate((hex) => (window as never as { __e2eWalletEmit: (e: string, v: string) => void }).__e2eWalletEmit("chainChanged", hex), `0x${id.toString(16)}`).catch(() => {});
@@ -90,6 +99,19 @@ async function list(a: Actor, t: { contract: string; tokenId: string }, amount: 
   return (await done.innerText()).split("\n")[0]!;
 }
 
+const ownerOf = (t: { contract: string; tokenId: string }) => amoy.readContract({ address: t.contract as Hex, abi: erc721Abi, functionName: "ownerOf", args: [BigInt(t.tokenId)] });
+
+/** The token's owner becomes `who`: polled, since the UI may confirm before the RPC sees the block. */
+async function becomesOwner(t: { contract: string; tokenId: string }, who: Hex): Promise<void> {
+  const until = Date.now() + 2 * 60_000;
+  let owner = await ownerOf(t);
+  while (owner.toLowerCase() !== who.toLowerCase()) {
+    if (Date.now() > until) throw new Error(`ownerOf is still ${owner} after 2 minutes`);
+    await new Promise((r) => setTimeout(r, 5_000));
+    owner = await ownerOf(t);
+  }
+}
+
 async function balances(label: string, address: Hex): Promise<{ pol: bigint; mana: bigint }> {
   const [pol, mana] = await Promise.all([
     amoy.getBalance({ address }),
@@ -104,7 +126,7 @@ async function main(): Promise<void> {
   const buyerKey = preflightOnly && !env.E2E_BUYER_KEY ? generatePrivateKey() : keyFrom(env, "E2E_BUYER_KEY");
   const token = preflightOnly && !env.E2E_TOKEN ? null : parseToken(env.E2E_TOKEN);
 
-  const { browser } = await launch();
+  const browser = await launch();
   try {
     const seller = await actor(browser, "seller", sellerKey);
     const buyer = await actor(browser, "buyer", buyerKey);
@@ -114,6 +136,7 @@ async function main(): Promise<void> {
 
     await step("stack answers", seller, async () => {
       const res = await fetch(`${sites}/shop-api/v1/trades-mirror`).catch(() => null);
+      if (res && !res.ok) await res.body?.cancel();
       if (!res?.ok) throw new Error(`${sites}/shop-api/v1/trades-mirror answered ${res?.status ?? "nothing"}: is foundation-dev up in the testnet profile?`);
       const body = (await res.json()) as { data?: { completedAt?: string | null } };
       return body.data?.completedAt ? `trades mirrored ${body.data.completedAt}` : "trades mirror has no complete pass yet";
@@ -122,7 +145,7 @@ async function main(): Promise<void> {
     await step("buyer signs in", buyer, () => signIn(buyer));
     if (token) {
       await step("seller owns the token", seller, async () => {
-        const owner = await amoy.readContract({ address: token.contract as Hex, abi: erc721Abi, functionName: "ownerOf", args: [BigInt(token.tokenId)] });
+        const owner = await ownerOf(token);
         if (owner.toLowerCase() !== seller.wallet.address.toLowerCase()) throw new Error(`the token belongs to ${owner}, not the seller`);
       });
       await step("token page renders", seller, async () => {
@@ -131,7 +154,12 @@ async function main(): Promise<void> {
         if (await seller.page.getByText(/not found/i).first().isVisible().catch(() => false)) throw new Error("the Shop does not know this token: has the NFT index caught up?");
       });
     }
-    const short = [s.pol === 0n && "seller has no POL (accepting a bid pays gas)", b.mana < BigInt(Number(bid) * 1e18) && "buyer has too little MANA to bid", s.mana === 0n && "seller has no MANA to buy the token back"].filter(Boolean);
+    const short = [
+      s.pol === 0n && "seller has no POL (accepting a bid pays gas)",
+      b.pol === 0n && "buyer has no POL (gas, should the relay refuse an approval)",
+      b.mana < parseEther(bid) && `buyer has less than the ${bid} MANA of the bid`,
+      s.mana < parseEther(price) && `seller has less than the ${price} MANA it pays to buy the token back`,
+    ].filter(Boolean);
     if (preflightOnly || !token) {
       console.log(`\nPreflight done.${short.length ? `\nBefore the full loop: ${short.join("; ")}.` : ""}`);
       return;
@@ -164,14 +192,13 @@ async function main(): Promise<void> {
     await step(`buyer bids ${bid} MANA again`, buyer, placeBid);
     await step("seller accepts the bid", seller, async () => {
       await seller.page.goto(`${tokenPath(token)}/bids`);
-      await seller.page.getByTestId("shop-token-bid").getByRole("button", { name: "Accept" }).first().click();
+      // The buyer's bid, not whichever is listed first: a stale or third-party bid would send the token elsewhere.
+      const row = seller.page.getByTestId("shop-token-bid").filter({ has: seller.page.locator(`a[title="${buyer.wallet.address.toLowerCase()}" i]`) });
+      await row.getByRole("button", { name: "Accept" }).click();
       await confirm(seller.page, bid);
       await seller.page.getByTestId("shop-accept-done").waitFor({ timeout: RELAYED });
     });
-    await step("the buyer owns the token on chain", buyer, async () => {
-      const owner = await amoy.readContract({ address: token.contract as Hex, abi: erc721Abi, functionName: "ownerOf", args: [BigInt(token.tokenId)] });
-      if (owner.toLowerCase() !== buyer.wallet.address.toLowerCase()) throw new Error(`ownerOf is ${owner}`);
-    });
+    await step("the buyer owns the token on chain", buyer, () => becomesOwner(token, buyer.wallet.address));
 
     // Back to the seller: the buyer lists it, the seller buys it with MANA through the cart.
     await step(`buyer lists it for ${price} MANA`, buyer, () => list(buyer, token, price));
@@ -182,14 +209,16 @@ async function main(): Promise<void> {
       await seller.page.getByTestId("cta-buy").click();
       await seller.page.waitForURL(/\/shop\/cart/);
       await seller.page.getByTestId("confirm-checkout").click();
+      // Either the cart asks to approve MANA first, or it goes straight to the purchase.
       const approve = seller.page.getByTestId("authorize-step-action");
-      await Promise.race([approve.waitFor({ timeout: 30_000 }).then(() => approve.click()), seller.page.waitForURL(/\/shop\/success/, { timeout: 30_000 })]).catch(() => {});
-      await seller.page.getByTestId("success-done").waitFor({ timeout: RELAYED });
+      const done = seller.page.getByTestId("success-done");
+      await approve.or(done).first().waitFor({ timeout: RELAYED });
+      if (await approve.isVisible()) {
+        await approve.click();
+        await done.waitFor({ timeout: RELAYED });
+      }
     });
-    await step("the seller owns the token again", seller, async () => {
-      const owner = await amoy.readContract({ address: token.contract as Hex, abi: erc721Abi, functionName: "ownerOf", args: [BigInt(token.tokenId)] });
-      if (owner.toLowerCase() !== seller.wallet.address.toLowerCase()) throw new Error(`ownerOf is ${owner}`);
-    });
+    await step("the seller owns the token again", seller, () => becomesOwner(token, seller.wallet.address));
   } finally {
     await browser.close();
     const failed = steps.filter((x) => !x.ok);
@@ -198,6 +227,8 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch(() => {
+main().catch((e) => {
+  // A failed step has already said why; anything else (settings, launch, RPC, funding) says it here.
+  if (!steps.some((s) => !s.ok)) console.error(`\n${(e as Error).message}`);
   process.exitCode = 1;
 });

@@ -88,6 +88,10 @@ def settings(create=False):
         if create and requested is not None and requested != str(config['port']):
             print(f"Using saved port {config['port']}; FOUNDATION_DEV_PORT={requested} applies only on first startup. "
                   'Stop services before editing .cache/dev/settings.json.', file=sys.stderr)
+        profile = os.environ.get('FOUNDATION_DEV_PROFILE')
+        if create and profile is not None and profile != config['profile']:
+            print(f"Using saved profile {config['profile']}; FOUNDATION_DEV_PROFILE={profile} applies only on first "
+                  'startup. Change it with foundation-dev profile.', file=sys.stderr)
         if missing_secrets(config):
             # A stack from before a generated secret, on whichever command reads it first; the lock
             # keeps tasks that start together on one value.
@@ -998,8 +1002,9 @@ def main():
         data = STATE / 'postgres'
         if (config['profile'] == 'testnet') != (args.profile == 'testnet') and data.exists() and any(data.iterdir()):
             # Mainnet and testnet rows (trades, collections, owners) must never share a database.
-            raise RuntimeError('This stack already holds data of another network. Run the testnet profile in its '
-                               'own worktree (FOUNDATION_DEV_PROFILE=testnet on its first foundation-dev up).')
+            raise RuntimeError(f"This stack already holds data of the {config['profile']} profile, and testnet data "
+                               'never shares a database with the others. Run the testnet profile in its own worktree '
+                               '(FOUNDATION_DEV_PROFILE=testnet on its first foundation-dev up).')
         config['profile'] = args.profile
         save_json(SETTINGS, config)
         print(f'Profile set to {args.profile}; run foundation-dev up. Existing data is preserved.')
@@ -1009,12 +1014,17 @@ def main():
         for key, value in (('FOUNDATION_DEV_API_URL', f"http://127.0.0.1:{config['port']}"),
                            ('FOUNDATION_DEV_SITES_URL', f"http://127.0.0.1:{config['port'] + 2}"),
                            ('FOUNDATION_DEV_DATABASE_URL', database_url(config)),
-                           ('FOUNDATION_DEV_TEST_DATABASE_URL', database_url(config, 'postgres'))):
+                           ('FOUNDATION_DEV_TEST_DATABASE_URL', database_url(config, 'postgres')),
+                           ('FOUNDATION_DEV_STACK_PROFILE', config['profile'])):
             print(f'{key}={shlex.quote(value)}')
     elif args.command == 'psql':
         os.execvpe('psql', ['psql', '-X'], psql_env(settings()))
     elif args.command == 'trades-snapshot':
-        export_trades_snapshot(settings(), args.out)
+        config = settings()
+        if config['profile'] == 'testnet':
+            # seed_trades loads a snapshot into a mirror stack; testnet trades must not reach one.
+            raise RuntimeError('This stack runs the testnet profile; its trades are not a snapshot for mainnet stacks.')
+        export_trades_snapshot(config, args.out)
     return 0
 
 

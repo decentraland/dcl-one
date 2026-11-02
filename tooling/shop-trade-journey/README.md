@@ -6,8 +6,8 @@ unit tests cover the same flows over fixtures; this is the run that shows they w
 the relayer and the order book.
 
 ```sh
-pnpm install                                   # playwright-core and viem
-eval "$(foundation-dev env)"                   # FOUNDATION_DEV_SITES_URL of the running stack
+pnpm install                                   # playwright-core and viem, in this folder only
+set -a; eval "$(foundation-dev env)"; set +a   # exports the running stack's URL and profile
 node journey.mts --preflight                   # stack, sign-in and balances; nothing on chain
 E2E_ENV_FILE=<file outside the repo> node journey.mts
 pnpm test && pnpm typecheck
@@ -23,8 +23,9 @@ FOUNDATION_DEV_PROFILE=testnet foundation-dev up
 
 The profile mirrors the .zone marketplace API's order book and reads Amoy and Sepolia's subgraphs and
 RPCs. It relays gasless transactions through the .zone transactions API, and builds the Shop to settle
-on Amoy. A stack that already holds mainnet data refuses to switch to it, so the two networks never share
-a database.
+on Amoy. A stack that already holds data of another profile refuses to switch to it, so the two networks
+never share a database, and a testnet stack refuses `foundation-dev trades-snapshot`. The journey refuses
+to run when `FOUNDATION_DEV_STACK_PROFILE` (from `foundation-dev env`) names another profile.
 
 ## Settings
 
@@ -41,7 +42,7 @@ outside the repository. The journey prints addresses, never keys.
 
 ## The loop
 
-It ends where it started, so it can run again.
+A complete run ends where it started, so it can run again.
 
 1. The seller lists the token, changes its price, and cancels the listing.
 2. The buyer bids, cancels the bid, and bids again.
@@ -55,15 +56,32 @@ What each step costs on Amoy:
 - Accepting a bid is a transaction the seller pays for in POL.
 - A purchase pays the price in MANA, plus gas if the relay refuses it.
 
-So both wallets need a little POL and some testnet MANA. The preflight prints both balances and names
-what is missing.
+So both wallets need a little POL, the buyer at least `E2E_BID` MANA and the seller at least `E2E_PRICE`
+MANA. The preflight prints both balances and names what is missing.
+
+A run that fails part way leaves things where that step left them. The screenshot and the log name the
+step. Before running again:
+
+- After the seller's listing: cancel it in the Shop (`/shop/token/<contract>/<id>/cancel`), or leave it, since
+  listing again replaces it.
+- After a bid: the buyer cancels it from the token's Bids tab.
+- After the accept: the buyer owns the token. Swap `E2E_SELLER_KEY` and `E2E_BUYER_KEY` for the next run,
+  or let the buyer list it and buy it back by hand.
 
 ## The wallet
 
 `lib/wallet.mts` is the EIP-1193 provider the page sees, as an extension and as `window.ethereum`. The key
 stays in Node: the page forwards each request over a Playwright binding, and signing and sending happen
-there with viem. It refuses any chain but Amoy and Sepolia, typed data for another chain's domain, and
-requests for another address. A key handed to it therefore cannot move mainnet funds.
+there with viem. Only the Shop's own top-level page can reach it. It refuses:
+
+- any chain but Amoy and Sepolia;
+- typed data whose domain names another chain, in `chainId` or in `salt` (where Decentraland's trade and
+  meta-transaction domains carry it), or names no chain at all;
+- a transaction for a chain other than the current one;
+- requests for another address, and `eth_sign`, `eth_signTransaction` and `eth_sendRawTransaction`.
+
+`personal_sign` is not chain-bound, which is one more reason to use a wallet that holds nothing on
+mainnet.
 
 A failed step leaves a screenshot under `state/shop-trade-journey/`. The run ends with the Polygonscan
 link of every transaction it sent.

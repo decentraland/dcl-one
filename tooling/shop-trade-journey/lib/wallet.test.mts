@@ -39,9 +39,17 @@ function fakeRpc() {
   return { calls, transport };
 }
 
-const typed = (chainId: number) =>
+// The Shop's own domains carry the chain as a bytes32 salt (market/lib/trades.ts, market/lib/metaTx.ts).
+const salt = (chainId: number) => `0x${chainId.toString(16).padStart(64, "0")}`;
+
+const typed = (chain: number | { salt?: number; chainId?: number }) =>
   JSON.stringify({
-    domain: { name: "DecentralandMarketplace", version: "1.0.0", chainId, verifyingContract: "0x0000000000000000000000000000000000000001" },
+    domain: {
+      name: "DecentralandMarketplace",
+      version: "1.0.0",
+      verifyingContract: "0x0000000000000000000000000000000000000001",
+      ...(typeof chain === "number" ? { chainId: chain } : { ...(chain.chainId != null && { chainId: chain.chainId }), ...(chain.salt != null && { salt: salt(chain.salt) }) }),
+    },
     types: { EIP712Domain: [{ name: "name", type: "string" }], Trade: [{ name: "salt", type: "bytes32" }] },
     primaryType: "Trade",
     message: { salt: `0x${"11".repeat(32)}` },
@@ -79,6 +87,23 @@ describe("testnetWallet", () => {
     assert.equal(await recoverTypedDataAddress({ ...data, types, signature: tsig }), w.address);
   });
 
+  it("signs a testnet salt domain, the shape of the Shop's trades and meta transactions", async () => {
+    const { transport } = fakeRpc();
+    const w = testnetWallet({ key: KEY, transport });
+    const data = JSON.parse(typed({ salt: 80002 }));
+    const { EIP712Domain: _d, ...types } = data.types;
+    const sig = (await w.request({ method: "eth_signTypedData_v4", params: [w.address, typed({ salt: 80002 })] })) as Hex;
+    assert.equal(await recoverTypedDataAddress({ ...data, types, signature: sig }), w.address);
+  });
+
+  it("refuses a salt domain for Polygon, a domain that names no chain, and a chainId and salt that disagree", async () => {
+    const { transport } = fakeRpc();
+    const w = testnetWallet({ key: KEY, transport });
+    for (const domain of [{ salt: 137 }, { salt: 1 }, {}, { chainId: 80002, salt: 137 }, { chainId: 80002, salt: 11155111 }]) {
+      await assert.rejects(w.request({ method: "eth_signTypedData_v4", params: [w.address, typed(domain)] }), WalletRefusal, JSON.stringify(domain));
+    }
+  });
+
   it("refuses typed data for a mainnet domain, and acting for another address", async () => {
     const { transport } = fakeRpc();
     const w = testnetWallet({ key: KEY, transport });
@@ -97,6 +122,9 @@ describe("testnetWallet", () => {
     assert.equal(tx.chainId, 80002);
     assert.deepEqual(w.sent, [hash]);
     await assert.rejects(w.request({ method: "eth_sendTransaction", params: [{ from: w.address, to: "0x0000000000000000000000000000000000000002", chainId: "0x1" }] }), WalletRefusal);
+    // Another testnet than the current one: refused rather than broadcast on Amoy.
+    await assert.rejects(w.request({ method: "eth_sendTransaction", params: [{ from: w.address, to: "0x0000000000000000000000000000000000000002", chainId: "0xaa36a7" }] }), WalletRefusal);
+    assert.equal(calls.filter((c) => c.method === "eth_sendRawTransaction").length, 1);
   });
 
   it("passes reads through to the testnet RPC", async () => {
@@ -106,11 +134,12 @@ describe("testnetWallet", () => {
     assert.equal(calls.at(-1)!.chainId, 80002);
   });
 
-  it("answers the page with an EIP-1193 error code on refusal", async () => {
+  it("answers the page with the EIP-1193 code of each refusal", async () => {
     const { transport } = fakeRpc();
     const w = testnetWallet({ key: KEY, transport });
-    const a = await answer(w, { method: "wallet_switchEthereumChain", params: [{ chainId: "0x1" }] });
-    assert.equal(a.error?.code, 4001);
+    assert.equal((await answer(w, { method: "wallet_switchEthereumChain", params: [{ chainId: "0x1" }] })).error?.code, 4902);
+    assert.equal((await answer(w, { method: "eth_sign", params: [w.address, "0x00"] })).error?.code, 4200);
+    assert.equal((await answer(w, { method: "personal_sign", params: ["0x00", "0x000000000000000000000000000000000000dEaD"] })).error?.code, 4001);
   });
 });
 
