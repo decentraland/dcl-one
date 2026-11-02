@@ -1,0 +1,9 @@
+{
+  "name": "bevy-explorer-e2e-scene-tweens",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Visual-regression scene: Tween component cases",
+  "scripts": {
+    "build": "dcl-scene-cli build --skip-install"
+  }
+}
