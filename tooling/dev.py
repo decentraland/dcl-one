@@ -342,8 +342,13 @@ def testnet_env():
     """The mirror profile's upstreams on Decentraland's testnet: .zone services, Amoy and Sepolia.
 
     The Shop settles on Amoy (VITE_SHOP_CHAIN_ID, read by the Sites dev server), its order book is the
-    .zone marketplace API's, and POST /v1/trades checks ownership over the testnet RPCs. Places, events
-    and the Explorer's lists stay on their production sources: only trading needs the testnet."""
+    .zone marketplace API's, and POST /v1/trades checks ownership over the testnet RPCs. Places, events,
+    worlds and the map stay on their production sources, but ETH_NETWORK and SYNC_SOURCE move content
+    read-through, LAND authorization and the node's network id to Sepolia and the .zone peer, so /play
+    does not resolve mainnet scenes on this profile.
+
+    The trade-events index covers mainnet marketplaces only, so a trade signed into this stack stays
+    `open` locally after it is cancelled, replaced or executed on chain."""
     return {
         'ETH_NETWORK': 'sepolia',
         'SYNC_SOURCE': 'https://peer.decentraland.zone/content',
@@ -357,7 +362,7 @@ def testnet_env():
         'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',
         # Gasless approvals and cancels: the local relay admits Amoy's Decentraland contracts (the bundled
         # contract-addresses list under `amoy`) and forwards to the .zone transactions API, which pays testnet
-        # gas. The relay and the credits index check RPC_ENDPOINT_POLYGON against COLLECTIONS_CHAIN_ID.
+        # gas. COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
         'COLLECTIONS_CHAIN_ID': '80002',
         'CONTRACT_ADDRESSES_CHAIN_KEY': 'amoy',
         'TRANSACTIONS_UPSTREAM_URL': 'https://transactions-api.decentraland.zone',

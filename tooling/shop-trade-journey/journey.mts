@@ -35,14 +35,19 @@ const env = journeyEnv();
 const preflightOnly = process.argv.includes("--preflight");
 const sites = (env.E2E_SITES_URL ?? env.FOUNDATION_DEV_SITES_URL ?? "").replace(/\/$/, "");
 if (!sites) throw new Error("Set E2E_SITES_URL, or run under eval \"$(foundation-dev env)\" so FOUNDATION_DEV_SITES_URL names the stack");
-// Trades signed here are written to the stack's database, so it must be a testnet stack's.
-if (env.FOUNDATION_DEV_STACK_PROFILE !== "testnet") {
+// Trades signed here are written to the stack's database, so it must be a testnet stack's. The profile
+// comes from `foundation-dev env` in the shell, never from E2E_ENV_FILE, and only describes the stack
+// at FOUNDATION_DEV_SITES_URL, so E2E_SITES_URL may not point anywhere else.
+const stackProfile = process.env.FOUNDATION_DEV_STACK_PROFILE;
+const stackSites = (process.env.FOUNDATION_DEV_SITES_URL ?? "").replace(/\/$/, "");
+if (stackProfile !== "testnet") {
   throw new Error(
-    env.FOUNDATION_DEV_STACK_PROFILE
-      ? `The stack runs the ${env.FOUNDATION_DEV_STACK_PROFILE} profile; the journey needs a testnet stack (README)`
+    stackProfile
+      ? `The stack runs the ${stackProfile} profile; the journey needs a testnet stack (README)`
       : "FOUNDATION_DEV_STACK_PROFILE is not set: run under set -a; eval \"$(foundation-dev env)\"; set +a (README)",
   );
 }
+if (sites !== stackSites) throw new Error(`E2E_SITES_URL (${sites}) is not the stack foundation-dev env describes (${stackSites})`);
 const price = env.E2E_PRICE ?? "1";
 const repriced = env.E2E_REPRICE ?? "2";
 const bid = env.E2E_BID ?? "1";
@@ -122,11 +127,12 @@ const ownerOf = (t: { contract: string; tokenId: string }) => amoy.readContract(
 /** The token's owner becomes `who`: polled, since the UI may confirm before the RPC sees the block. */
 async function becomesOwner(t: { contract: string; tokenId: string }, who: Hex): Promise<void> {
   const until = Date.now() + 2 * 60_000;
-  let owner = await ownerOf(t);
-  while (owner.toLowerCase() !== who.toLowerCase()) {
-    if (Date.now() > until) throw new Error(`ownerOf is still ${owner} after 2 minutes`);
+  // A failed read is retried at the next poll; only the deadline fails the step.
+  let owner = await ownerOf(t).catch(() => null);
+  while (owner?.toLowerCase() !== who.toLowerCase()) {
+    if (Date.now() > until) throw new Error(`ownerOf is still ${owner ?? "unreadable"} after 2 minutes`);
     await new Promise((r) => setTimeout(r, 5_000));
-    owner = await ownerOf(t);
+    owner = await ownerOf(t).catch(() => null);
   }
 }
 

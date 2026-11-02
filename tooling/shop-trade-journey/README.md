@@ -38,7 +38,7 @@ outside the repository. The journey prints addresses, never keys.
 | `E2E_SELLER_KEY`, `E2E_BUYER_KEY` | Private keys of two testnet wallets. Never use a wallet that holds anything on mainnet. |
 | `E2E_TOKEN` | `<contract>:<tokenId>`, an Amoy NFT the seller owns. |
 | `E2E_PRICE`, `E2E_REPRICE`, `E2E_BID` | MANA amounts. The defaults are 1, 2 and 1. |
-| `E2E_SITES_URL` | The stack's Sites URL. The default is `FOUNDATION_DEV_SITES_URL`. |
+| `E2E_SITES_URL` | The stack's Sites URL. The default is `FOUNDATION_DEV_SITES_URL`, and any other value is refused, since `FOUNDATION_DEV_STACK_PROFILE` describes only that stack. Both come from the shell, never from `E2E_ENV_FILE`. |
 | `E2E_RPC_AMOY` | The Amoy RPC for balance and ownership reads. The default is `rpc.decentraland.org/amoy`. |
 
 ## The loop
