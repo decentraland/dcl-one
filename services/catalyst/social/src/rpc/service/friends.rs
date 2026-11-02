@@ -9,6 +9,7 @@ use super::helpers::{
     page_friends, page_of, upsert_internal_error,
 };
 use crate::auth::is_eth_address;
+use crate::notifications::{NewNotification, insert_notifications};
 use crate::rpc::context::{Context, PairScope};
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::proto::errors::InvalidFriendshipAction;
@@ -55,7 +56,7 @@ pub(crate) async fn apply_friendship_action(
     if !user_action_valid(me, action, other, last.as_ref()) {
         return Err(Refusal::Conflict(INVALID_FRIENDSHIP_ACTION_MESSAGE.into()));
     }
-    let (id, created_at) = db
+    let (id, created_at, action_id) = db
         .apply_friendship_action(
             me,
             other,
@@ -67,9 +68,103 @@ pub(crate) async fn apply_friendship_action(
         .await?;
     let created_ms = created_at.timestamp_millis();
     let my_profile = ctx.profiles().friend_profile(me).await;
-    let update = friendship_update_for(action, me, &id, created_ms, message, my_profile);
+    let update = friendship_update_for(action, me, &id, created_ms, message, my_profile.clone());
     ctx.pubsub().publish(other, SocialEvent::Friendship(update));
+    if action == Action::Accept {
+        announce_accepted_connectivity(ctx, me, other, my_profile).await;
+    }
+    notify_friendship_action(ctx, action, action_id, me, other, message).await;
     Ok((id, created_ms))
+}
+
+/// An accept changes the recipients of connectivity even when the Pulse wallet
+/// set stays unchanged. Queue only current ONLINE peers; the stream's existing
+/// relationship and topology guards recheck them before delivery.
+async fn announce_accepted_connectivity(
+    ctx: &Context,
+    me: &str,
+    other: &str,
+    my_profile: FriendProfile,
+) {
+    let other_profile = ctx.profiles().friend_profile(other).await;
+    let snapshot = ctx.topology().snapshot();
+    for (recipient, friend) in [(other, my_profile), (me, other_profile)] {
+        if snapshot.is_online(&friend.address) {
+            let friend = crate::rpc::profiles::connectivity_profile(friend);
+            let address = friend.address.clone();
+            ctx.topology()
+                .deliver_if_current(snapshot.generation, &address, true, || {
+                    ctx.pubsub().publish(
+                        recipient,
+                        SocialEvent::TopologyFriendConnectivity(
+                            FriendConnectivityUpdate {
+                                stream_closed: None,
+                                friend: Some(friend),
+                                status: ConnectivityStatus::Online as i32,
+                            },
+                            snapshot.generation,
+                        ),
+                    );
+                });
+        }
+    }
+}
+
+/// The request/accept notification is best effort after the action commits,
+/// like upstream's notification worker. Reuse its action UUID for deduplication
+/// and the existing inbox/email outbox; missing profiles never fail the action.
+async fn notify_friendship_action(
+    ctx: &Context,
+    action: Action,
+    action_id: uuid::Uuid,
+    me: &str,
+    other: &str,
+    message: Option<&str>,
+) {
+    let kind = match action {
+        Action::Request => "social_service_friendship_request",
+        Action::Accept => "social_service_friendship_accepted",
+        _ => return,
+    };
+    let profiles = ctx
+        .profiles()
+        .get_profiles(&[me.to_string(), other.to_string()])
+        .await;
+    let (Some(sender), Some(receiver)) = (profiles.get(me), profiles.get(other)) else {
+        tracing::warn!(
+            action = action.as_str(),
+            "friendship notification skipped: profile unavailable"
+        );
+        return;
+    };
+    let Ok(address) = crate::Address::parse(other) else {
+        return;
+    };
+    let profile_metadata = |address: &str, profile: &crate::rpc::profiles::ProfileInfo| {
+        serde_json::json!({
+            "address": address,
+            "name": profile.name,
+            "profileImageUrl": profile.profile_picture_url,
+            "hasClaimedName": profile.has_claimed_name,
+        })
+    };
+    let mut metadata = serde_json::json!({
+        "requestId": action_id.to_string(),
+        "sender": profile_metadata(me, sender),
+        "receiver": profile_metadata(other, receiver),
+    });
+    if action == Action::Request
+        && let Some(message) = message.filter(|m| !m.is_empty())
+    {
+        metadata["message"] = serde_json::json!(message);
+    }
+    let notification = NewNotification {
+        id: action_id,
+        ..NewNotification::now(address, kind, metadata)
+    };
+    if let Err(error) = insert_notifications(ctx.db().pool(), &[notification]).await {
+        tracing::warn!(%error, kind, "friendship notification not written");
+    }
 }
 
 /// The status `me` reads for the pair: the last action, or the block rows

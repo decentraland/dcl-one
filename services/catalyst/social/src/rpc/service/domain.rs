@@ -220,6 +220,7 @@ pub(super) fn friendship_update_for(
         }
     };
     FriendshipUpdate {
+        stream_closed: None,
         update: Some(update),
     }
 }
@@ -316,6 +317,7 @@ pub(super) fn fan_community_voice_to(
         ctx.pubsub().publish(
             member,
             SocialEvent::CommunityVoice(CommunityVoiceChatUpdate {
+                stream_closed: None,
                 community_id: community_id.to_string(),
                 created_at: now_ms,
                 status: status as i32,
@@ -352,12 +354,13 @@ fn moderator_gate(standing: CommunityStanding) -> Result<(), ForbiddenError> {
     }
 }
 
-/// The community's privacy and two members' standings, which every voice-room
-/// gate below decides from: one read of `community_members`.
+/// The community's privacy, roles and bans, which every voice-room gate below
+/// decides from in one database read.
 struct VoiceStanding {
     private: bool,
     actor: CommunityStanding,
     target: CommunityStanding,
+    target_banned: bool,
 }
 
 /// An absent or unrecognised value is `NotAMember`; a missing community too.
@@ -367,14 +370,15 @@ async fn load_voice_standing(
     actor: &str,
     target: &str,
 ) -> Result<VoiceStanding, SocialError> {
-    let (private, actor_role, target_role) = db
+    let (private, actor_role, target_role, actor_banned, target_banned) = db
         .community_voice_roles(community_id, actor, target)
         .await?
-        .unwrap_or((false, None, None));
+        .unwrap_or((false, None, None, false, false));
     Ok(VoiceStanding {
         private,
-        actor: CommunityStanding::from_rows(false, actor_role.as_deref()),
+        actor: CommunityStanding::from_rows(actor_banned, actor_role.as_deref()),
         target: CommunityStanding::from_rows(false, target_role.as_deref()),
+        target_banned,
     })
 }
 
@@ -389,12 +393,12 @@ pub(super) async fn validate_community_voice_participation(
     community_id: &str,
     address: &str,
 ) -> Result<Result<(), ForbiddenError>, SocialError> {
-    if db.is_member_banned(community_id, address).await? {
+    let standing = load_voice_standing(db, community_id, address, address).await?;
+    if standing.actor == CommunityStanding::Banned {
         return Ok(Err(ForbiddenError {
             message: Some("banned from this community".into()),
         }));
     }
-    let standing = load_voice_standing(db, community_id, address, address).await?;
     Ok(target_membership_gate(standing.private, standing.actor))
 }
 
@@ -415,17 +419,27 @@ fn target_membership_gate(
 }
 
 /// [`require_moderator_protecting_owner`] followed by the target-membership
-/// gate, decided from the same read. Promote/demote/reject use this.
+/// gate, decided from the same read. Promotion and demotion also reject a
+/// banned target; rejecting a hand request remains possible after a ban.
 pub(super) async fn require_moderator_over_member(
     db: &Db,
     community_id: &str,
     actor: &str,
     target: &str,
     action: &str,
+    reject_banned_target: bool,
 ) -> Result<Result<(), ForbiddenError>, SocialError> {
     let standing = load_voice_standing(db, community_id, actor, target).await?;
-    Ok(owner_protecting_gate(&standing, actor, target, action)
-        .and_then(|()| target_membership_gate(standing.private, standing.target)))
+    Ok(
+        owner_protecting_gate(&standing, actor, target, action).and_then(|()| {
+            if reject_banned_target && standing.target_banned {
+                return Err(ForbiddenError {
+                    message: Some("not a community member".into()),
+                });
+            }
+            target_membership_gate(standing.private, standing.target)
+        }),
+    )
 }
 
 /// Like [`require_moderator`], but protects the owner: a voice-room moderation

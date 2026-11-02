@@ -99,6 +99,7 @@ pub(crate) async fn start_private_voice_chat(
     ctx.pubsub().publish(
         callee,
         SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+            stream_closed: None,
             call_id: id.to_string(),
             status: PrivateVoiceChatStatus::VoiceChatRequested as i32,
             caller: Some(User {
@@ -140,6 +141,7 @@ pub(crate) async fn accept_private_voice_chat(
     ctx.pubsub().publish(
         &chat.caller_address,
         SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+            stream_closed: None,
             call_id: id.to_string(),
             status: PrivateVoiceChatStatus::VoiceChatAccepted as i32,
             caller: Some(User {
@@ -174,6 +176,7 @@ pub(crate) async fn reject_private_voice_chat(
     ctx.pubsub().publish(
         &chat.caller_address,
         SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+            stream_closed: None,
             call_id: id.to_string(),
             status: PrivateVoiceChatStatus::VoiceChatRejected as i32,
             caller: Some(User {
@@ -216,8 +219,8 @@ pub(crate) async fn end_private_voice_chat(
 
 impl SocialServiceImpl {
     /// The gates run in the old precedence, all from one read: self-call,
-    /// block, either party in a community room, the privacy settings
-    /// (`all` on both sides or friends), busy, either party in a private
+    /// block, the privacy settings (`all` on both sides or friends), either
+    /// party in a community room, busy, either party in a private
     /// room; then the locked insert. With no voice runtime the call is refused
     /// up front rather than rung with nothing to connect to.
     pub(crate) async fn start_private_voice_chat(

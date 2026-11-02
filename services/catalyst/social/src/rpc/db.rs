@@ -565,7 +565,8 @@ impl Db {
     /// `is_active`, `last_action`, `last_actor`, `last_action_at` and the
     /// action row move together, stamped with the statement's one `now()`.
     /// A concurrent insert on the same unordered pair resolves through
-    /// `friendships_unordered_pair_uidx`.
+    /// `friendships_unordered_pair_uidx`. Returns the friendship id, time and
+    /// action id from that statement; notifications use the committed action id.
     pub async fn apply_friendship_action(
         &self,
         acting_user: &str,
@@ -574,7 +575,7 @@ impl Db {
         is_active: bool,
         existing: Option<Uuid>,
         message: Option<&str>,
-    ) -> Result<(Uuid, DateTime<Utc>), DbError> {
+    ) -> Result<(Uuid, DateTime<Utc>, Uuid), DbError> {
         let acting_user = acting_user.to_lowercase();
         let other = other.to_lowercase();
         let metadata = message.map(|m| serde_json::json!({ "message": m }));
@@ -589,7 +590,7 @@ impl Db {
                        )
                        INSERT INTO social.friendship_actions (id, friendship_id, action, acting_user, metadata, "timestamp")
                        SELECT $3::uuid, f.id, $4::text, $5::text, $6::json, timezone('UTC', now()) FROM f
-                       RETURNING friendship_id, "timestamp""#,
+                       RETURNING friendship_id, "timestamp", id"#,
                 )
                 .bind(is_active)
                 .bind(id)
@@ -615,7 +616,7 @@ impl Db {
                        )
                        INSERT INTO social.friendship_actions (id, friendship_id, action, acting_user, metadata, "timestamp")
                        SELECT $5::uuid, f.id, $6::text, $7::text, $8::json, timezone('UTC', now()) FROM f
-                       RETURNING friendship_id, "timestamp""#,
+                       RETURNING friendship_id, "timestamp", id"#,
                 )
                 .bind(Uuid::new_v4())
                 .bind(&acting_user)
@@ -632,6 +633,7 @@ impl Db {
         Ok((
             row.get::<Uuid, _>("friendship_id"),
             row.get::<NaiveDateTime, _>("timestamp").and_utc(),
+            row.get::<Uuid, _>("id"),
         ))
     }
 
@@ -1184,14 +1186,14 @@ impl Db {
         Ok(rows)
     }
 
-    /// `(private, role of a, role of b)` in one read; `None` when the community
-    /// row is missing; roles are `None` for an inactive community.
+    /// Privacy, roles and bans in one read; `None` when the community row is
+    /// missing. Roles are `None` for an inactive community.
     pub async fn community_voice_roles(
         &self,
         community_id: &str,
         a: &str,
         b: &str,
-    ) -> Result<Option<(bool, Option<String>, Option<String>)>, DbError> {
+    ) -> Result<Option<(bool, Option<String>, Option<String>, bool, bool)>, DbError> {
         let Ok(cid) = Uuid::parse_str(community_id) else {
             return Ok(None);
         };
@@ -1200,7 +1202,11 @@ impl Db {
                     CASE WHEN c.active THEN (SELECT role FROM social.community_members \
                                              WHERE community_id = c.id AND member_address = $2) END AS role_a, \
                     CASE WHEN c.active THEN (SELECT role FROM social.community_members \
-                                             WHERE community_id = c.id AND member_address = $3) END AS role_b \
+                                             WHERE community_id = c.id AND member_address = $3) END AS role_b, \
+                    EXISTS (SELECT 1 FROM social.community_bans WHERE community_id = c.id \
+                            AND banned_address = $2 AND active) AS banned_a, \
+                    EXISTS (SELECT 1 FROM social.community_bans WHERE community_id = c.id \
+                            AND banned_address = $3 AND active) AS banned_b \
              FROM social.communities c WHERE c.id = $1",
         )
         .bind(cid)
@@ -1208,30 +1214,38 @@ impl Db {
         .bind(b.to_lowercase())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| (r.get("private"), r.get("role_a"), r.get("role_b"))))
+        Ok(row.map(|r| {
+            (
+                r.get("private"),
+                r.get("role_a"),
+                r.get("role_b"),
+                r.get("banned_a"),
+                r.get("banned_b"),
+            )
+        }))
     }
 
-    /// `(role, banned)` of one address; `None` when the community row is missing.
+    /// `(private, role, banned)` of one address in an active community.
     pub async fn community_membership(
         &self,
         community_id: &str,
         address: &str,
-    ) -> Result<Option<(Option<String>, bool)>, DbError> {
+    ) -> Result<Option<(bool, Option<String>, bool)>, DbError> {
         let Ok(cid) = Uuid::parse_str(community_id) else {
             return Ok(None);
         };
         let row = sqlx::query(
-            "SELECT CASE WHEN c.active THEN m.role END AS role, COALESCE(b.active, FALSE) AS banned \
+            "SELECT c.private, m.role, COALESCE(b.active, FALSE) AS banned \
              FROM social.communities c \
              LEFT JOIN social.community_members m ON m.community_id = c.id AND m.member_address = $2 \
              LEFT JOIN social.community_bans b ON b.community_id = c.id AND b.banned_address = $2 \
-             WHERE c.id = $1",
+             WHERE c.id = $1 AND c.active",
         )
         .bind(cid)
         .bind(address.to_lowercase())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| (r.get("role"), r.get("banned"))))
+        Ok(row.map(|r| (r.get("private"), r.get("role"), r.get("banned"))))
     }
 
     /// `(name, member addresses)` for a voice fan-out; `None` when the
@@ -1267,7 +1281,8 @@ impl Db {
         };
         let row = sqlx::query(
             "SELECT c.name, \
-                    CASE WHEN c.active THEN m.role END AS role, \
+                    CASE WHEN c.active AND NOT EXISTS (SELECT 1 FROM social.community_bans \
+                         WHERE community_id = c.id AND banned_address = $2 AND active) THEN m.role END AS role, \
                     CASE WHEN c.active AND m.role IN ('owner', 'moderator') THEN \
                       COALESCE((SELECT array_agg(member_address) FROM social.community_members \
                                 WHERE community_id = c.id), '{}'::text[]) \
