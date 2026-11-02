@@ -50,7 +50,12 @@ use util::SceneUtilPlugin;
 
 use web_time::Instant;
 
-use crate::{asset_preload::plugin::AssetPreloadPlugin, initialize_scene::SuperUserScene};
+use crate::{
+    asset_preload::plugin::AssetPreloadPlugin,
+    initialize_scene::SuperUserScene,
+    scene_partition::{update_scene_partitions, ScenePartition, BEHIND_SCENE_TICK_INTERVAL},
+};
+use common::partition::ScenePartitionData;
 
 use self::{
     initialize_scene::{
@@ -72,6 +77,7 @@ pub mod initialize_scene;
 pub mod permissions;
 pub mod primary_entities;
 pub mod renderer_context;
+pub mod scene_partition;
 #[cfg(test)]
 pub mod test;
 pub mod update_scene;
@@ -386,7 +392,7 @@ impl Plugin for SceneRunnerPlugin {
 
         app.add_systems(
             Update,
-            (update_scene_priority, run_scene_loop)
+            (update_scene_partitions, update_scene_priority, run_scene_loop)
                 .chain()
                 .in_set(SceneSets::RunLoop),
         );
@@ -508,13 +514,13 @@ fn update_scene_priority(
     mut scenes: Query<
         (
             Entity,
-            &GlobalTransform,
+            Option<&ScenePartition>,
             &mut RendererSceneContext,
             Option<&SuperUserScene>,
         ),
         Without<SceneLoading>,
     >,
-    player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
+    player: Query<Entity, With<PrimaryUser>>,
     mut updates: ResMut<SceneUpdates>,
     time: Res<Time>,
     containing_scene: ContainingScene,
@@ -522,9 +528,9 @@ fn update_scene_priority(
     updates.eligible_jobs = 0;
     updates.frames += 1;
 
-    let (active_scenes, player_translation) = player
+    let active_scenes = player
         .single()
-        .map(|(e, gt)| (containing_scene.get(e), gt.translation()))
+        .map(|e| containing_scene.get(e))
         .unwrap_or_default();
 
     // mark scenes that have been in-flight past the timeout as broken and free their
@@ -583,31 +589,23 @@ fn update_scene_priority(
             }
             allow
         })
-        .filter_map(|(ent, transform, mut context, _)| {
-            // clamp to scene bounds instead of using distance to scene origin
-            let nearest_point = player_translation.xz().clamp(
-                transform.translation().xz() - Vec2::Y * PARCEL_SIZE,
-                transform.translation().xz() + Vec2::X * PARCEL_SIZE,
-            );
-            let distance = (nearest_point - player_translation.xz()).length_squared();
-            context.priority = if active_scenes.contains(&ent) {
-                0.0
-            } else {
-                distance
-            };
+        .filter_map(|(ent, maybe_partition, mut context, maybe_super)| {
+            let partition = maybe_partition.map_or(ScenePartitionData::NEAREST, |p| p.0);
+            let active = active_scenes.contains(&ent);
+            context.priority = if active { 0.0 } else { partition.sqr_distance };
             let not_yet_run = context.last_sent < time.elapsed_secs_f64();
 
             if !context.in_flight() && !not_yet_run {
                 skipped_already_sent += 1;
             }
 
-            (!context.in_flight() && not_yet_run).then(|| {
-                updates.eligible_jobs += 1;
-                let priority = FloatOrd(
-                    context.priority / (time.elapsed_secs_f64() - context.last_sent) as f32,
-                );
-                (ent, priority)
-            })
+            if context.in_flight() || !not_yet_run {
+                return None;
+            }
+            let age = time.elapsed_secs_f64() - context.last_sent;
+            let key = scene_tick_key(partition, active, maybe_super.is_some(), age)?;
+            updates.eligible_jobs += 1;
+            Some((ent, key))
         })
         .collect();
     updates.skipped_in_flight += skipped_in_flight;
@@ -621,6 +619,26 @@ fn update_scene_priority(
     updates.jobs_in_flight = &updates.jobs_in_flight - &missing_in_flight;
 }
 
+/// The queue key of a scene due this frame: its distance over the time since it was last
+/// sent, 0 for the player's scenes. `None` while a scene behind the camera waits out
+/// `BEHIND_SCENE_TICK_INTERVAL`; the player's and system scenes are never held back.
+fn scene_tick_key(
+    partition: ScenePartitionData,
+    active: bool,
+    super_user: bool,
+    age: f64,
+) -> Option<FloatOrd> {
+    if partition.is_behind
+        && !active
+        && !super_user
+        && age < BEHIND_SCENE_TICK_INTERVAL.as_secs_f64()
+    {
+        return None;
+    }
+    let distance = if active { 0.0 } else { partition.sqr_distance };
+    Some(FloatOrd(distance / age as f32))
+}
+
 // TODO: work out how to set this intelligently
 // we need to keep enough scheduler time to ensure the main loop wakes enough
 // otherwise we end up overrunning the budget
@@ -629,6 +647,60 @@ fn update_scene_priority(
 // - reduce bevy primary thread pool
 // - see if we can get v8 single threaded / no native threads working
 // const MAX_CONCURRENT_SCENES: usize = 8;
+
+#[cfg(test)]
+mod tick_key_tests {
+    use super::*;
+    use common::partition::ScenePartitionData;
+
+    const BEHIND_FAR: ScenePartitionData = ScenePartitionData {
+        sqr_distance: 6400.0,
+        parcel_distance: 5,
+        is_behind: true,
+    };
+    const FRONT_FAR: ScenePartitionData = ScenePartitionData {
+        sqr_distance: 6400.0,
+        parcel_distance: 5,
+        is_behind: false,
+    };
+
+    #[test]
+    fn a_behind_scene_is_not_due_within_the_interval() {
+        assert_eq!(scene_tick_key(BEHIND_FAR, false, false, 0.5), None);
+    }
+
+    #[test]
+    fn a_behind_scene_is_due_after_the_interval() {
+        assert_eq!(
+            scene_tick_key(BEHIND_FAR, false, false, 1.0),
+            Some(FloatOrd(6400.0))
+        );
+    }
+
+    #[test]
+    fn the_players_scene_is_never_capped() {
+        assert_eq!(
+            scene_tick_key(BEHIND_FAR, true, false, 0.016),
+            Some(FloatOrd(0.0))
+        );
+    }
+
+    #[test]
+    fn a_super_user_scene_is_never_capped() {
+        assert_eq!(
+            scene_tick_key(BEHIND_FAR, false, true, 0.016),
+            Some(FloatOrd(6400.0 / 0.016f64 as f32))
+        );
+    }
+
+    #[test]
+    fn a_front_scene_ages_as_before() {
+        assert_eq!(
+            scene_tick_key(FRONT_FAR, false, false, 0.5),
+            Some(FloatOrd(12800.0))
+        );
+    }
+}
 
 pub use common::structs::OutOfWorld;
 
