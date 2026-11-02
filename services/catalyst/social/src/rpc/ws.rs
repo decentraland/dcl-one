@@ -1,8 +1,13 @@
-//! The socket: an axum WebSocket upgrade whose first frame must be the signed
-//! handshake (`handshake.rs`) within the auth window, closed with `3003
-//! Unauthorized` otherwise and `1013` when the connection cap is reached;
-//! after it the socket is a binary [`Transport`](crate::shared::rpc::drpc::transport::Transport) attached to the RPC server,
-//! which answers `SERVER_READY` and serves the ports the client creates.
+//! The socket: an axum WebSocket upgrade, counted from the moment it opens
+//! (closed `1013` when the pool is full), whose first frame must be the
+//! signed handshake (`handshake.rs`) within the auth window: `3004
+//! Authorization timeout` when none arrives, `3003 Unauthorized` when it is
+//! refused, and any frame sent while it is verified answered with upstream's
+//! `{"error":"Authentication already in progress, please try again later"}`.
+//! A socket that closes during verification is never attached. After it the
+//! socket is a binary [`Transport`](crate::shared::rpc::drpc::transport::Transport)
+//! attached to the RPC server, which answers `SERVER_READY` and serves the
+//! ports the client creates (upstream `src/controllers/handlers/uws/ws-handler.ts`).
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -10,15 +15,24 @@ use std::time::Duration;
 use anyhow::{Result, anyhow};
 use axum::extract::State as AxumState;
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, Uri};
 use axum::response::{IntoResponse, Response};
-use tokio::time::timeout;
 
 use crate::rpc::State;
+use crate::rpc::limits::Protocol;
 use crate::shared::identity::Address;
-use crate::shared::rpc::handshake::{candidate_paths, validator_ref, verify_handshake};
-use crate::shared::rpc::ws::AxumWsTransport;
+use crate::shared::rpc::handshake::{
+    HandshakeError, candidate_paths, validator_ref, verify_handshake,
+};
+use crate::shared::rpc::ws::{AxumWsTransport, RPC_TRANSPORT_CLOSED, SocketClose, close_message};
+
+/// The pool is full (upstream `ws-handler.ts:367`).
+pub const POOL_FULL: (u16, &str) = (1013, "Unable to acquire connection");
+pub const UNAUTHORIZED: (u16, &str) = (3003, "Unauthorized");
+pub const AUTH_TIMEOUT: (u16, &str) = (3004, "Authorization timeout");
+const AUTH_IN_PROGRESS: &str =
+    r#"{"error":"Authentication already in progress, please try again later"}"#;
 
 pub async fn ws_upgrade(
     AxumState(state): AxumState<Arc<State>>,
@@ -52,30 +66,14 @@ async fn handle_connection(
     paths: Vec<String>,
     mut socket: WebSocket,
 ) -> Result<()> {
-    if let Some(max) = state.settings.ws_max_concurrent_connections
-        && state.ctx.live_connections() >= max
-    {
+    let max = state.settings.ws_max_concurrent_connections;
+    let Some(slot) = state.ctx.open_socket(Protocol::Rpc, max) else {
         tracing::warn!(max, "rejecting ws connection: pool is full");
-        let _ = socket
-            .send(Message::Close(Some(CloseFrame {
-                code: 1013,
-                reason: "Server is at capacity; try again later".into(),
-            })))
-            .await;
+        let _ = socket.send(close_message(POOL_FULL)).await;
         return Ok(());
-    }
-    let address = match auth_handshake(&state, &paths, &mut socket).await {
-        Ok(addr) => addr,
-        Err(err) => {
-            tracing::info!(%err, "auth handshake failed");
-            let _ = socket
-                .send(Message::Close(Some(CloseFrame {
-                    code: 3003,
-                    reason: "Unauthorized".into(),
-                })))
-                .await;
-            return Ok(());
-        }
+    };
+    let Some(address) = auth_handshake(&state, &paths, &mut socket, &slot.close).await else {
+        return Ok(());
     };
     tracing::info!(address = %address, "social-rpc client authenticated");
 
@@ -84,39 +82,93 @@ async fn handle_connection(
             "rpc server not running; State::spawn_jobs was not called"
         ));
     };
-    let transport = Arc::new(AxumWsTransport::spawn(socket, address.into_string()));
-    events
-        .send_attach_transport(transport)
-        .map_err(|e| anyhow!("attach transport: {e:?}"))?;
+    let (transport, writer) =
+        AxumWsTransport::spawn(socket, address.into_string(), slot.close.clone());
+    if let Err(e) = events.send_attach_transport(Arc::new(transport)) {
+        let (code, reason) = RPC_TRANSPORT_CLOSED;
+        slot.close.end(code, reason);
+        return Err(anyhow!("attach transport: {e:?}"));
+    }
+    // The socket keeps its place in the pool until its close frame is out.
+    let _ = writer.await;
     Ok(())
 }
 
+/// The first frame, verified; `None` once the socket is closed (with the
+/// frame upstream sends, or by its peer).
 async fn auth_handshake(
     state: &State,
     paths: &[String],
     socket: &mut WebSocket,
-) -> Result<Address> {
+    close: &SocketClose,
+) -> Option<Address> {
     let window_secs = state.settings.auth_window_secs.max(1);
-    let first = timeout(Duration::from_secs(window_secs as u64), socket.recv())
-        .await
-        .map_err(|_| anyhow!("auth timeout after {window_secs}s"))?
-        .ok_or_else(|| anyhow!("socket closed before auth"))?
-        .map_err(|e| anyhow!("ws recv error: {e}"))?;
-    let text: String = match first {
-        Message::Text(s) => s.to_string(),
-        Message::Binary(b) => String::from_utf8(b.to_vec())
-            .map_err(|_| anyhow!("auth payload was binary but not utf-8 json"))?,
-        _ => return Err(anyhow!("expected text/binary frame for auth")),
+    let deadline = tokio::time::sleep(Duration::from_secs(window_secs as u64));
+    tokio::pin!(deadline);
+    let frame = loop {
+        tokio::select! {
+            _ = close.ended() => return end(socket, close.frame()).await,
+            _ = &mut deadline => return end(socket, Some(AUTH_TIMEOUT)).await,
+            message = socket.recv() => match message {
+                Some(Ok(Message::Text(text))) => break text.to_string(),
+                Some(Ok(Message::Binary(bytes))) => break String::from_utf8_lossy(&bytes).into_owned(),
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+                _ => return None,
+            },
+        }
     };
-    let now_secs = chrono::Utc::now().timestamp();
-    verify_handshake(
-        &text,
+    let verification = verify_handshake(
+        &frame,
         "get",
         paths,
         state.settings.auth_window_secs,
-        now_secs,
+        chrono::Utc::now().timestamp(),
         validator_ref(&state.eip1654),
-    )
-    .await
-    .map_err(|e| anyhow!("handshake: {e}"))
+    );
+    tokio::pin!(verification);
+    // Upstream's timer runs until the verdict, and a frame sent meanwhile is
+    // answered and dropped (`ws-handler.ts:374-384`).
+    // Biased: a frame or a close already received is handled before the verdict.
+    let verdict = loop {
+        tokio::select! {
+            biased;
+            _ = close.ended() => return end(socket, close.frame()).await,
+            message = socket.recv() => match message {
+                Some(Ok(Message::Text(_) | Message::Binary(_))) => {
+                    let _ = socket.send(Message::Text(AUTH_IN_PROGRESS.into())).await;
+                }
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                _ => {
+                    tracing::info!("socket closed during authentication; not attached");
+                    return None;
+                }
+            },
+            _ = &mut deadline => return end(socket, Some(AUTH_TIMEOUT)).await,
+            verdict = &mut verification => break verdict,
+        }
+    };
+    match verdict {
+        Ok(address) => Some(address),
+        Err(err) => {
+            let kind = match err {
+                HandshakeError::CatalystUnavailable(_) => "server_error",
+                _ => "client_rejected",
+            };
+            metrics::counter!(
+                "ws_auth_errors_by_protocol",
+                "protocol" => Protocol::Rpc.label(),
+                "type" => kind
+            )
+            .increment(1);
+            tracing::info!(%err, "auth handshake failed");
+            end(socket, Some(UNAUTHORIZED)).await
+        }
+    }
+}
+
+async fn end(socket: &mut WebSocket, frame: Option<(u16, &'static str)>) -> Option<Address> {
+    if let Some(frame) = frame {
+        let _ = socket.send(close_message(frame)).await;
+    }
+    None
 }

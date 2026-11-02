@@ -1513,13 +1513,14 @@ async fn ws_handshake_garbage_or_scene_signed_frame_gets_close_3003() {
 async fn ws_handshake_timeout_closes_connection() {
     let server = spawn_server(None, 1).await;
     let mut socket = connect(&server, "/social-rpc").await;
-    // The server's one-second handshake timeout closes the socket; the wait only guards a hang.
-    let msg = tokio::time::timeout(crate::shared::test_wait::HANG_GUARD, socket.next())
-        .await
-        .expect("the handshake timeout never closed the socket");
-    match msg {
-        Some(Ok(WsMessage::Close(_))) | None => {}
-        other => panic!("expected Close or stream end, got {other:?}"),
+    // The server's one-second handshake timeout closes the socket 3004
+    // "Authorization timeout" (upstream `ws-handler.ts:336`); the wait only guards a hang.
+    match next_message(&mut socket).await {
+        WsMessage::Close(Some(frame)) => {
+            assert_eq!(u16::from(frame.code), 3004);
+            assert_eq!(frame.reason.as_str(), "Authorization timeout");
+        }
+        other => panic!("expected a close, got {other:?}"),
     }
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }

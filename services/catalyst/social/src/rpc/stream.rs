@@ -17,9 +17,17 @@
 //! Each stream reads the same per-address channel (`pubsub`) as its RPC
 //! procedure, with the same filters and delivery guards, and maps its events
 //! to the protocol's JSON: addresses only, never profiles. Both protocols
-//! share the per-address socket cap and presence (`limits::Admission`,
-//! `Context::mark_online`): the address's last socket of either kind ending
-//! ends its private call.
+//! share the socket pool, the per-address socket cap and presence
+//! (`limits::Admission`, `Context::mark_online`): the address's last socket
+//! of either kind ending ends its private call.
+//!
+//! Backpressure is upstream's (`src/adapters/stream-sessions/component.ts`):
+//! a writer task drains the socket and counts the bytes handed to it and not
+//! yet written, as uWS's buffered amount; a subscription hands its next
+//! event over only once that is zero, a send while more than
+//! `WS_MAX_BACKPRESSURE` bytes wait closes the socket 1008 `Slow consumer`,
+//! and a subscription whose queue of 1,000 events is full closes it 1008
+//! `Subscription overflow; reconnect and resync`.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -27,36 +35,70 @@ use std::time::{Duration, Instant};
 
 use axum::extract::State as AxumState;
 use axum::extract::ws::rejection::WebSocketUpgradeRejection;
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use futures::stream::{SplitSink, SplitStream};
+use futures::{SinkExt, StreamExt};
 use serde_json::{Map, Value, json};
-use tokio::sync::{Notify, broadcast::error::RecvError, mpsc};
+use tokio::sync::{broadcast::error::RecvError, mpsc, watch};
 use tokio::task::JoinHandle;
 
 use crate::rpc::State;
 use crate::rpc::context::Context;
-use crate::rpc::limits::Eviction;
+use crate::rpc::limits::Protocol;
 use crate::rpc::proto::v2::{
     CommunityVoiceChatStatus, ConnectivityStatus, PrivateVoiceChatStatus, friendship_update,
 };
 use crate::rpc::pubsub::SocialEvent;
+use crate::rpc::ws::{AUTH_TIMEOUT, POOL_FULL, UNAUTHORIZED};
 use crate::shared::rpc::handshake::{
     HandshakeError, handshake_path, validator_ref, verify_handshake,
 };
+use crate::shared::rpc::ws::{SocketClose, close_message};
 
 /// The route upstream signs and serves (`src/adapters/stream-sessions/constants.ts`).
 pub const STREAM_PATH: &str = "/v1/stream";
-/// `STREAM_WS_MAX_PAYLOAD_LENGTH`: enough for a signed-fetch auth chain.
-const MAX_PAYLOAD_BYTES: usize = 16 * 1024;
-/// `STREAM_WS_MESSAGES_PER_SECOND` / `STREAM_WS_MESSAGE_BURST`: every
-/// application frame, the auth frame included, draws from it.
-const MESSAGES_PER_SECOND: f64 = 20.0;
-const MESSAGE_BURST: f64 = 40.0;
-/// Events queued per subscription before the socket is closed `1008`.
+/// Events queued per subscription (upstream `MAX_VALUE_QUEUE_SIZE`,
+/// `src/utils/emitterToGenerator.ts:4`, a constant there too).
 const SUBSCRIPTION_QUEUE: usize = 1_000;
+/// How long a closing socket may take to write what is queued before its
+/// close frame; past it the connection is dropped.
+const CLOSE_BUDGET: Duration = Duration::from_secs(10);
 /// A subscription or unsubscription id: 1 to 64 UTF-16 units, as JS counts.
 const MAX_ID_UNITS: usize = 64;
+
+const MESSAGE_RATE: (u16, &str) = (1008, "Message rate exceeded; reconnect with backoff");
+const SLOW_CONSUMER: (u16, &str) = (1008, "Slow consumer");
+const SUBSCRIPTION_OVERFLOW: (u16, &str) = (1008, "Subscription overflow; reconnect and resync");
+/// Close codes counted under their own label; any other is `other`
+/// (upstream `KNOWN_CLOSE_CODES`).
+const KNOWN_CLOSE_CODES: [u16; 11] = [
+    1000, 1001, 1005, 1006, 1008, 1009, 1011, 1013, 3003, 3004, 3005,
+];
+
+/// `/v1/stream`'s own limits (upstream `stream-ws-handler.ts:28`,
+/// `stream-sessions/component.ts:68-69`), each positive.
+#[derive(Clone, Copy, Debug)]
+pub struct StreamLimits {
+    /// `STREAM_WS_MAX_PAYLOAD_LENGTH`: the largest inbound frame; enough for
+    /// a signed-fetch auth chain.
+    pub max_payload_bytes: usize,
+    /// `STREAM_WS_MESSAGES_PER_SECOND` / `STREAM_WS_MESSAGE_BURST`: every
+    /// application frame, the auth frame included, draws from this bucket.
+    pub messages_per_second: f64,
+    pub message_burst: usize,
+}
+
+impl Default for StreamLimits {
+    fn default() -> Self {
+        Self {
+            max_payload_bytes: 16 * 1024,
+            messages_per_second: 20.0,
+            message_burst: 40,
+        }
+    }
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Stream {
@@ -91,6 +133,28 @@ impl Stream {
             Self::CommunityVoiceChats => "community_voice_chat_updates",
         }
     }
+
+    /// Whether `event` is one this stream listens to, as each upstream
+    /// generator listens to its one event: only these fill its queue.
+    fn carries(self, event: &SocialEvent) -> bool {
+        use SocialEvent as E;
+        match self {
+            Self::Friendships => matches!(event, E::Friendship(_)),
+            Self::Blocks => matches!(event, E::Block(_)),
+            Self::PrivateVoiceChats => matches!(event, E::PrivateVoice(_)),
+            Self::CommunityVoiceChats => matches!(event, E::CommunityVoice(_)),
+            Self::FriendConnectivity => matches!(
+                event,
+                E::FriendConnectivity(_)
+                    | E::TopologyFriendConnectivity(..)
+                    | E::ConnectivityResync
+            ),
+            Self::CommunityMemberConnectivity => matches!(
+                event,
+                E::CommunityMember(_) | E::TopologyCommunityMember(..) | E::ConnectivityResync
+            ),
+        }
+    }
 }
 
 /// The candidate paths of the handshake signature: the route, the path this
@@ -121,7 +185,7 @@ fn header_frame(headers: &HeaderMap) -> Option<String> {
 }
 
 async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, HandshakeError> {
-    verify_handshake(
+    let verdict = verify_handshake(
         frame,
         "get",
         paths,
@@ -130,7 +194,20 @@ async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, 
         validator_ref(&state.eip1654),
     )
     .await
-    .map(|address| address.into_string())
+    .map(|address| address.into_string());
+    if let Err(e) = &verdict {
+        let kind = match e {
+            HandshakeError::CatalystUnavailable(_) => "server_error",
+            _ => "client_rejected",
+        };
+        metrics::counter!(
+            "ws_auth_errors_by_protocol",
+            "protocol" => Protocol::Stream.label(),
+            "type" => kind
+        )
+        .increment(1);
+    }
+    verdict
 }
 
 pub async fn ws_upgrade(
@@ -161,10 +238,23 @@ pub async fn ws_upgrade(
             }
         },
     };
-    ws.max_message_size(MAX_PAYLOAD_BYTES)
-        .on_upgrade(move |socket| async move {
-            let mut session = Session::new(state, socket);
-            session.run(paths, verified).await;
+    ws.max_message_size(state.settings.stream.max_payload_bytes)
+        .on_upgrade(move |mut socket| async move {
+            let max = state.settings.ws_max_concurrent_connections;
+            let Some(slot) = state.ctx.open_socket(Protocol::Stream, max) else {
+                tracing::warn!(max, "rejecting stream connection: pool is full");
+                let _ = socket.send(close_message(POOL_FULL)).await;
+                return;
+            };
+            let code = Session::new(state, socket, slot.close.clone())
+                .run(paths, verified)
+                .await;
+            let label = if KNOWN_CLOSE_CODES.contains(&code) {
+                code.to_string()
+            } else {
+                "other".into()
+            };
+            metrics::counter!("stream_ws_close_codes", "code" => label).increment(1);
         })
         .into_response()
 }
@@ -173,13 +263,15 @@ pub async fn ws_upgrade(
 struct MessageBudget {
     tokens: f64,
     updated_at: Instant,
+    limits: StreamLimits,
 }
 
 impl MessageBudget {
     fn take(&mut self) -> bool {
         let now = Instant::now();
         let elapsed = now.saturating_duration_since(self.updated_at).as_secs_f64();
-        self.tokens = (self.tokens + elapsed * MESSAGES_PER_SECOND).min(MESSAGE_BURST);
+        self.tokens = (self.tokens + elapsed * self.limits.messages_per_second)
+            .min(self.limits.message_burst as f64);
         self.updated_at = now;
         if self.tokens < 1.0 {
             return false;
@@ -189,7 +281,7 @@ impl MessageBudget {
     }
 }
 
-/// What a subscription task hands the socket loop.
+/// What a subscription hands the socket loop.
 enum Outgoing {
     Event {
         serial: u64,
@@ -201,39 +293,122 @@ enum Outgoing {
     },
 }
 
+/// One live subscription; dropping it stops its tasks.
 struct Subscription {
     id: String,
     stream: Stream,
-    task: JoinHandle<()>,
+    tasks: [JoinHandle<()>; 2],
 }
 
-/// How a socket ended, past the handshake.
-enum Ending {
+impl Drop for Subscription {
+    fn drop(&mut self) {
+        for task in &self.tasks {
+            task.abort();
+        }
+    }
+}
+
+/// The socket's write half, drained by its own task. `buffered` counts the
+/// bytes handed to the task and not yet written (uWS's buffered amount).
+struct Outbox {
+    tx: Option<mpsc::UnboundedSender<Message>>,
+    buffered: Arc<watch::Sender<usize>>,
+    max_backpressure: usize,
+    writer: JoinHandle<()>,
+}
+
+impl Outbox {
+    fn spawn(mut sink: SplitSink<WebSocket, Message>, max_backpressure: usize) -> Self {
+        let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+        let buffered = Arc::new(watch::Sender::new(0usize));
+        let written = buffered.clone();
+        let writer = tokio::spawn(async move {
+            while let Some(message) = rx.recv().await {
+                let len = message_len(&message);
+                let closing = matches!(message, Message::Close(_));
+                let sent = sink.send(message).await.is_ok();
+                written.send_modify(|b| *b = b.saturating_sub(len));
+                if !sent || closing {
+                    break;
+                }
+            }
+            let _ = tokio::time::timeout(Duration::from_millis(100), sink.close()).await;
+        });
+        Self {
+            tx: Some(tx),
+            buffered,
+            max_backpressure,
+            writer,
+        }
+    }
+
+    /// Queues `text` unless more than the backpressure limit is waiting
+    /// (upstream's `DROPPED`); false when it was not queued.
+    fn send(&self, text: String) -> Result<(), Dropped> {
+        let Some(tx) = &self.tx else {
+            return Err(Dropped::Gone);
+        };
+        if *self.buffered.borrow() > self.max_backpressure {
+            return Err(Dropped::Backpressure);
+        }
+        self.buffered.send_modify(|b| *b += text.len());
+        tx.send(Message::Text(text.into()))
+            .map_err(|_| Dropped::Gone)
+    }
+
+    /// Sends the close frame after whatever is queued, then waits for the
+    /// writer to finish.
+    async fn close(mut self, frame: Option<(u16, &'static str)>) {
+        if let (Some(tx), Some(frame)) = (self.tx.take(), frame) {
+            let _ = tx.send(close_message(frame));
+        }
+        self.tx = None;
+        let _ = tokio::time::timeout(CLOSE_BUDGET, &mut self.writer).await;
+        self.writer.abort();
+    }
+}
+
+enum Dropped {
+    Backpressure,
     Gone,
-    Close(u16, &'static str),
+}
+
+fn message_len(message: &Message) -> usize {
+    match message {
+        Message::Text(text) => text.len(),
+        Message::Binary(bytes) => bytes.len(),
+        _ => 0,
+    }
 }
 
 struct Session {
     state: Arc<State>,
-    socket: WebSocket,
+    incoming: SplitStream<WebSocket>,
+    outbox: Outbox,
+    close: Arc<SocketClose>,
+    /// The close code the socket ended with, for `stream_ws_close_codes`.
+    code: u16,
     budget: MessageBudget,
-    evicted: Arc<Notify>,
-    overflow: Arc<Notify>,
     subscriptions: HashMap<u64, Subscription>,
     next_serial: u64,
 }
 
 impl Session {
-    fn new(state: Arc<State>, socket: WebSocket) -> Self {
+    fn new(state: Arc<State>, socket: WebSocket, close: Arc<SocketClose>) -> Self {
+        let (sink, incoming) = socket.split();
+        let limits = state.settings.stream;
+        let outbox = Outbox::spawn(sink, state.settings.ws_max_backpressure_bytes);
         Self {
             state,
-            socket,
+            incoming,
+            outbox,
+            close,
+            code: 1006,
             budget: MessageBudget {
-                tokens: MESSAGE_BURST,
+                tokens: limits.message_burst as f64,
                 updated_at: Instant::now(),
+                limits,
             },
-            evicted: Arc::new(Notify::new()),
-            overflow: Arc::new(Notify::new()),
             subscriptions: HashMap::new(),
             next_serial: 0,
         }
@@ -243,72 +418,101 @@ impl Session {
         &self.state.ctx
     }
 
-    async fn send(&mut self, message: Value) -> bool {
-        self.socket
-            .send(Message::Text(message.to_string().into()))
-            .await
-            .is_ok()
+    /// Queues a frame; a send past the backpressure limit closes the
+    /// socket 1008 `Slow consumer` (upstream `safeSend`). False once the
+    /// socket is ending.
+    fn send(&self, message: Value) -> bool {
+        match self.outbox.send(message.to_string()) {
+            Ok(()) => true,
+            Err(Dropped::Backpressure) => {
+                self.policy_close("slow_consumer", SLOW_CONSUMER);
+                false
+            }
+            Err(Dropped::Gone) => {
+                self.close.peer_gone();
+                false
+            }
+        }
     }
 
-    async fn close(&mut self, code: u16, reason: &'static str) {
-        let _ = self
-            .socket
-            .send(Message::Close(Some(CloseFrame {
-                code,
-                reason: reason.into(),
-            })))
-            .await;
+    /// Upstream `closeForPolicy`: counted under its type, then closed 1008.
+    fn policy_close(&self, kind: &'static str, (code, reason): (u16, &'static str)) {
+        if !self.close.is_ended() {
+            metrics::counter!("stream_ws_errors", "type" => kind).increment(1);
+        }
+        self.close.end(code, reason);
     }
 
-    async fn error(&mut self, code: &str, message: &str, id: Option<&str>) -> bool {
+    fn error(&self, code: &'static str, message: &str, id: Option<&str>) -> bool {
+        metrics::counter!("stream_ws_errors", "type" => code).increment(1);
         let mut error = json!({ "type": "error", "code": code, "message": message });
         if let Some(id) = id {
             error["id"] = json!(id);
         }
-        self.send(error).await
+        self.send(error)
     }
 
-    async fn run(&mut self, paths: Vec<String>, verified: Option<String>) {
-        if let Some(max) = self.state.settings.ws_max_concurrent_connections
-            && self.ctx().live_connections() >= max
-        {
-            tracing::warn!(max, "rejecting stream connection: pool is full");
-            self.close(1013, "Unable to acquire connection").await;
-            return;
+    /// The next application frame; `None` once the peer is gone (its close
+    /// code kept for the metric).
+    async fn recv(&mut self) -> Option<Vec<u8>> {
+        loop {
+            match self.incoming.next().await {
+                Some(Ok(Message::Text(text))) => return Some(text.as_bytes().to_vec()),
+                Some(Ok(Message::Binary(bytes))) => return Some(bytes.to_vec()),
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+                Some(Ok(Message::Close(frame))) => {
+                    self.code = frame.map_or(1005, |f| f.code);
+                    return None;
+                }
+                Some(Err(_)) | None => return None,
+            }
         }
-        self.ctx().connection_opened();
+    }
+
+    /// Serves the socket until it ends; answers its close code.
+    async fn run(mut self, paths: Vec<String>, verified: Option<String>) -> u16 {
         let address = match verified {
-            Some(address) => Some(address),
+            Some(address) => {
+                metrics::counter!("stream_ws_authentications", "method" => "upgrade_headers")
+                    .increment(1);
+                Some(address)
+            }
             None => self.first_frame_handshake(&paths).await,
         };
         if let Some(address) = address {
             self.serve(&address).await;
         }
-        self.ctx().connection_closed();
+        self.subscriptions.clear();
+        let frame = self.close.frame();
+        if let Some((code, _)) = frame {
+            self.code = code;
+        }
+        self.outbox.close(frame).await;
+        self.code
     }
 
     /// The fallback handshake: the first application frame is the chain.
     async fn first_frame_handshake(&mut self, paths: &[String]) -> Option<String> {
+        let close = self.close.clone();
         let window = Duration::from_secs(self.state.settings.auth_window_secs.max(1) as u64);
         let deadline = tokio::time::sleep(window);
         tokio::pin!(deadline);
-        let frame = loop {
-            tokio::select! {
-                _ = &mut deadline => {
-                    self.close(3004, "Authorization timeout").await;
+        let frame = tokio::select! {
+            _ = close.ended() => return None,
+            _ = &mut deadline => {
+                close.end(AUTH_TIMEOUT.0, AUTH_TIMEOUT.1);
+                return None;
+            }
+            frame = self.recv() => match frame {
+                Some(frame) => String::from_utf8_lossy(&frame).into_owned(),
+                None => {
+                    close.peer_gone();
                     return None;
                 }
-                message = self.socket.recv() => match message {
-                    Some(Ok(Message::Text(text))) => break text.to_string(),
-                    Some(Ok(Message::Binary(bytes))) => break String::from_utf8_lossy(&bytes).into_owned(),
-                    Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
-                    _ => return None,
-                },
-            }
+            },
         };
         if !self.budget.take() {
-            self.close(1008, "Message rate exceeded; reconnect with backoff")
-                .await;
+            self.policy_close("message_rate", MESSAGE_RATE);
             return None;
         }
         let state = self.state.clone();
@@ -316,29 +520,35 @@ impl Session {
         tokio::pin!(verification);
         let verdict = loop {
             tokio::select! {
-                verdict = &mut verification => break verdict,
+                biased;
+                _ = close.ended() => return None,
+                frame = self.recv() => {
+                    if frame.is_none() {
+                        close.peer_gone();
+                        return None;
+                    }
+                    if !self.budget.take() {
+                        self.policy_close("message_rate", MESSAGE_RATE);
+                        return None;
+                    }
+                    self.error("auth_in_progress", "Authentication already in progress", None);
+                }
                 _ = &mut deadline => {
-                    self.close(3004, "Authorization timeout").await;
+                    close.end(AUTH_TIMEOUT.0, AUTH_TIMEOUT.1);
                     return None;
                 }
-                message = self.socket.recv() => match message {
-                    Some(Ok(Message::Text(_) | Message::Binary(_))) => {
-                        if !self.budget.take() {
-                            self.close(1008, "Message rate exceeded; reconnect with backoff").await;
-                            return None;
-                        }
-                        self.error("auth_in_progress", "Authentication already in progress", None).await;
-                    }
-                    Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
-                    _ => return None,
-                },
+                verdict = &mut verification => break verdict,
             }
         };
         match verdict {
-            Ok(address) => Some(address),
+            Ok(address) => {
+                metrics::counter!("stream_ws_authentications", "method" => "first_frame")
+                    .increment(1);
+                Some(address)
+            }
             Err(e) => {
                 tracing::info!(error = %e, "stream handshake failed");
-                self.close(3003, "Unauthorized").await;
+                close.end(UNAUTHORIZED.0, UNAUTHORIZED.1);
                 None
             }
         }
@@ -350,21 +560,14 @@ impl Session {
     async fn serve(&mut self, address: &str) {
         let ctx = self.ctx().clone();
         ctx.admission()
-            .claim(address, Eviction::Stream(self.evicted.clone()));
+            .claim(address, self.close.clone(), Protocol::Stream);
         ctx.mark_online(address);
-        let (tx, mut rx) = mpsc::channel::<Outgoing>(SUBSCRIPTION_QUEUE);
-        let ending = if self.send(json!({ "type": "ready" })).await {
-            self.message_loop(address, &tx, &mut rx).await
-        } else {
-            Ending::Gone
-        };
-        for (_, subscription) in self.subscriptions.drain() {
-            subscription.task.abort();
+        let (tx, mut rx) = mpsc::channel::<Outgoing>(1);
+        if self.send(json!({ "type": "ready" })) {
+            self.message_loop(address, &tx, &mut rx).await;
         }
-        if let Ending::Close(code, reason) = ending {
-            self.close(code, reason).await;
-        }
-        ctx.admission().release(address, &self.evicted);
+        self.subscriptions.clear();
+        ctx.admission().release(address, &self.close);
         if ctx.mark_offline(address) {
             let address = address.to_string();
             tokio::spawn(async move {
@@ -378,33 +581,28 @@ impl Session {
         address: &str,
         tx: &mpsc::Sender<Outgoing>,
         rx: &mut mpsc::Receiver<Outgoing>,
-    ) -> Ending {
-        let evicted = self.evicted.clone();
-        let overflow = self.overflow.clone();
+    ) {
+        let close = self.close.clone();
         loop {
             tokio::select! {
-                _ = evicted.notified() => return Ending::Close(3005, "Replaced by a newer connection"),
-                _ = overflow.notified() => {
-                    return Ending::Close(1008, "Subscription overflow; reconnect and resync");
-                }
+                _ = close.ended() => return,
                 outgoing = rx.recv() => {
-                    let Some(outgoing) = outgoing else { return Ending::Gone };
-                    if !self.deliver(outgoing).await {
-                        return Ending::Gone;
+                    let Some(outgoing) = outgoing else { return };
+                    if !self.deliver(outgoing) {
+                        return;
                     }
                 }
-                message = self.socket.recv() => {
-                    let raw = match message {
-                        Some(Ok(Message::Text(text))) => text.as_bytes().to_vec(),
-                        Some(Ok(Message::Binary(bytes))) => bytes.to_vec(),
-                        Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
-                        _ => return Ending::Gone,
+                frame = self.recv() => {
+                    let Some(raw) = frame else {
+                        close.peer_gone();
+                        return;
                     };
                     if !self.budget.take() {
-                        return Ending::Close(1008, "Message rate exceeded; reconnect with backoff");
+                        self.policy_close("message_rate", MESSAGE_RATE);
+                        return;
                     }
-                    if !self.handle(address, tx, &raw).await {
-                        return Ending::Gone;
+                    if !self.handle(address, tx, &raw) {
+                        return;
                     }
                 }
             }
@@ -413,117 +611,120 @@ impl Session {
 
     /// An event or completion of a subscription still open; anything queued
     /// for one already ended is dropped, so nothing follows its `end`.
-    async fn deliver(&mut self, outgoing: Outgoing) -> bool {
+    fn deliver(&mut self, outgoing: Outgoing) -> bool {
         match outgoing {
             Outgoing::Event { serial, data } => {
                 let Some(subscription) = self.subscriptions.get(&serial) else {
                     return true;
                 };
+                let stream = subscription.stream.name();
                 let event = json!({
                     "type": "event",
                     "id": subscription.id,
-                    "stream": subscription.stream.name(),
+                    "stream": stream,
                     "data": data,
                 });
-                self.send(event).await
+                let sent = self.send(event);
+                if sent {
+                    metrics::counter!("stream_ws_updates_sent", "event" => stream).increment(1);
+                }
+                sent
             }
             Outgoing::Completed { serial } => {
                 let Some(subscription) = self.subscriptions.remove(&serial) else {
                     return true;
                 };
                 self.send(json!({ "type": "end", "id": subscription.id, "reason": "completed" }))
-                    .await
             }
         }
     }
 
-    async fn handle(&mut self, address: &str, tx: &mpsc::Sender<Outgoing>, raw: &[u8]) -> bool {
-        match parse_message(raw) {
-            Err(e) => self.error(e.code, e.message, e.id.as_deref()).await,
-            Ok(ClientMessage::Ping) => self.send(json!({ "type": "pong" })).await,
-            Ok(ClientMessage::Unsubscribe { id }) => {
+    fn handle(&mut self, address: &str, tx: &mpsc::Sender<Outgoing>, raw: &[u8]) -> bool {
+        let message = match parse_message(raw) {
+            Err(e) => {
+                metrics::counter!("stream_ws_messages_received", "type" => e.received).increment(1);
+                return self.error(e.code, e.message, e.id.as_deref());
+            }
+            Ok(message) => message,
+        };
+        let kind = match &message {
+            ClientMessage::Ping => "ping",
+            ClientMessage::Subscribe { .. } => "subscribe",
+            ClientMessage::Unsubscribe { .. } => "unsubscribe",
+        };
+        metrics::counter!("stream_ws_messages_received", "type" => kind).increment(1);
+        match message {
+            ClientMessage::Ping => self.send(json!({ "type": "pong" })),
+            ClientMessage::Unsubscribe { id } => {
                 let serial = self
                     .subscriptions
                     .iter()
                     .find(|(_, s)| s.id == id)
                     .map(|(serial, _)| *serial);
-                let Some(subscription) = serial.and_then(|s| self.subscriptions.remove(&s)) else {
-                    return self
-                        .error(
-                            "unknown_subscription",
-                            "No subscription with this id",
-                            Some(&id),
-                        )
-                        .await;
-                };
-                subscription.task.abort();
+                if serial.and_then(|s| self.subscriptions.remove(&s)).is_none() {
+                    return self.error(
+                        "unknown_subscription",
+                        "No subscription with this id",
+                        Some(&id),
+                    );
+                }
                 self.send(json!({ "type": "end", "id": id, "reason": "unsubscribed" }))
-                    .await
             }
-            Ok(ClientMessage::Subscribe { id, stream }) => {
+            ClientMessage::Subscribe { id, stream } => {
                 let Some(stream) = Stream::parse(&stream) else {
-                    return self
-                        .error("unknown_stream", "Unknown stream", Some(&id))
-                        .await;
+                    return self.error("unknown_stream", "Unknown stream", Some(&id));
                 };
                 if self.subscriptions.values().any(|s| s.id == id) {
-                    return self
-                        .error(
-                            "duplicate_subscription",
-                            "A subscription with this id already exists",
-                            Some(&id),
-                        )
-                        .await;
+                    return self.error(
+                        "duplicate_subscription",
+                        "A subscription with this id already exists",
+                        Some(&id),
+                    );
                 }
                 if self.subscriptions.values().any(|s| s.stream == stream) {
-                    return self
-                        .error(
-                            "duplicate_subscription",
-                            "Already subscribed to this stream on this connection",
-                            Some(&id),
-                        )
-                        .await;
+                    return self.error(
+                        "duplicate_subscription",
+                        "Already subscribed to this stream on this connection",
+                        Some(&id),
+                    );
                 }
                 let admission = self.ctx().admission();
                 // A socket a newer one displaced holds no slot; its close is under way.
-                if !admission.holds(address, &self.evicted) {
-                    return self
-                        .error(
-                            "stream_error",
-                            "The subscription could not be started",
-                            Some(&id),
-                        )
-                        .await;
+                if !admission.holds(address, &self.close) {
+                    return self.error(
+                        "stream_error",
+                        "The subscription could not be started",
+                        Some(&id),
+                    );
                 }
                 if !admission.admit_subscription(address) {
-                    return self
-                        .error(
-                            "rate_limited",
-                            "Subscription rate exceeded; retry with backoff",
-                            Some(&id),
-                        )
-                        .await;
+                    return self.error(
+                        "rate_limited",
+                        "Subscription rate exceeded; retry with backoff",
+                        Some(&id),
+                    );
                 }
                 self.next_serial += 1;
                 let serial = self.next_serial;
                 // Subscribed before `subscribed` is sent: nothing published after it is missed.
-                let task = spawn_stream(
+                let tasks = spawn_stream(
                     self.ctx().clone(),
                     address.to_string(),
                     stream,
                     serial,
                     tx.clone(),
-                    self.overflow.clone(),
+                    self.close.clone(),
+                    self.outbox.buffered.subscribe(),
                 );
                 self.subscriptions.insert(
                     serial,
                     Subscription {
                         id: id.clone(),
                         stream,
-                        task,
+                        tasks,
                     },
                 );
-                self.send(json!({ "type": "subscribed", "id": id })).await
+                self.send(json!({ "type": "subscribed", "id": id }))
             }
         }
     }
@@ -541,10 +742,22 @@ struct ProtocolError {
     code: &'static str,
     message: &'static str,
     id: Option<String>,
+    /// The `type` label of `stream_ws_messages_received` (upstream `receivedType`).
+    received: &'static str,
 }
 
 fn protocol_error(code: &'static str, message: &'static str, id: Option<String>) -> ProtocolError {
-    ProtocolError { code, message, id }
+    let received = match code {
+        "unknown_subscription" => "unsubscribe",
+        "unknown_stream" => "subscribe",
+        _ => "invalid",
+    };
+    ProtocolError {
+        code,
+        message,
+        id,
+        received,
+    }
 }
 
 fn valid_id(value: Option<&Value>) -> Option<String> {
@@ -568,8 +781,9 @@ fn parse_message(raw: &[u8]) -> Result<ClientMessage, ProtocolError> {
     match object.get("type").and_then(Value::as_str) {
         Some("ping") => Ok(ClientMessage::Ping),
         Some("subscribe") => {
-            let id = valid_id(object.get("id")).ok_or_else(|| {
-                protocol_error(
+            let id = valid_id(object.get("id")).ok_or_else(|| ProtocolError {
+                received: "subscribe",
+                ..protocol_error(
                     "invalid_message",
                     "id must be a string of 1 to 64 characters",
                     None,
@@ -604,79 +818,93 @@ fn connectivity_name(status: i32) -> Option<&'static str> {
     })
 }
 
-/// One subscription: the address's channel, taken before it returns, read
-/// by a task that maps each event of `stream` to its JSON and queues it.
+/// One subscription: the address's channel, taken before it returns. A
+/// forwarding task moves the events `stream` listens to into the
+/// subscription's queue of [`SUBSCRIPTION_QUEUE`]; a full queue (or a lagging
+/// channel) closes the socket, as an update cannot be replayed. A second
+/// task maps each to its JSON and hands it to the socket loop once nothing
+/// is waiting to be written.
 fn spawn_stream(
     ctx: Context,
     me: String,
     stream: Stream,
     serial: u64,
     tx: mpsc::Sender<Outgoing>,
-    overflow: Arc<Notify>,
-) -> JoinHandle<()> {
-    let mut rx = ctx.pubsub().subscribe(&me);
-    tokio::spawn(async move {
-        let queue = |data: Value| match tx.try_send(Outgoing::Event { serial, data }) {
-            Ok(()) => true,
-            Err(mpsc::error::TrySendError::Full(_)) => {
-                overflow.notify_one();
-                false
-            }
-            Err(mpsc::error::TrySendError::Closed(_)) => false,
-        };
-        if stream == Stream::FriendConnectivity && !online_friends_snapshot(&ctx, &me, &queue).await
-        {
-            return;
+    close: Arc<SocketClose>,
+    mut buffered: watch::Receiver<usize>,
+) -> [JoinHandle<()>; 2] {
+    let mut events = ctx.pubsub().subscribe(&me);
+    let (queue_tx, mut queue) = mpsc::channel::<Arc<SocialEvent>>(SUBSCRIPTION_QUEUE);
+    let overflow = move || {
+        if !close.is_ended() {
+            metrics::counter!("stream_ws_errors", "type" => "subscription_overflow").increment(1);
         }
+        close.end(SUBSCRIPTION_OVERFLOW.0, SUBSCRIPTION_OVERFLOW.1);
+    };
+    let forward = tokio::spawn(async move {
         loop {
-            let event = match rx.recv().await {
+            let event = match events.recv().await {
                 Ok(event) => event,
                 Err(RecvError::Lagged(skipped)) => {
-                    // Updates cannot be replayed: the client reconnects and resyncs.
                     tracing::warn!(skipped, "stream subscription lagged");
-                    overflow.notify_one();
+                    return overflow();
+                }
+                Err(RecvError::Closed) => return,
+            };
+            if !stream.carries(&event) {
+                continue;
+            }
+            match queue_tx.try_send(event) {
+                Ok(()) => {}
+                Err(mpsc::error::TrySendError::Full(_)) => return overflow(),
+                Err(mpsc::error::TrySendError::Closed(_)) => return,
+            }
+        }
+    });
+    let process = tokio::spawn(async move {
+        // Upstream waits for the socket to drain before each event.
+        let mut hand_off = async |data: Value| {
+            buffered.wait_for(|waiting| *waiting == 0).await.is_ok()
+                && tx.send(Outgoing::Event { serial, data }).await.is_ok()
+        };
+        if stream == Stream::FriendConnectivity {
+            for friend in online_friends(&ctx, &me).await {
+                if !hand_off(json!({ "address": friend, "status": "online" })).await {
                     return;
                 }
-                Err(RecvError::Closed) => break,
-            };
-            if matches!(&*event, SocialEvent::ConnectivityResync)
-                && matches!(
-                    stream,
-                    Stream::FriendConnectivity | Stream::CommunityMemberConnectivity
-                )
-            {
+            }
+        }
+        while let Some(event) = queue.recv().await {
+            if matches!(&*event, SocialEvent::ConnectivityResync) {
                 break;
             }
             let Some(data) = event_data(&ctx, &me, stream, &event).await else {
                 continue;
             };
-            if !queue(data) {
+            if !hand_off(data).await {
                 return;
             }
         }
         let _ = tx.send(Outgoing::Completed { serial }).await;
-    })
+    });
+    [forward, process]
 }
 
-/// One `online` event per friend online when the subscription starts, as
-/// the RPC stream starts (upstream `getOnlineFriendAddresses`).
-async fn online_friends_snapshot(ctx: &Context, me: &str, queue: &impl Fn(Value) -> bool) -> bool {
+/// The friends online when the subscription starts, one `online` event each,
+/// as the RPC stream starts (upstream `getOnlineFriendAddresses`); a failed
+/// read ends the list where it failed.
+async fn online_friends(ctx: &Context, me: &str) -> Vec<String> {
+    let mut online = Vec::new();
     let mut after = String::new();
     loop {
         let Ok(page) = ctx.db().connectivity_friends_page(me, &after, true).await else {
-            return true;
+            return online;
         };
         let snapshot = ctx.topology().snapshot();
-        for friend in &page {
-            if snapshot.is_online(friend)
-                && !queue(json!({ "address": friend, "status": "online" }))
-            {
-                return false;
-            }
-        }
+        online.extend(page.iter().filter(|f| snapshot.is_online(f)).cloned());
         match page.last() {
             Some(last) if page.len() >= 256 => after = last.clone(),
-            _ => return true,
+            _ => return online,
         }
     }
 }
@@ -841,12 +1069,16 @@ mod tests {
         ));
         assert_eq!(
             refused,
-            Err(protocol_error(
-                "invalid_message",
-                "id must be a string of 1 to 64 characters",
-                None
-            ))
+            Err(ProtocolError {
+                received: "subscribe",
+                ..protocol_error(
+                    "invalid_message",
+                    "id must be a string of 1 to 64 characters",
+                    None
+                )
+            })
         );
+        assert_eq!(parse("[]").unwrap_err().received, "invalid");
         assert_eq!(
             parse(r#"{"type":"subscribe","id":"a","stream":7}"#),
             Err(protocol_error(

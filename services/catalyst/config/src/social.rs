@@ -80,6 +80,40 @@ pub struct SocialConfig {
     #[arg(long, env = "WS_MAX_PAYLOAD_LENGTH", default_value_t = 1_048_576)]
     pub ws_max_payload_length: usize,
 
+    /// Bytes a /social-rpc/v1/stream socket may have waiting to be written
+    /// when another frame is sent; past it the socket closes 1008 `Slow consumer`.
+    #[arg(long, env = "WS_MAX_BACKPRESSURE", default_value_t = 131_072)]
+    pub ws_max_backpressure: usize,
+
+    /// Authenticated social sockets per address across both protocols; past
+    /// it the address's oldest closes 3005.
+    #[arg(long, env = "WS_MAX_CONNECTIONS_PER_ADDRESS", default_value_t = 8, value_parser = clap::value_parser!(u32).range(1..))]
+    pub ws_max_connections_per_address: u32,
+
+    /// Stream subscriptions an address may start per second, refilling its bucket.
+    #[arg(long, env = "WS_SUBSCRIPTIONS_PER_SECOND", default_value_t = 2.0, value_parser = positive)]
+    pub ws_subscriptions_per_second: f64,
+
+    /// The size of an address's subscription bucket.
+    #[arg(long, env = "WS_SUBSCRIPTION_BURST", default_value_t = 24, value_parser = clap::value_parser!(u32).range(1..))]
+    pub ws_subscription_burst: u32,
+
+    /// Disconnected addresses whose partly spent subscription bucket is remembered.
+    #[arg(long, env = "WS_ADDRESS_BUDGET_CAPACITY", default_value_t = 10_000, value_parser = clap::value_parser!(u32).range(1..))]
+    pub ws_address_budget_capacity: u32,
+
+    /// Largest inbound /social-rpc/v1/stream frame, bytes.
+    #[arg(long, env = "STREAM_WS_MAX_PAYLOAD_LENGTH", default_value_t = 16_384, value_parser = clap::value_parser!(u32).range(1..))]
+    pub stream_ws_max_payload_length: u32,
+
+    /// Frames a /social-rpc/v1/stream socket may send per second, refilling its bucket.
+    #[arg(long, env = "STREAM_WS_MESSAGES_PER_SECOND", default_value_t = 20.0, value_parser = positive)]
+    pub stream_ws_messages_per_second: f64,
+
+    /// The size of a /social-rpc/v1/stream socket's frame bucket.
+    #[arg(long, env = "STREAM_WS_MESSAGE_BURST", default_value_t = 40, value_parser = clap::value_parser!(u32).range(1..))]
+    pub stream_ws_message_burst: u32,
+
     /// Bearer of the /admin/social routes; unset refuses them.
     #[arg(long, env = "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN", hide_env_values = true)]
     pub catalyrst_social_rpc_admin_token: Option<String>,
@@ -398,4 +432,77 @@ pub struct RoomAuthorityConfig {
     /// LiveKit secret; unset, the room authority route is not mounted.
     #[arg(long, env = "PULSE_ROOM_AUTHORITY_KEY", hide_env_values = true)]
     pub pulse_room_authority_key: Option<String>,
+}
+
+/// A finite number above zero (upstream refuses to start otherwise).
+fn positive(raw: &str) -> Result<f64, String> {
+    match raw.parse::<f64>() {
+        Ok(value) if value.is_finite() && value > 0.0 => Ok(value),
+        _ => Err(format!("`{raw}` is not a positive number")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::config::Config;
+
+    const BASE: [(&str, &str); 1] = [("DATABASE_URL", "postgres:///catalyst")];
+
+    fn social(pairs: &[(&'static str, &'static str)]) -> Result<super::SocialConfig, clap::Error> {
+        Config::parse_env_for_tests(BASE.iter().chain(pairs).copied()).map(|c| c.social)
+    }
+
+    /// The social sockets' limits are upstream social-service-ea's variables
+    /// with its defaults (`src/logic/ws-admission/component.ts:19-22`,
+    /// `stream-ws-handler.ts:28`, `stream-sessions/component.ts:68-69`,
+    /// `ws-handler.ts:272`), and a value upstream refuses to start with is refused.
+    #[test]
+    fn socket_limits_read_upstreams_variables() {
+        let defaults = social(&[]).unwrap();
+        assert_eq!(defaults.ws_max_backpressure, 128 * 1024);
+        assert_eq!(defaults.ws_max_connections_per_address, 8);
+        assert_eq!(defaults.ws_subscriptions_per_second, 2.0);
+        assert_eq!(defaults.ws_subscription_burst, 24);
+        assert_eq!(defaults.ws_address_budget_capacity, 10_000);
+        assert_eq!(defaults.stream_ws_max_payload_length, 16 * 1024);
+        assert_eq!(defaults.stream_ws_messages_per_second, 20.0);
+        assert_eq!(defaults.stream_ws_message_burst, 40);
+
+        let set = social(&[
+            ("WS_MAX_BACKPRESSURE", "1024"),
+            ("WS_MAX_CONNECTIONS_PER_ADDRESS", "2"),
+            ("WS_SUBSCRIPTIONS_PER_SECOND", "0.5"),
+            ("WS_SUBSCRIPTION_BURST", "3"),
+            ("WS_ADDRESS_BUDGET_CAPACITY", "4"),
+            ("STREAM_WS_MAX_PAYLOAD_LENGTH", "5"),
+            ("STREAM_WS_MESSAGES_PER_SECOND", "6.5"),
+            ("STREAM_WS_MESSAGE_BURST", "7"),
+        ])
+        .unwrap();
+        assert_eq!(
+            (
+                set.ws_max_backpressure,
+                set.ws_max_connections_per_address,
+                set.ws_subscriptions_per_second,
+                set.ws_subscription_burst,
+                set.ws_address_budget_capacity,
+                set.stream_ws_max_payload_length,
+                set.stream_ws_messages_per_second,
+                set.stream_ws_message_burst,
+            ),
+            (1024, 2, 0.5, 3, 4, 5, 6.5, 7)
+        );
+        for refused in [
+            ("WS_MAX_CONNECTIONS_PER_ADDRESS", "0"),
+            ("WS_SUBSCRIPTIONS_PER_SECOND", "0"),
+            ("WS_SUBSCRIPTION_BURST", "0"),
+            ("WS_ADDRESS_BUDGET_CAPACITY", "0"),
+            ("STREAM_WS_MAX_PAYLOAD_LENGTH", "0"),
+            ("STREAM_WS_MESSAGES_PER_SECOND", "-1"),
+            ("STREAM_WS_MESSAGES_PER_SECOND", "inf"),
+            ("STREAM_WS_MESSAGE_BURST", "0"),
+        ] {
+            assert!(social(&[refused]).is_err(), "{refused:?}");
+        }
+    }
 }
