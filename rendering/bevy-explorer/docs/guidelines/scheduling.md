@@ -35,7 +35,7 @@ flowchart LR
 | `Init` | Scene spawn and load, and per-frame setup that must precede scene work. Runs after bevy's `scene_spawner_system`; console commands land just before it (`ConsoleSet::PostCommands`) | `initialize_scene`, collider registration into the scene's qbvh, imposter tick start |
 | `PostInit` | Adding data to scenes that just appeared | scene collider data, gltf readiness, scene UI root, avatar colliders |
 | `Input` | Systems that produce this frame's engine-to-scene messages | pointer results, raycasts, trigger areas, pointer lock, camera mode, time and FOV into the CRDT |
-| `RunLoop` | The scene loop (below) | `update_scene_partitions`, `publish_download_priorities`, `update_scene_priority`, `run_scene_loop` |
+| `RunLoop` | The scene loop (below), and the partitions and download priorities it ranks by | `update_scene_partitions`, `publish_download_priorities`, `update_scene_priority`, `run_scene_loop` |
 | `PostLoop` | Reacting to scene state the loop wrote: by far the largest set | materials, mesh renderer, gltf container, lights, animation, fonts, scene UI, tween, audio, NFT, texture camera, avatar attach and animate, world UI |
 | `RestrictedActions` | Anything that may move the player, change realm, or alter engine-level state on a scene's behalf | teleport and move player, settings, profile updates, emote reports, imposter render |
 
@@ -64,14 +64,18 @@ Each pass of the loop runs four chained sets (`SceneLoopSets`):
    the system. Only transforms and text shapes have hand-written loop systems.
 
 The loop runs at least once per frame, then repeats while time remains and there are eligible
-scenes or replies outstanding. Priority: a scene the player stands in is 0; any other scene is
-its squared distance from the player to the nearest point of its nearest parcel; both are
-divided by the time since the scene was last sent, so a starved scene rises. A scene behind
-the camera (every parcel corner behind it) counts as four times farther, so it keeps ticking
-and yields first when frame time runs short; without a rendering camera (headless) nothing
-is behind. A scene is skipped while in
-flight, broken, or blocked (unless it is the system scene), and is not sent twice in one frame.
-A scene that has not replied for ten seconds is marked broken and its slot freed.
+scenes or replies outstanding. Priority: the scenes the player is in (the one they stand in,
+plus portables and global scenes) are 0; any other scene is its squared distance from the
+player to the nearest point of its nearest parcel (its `Partition`, refreshed each frame by
+`update_scene_partitions`); both are divided by the time since the scene was last sent, so a
+starved scene rises. A scene behind the rendering camera (every corner of every parcel behind
+it) counts as four times farther (`BEHIND_SCENE_TICK_PENALTY`), so it keeps ticking and yields
+first when frame time runs short. Distance is always from the player; only facing comes from
+the camera, and with no rendering camera (headless) nothing is behind. The same partitions rank
+the ipfs request slots (`publish_download_priorities`); see the
+[ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md). A scene is skipped
+while in flight, broken, or blocked (unless it is the system scene), and is not sent twice in
+one frame. A scene that has not replied for ten seconds is marked broken and its slot freed.
 
 Everything downstream of the loop reads bevy components. A system that needs scene data never
 reads the CRDT store directly; it queries the component the `UpdateWorld` system wrote.
