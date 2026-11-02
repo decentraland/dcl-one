@@ -31,6 +31,53 @@ pub const SCENE_MATERIAL_OUTLINE_BLACK_MESH_TAG: u32 = 0x10000000;
 pub const SCENE_MATERIAL_OUTLINE_RED_MESH_TAG: u32 = 0x20000000;
 pub const SCENE_MATERIAL_OUTLINE_GREEN_MESH_TAG: u32 = 0x40000000;
 pub const SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG: u32 = 0x80000000;
+/// an avatar being revealed bottom-up from its ghost: the shaders discard fragments above the
+/// reveal height, carried in the tag's low byte: 0 is no reveal, and 1..=255 span the range from
+/// `SCENE_MATERIAL_REVEAL_HIDE_HEIGHT` to `SCENE_MATERIAL_REVEAL_FULL_HEIGHT` above the mesh
+/// origin (bound_material_effect.wgsl, which takes the encoding from `reveal_shader_defs`)
+pub const SCENE_MATERIAL_REVEAL_MESH_TAG_MASK: u32 = 0x000000FF;
+/// the reveal range, in millimetres so the shaders get it as integer defs
+const SCENE_MATERIAL_REVEAL_HIDE_MILLIMETRES: i32 = -50;
+const SCENE_MATERIAL_REVEAL_FULL_MILLIMETRES: i32 = 2050;
+/// a reveal height below the feet: nothing shows
+pub const SCENE_MATERIAL_REVEAL_HIDE_HEIGHT: f32 =
+    SCENE_MATERIAL_REVEAL_HIDE_MILLIMETRES as f32 / 1000.0;
+/// a reveal height above the head: everything shows
+pub const SCENE_MATERIAL_REVEAL_FULL_HEIGHT: f32 =
+    SCENE_MATERIAL_REVEAL_FULL_MILLIMETRES as f32 / 1000.0;
+/// the steps from the first reveal value to the last
+const SCENE_MATERIAL_REVEAL_STEPS: f32 = (SCENE_MATERIAL_REVEAL_MESH_TAG_MASK - 1) as f32;
+
+/// `tag` with the reveal set to `height` metres above the mesh origin, clamped to the range
+pub fn reveal_mesh_tag(tag: u32, height: f32) -> u32 {
+    let range = SCENE_MATERIAL_REVEAL_FULL_HEIGHT - SCENE_MATERIAL_REVEAL_HIDE_HEIGHT;
+    let unit = ((height - SCENE_MATERIAL_REVEAL_HIDE_HEIGHT) / range).clamp(0.0, 1.0);
+    let step = 1 + (unit * SCENE_MATERIAL_REVEAL_STEPS).round() as u32;
+    (tag & !SCENE_MATERIAL_REVEAL_MESH_TAG_MASK) | step
+}
+
+/// `tag` with no reveal
+pub fn unrevealed_mesh_tag(tag: u32) -> u32 {
+    tag & !SCENE_MATERIAL_REVEAL_MESH_TAG_MASK
+}
+
+/// the reveal encoding, for the pipeline of every shader that imports `reveal_discard`
+pub fn reveal_shader_defs() -> [ShaderDefVal; 3] {
+    [
+        ShaderDefVal::UInt(
+            "REVEAL_MESH_TAG_MASK".to_owned(),
+            SCENE_MATERIAL_REVEAL_MESH_TAG_MASK,
+        ),
+        ShaderDefVal::Int(
+            "REVEAL_HIDE_MILLIMETRES".to_owned(),
+            SCENE_MATERIAL_REVEAL_HIDE_MILLIMETRES,
+        ),
+        ShaderDefVal::Int(
+            "REVEAL_FULL_MILLIMETRES".to_owned(),
+            SCENE_MATERIAL_REVEAL_FULL_MILLIMETRES,
+        ),
+    ]
+}
 
 pub trait SceneMaterialExt {
     fn new_unbounded(mat: StandardMaterial) -> Self
@@ -430,6 +477,7 @@ impl MaterialExtension for SceneBound {
                 "OUTLINE_BLUE_MESH_TAG".to_owned(),
                 SCENE_MATERIAL_OUTLINE_BLUE_MESH_TAG,
             ));
+            fragment.shader_defs.extend(reveal_shader_defs());
 
             if data.inverted_scale {
                 fragment.shader_defs.push("INVERTED_SCALE".into());
@@ -614,7 +662,59 @@ fn scene_material_removed<T: Material>(
 mod test {
     use bevy::math::{IVec2, Vec2, Vec3, Vec3Swizzles};
 
-    use crate::BoundRegion;
+    use crate::{
+        reveal_mesh_tag, unrevealed_mesh_tag, BoundRegion, SCENE_MATERIAL_REVEAL_FULL_HEIGHT,
+        SCENE_MATERIAL_REVEAL_HIDE_HEIGHT, SCENE_MATERIAL_REVEAL_MESH_TAG_MASK,
+    };
+
+    /// the reveal height a shader reads back from a tag (reveal_discard in
+    /// bound_material_effect.wgsl)
+    fn decode(tag: u32) -> Option<f32> {
+        let step = tag & SCENE_MATERIAL_REVEAL_MESH_TAG_MASK;
+        (step != 0).then(|| {
+            SCENE_MATERIAL_REVEAL_HIDE_HEIGHT
+                + (SCENE_MATERIAL_REVEAL_FULL_HEIGHT - SCENE_MATERIAL_REVEAL_HIDE_HEIGHT)
+                    * (step - 1) as f32
+                    / 254.0
+        })
+    }
+
+    #[test]
+    fn reveal_takes_the_tag_low_byte() {
+        let flags = 0xFFFFFF00;
+        assert_eq!(
+            reveal_mesh_tag(flags, SCENE_MATERIAL_REVEAL_HIDE_HEIGHT),
+            flags | 1
+        );
+        assert_eq!(
+            reveal_mesh_tag(flags, SCENE_MATERIAL_REVEAL_FULL_HEIGHT),
+            flags | 255
+        );
+        // heights outside the range clamp to its ends
+        assert_eq!(reveal_mesh_tag(flags, -10.0), flags | 1);
+        assert_eq!(reveal_mesh_tag(flags, 10.0), flags | 255);
+        assert_eq!(unrevealed_mesh_tag(flags | 77), flags);
+        assert_eq!(decode(unrevealed_mesh_tag(flags | 77)), None);
+    }
+
+    #[test]
+    fn reveal_round_trips_within_a_step() {
+        let range = SCENE_MATERIAL_REVEAL_FULL_HEIGHT - SCENE_MATERIAL_REVEAL_HIDE_HEIGHT;
+        let step = range / 254.0;
+        assert!(step < 0.01, "a step is {step} m");
+        let mut previous = 0;
+        for i in 0..=2100 {
+            let height = -0.05 + i as f32 * 0.001;
+            let tag = reveal_mesh_tag(0, height);
+            assert!(tag >= previous, "{height} m encodes below {previous}");
+            previous = tag;
+            let decoded = decode(tag).unwrap();
+            assert!(
+                (decoded - height).abs() <= step / 2.0 + 1e-5,
+                "{height} m decodes as {decoded} m"
+            );
+        }
+    }
 
     #[test]
     fn test_bounds() {
