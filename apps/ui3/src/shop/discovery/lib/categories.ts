@@ -34,6 +34,25 @@ export const SUBCAT_MAP: Record<string, string[]> = {
   Miscellaneous: ["miscellaneous"],
 };
 
+/** The emote sub-categories (`emoteCategory` on the server), as the on-chain values SUBCAT_MAP maps to. */
+const EMOTE_CATEGORIES = new Set(["dance", "stunt", "greetings", "fun", "poses", "reactions", "horror", "miscellaneous"]);
+
+const sameSet = (a: string[], b: string[] | undefined) => !!b && a.length === b.length && a.every((v) => b.includes(v));
+
+/**
+ * The `/v3/catalog/items` parameters for a sub-category's on-chain categories. That route takes one
+ * `wearableCategory` (wearables only), so the Head and Accessories groups use its `isWearableHead` /
+ * `isWearableAccessory` flags and an emote sub-category uses `emoteCategory`.
+ */
+export function catalogCategoryParams(categories: string[] | undefined): Record<string, string> {
+  if (!categories?.length) return {};
+  if (sameSet(categories, SUBCAT_MAP.Head)) return { isWearableHead: "true" };
+  if (sameSet(categories, SUBCAT_MAP.Accessories)) return { isWearableAccessory: "true" };
+  const [first] = categories;
+  if (categories.length === 1 && EMOTE_CATEGORIES.has(first!)) return { emoteCategory: first! };
+  return categories.length === 1 ? { wearableCategory: first! } : {};
+}
+
 export type SubSub = { key: string; labelKey: string; icon: IconName };
 export type Sub = { key: string; labelKey: string; icon: IconName; expandable?: boolean; subs?: SubSub[] };
 export type Top = { key: string; labelKey: string; expandable?: boolean; subs?: Sub[] };

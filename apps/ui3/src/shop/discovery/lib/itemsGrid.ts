@@ -84,6 +84,8 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
     sortBy: sortOption.server,
     isWearableSmart: smart || undefined,
     isOnSale: status === "not_for_sale" ? false : undefined,
+    minPriceCredits: min,
+    maxPriceCredits: max,
     contractAddresses: contracts?.length ? contracts : undefined,
   };
   const key = category === "names" || selectsNothing ? null : isUnified ? ["shop-items", unifiedFilters] : ["catalog-items", catalogFilters];
