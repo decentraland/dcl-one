@@ -2328,3 +2328,68 @@ async fn live_worlds_pass_against_places_decentraland_org() {
     assert!(worlds["lag_secs"].as_i64().is_some());
     db.teardown().await;
 }
+
+#[tokio::test]
+async fn a_local_rsvp_outside_the_upstream_preview_keeps_the_signed_delta_estimate() {
+    let Some(db) = db::scratch_database().await else {
+        return;
+    };
+    // The source count includes USER, but its bounded preview does not. The
+    // mirror supplies no membership fact with which to deduplicate that wallet.
+    let mut event = fixture_events().remove(0);
+    event["total_attendees"] = json!(100);
+    event["latest_attendees"] = json!([OTHER, null]);
+    let id = event["id"].as_str().unwrap();
+    events_mirror::upsert_event(&db.pool, &event).await.unwrap();
+    let component = EventsComponent::new(db.pool.clone(), None);
+    assert_eq!(
+        component.get(id).await.unwrap().unwrap().total_attendees,
+        100
+    );
+
+    catalyst::explore::events::attendees::rsvp_going(&db.pool, id, USER, None)
+        .await
+        .unwrap();
+    let going = component
+        .get_for_viewer(id, Some(USER))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(going.attending);
+    assert_eq!(
+        going.total_attendees, 101,
+        "the signed delta is an estimate when source membership is unknown"
+    );
+    assert!(
+        going
+            .latest_attendees
+            .iter()
+            .any(|address| address.eq_ignore_ascii_case(USER))
+    );
+    events_mirror::upsert_event(&db.pool, &event).await.unwrap();
+    assert_eq!(
+        component.get(id).await.unwrap().unwrap().total_attendees,
+        101
+    );
+
+    catalyst::explore::events::attendees::rsvp_cancel(&db.pool, id, USER)
+        .await
+        .unwrap();
+    let cancelled = component
+        .get_for_viewer(id, Some(USER))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!cancelled.attending);
+    assert_eq!(
+        cancelled.total_attendees, 100,
+        "an unknown upstream membership cannot be subtracted"
+    );
+    assert!(
+        !cancelled
+            .latest_attendees
+            .iter()
+            .any(|address| address.eq_ignore_ascii_case(USER))
+    );
+    db.teardown().await;
+}

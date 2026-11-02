@@ -68,8 +68,8 @@ pub struct UpdateEventBody {
     pub name: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
-    #[serde(default)]
-    pub image: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_some")]
+    pub image: Option<Option<String>>,
     #[serde(default)]
     pub image_vertical: Option<String>,
     #[serde(default)]
@@ -274,14 +274,18 @@ pub fn apply_owner_edit(
             "event text exceeds the maximum length",
         ));
     }
-    for (key, img) in [
-        ("image", &body.image),
-        ("image_vertical", &body.image_vertical),
-    ] {
-        if let Some(img) = img {
-            let img = crate::sanitize::sanitize_asset_url(img).map_err(ApiError::bad_request)?;
-            raw.insert(key.into(), json!(img));
-        }
+    if let Some(image) = &body.image {
+        let image = image
+            .as_deref()
+            .map(crate::sanitize::sanitize_asset_url)
+            .transpose()
+            .map_err(ApiError::bad_request)?;
+        raw.insert("image".into(), json!(image));
+        raw.insert("_image_source".into(), json!("explicit"));
+    }
+    if let Some(img) = &body.image_vertical {
+        let img = crate::sanitize::sanitize_asset_url(img).map_err(ApiError::bad_request)?;
+        raw.insert("image_vertical".into(), json!(img));
     }
     if let Some(server) = &body.server {
         raw.insert("server".into(), json!(server));
@@ -385,7 +389,7 @@ fn reject_past_dates(raw: &Map<String, Value>) -> Result<(), ApiError> {
 /// from the document or projected creator; mirrored authority is returned so
 /// the caller can reject an owner write or apply operator policy explicitly.
 async fn load_raw(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    tx: &mut Transaction<'_, Postgres>,
     id: &str,
 ) -> Result<Option<(Map<String, Value>, String, bool)>, ApiError> {
     let row: Option<(Value, Option<String>, String)> = sqlx::query_as(
@@ -632,7 +636,7 @@ pub async fn patch_event(
         );
         raw.insert("world".into(), json!(world));
     }
-    super::metadata::enrich(&mut tx, &mut raw, edit.url.is_none().then_some(&before)).await?;
+    super::metadata::enrich(&mut tx, &mut raw, Some(&before), edit.url.is_none()).await?;
     // Another reviewer's rejection is a moderation hold: self-approval cannot remove it.
     let held = moderation::flag(&before, "rejected")
         && !before
@@ -731,7 +735,10 @@ pub async fn delete_event(
         tx.rollback().await?;
         return Err(moderation::mirrored_event(&state.pool, &event_id).await);
     }
-    if let Some(signer) = signer.as_ref().filter(|signer| signer.as_str() != owner) {
+    if let Some(signer) = signer
+        .as_ref()
+        .filter(|signer| mirrored || signer.as_str() != owner)
+    {
         if !permissions.edit_any {
             return Err(ApiError::forbidden(
                 "You don't have permission to delete this event",
@@ -773,11 +780,8 @@ pub async fn delete_event(
             )
         }
         Some(signer) => {
-            if owner != signer {
-                state.operator_writes()?;
-            }
             raw.insert(
-                if owner == signer {
+                if owner == signer && !mirrored {
                     "deleted_by_user"
                 } else {
                     "deleted_by_admin"
@@ -1023,11 +1027,15 @@ mod tests {
         json!({ "name": "Launch party", "start_at": "2099-06-01T18:00:00Z", "duration": 3_600_000, "x": 10, "y": -20, "description": "<b>come</b>" })
     }
 
-    async fn wait_for_event_lock(pool: &sqlx::PgPool, count: i64) {
+    async fn wait_for_event_lock(pool: &sqlx::PgPool, blocker_pid: i32, count: i64) {
         tokio::time::timeout(std::time::Duration::from_secs(5),async {
             loop {
-                let blocked: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND query LIKE '%explore.event%FOR UPDATE%'")
-                    .fetch_one(pool).await.unwrap();
+                let blocked: i64 = sqlx::query_scalar("WITH RECURSIVE blocked(pid) AS (
+                    SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))
+                    UNION SELECT a.pid FROM pg_stat_activity a JOIN blocked b ON b.pid=ANY(pg_blocking_pids(a.pid))
+                ) SELECT count(*) FROM pg_stat_activity a JOIN blocked b USING(pid)
+                WHERE a.datname=current_database() AND a.wait_event_type='Lock' AND a.query LIKE '%explore.event%FOR UPDATE%' ")
+                    .bind(blocker_pid).fetch_one(pool).await.unwrap();
                 if blocked >= count { break; }
                 tokio::task::yield_now().await;
             }
@@ -1071,6 +1079,19 @@ mod tests {
             "https://cdn.example.org/scene.png"
         );
         let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        let (status, generated) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"x":43,"y":44})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{generated}");
+        assert_eq!(
+            generated["data"]["image"],
+            "https://api.decentraland.org/v1/parcels/43/44/map.png"
+        );
         let (status, moved) = call(
             &app,
             "PATCH",
@@ -1092,6 +1113,153 @@ mod tests {
             moved["data"]["url"],
             "https://decentraland.org/play/?position=43%2C44"
         );
+    }
+
+    #[tokio::test]
+    async fn generated_posters_follow_moves_and_explicit_null_clears_survive_edits() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let app = router(Arc::new(ExploreState::new(
+            pool,
+            Settings {
+                user_writes_enabled: true,
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let (status, created) = call(
+            &app,
+            "POST",
+            "/api/events",
+            Some("signed"),
+            Some(new_event()),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        assert_eq!(
+            created["data"]["image"],
+            "https://api.decentraland.org/v1/parcels/10/-20/map.png"
+        );
+        let (status, moved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"x":123,"y":124})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert_eq!(
+            moved["data"]["image"],
+            "https://api.decentraland.org/v1/parcels/123/124/map.png"
+        );
+        let (status, cleared) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"image":null})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{cleared}");
+        assert!(cleared["data"]["image"].is_null());
+        let (status, moved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"x":125,"name":"Still cleared"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{moved}");
+        assert!(moved["data"]["image"].is_null());
+        let (_, poster) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"image":"/poster/custom.webp"})),
+        )
+        .await;
+        assert_eq!(poster["data"]["image"], "/poster/custom.webp");
+        let (_, moved) = call(&app, "PATCH", &path, Some("signed"), Some(json!({"y":126}))).await;
+        assert_eq!(moved["data"]["image"], "/poster/custom.webp");
+    }
+
+    #[tokio::test]
+    async fn mirrored_deletion_by_its_owner_with_edit_any_requires_operator_writes_and_a_single_use_nonce()
+     {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let wallet = alloy::signers::local::PrivateKeySigner::random();
+        let signer = format!("{:#x}", wallet.address());
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions_granted,permissions) VALUES ($1,true,'[\"edit_any_event\"]') ON CONFLICT (\"user\") DO UPDATE SET permissions_granted=true,permissions=EXCLUDED.permissions")
+            .bind(&signer).execute(&pool).await.unwrap();
+        let id = uuid::Uuid::new_v4().to_string();
+        super::super::mirror::upsert_event(&pool,&json!({"id":id,"name":"Mirrored owner","user":signer,"approved":true,"start_at":"2099-06-01T18:00:00Z","duration":3600000})).await.unwrap();
+        let path = format!("/api/events/{id}");
+        let make_app = |operator_writes_enabled| {
+            router(Arc::new(ExploreState::new(
+                pool.clone(),
+                Settings {
+                    user_writes_enabled: true,
+                    operator_writes_enabled,
+                    ..Settings::for_tests()
+                },
+                None,
+            )))
+        };
+        let (status, _) = call_as(&make_app(false), "DELETE", &path, &wallet, json!({})).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        let app = make_app(true);
+        let nonce = uuid::Uuid::new_v4().to_string();
+        for (metadata, expected) in [
+            (
+                json!({"body_sha256":hex::encode(Sha256::digest(b""))}),
+                StatusCode::BAD_REQUEST,
+            ),
+            (
+                json!({"body_sha256":hex::encode(Sha256::digest(b"")),"nonce":nonce}),
+                StatusCode::OK,
+            ),
+            (
+                json!({"body_sha256":hex::encode(Sha256::digest(b"")),"nonce":nonce}),
+                StatusCode::CONFLICT,
+            ),
+        ] {
+            let mut req = Request::builder().method("DELETE").uri(&path);
+            for (key, value) in crate::shared::signed_fetch::test_support::signed_headers_by(
+                &wallet,
+                "delete",
+                &path,
+                &metadata.to_string(),
+                true,
+                &Utc::now().timestamp_millis().to_string(),
+            )
+            .await
+            .iter()
+            {
+                req = req.header(key, value);
+            }
+            let response = app
+                .clone()
+                .oneshot(req.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), expected);
+        }
+        let raw: Value = sqlx::query_scalar("SELECT raw FROM explore.event WHERE id=$1")
+            .bind(&id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(raw["deleted_by_admin"], true);
+        assert_ne!(raw["deleted_by_user"], true);
+        let actions:i64=sqlx::query_scalar("SELECT count(*) FROM explore.signed_actions WHERE signer=$1 AND action_type='EventPrivilegedWrite' AND subject_id=$2").bind(&signer).bind(&id).fetch_one(&pool).await.unwrap();
+        assert_eq!(actions, 1);
     }
 
     #[tokio::test]
@@ -1157,7 +1325,11 @@ mod tests {
                 .await
             })
         };
-        wait_for_event_lock(&pool, 1).await;
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *moderator)
+            .await
+            .unwrap();
+        wait_for_event_lock(&pool, blocker_pid, 1).await;
         sqlx::query("UPDATE explore.event SET approved=false,raw=raw || '{\"approved\":false,\"rejected\":true,\"rejection_reason\":\"Moderator reason\"}'::jsonb WHERE id=$1")
             .bind(&id).execute(&mut *moderator).await.unwrap();
         moderator.commit().await.unwrap();
@@ -1200,7 +1372,11 @@ mod tests {
                 .await
             })
         };
-        wait_for_event_lock(&pool, 2).await;
+        let blocker_pid = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *blocker)
+            .await
+            .unwrap();
+        wait_for_event_lock(&pool, blocker_pid, 2).await;
         blocker.rollback().await.unwrap();
         assert_eq!(first.await.unwrap().0, StatusCode::OK);
         assert_eq!(second.await.unwrap().0, StatusCode::OK);
