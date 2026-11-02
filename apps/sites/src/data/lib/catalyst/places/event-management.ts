@@ -9,7 +9,7 @@ export const EVENT_PERMISSIONS = [
   { id: "approve_any_event", label: "Approve any hangout" },
   { id: "edit_any_event", label: "Edit any hangout" },
   { id: "edit_any_schedule", label: "Manage schedules" },
-  { id: "edit_any_profile", label: "Manage user permissions" },
+  { id: "edit_any_profile", label: "Legacy profile permission" },
 ] as const;
 export type EventPermission = typeof EVENT_PERMISSIONS[number]["id"];
 export type ManagedEvent = z.infer<typeof EventRecordSchema>;
@@ -27,19 +27,20 @@ export async function loadEventProfile(identity: AuthIdentity, signal?: AbortSig
 export async function loadManagedEvents(identity: AuthIdentity, options: { own: boolean; offset: number; limit: number; search?: string }, signal?: AbortSignal) {
   const raw = await signedGetJSON("/events/api/events", {
     identity, signal,
-    query: { list: options.own ? "all" : "active", owner: options.own || undefined, limit: options.limit, offset: options.offset, search: options.search || undefined, order: "desc", ...(!options.own ? { approved: false, rejected: false, deleted: false } : {}) },
+    query: { list: options.own ? "all" : "active", owner: options.own || undefined, limit: options.limit + 1, offset: options.offset, search: options.search || undefined, order: "desc", ...(!options.own ? { approved: false, rejected: false, deleted: false } : {}) },
   });
   const envelope = EventList.parse(raw);
-  const events = Array.isArray(envelope.data) ? envelope.data : envelope.data.events;
+  const rows = Array.isArray(envelope.data) ? envelope.data : envelope.data.events;
+  const events = rows.slice(0, options.limit);
   const total = Array.isArray(envelope.data) ? envelope.total : envelope.data.total;
-  return { events, hasMore: total === undefined ? events.length === options.limit : options.offset + events.length < total };
+  return { events, hasMore: total === undefined ? rows.length > options.limit : options.offset + events.length < total };
 }
 
 export async function moderateEvent(identity: AuthIdentity, id: string, action: "approve" | "reject", reason?: string): Promise<void> {
   const body = action === "approve" ? { approved: true } : { rejected: true, rejection_reason: reason?.trim().slice(0, 500) || null };
   const result = apiOkOf(z.object({ approved: z.boolean(), rejected: z.boolean() })).parse(await postJSON(`/events/api/events/${encodeURIComponent(id)}`, body, { identity, method: "PATCH" })).data;
   if (action === "approve" ? !result.approved || result.rejected : !result.rejected) {
-    throw new Error("The hangout changed before this action was applied. Refresh the list and try again.");
+    throw new Error("The action was not applied. Another reviewer may be required, or the hangout's state may have changed. Refresh the list before trying again.");
   }
 }
 

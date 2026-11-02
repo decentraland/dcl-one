@@ -35,7 +35,7 @@ describe("when managing hangouts", () => {
     vi.mocked(loadEventProfiles).mockResolvedValue([profile]);
     vi.mocked(loadManagedEvents).mockResolvedValue({ events: [event], hasMore: true });
     vi.mocked(moderateEvent).mockResolvedValue();
-    vi.mocked(saveEventPermissions).mockResolvedValue(profile);
+    vi.mocked(saveEventPermissions).mockImplementation(async (_identity, address, permissions) => ({ user: address, permissions }));
     user = userEvent.setup();
     renderPage = (mode = "pending") => render(<MemoryRouter><EventManagement mode={mode} /></MemoryRouter>);
   });
@@ -54,6 +54,7 @@ describe("when managing hangouts", () => {
     await user.click(await screen.findByRole("button", { name: "Approve Moon concert" }));
     await screen.findByText("Hangout approved.");
     expect(moderateEvent).toHaveBeenCalledWith(identity, "pending-one", "approve", undefined);
+    expect(loadEventProfile).toHaveBeenCalledTimes(1);
   });
 
   describe("and moderation was superseded", () => {
@@ -91,6 +92,27 @@ describe("when managing hangouts", () => {
     expect(loadManagedEvents).toHaveBeenCalledTimes(1);
     await waitFor(() => expect(loadManagedEvents).toHaveBeenCalledTimes(2));
     expect(loadManagedEvents).toHaveBeenLastCalledWith(identity, expect.objectContaining({ search: "music" }), expect.any(AbortSignal));
+  });
+
+  it("should combine the debounced search and page reset into one request", async () => {
+    renderPage();
+    await screen.findByRole("button", { name: "Approve Moon concert" });
+    await user.click(screen.getByRole("button", { name: "Next page" }));
+    await waitFor(() => expect(loadManagedEvents).toHaveBeenCalledTimes(2));
+    await user.type(screen.getByRole("searchbox"), "music");
+    expect(loadManagedEvents).toHaveBeenCalledTimes(2);
+    await waitFor(() => expect(loadManagedEvents).toHaveBeenCalledTimes(3));
+    expect(loadManagedEvents).toHaveBeenLastCalledWith(identity, expect.objectContaining({ search: "music", offset: 0 }), expect.any(AbortSignal));
+  });
+
+  describe("and an event-list request fails", () => {
+    beforeEach(() => { vi.mocked(loadManagedEvents).mockRejectedValueOnce(new Error("List unavailable")); });
+    it("should retry the list without checking access again", async () => {
+      renderPage();
+      await user.click(await screen.findByRole("button", { name: "Retry" }));
+      await screen.findByRole("button", { name: "Approve Moon concert" });
+      expect(loadEventProfile).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("should preserve a draft after a same-wallet storage update", async () => {
@@ -165,8 +187,35 @@ describe("when managing hangouts", () => {
       await user.type(screen.getByRole("textbox", { name: "Wallet address" }), identity.signer);
       await user.click(screen.getByRole("checkbox", { name: "Approve any hangout" }));
       await user.click(screen.getByRole("button", { name: "Save permissions" }));
-      await screen.findByText("Permissions saved.");
+      await screen.findByText("Delegated permissions saved. Moderator accounts always retain every permission.");
       expect(saveEventPermissions).toHaveBeenCalledWith(identity, identity.signer, ["approve_any_event"]);
+    });
+
+    describe("and the access refresh is slow", () => {
+      beforeEach(() => {
+        vi.mocked(loadEventProfile).mockResolvedValueOnce(profile).mockImplementation(() => new Promise(() => {}));
+      });
+      it("should retain the users view and show feedback immediately after saving", async () => {
+        renderPage("users");
+        await user.click(await screen.findByRole("button", { name: "Add permissions for a wallet" }));
+        await user.type(screen.getByRole("textbox", { name: "Wallet address" }), identity.signer);
+        await user.click(screen.getByRole("button", { name: "Save permissions" }));
+        await screen.findByText("Delegated permissions saved. Moderator accounts always retain every permission.");
+        expect(screen.getByRole("searchbox")).toBeTruthy();
+        expect(screen.queryByText("Checking access…")).toBeNull();
+      });
+    });
+
+    describe("and a moderator's effective permissions cannot be removed", () => {
+      beforeEach(() => { vi.mocked(saveEventPermissions).mockResolvedValue(profile); });
+      it("should explain fixed moderator authority instead of claiming the requested change took effect", async () => {
+        renderPage("users");
+        await user.click(await screen.findByRole("button", { name: "Add permissions for a wallet" }));
+        await user.type(screen.getByRole("textbox", { name: "Wallet address" }), identity.signer);
+        expect(screen.getByText(/This form updates delegated grants/)).toBeTruthy();
+        await user.click(screen.getByRole("button", { name: "Save permissions" }));
+        await screen.findByText("The server kept the account's effective permissions. Moderator accounts always retain every permission.");
+      });
     });
   });
 

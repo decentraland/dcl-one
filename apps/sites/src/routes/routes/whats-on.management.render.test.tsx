@@ -5,6 +5,7 @@ import type { AuthIdentity } from "@/data/lib/auth/types";
 import WhatsOn, { loader } from "./whats-on";
 import { fetchEvents } from "@/data/lib/catalyst/places/events";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
+import { whatsOnToMarkdown } from "@/data/lib/agent/markdown";
 
 const auth = vi.hoisted(() => ({ identity: null as AuthIdentity | null, address: null as string | null, isConnected: false }));
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => auth }));
@@ -41,5 +42,11 @@ describe("when the main What's On route opens My Hangouts", () => {
     await loader({ request: new Request("https://example.org/whats-on?tab=my") } as never);
     expect(fetchEvents).not.toHaveBeenCalled();
     expect(pageLoader).not.toHaveBeenCalled();
+  });
+
+  it("should describe the private management view in agent markdown instead of an empty public feed", async () => {
+    await expect(loader({ request: new Request("https://example.org/whats-on?tab=my") } as never)).resolves.toMatchObject({ tab: "my" });
+    expect(whatsOnToMarkdown({ tab: "my" })).toContain("# My Hangouts");
+    expect(whatsOnToMarkdown({ tab: "my" })).not.toContain("No events right now");
   });
 });

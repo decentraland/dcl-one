@@ -60,7 +60,7 @@ const FALLBACK: PageDefaults = {
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   if (url.searchParams.get("tab") === "my") {
-    return { sid: "", filter: "" as FilterId, search: "", live: [], upcoming: [], allDays: [], dayLabels: [], copy: { stamp: null, now: Date.now() } };
+    return { tab: "my" as const, sid: "", filter: "" as FilterId, search: "", live: [], upcoming: [], allDays: [], dayLabels: [], copy: { stamp: null, now: Date.now() } };
   }
   const rawFilter = url.searchParams.get("filter")?.trim() ?? "";
   const filter: FilterId = (FILTERS.some((f) => f.id === rawFilter) ? rawFilter : "") as FilterId;

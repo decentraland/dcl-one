@@ -23,7 +23,7 @@ type Access = { profile: EventProfile; profiles: EventProfile[] | null };
 function useEventAccess(identity: AuthIdentity | null, version: number) {
   const latestIdentity = useRef(identity);
   latestIdentity.current = identity;
-  const [read, setRead] = useState<{ version: number; data?: Access; error?: string } | null>(null);
+  const [read, setRead] = useState<{ data?: Access; error?: string } | null>(null);
   const signer = identity?.signer.toLowerCase();
   useEffect(() => {
     const current = latestIdentity.current;
@@ -43,12 +43,14 @@ function useEventAccess(identity: AuthIdentity | null, version: number) {
       return { profile, profiles };
     }
     load().then(
-      (data) => { if (!controller.signal.aborted) setRead({ version, data }); },
-      (error: unknown) => { if (!controller.signal.aborted) setRead({ version, error: message(error) }); },
+      (data) => { if (!controller.signal.aborted) setRead({ data }); },
+      (error: unknown) => { if (!controller.signal.aborted) setRead({ error: message(error) }); },
     );
     return () => controller.abort();
   }, [signer, version]);
-  const current = read?.version === version ? read : null;
+  // A permission save refreshes access in the background; preserve the current
+  // authorized view until its replacement arrives. Wallet changes remount us.
+  const current = read;
   return { profile: current?.data?.profile ?? null, profiles: current?.data?.profiles ?? null, error: current?.error, loading: Boolean(identity) && !current };
 }
 
@@ -83,7 +85,8 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
   const [search, setSearch] = useState("");
   const [query, setQuery] = useState("");
   const [version, setVersion] = useState(0);
-  const access = useEventAccess(identity, version);
+  const [accessVersion, setAccessVersion] = useState(0);
+  const access = useEventAccess(identity, accessVersion);
   const [read, setRead] = useState<Read | null>(null);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -97,8 +100,14 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
   const latestIdentity = useRef(identity);
   latestIdentity.current = identity;
 
+  const settledSearch = useRef(search);
   useEffect(() => {
-    const timer = setTimeout(() => setQuery(search.trim().length >= 3 ? search.trim() : ""), 300);
+    if (search === settledSearch.current) return;
+    const timer = setTimeout(() => {
+      settledSearch.current = search;
+      setPage(0);
+      setQuery(search.trim().length >= 3 ? search.trim() : "");
+    }, 300);
     return () => clearTimeout(timer);
   }, [search]);
 
@@ -143,9 +152,14 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
     if (!signer || signer.signer.toLowerCase() !== identity?.signer.toLowerCase()) { openSignIn(); return; }
     setBusy(true); setFeedback(null);
     try {
-      await saveEventPermissions(signer, address.trim(), permissions);
+      const saved = await saveEventPermissions(signer, address.trim(), permissions);
       if (!mounted.current) return;
-      setEditingProfile(false); setVersion((previous) => previous + 1); setFeedback("Permissions saved.");
+      setEditingProfile(false);
+      setAccessVersion((previous) => previous + 1);
+      const effectiveMatches = saved.permissions.length === permissions.length && permissions.every((permission) => saved.permissions.includes(permission));
+      setFeedback(effectiveMatches
+        ? "Delegated permissions saved. Moderator accounts always retain every permission."
+        : "The server kept the account's effective permissions. Moderator accounts always retain every permission.");
     } catch (error) { if (mounted.current) setFeedback(message(error)); }
     finally { if (mounted.current) setBusy(false); }
   }
@@ -173,7 +187,7 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
             <>
               <label className={styles.label}>
                 Search {mode === "users" ? "wallets" : "hangouts"}
-                <input className={styles.input} type="search" value={search} disabled={busy} onChange={(event) => { resetSelection(); setSearch(event.target.value); setPage(0); }} />
+                <input className={styles.input} type="search" value={search} disabled={busy} onChange={(event) => { resetSelection(); setSearch(event.target.value); }} />
               </label>
               {search.trim().length > 0 && search.trim().length < 3 && <p>Enter at least three characters to search.</p>}
               {feedback && <p role="status">{feedback}</p>}
@@ -244,6 +258,7 @@ function ManagementSession({ mode, identity }: { mode: Mode; identity: AuthIdent
               {editingProfile && (
                 <section className={styles.editor} aria-label="Edit user permissions">
                   <h2>Edit user permissions</h2>
+                  <p>Moderator accounts always retain every permission. This form updates delegated grants. The legacy profile permission does not grant user administration.</p>
                   <label className={styles.label}>Wallet address
                     <input className={styles.input} value={address} onChange={(event) => setAddress(event.target.value)} />
                   </label>
