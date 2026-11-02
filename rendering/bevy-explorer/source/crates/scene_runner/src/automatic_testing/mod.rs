@@ -429,13 +429,17 @@ fn automatic_testing(
     };
     let context = scenes.get(current_scene).unwrap();
 
-    // A scene that failed to load never sends a plan: it fails by name and the run goes on.
+    // A scene that failed to load never sends a plan: it fails by name (`scene load`, which its
+    // `allow_failures` may list, as a step's name) and the run goes on.
     if matches!(loading.get(current_scene), Ok(SceneLoading::Failed)) {
         warn!("test scene @ {:?} failed to load", context.base);
         fails.push((
             format!("[({},{}) : scene load]", context.base.x, context.base.y),
             "the scene failed to load".to_owned(),
-            false,
+            next_test_scene
+                .allow_failures
+                .iter()
+                .any(|f| f == "scene load"),
         ));
         testing_data.test_scenes.as_mut().unwrap().0.pop_front();
         return;
