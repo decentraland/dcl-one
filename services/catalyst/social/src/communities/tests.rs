@@ -34,6 +34,7 @@ mod post_edit;
 mod request_lifecycle;
 mod selected_community;
 mod social_api_parity;
+mod upstream_rules;
 pub(super) mod world_access;
 
 const ADMIN_TOKEN: &str = "cg-social-admin";
@@ -1197,30 +1198,69 @@ async fn every_route_answers_its_contract() {
         "a member may not edit: {v}"
     );
 
+    // upstream `updateEditorChoice`: global moderators only, even over the owner
     let (status, _) = hit(
         app,
         Case::new("patch", &c1_path)
-            .signed(&user)
+            .signed(&modw)
             .await
             .json(&json!({ "editorsChoice": true })),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+    let editors_choice: bool =
+        sqlx::query_scalar("SELECT editors_choice FROM social.communities WHERE id = $1")
+            .bind(c1)
+            .fetch_one(&rig.pool)
+            .await
+            .unwrap();
+    assert!(editors_choice);
     let (status, v) = hit(
         app,
         Case::new("patch", &c1_path).json(&json!({ "editorsChoice": true })),
     )
     .await;
     assert_gate_400(status, &v, "patch unsigned");
+    for w in [&user, &m1] {
+        let (status, v) = hit(
+            app,
+            Case::new("patch", &c1_path)
+                .signed(w)
+                .await
+                .json(&json!({ "editorsChoice": false })),
+        )
+        .await;
+        assert_eq!(
+            v,
+            json!({
+                "error": "Not Authorized",
+                "message": "Only global moderators can update Editor's Choice flag"
+            }),
+            "global moderators only"
+        );
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    for body in [
+        json!({}),
+        json!({ "editorsChoice": "yes" }),
+        json!({ "editorsChoice": true, "name": "x" }),
+    ] {
+        let (status, v) = hit(
+            app,
+            Case::new("patch", &c1_path).signed(&modw).await.json(&body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {v}");
+    }
     let (status, v) = hit(
         app,
-        Case::new("patch", &c1_path)
-            .signed(&m1)
+        Case::new("patch", format!("/v1/communities/{missing}"))
+            .signed(&modw)
             .await
             .json(&json!({ "editorsChoice": true })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "owner only: {v}");
+    assert_eq!(status, StatusCode::NOT_FOUND, "{v}");
 
     let (status, _) = hit(
         app,
@@ -1236,6 +1276,24 @@ async fn every_route_answers_its_contract() {
         StatusCode::NOT_FOUND,
         "a soft-deleted community reads as missing"
     );
+    // upstream `deleteCommunity`: the owner or a global moderator
+    let c_mod_del = rig.community(&user, false).await;
+    let mod_del_path = format!("/v1/communities/{c_mod_del}");
+    let (status, v) = hit(app, Case::new("delete", &mod_del_path).signed(&m1).await).await;
+    assert_eq!(
+        (status, v),
+        (
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "error": "Not Authorized",
+                "message": "The user doesn't have permission to delete this community"
+            })
+        )
+    );
+    let (status, _) = hit(app, Case::new("delete", &mod_del_path).signed(&modw).await).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = hit(app, Case::new("delete", &mod_del_path).signed(&modw).await).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "already deleted");
     let (status, v) = hit(app, Case::new("delete", &c1_path)).await;
     assert_gate_400(status, &v, "delete unsigned");
     let (status, v) = hit(app, Case::new("delete", &c1_path).forged(&user).await).await;
@@ -1449,8 +1507,15 @@ async fn every_route_answers_its_contract() {
     let (status, v) = hit(app, Case::new("post", &members).signed(&m2).await).await;
     assert_eq!(
         status,
-        StatusCode::FORBIDDEN,
+        StatusCode::UNAUTHORIZED,
         "a banned wallet cannot rejoin: {v}"
+    );
+    assert_eq!(
+        v,
+        json!({
+            "error": "Not Authorized",
+            "message": format!("The user {} is banned from community {c1}", m2.address)
+        })
     );
     let (_, v) = hit(
         app,
