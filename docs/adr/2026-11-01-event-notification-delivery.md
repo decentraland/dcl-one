@@ -37,10 +37,12 @@ timestamp cursor that could permanently skip a newly approved event.
 The worker drains recipient pages within a five-second dispatch budget. Cleanup runs
 first with its own bounded opportunity, independent of dispatch backlog. Reminder
 and start scans receive separate three-second budgets so one cannot starve the other;
-scan statements have a two-second server timeout. Scan failures are returned to
-the periodic job after queued delivery gets its turn, making failures visible
-through the job's error reporting and backoff. Cleanup failures are logged and
-do not prevent scanning or delivery.
+scan statements have a two-second server timeout. Scan timeouts and budget
+exhaustion emit error-level diagnostics and defer remaining discovery without
+activating job backoff, preserving the normal delivery cadence. Other scan
+database failures reach job error reporting after queued delivery gets its turn.
+Cleanup failures and cleanup budget exhaustion emit error-level diagnostics
+without preventing scanning or delivery.
 Transaction-local PostgreSQL statement and lock timeouts bound server work as
 well as client waits. Each claim commits a queue-order rotation before processing;
 a timed-out page therefore retains its recipient cursor without keeping the
@@ -67,7 +69,9 @@ than assuming that exactly one hour remains.
 
 Event notification channel preferences come from Social subscriptions, including
 per-type settings and community opt-outs. Community UUID scopes are normalized
-on write and lookup; delivery also recognizes existing non-canonical UUID scopes.
+on write and lookup; event and community delivery also recognize existing
+non-canonical UUID scopes. Lookup parameters are parsed in Rust and bound as
+optional UUIDs, preserving opaque legacy scope IDs without unsafe parameter casts.
 Legacy Explore profile notification
 settings remain a separate contract. Event-only in-app suppression does not
 change unrelated producers. Suppressed event rows are stored as read with a

@@ -564,13 +564,14 @@ impl NotificationsStore {
               SELECT 1 FROM social.subscription_opt_outs
               WHERE address = $1 AND scope = $2 AND (scope_id = $3
                 OR ($2='community' AND CASE WHEN pg_input_is_valid(scope_id,'uuid')
-                    THEN scope_id::uuid END = CASE WHEN pg_input_is_valid($3,'uuid') THEN $3::uuid END))
+                    THEN scope_id::uuid END = $4))
             )
             "#,
         )
         .bind(address)
         .bind(scope)
         .bind(scope_id)
+        .bind(Uuid::parse_str(scope_id).ok())
         .fetch_one(&self.pool)
         .await?;
         Ok(exists)
@@ -615,12 +616,13 @@ impl NotificationsStore {
             DELETE FROM social.subscription_opt_outs
             WHERE address = $1 AND scope = $2 AND (scope_id = $3
                 OR ($2='community' AND CASE WHEN pg_input_is_valid(scope_id,'uuid')
-                    THEN scope_id::uuid END = CASE WHEN pg_input_is_valid($3,'uuid') THEN $3::uuid END))
+                    THEN scope_id::uuid END = $4))
             "#,
         )
         .bind(address)
         .bind(scope)
         .bind(scope_id)
+        .bind(Uuid::parse_str(scope_id).ok())
         .execute(&self.pool)
         .await?;
         Ok(res.rows_affected() > 0)

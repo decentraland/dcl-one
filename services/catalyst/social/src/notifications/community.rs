@@ -63,10 +63,10 @@ async fn recipients(
         Audience::One(address) => {
             return sqlx::query_scalar(
                 "SELECT $1::text WHERE NOT EXISTS (SELECT 1 FROM social.subscription_opt_outs \
-                 WHERE address = $1 AND scope = 'community' AND scope_id = $2)",
+                 WHERE address = $1 AND scope = 'community' AND CASE WHEN pg_input_is_valid(scope_id,'uuid') THEN scope_id::uuid END = $2)",
             )
             .bind(address.as_str())
-            .bind(community.to_string())
+            .bind(community)
             .fetch_all(pool)
             .await;
         }
@@ -86,13 +86,13 @@ async fn recipients(
          WHERE m.community_id = $1 AND m.role = ANY($2) \
            AND m.member_address IS DISTINCT FROM lower($3) \
            AND NOT EXISTS (SELECT 1 FROM social.subscription_opt_outs o \
-                           WHERE o.address = m.member_address AND o.scope = 'community' AND o.scope_id = $4) \
+                           WHERE o.address = m.member_address AND o.scope = 'community' AND CASE WHEN pg_input_is_valid(o.scope_id,'uuid') THEN o.scope_id::uuid END = $4) \
          ORDER BY m.member_address",
     )
     .bind(community)
     .bind(&roles)
     .bind(except)
-    .bind(community.to_string())
+    .bind(community)
     .fetch_all(pool)
     .await?;
     Ok(match audience {

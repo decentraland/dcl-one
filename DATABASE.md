@@ -276,11 +276,15 @@ use the delivery clock so incremental polling sees catch-up deliveries; source
 timing remains in metadata. The worker uses a five-second dispatch budget rather than a
 fixed number of audience pages. Independent three-second scan budgets and
 two-second scan statement timeouts allow more time for catalogue discovery than
-for recipient pages. Scan failures reach job error reporting after dispatch;
-cleanup failures are logged without stopping delivery. Committed stale or
+for recipient pages. Scan timeouts and budget exhaustion emit error-level
+diagnostics without activating job backoff; other scan failures reach job error
+reporting after dispatch. Cleanup failures and budget exhaustion emit error-level
+diagnostics without stopping delivery. Committed stale or
 obsolete suppression logs the intent and reason, including expiry after lock
 contention. Community opt-out UUIDs are canonicalized on write and lookup;
-delivery recognizes existing non-canonical UUID scopes too.
+event and community delivery recognize existing non-canonical UUID scopes too.
+Lookup binds optional UUID parameters parsed in Rust, preserving opaque legacy
+scope IDs without relying on guarded casts of SQL parameters.
 Catalogue-scale capacity is not established by
 bounded result sizes alone. See the
 [event notification ADR](docs/adr/2026-11-01-event-notification-delivery.md).

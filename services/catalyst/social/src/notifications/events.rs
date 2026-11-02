@@ -396,23 +396,36 @@ async fn scan_with_budget(
         while scan_kind(pool, kind, ahead, now).await? == PAGE as u64 {}
         Ok::<_, anyhow::Error>(())
     };
-    tokio::time::timeout(SCAN_BUDGET, scan)
-        .await
-        .map_err(|_| anyhow::anyhow!("{kind} occurrence scan exceeded its budget"))?
-        .map_err(|error| error.context(format!("{kind} occurrence scan failed")))
+    match tokio::time::timeout(SCAN_BUDGET, scan).await {
+        Ok(Err(error)) if timed_out(&error) => {
+            tracing::error!(%error,kind,"event occurrence scan deferred; retaining normal delivery cadence");
+            Ok(())
+        }
+        Ok(result) => {
+            result.map_err(|error| error.context(format!("{kind} occurrence scan failed")))
+        }
+        Err(_) => {
+            tracing::error!(
+                kind,
+                "event occurrence scan exceeded budget; retaining normal delivery cadence"
+            );
+            Ok(())
+        }
+    }
 }
 
 /// Cleanup always receives a turn before scanning/dispatch. Independent scan
 /// budgets prevent one occurrence kind starving the other. Committed rotation
-/// survives a timed-out page. Scan failures surface after dispatch; maintenance
-/// errors are logged without blocking delivery.
+/// survives a timed-out page. Non-timeout scan failures surface after dispatch;
+/// expected scan deferrals and maintenance failures are error-logged without
+/// delaying the normal delivery cadence.
 pub async fn run_once(pool: &PgPool, base: &str, now: NaiveDateTime) -> anyhow::Result<u64> {
     match tokio::time::timeout(CLEANUP_BUDGET, cleanup(pool, now)).await {
         Ok(Err(error)) => {
-            tracing::warn!(%error, "event intent cleanup deferred")
+            tracing::error!(%error, "event intent cleanup deferred")
         }
         Ok(Ok(())) => {}
-        Err(_) => {}
+        Err(_) => tracing::error!("event intent cleanup exceeded budget"),
     }
     let (reminders, starts) = tokio::join!(
         scan_with_budget(pool, "events_starts_soon", 3600, now),
@@ -1105,6 +1118,13 @@ mod tests {
         sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {trigger} BEFORE INSERT ON social.event_notification_intents FOR EACH ROW EXECUTE FUNCTION social.{function}()")))
             .execute(pool).await.unwrap();
         let result = run_once(pool, "https://example.org", now).await;
+        // Unlike deadline deferrals, an ordinary scan database failure remains
+        // a failed job, but queued host notices still receive their turn.
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE OR REPLACE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_id='{reminder}' AND NEW.kind='events_starts_soon' THEN RAISE EXCEPTION 'test scan failure'; END IF; RETURN NEW; END $$"))).execute(pool).await.unwrap();
+        let queued_event = format!("{prefix}-scan-error-delivery");
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,'event_approved',$3,false,$4)")
+            .bind(Uuid::new_v4()).bind(&queued_event).bind(json!({"user":address})).bind(now).execute(pool).await.unwrap();
+        let failed_scan = run_once(pool, "https://example.org", now).await;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP TRIGGER {trigger} ON social.event_notification_intents"
         )))
@@ -1117,11 +1137,16 @@ mod tests {
         .execute(pool)
         .await
         .unwrap();
+        result.expect("scan timeout must keep the normal delivery cadence");
         assert!(
-            result
+            failed_scan
                 .unwrap_err()
                 .to_string()
-                .contains("events_starts_soon occurrence scan")
+                .contains("events_starts_soon occurrence scan failed")
+        );
+        assert_eq!(
+            count(pool, &queued_event, "event_approved", &address).await,
+            1
         );
         assert_eq!(count(pool, &started, "events_started", &address).await, 1);
         assert_eq!(
