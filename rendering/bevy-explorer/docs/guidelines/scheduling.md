@@ -72,7 +72,7 @@ starved scene rises. A scene behind the rendering camera (every corner of every 
 it) counts as four times farther (`BEHIND_SCENE_TICK_PENALTY`), so it keeps ticking and yields
 first when frame time runs short. Distance is always from the player; only facing comes from
 the camera, and with no rendering camera (headless) nothing is behind. The same partitions rank
-the ipfs request slots (`publish_download_priorities`); see the
+the ipfs request slots (`publish_download_priorities`, on frames with a download waiting); see the
 [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md). A scene is skipped
 while in flight, broken, or blocked (unless it is the system scene), and is not sent twice in
 one frame. A scene that has not replied for ten seconds is marked broken and its slot freed.

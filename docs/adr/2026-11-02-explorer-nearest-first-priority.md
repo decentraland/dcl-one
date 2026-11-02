@@ -99,13 +99,14 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   it wait. The mark lives with the queue: a request that finds no queue waiting for a departed
   hash is unknown again, and on top.
 - **Keys cross the crate boundary as data.** `publish_download_priorities` writes `hash →
-  LoadPriority` into `IpfsIo` (`set_scene_priorities`) every frame, because `ipfs` cannot depend
-  on `scene_runner`: the player's scenes at `LoadPriority::TOP`, the other scenes at their
-  partition in the `Scene` tier, and each avatar's wearable hashes at the avatar's partition in
-  the `Avatar` tier, the best of them for a shared one. The gate keeps the map and ranks its
-  queues by it at each grant; publishing touches no request. That map is the one per-scene (and
-  per-avatar) fact this change keeps outside the entity, and it is a cache the gate reads, not
-  state systems branch on.
+  LoadPriority` into `IpfsIo` (`set_scene_priorities`) on every frame in which a download waits
+  for a slot, because `ipfs` cannot depend on `scene_runner`: the player's scenes at
+  `LoadPriority::TOP`, the other scenes at their partition in the `Scene` tier, and each avatar's
+  wearable hashes at the avatar's partition in the `Avatar` tier, the best of them for a shared
+  one. The gate keeps the map and ranks its queues by it at each grant; publishing touches no
+  request, and an idle frame publishes nothing, since the keys are only read at a grant. That
+  map is the one per-scene (and per-avatar) fact this change keeps outside the entity, and it is
+  a cache the gate reads, not state systems branch on.
 - **Constants, not settings, and no sampling tolerance.** `BEHIND_SCENE_TICK_PENALTY` and the
   key's shape are code constants, as unity-explorer's are asset values; partitions are recomputed
   every frame from the camera as it is.
@@ -157,9 +158,10 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   within it.
 - **A flat avatar tier, first come first served.** Distance order among avatars is wanted: the
   nearest avatar's wearables first. It costs a partition per avatar and a map entry per wearable
-  hash published every frame: partitioning 20 live scenes and 50 avatars with 10 wearables each,
-  then building and publishing the map, took about 200 µs a frame in the dev profile
-  (`overhead_of_publishing_at_a_busy_plaza`).
+  hash on every frame with a download waiting: for 20 live scenes and 50 avatars with 10
+  wearables each (353 distinct), partitioning, building and publishing the map took about 300 µs
+  a frame in the dev profile, and about 30 µs on a frame with nothing waiting, when only the
+  partitions are refreshed (`overhead_of_publishing_at_a_busy_plaza`).
 - **Keeping the first-come semaphore for download slots.** The first scene to ask fills the queue
   whatever its distance; the gate decides at every grant instead, as unity-explorer re-sorts its
   pending loads every frame.
