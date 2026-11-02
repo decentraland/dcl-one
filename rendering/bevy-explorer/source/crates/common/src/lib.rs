@@ -5,6 +5,7 @@ pub mod bounds_calc;
 pub mod dynamics;
 pub mod gpu_time;
 pub mod inputs;
+pub mod partition;
 pub mod profile;
 pub mod rpc;
 pub mod sets;
