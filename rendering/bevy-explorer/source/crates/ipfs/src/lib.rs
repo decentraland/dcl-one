@@ -84,7 +84,7 @@ use world_access::WorldCommsSecret;
 use common::util::JoinRelativeExt;
 
 use self::ipfs_path::{content_file_path, CacheKey, IpfsKey, IpfsPath, IpfsType};
-use self::priority_gate::{PriorityGate, WaiterScenes};
+use self::priority_gate::{PriorityGate, Ticket};
 use common::partition::LoadPriority;
 
 const IPFS_IN_FLIGHT_DIAGNOSTIC_PATH: DiagnosticPath = DiagnosticPath::const_new("IPFS_IN_FLIGHT");
@@ -1414,9 +1414,10 @@ impl IpfsIo {
         client: reqwest::Client,
     ) -> Result<reqwest::Response, anyhow::Error> {
         // a request slot; not a scene's, so top priority
+        let ticket = self.request_slots.ticket(None);
         let _permit = self
             .request_slots
-            .acquire(WaiterScenes::default())
+            .acquire(ticket)
             .await
             .map_err(|e| anyhow!(e))?;
 
@@ -1762,14 +1763,6 @@ impl IpfsIo {
                     return Ok(data);
                 }
             };
-            // the scene the file belongs to decides its place in the request slot queue
-            let scenes: WaiterScenes = Arc::new(std::sync::Mutex::new(
-                ipfs_path
-                    .scene_hash()
-                    .map(str::to_owned)
-                    .into_iter()
-                    .collect(),
-            ));
 
             #[cfg(target_arch = "wasm32")]
             if let Some(indexdb_path) = ipfs_path.to_indexdb() {
@@ -1902,11 +1895,15 @@ impl IpfsIo {
                 }
             }
 
+            // the scene the file belongs to decides its place in the request slot queue
+            let scene = ipfs_path.scene_hash().map(str::to_owned);
+
             // nothing to share an uncacheable download under
             let Some(key) = cache_key else {
+                let ticket = self.request_slots.ticket(scene);
                 let data = self
                     .clone()
-                    .download(token, path.to_owned(), remote, None, scenes)
+                    .download(token, path.to_owned(), remote, None, ticket)
                     .await?;
                 return Ok(Box::new(AsyncCursor::new(data)));
             };
@@ -1915,7 +1912,7 @@ impl IpfsIo {
             // download of its own behind everything requested since. By url, not by hash: the
             // bytes are shared before the hash check, and a scene names its own server
             let (download, joined) =
-                self.share_download(key, token, path.to_owned(), remote, scenes);
+                self.share_download(key, token, path.to_owned(), remote, scene);
             let mut result = download.result.clone();
             let data = result
                 .wait_for(Option::is_some)
@@ -1947,7 +1944,7 @@ impl IpfsIo {
         token: u16,
         path: PathBuf,
         remote: String,
-        scenes: WaiterScenes,
+        scene: Option<String>,
     ) -> (Arc<SharedDownload>, bool) {
         let mut in_flight = self.in_flight.lock().unwrap();
         if let Some(download) = in_flight
@@ -1956,22 +1953,19 @@ impl IpfsIo {
         {
             debug!("[{token:?}]: remote url: `{remote}` joining in-flight download");
             // the download now serves this reader's scene too, so it may move up the queue
-            download
-                .scenes
-                .lock()
-                .unwrap()
-                .extend(scenes.lock().unwrap().iter().cloned());
+            self.request_slots.join(&download.ticket, scene);
             return (download, true);
         }
         let name = remote.clone();
         let (sender, result) = watch::channel(None);
         let ipfs = self.clone();
         let entry = remote.clone();
-        let download_scenes = scenes.clone();
+        let ticket = self.request_slots.ticket(scene);
+        let download_ticket = ticket.clone();
         let task = IoTaskPool::get().spawn_compat(async move {
             let result = ipfs
                 .clone()
-                .download(token, path, remote, Some(key), download_scenes)
+                .download(token, path, remote, Some(key), download_ticket)
                 .await;
             // over, so a later reader starts afresh (from the cache, now it is written). Only
             // this download's own entry goes: cancelled, it was replaced by a newer one
@@ -1985,7 +1979,7 @@ impl IpfsIo {
         let download = Arc::new(SharedDownload {
             _task: task,
             result,
-            scenes,
+            ticket,
         });
         // a cancelled download leaves its entry behind: nothing else sweeps them
         in_flight.retain(|_, (_, download)| download.strong_count() > 0);
@@ -2000,7 +1994,7 @@ impl IpfsIo {
         path: PathBuf,
         remote: String,
         cache_key: Option<CacheKey>,
-        scenes: WaiterScenes,
+        ticket: Arc<Ticket>,
     ) -> Result<SharedBytes, AssetReaderError> {
         let start = web_time::Instant::now();
         let ipfs_io_read_state = IpfsIoReadState {
@@ -2018,7 +2012,7 @@ impl IpfsIo {
         // a request slot, granted nearest scene first
         let _deferred_in_flight = DeferredDropper::new(&IPFS_IN_FLIGHT);
         let _permit =
-            ipfs_io_read_state.send_failure(self.request_slots.acquire(scenes).await.map_err(
+            ipfs_io_read_state.send_failure(self.request_slots.acquire(ticket).await.map_err(
                 |e| AssetReaderError::Io(Arc::new(std::io::Error::new(ErrorKind::Interrupted, e))),
             ))?;
         debug!("[{token:?}]: remote url: `{remote}` proceeding");
@@ -2210,8 +2204,8 @@ impl std::ops::Deref for SharedBytes {
 struct SharedDownload {
     _task: Task<()>,
     result: watch::Receiver<Option<Result<SharedBytes, AssetReaderError>>>,
-    // the scenes of every reader, shared with the download's request-slot waiter
-    scenes: WaiterScenes,
+    // the download's place in the request queue; a joining reader queues it under its scene too
+    ticket: Arc<Ticket>,
 }
 
 /// Downloads under way by url, each with its request token (`SharedDownload` holds its

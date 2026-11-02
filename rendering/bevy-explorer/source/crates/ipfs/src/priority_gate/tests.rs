@@ -16,8 +16,8 @@ fn key(parcel_distance: u16, is_behind: bool, sqr_distance: f32) -> LoadPriority
     }
 }
 
-fn scenes(names: &[&str]) -> WaiterScenes {
-    Arc::new(Mutex::new(names.iter().map(|n| (*n).to_owned()).collect()))
+fn scene(name: &str) -> Option<String> {
+    Some(name.to_owned())
 }
 
 fn priorities(entries: &[(&str, LoadPriority)]) -> HashMap<String, LoadPriority> {
@@ -27,7 +27,7 @@ fn priorities(entries: &[(&str, LoadPriority)]) -> HashMap<String, LoadPriority>
         .collect()
 }
 
-/// Yield until `count` waiters are queued; a waiter that never queues fails the test.
+/// Yield until `count` tickets are queued; a ticket that never queues fails the test.
 async fn settle(gate: &Arc<PriorityGate>, count: usize) {
     for _ in 0..1000 {
         if gate.waiting() == count {
@@ -35,22 +35,22 @@ async fn settle(gate: &Arc<PriorityGate>, count: usize) {
         }
         tokio::task::yield_now().await;
     }
-    panic!("{} waiters never queued", count);
+    panic!("{} tickets never queued", count);
 }
 
 type Log = Arc<Mutex<Vec<&'static str>>>;
 
-/// A reader that takes a slot for `scenes`, records `name`, and frees the slot.
+/// A reader that takes a slot on `ticket`, records `name`, and frees the slot.
 fn reader(
     gate: &Arc<PriorityGate>,
     name: &'static str,
-    scenes: WaiterScenes,
+    ticket: Arc<Ticket>,
     log: &Log,
 ) -> tokio::task::JoinHandle<()> {
     let gate = gate.clone();
     let log = log.clone();
     tokio::spawn(async move {
-        let permit = gate.acquire(scenes).await.unwrap();
+        let permit = gate.acquire(ticket).await.unwrap();
         log.lock().unwrap().push(name);
         drop(permit);
     })
@@ -66,8 +66,8 @@ async fn grants_the_nearest_in_front_scene_first() {
     ]));
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
-    let tasks =
-        ["far", "near", "near_behind"].map(|name| reader(&gate, name, scenes(&[name]), &log));
+    let tasks = ["far", "near", "near_behind"]
+        .map(|name| reader(&gate, name, gate.ticket(scene(name)), &log));
     settle(&gate, 3).await;
 
     drop(holder);
@@ -87,7 +87,7 @@ async fn a_key_change_is_honoured_at_grant_time() {
     ]));
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
-    let tasks = ["a", "b"].map(|name| reader(&gate, name, scenes(&[name]), &log));
+    let tasks = ["a", "b"].map(|name| reader(&gate, name, gate.ticket(scene(name)), &log));
     settle(&gate, 2).await;
 
     // the player turned round: a is now the near one
@@ -109,7 +109,8 @@ async fn unknown_scene_is_top_priority() {
     gate.set_priorities(priorities(&[("known", key(1, false, 100.0))]));
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
-    let tasks = ["known", "unknown"].map(|name| reader(&gate, name, scenes(&[name]), &log));
+    let tasks =
+        ["known", "unknown"].map(|name| reader(&gate, name, gate.ticket(scene(name)), &log));
     settle(&gate, 2).await;
 
     drop(holder);
@@ -125,7 +126,7 @@ async fn same_key_is_first_come_first_served() {
     let gate = PriorityGate::new(1);
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
-    let tasks = ["first", "second"].map(|name| reader(&gate, name, scenes(&[]), &log));
+    let tasks = ["first", "second"].map(|name| reader(&gate, name, gate.ticket(None), &log));
     settle(&gate, 2).await;
 
     drop(holder);
@@ -137,6 +138,23 @@ async fn same_key_is_first_come_first_served() {
 }
 
 #[tokio::test]
+async fn one_scenes_requests_keep_their_order() {
+    let gate = PriorityGate::new(1);
+    gate.set_priorities(priorities(&[("s", key(1, false, 100.0))]));
+    let holder = gate.try_acquire().unwrap();
+    let log = Log::default();
+    let tasks = ["s1", "s2", "s3"].map(|name| reader(&gate, name, gate.ticket(scene("s")), &log));
+    settle(&gate, 3).await;
+
+    drop(holder);
+    for task in tasks {
+        task.await.unwrap();
+    }
+
+    assert_eq!(*log.lock().unwrap(), vec!["s1", "s2", "s3"]);
+}
+
+#[tokio::test]
 async fn a_cancelled_waiter_does_not_hold_a_slot() {
     let gate = PriorityGate::new(1);
     gate.set_priorities(priorities(&[
@@ -145,13 +163,35 @@ async fn a_cancelled_waiter_does_not_hold_a_slot() {
     ]));
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
-    let far = reader(&gate, "far", scenes(&["far"]), &log);
-    let near = reader(&gate, "near", scenes(&["near"]), &log);
+    let far = reader(&gate, "far", gate.ticket(scene("far")), &log);
+    let near = reader(&gate, "near", gate.ticket(scene("near")), &log);
     settle(&gate, 2).await;
 
     // the near reader is dropped before it is granted
     near.abort();
     assert!(near.await.unwrap_err().is_cancelled());
+    drop(holder);
+    far.await.unwrap();
+
+    assert_eq!(*log.lock().unwrap(), vec!["far"]);
+    assert_eq!(gate.waiting(), 0);
+    assert!(gate.try_acquire().is_some(), "the slot came back");
+}
+
+#[tokio::test]
+async fn a_ticket_nobody_awaits_does_not_hold_a_slot() {
+    let gate = PriorityGate::new(1);
+    gate.set_priorities(priorities(&[
+        ("far", key(5, false, 6400.0)),
+        ("near", key(1, false, 100.0)),
+    ]));
+    let holder = gate.try_acquire().unwrap();
+    let log = Log::default();
+    let far = reader(&gate, "far", gate.ticket(scene("far")), &log);
+    // a read that queued a ticket and then went away without ever awaiting it
+    drop(gate.ticket(scene("near")));
+    settle(&gate, 2).await;
+
     drop(holder);
     far.await.unwrap();
 
@@ -190,21 +230,24 @@ async fn a_joined_reader_raises_the_download() {
     ]));
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
-    let far_scenes = scenes(&["far"]);
+    let far_ticket = gate.ticket(scene("far"));
     let tasks = [
-        reader(&gate, "far-download", far_scenes.clone(), &log),
-        reader(&gate, "mid-download", scenes(&["mid"]), &log),
+        reader(&gate, "far-download", far_ticket.clone(), &log),
+        reader(&gate, "mid-download", gate.ticket(scene("mid")), &log),
     ];
     settle(&gate, 2).await;
 
     // a reader from the near scene joins the far scene's download
-    far_scenes.lock().unwrap().push("near".to_owned());
+    gate.join(&far_ticket, scene("near"));
     drop(holder);
     for task in tasks {
         task.await.unwrap();
     }
 
+    // granted once, as the near scene's; the far queue's copy is skipped, not granted again
     assert_eq!(*log.lock().unwrap(), vec!["far-download", "mid-download"]);
+    assert_eq!(gate.waiting(), 0);
+    assert!(gate.try_acquire().is_some());
 }
 
 #[tokio::test]
@@ -216,7 +259,7 @@ async fn a_departed_scenes_downloads_sink_to_the_bottom() {
     ]));
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
-    let tasks = ["left", "ahead"].map(|name| reader(&gate, name, scenes(&[name]), &log));
+    let tasks = ["left", "ahead"].map(|name| reader(&gate, name, gate.ticket(scene(name)), &log));
     settle(&gate, 2).await;
 
     // the player walked out of "left": it is no longer a live scene
@@ -235,7 +278,8 @@ async fn an_unknown_scene_stays_on_top_after_a_refresh() {
     gate.set_priorities(priorities(&[("ahead", key(2, false, 1000.0))]));
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
-    let tasks = ["ahead", "unknown"].map(|name| reader(&gate, name, scenes(&[name]), &log));
+    let tasks =
+        ["ahead", "unknown"].map(|name| reader(&gate, name, gate.ticket(scene(name)), &log));
     settle(&gate, 2).await;
 
     // a refresh that never knew "unknown" leaves it on top
