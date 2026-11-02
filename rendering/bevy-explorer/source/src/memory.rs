@@ -35,7 +35,7 @@ impl Default for NativeSampler {
                 }
             });
         if let Err(error) = worker {
-            warn!("Could not start the memory sampler: {error}");
+            error!("Could not start the memory sampler: {error}");
             return Self { latest: None };
         }
         Self {
@@ -53,7 +53,7 @@ fn sample_memory(mut sampler: ResMut<NativeSampler>, status: ResMut<MemoryStatus
         Ok(true) => MemoryStatus::record(status.into(), *latest.borrow_and_update()),
         Ok(false) => {}
         Err(_) => {
-            warn!("Memory sampler stopped; clearing the process memory reading");
+            error!("Memory sampler stopped; clearing the process memory reading");
             sampler.latest = None;
             MemoryStatus::record(status.into(), None);
         }

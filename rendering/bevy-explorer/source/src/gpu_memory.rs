@@ -46,16 +46,20 @@ mod native {
         if last_query.is_some_and(|time| now.duration_since(time) < Duration::from_secs(1)) {
             return;
         }
-        *last_query = Some(now);
         #[cfg(windows)]
         let pools = adapter.and_then(|a| dxgi(&a).or_else(|| vulkan(&a)));
         #[cfg(target_os = "linux")]
         let pools = adapter.and_then(|a| vulkan(&a));
         #[cfg(target_os = "macos")]
-        let pools = device.and_then(|d| metal(&d));
+        let pools = match device.as_deref().map(metal) {
+            Some(Err(MetalDeviceBusy)) => return,
+            Some(Ok(pools)) => pools,
+            None => None,
+        };
         #[cfg(not(any(windows, target_os = "linux", target_os = "macos")))]
         let pools = None;
 
+        *last_query = Some(now);
         budget.set_if_neq(pools.map_or(GpuMemoryBudget::Unavailable, GpuMemoryBudget::Available));
     }
 
@@ -141,19 +145,28 @@ mod native {
     }
 
     #[cfg(target_os = "macos")]
-    fn metal(device: &RenderDevice) -> Option<Vec<GpuMemoryPool>> {
+    struct MetalDeviceBusy;
+
+    #[cfg(target_os = "macos")]
+    fn metal(device: &RenderDevice) -> Result<Option<Vec<GpuMemoryPool>>, MetalDeviceBusy> {
         // SAFETY: the Metal device stays borrowed and locked for both read-only queries.
         unsafe {
             device
                 .wgpu_device()
                 .as_hal::<wgpu::hal::api::Metal, _, _>(|hal| {
-                    // Skip this sample if a pipeline compilation holds the device.
-                    let raw = hal?.raw_device().try_lock()?;
-                    Some(vec![GpuMemoryPool {
+                    let Some(hal) = hal else { return Ok(None) };
+                    // Preserve the last sample and retry next frame if the renderer holds the device.
+                    let raw = hal.raw_device().try_lock().ok_or(MetalDeviceBusy)?;
+                    let Some(budget_bytes) =
+                        NonZeroU64::new(raw.recommended_max_working_set_size())
+                    else {
+                        return Ok(None);
+                    };
+                    Ok(Some(vec![GpuMemoryPool {
                         kind: GpuMemoryPoolKind::MetalWorkingSet,
                         used_bytes: raw.current_allocated_size(),
-                        budget_bytes: NonZeroU64::new(raw.recommended_max_working_set_size())?,
-                    }])
+                        budget_bytes,
+                    }]))
                 })
         }
     }

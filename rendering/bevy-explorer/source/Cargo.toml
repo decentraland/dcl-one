@@ -167,6 +167,7 @@ bevy_transform = { version = "0.16.1", default-features = false }
 bevy_ecs = { version = "0.16.1", default-features = false, features = ["std"] }
 disqualified = "1.0"
 wgpu = "24"
+# Match wgpu-hal's ash/windows versions: the GPU memory queries use its native handles.
 ash = { version = "0.38", default-features = false }
 windows = { version = "0.58", default-features = false, features = [
   "Win32_Graphics_Dxgi",
