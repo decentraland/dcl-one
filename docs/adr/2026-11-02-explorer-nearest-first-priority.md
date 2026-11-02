@@ -29,25 +29,36 @@ distance and a table of steps is a second source of tuning.
 
 ## Decision
 
-Scene ticks and download slots order by one fact about a scene, its **partition**, and every
-partition is measured the same way.
+Scene ticks and download slots order by one fact about a scene, or an avatar, its
+**partition**, and every partition is measured the same way.
 
 - **One measurement, two uses.** `common::partition::scene_partition` turns the player's
   position, the rendering camera's position and forward, and a scene's parcels into
-  `ScenePartitionData`, on the ground plane: the squared distance from the player to the nearest
+  `PartitionData`, on the ground plane: the squared distance from the player to the nearest
   point of the scene's nearest parcel, the smallest Chebyshev distance in parcels from the
   player's parcel to any of the scene's parcels, and whether every corner of every parcel is
   behind the camera (unity-explorer's test). A scene with no parcels (a portable, a global scene)
-  is nearest and in front. It is a component, `ScenePartition`, on every scene root that has a
+  is nearest and in front. It is a component, `Partition`, on every scene root that has a
   `RendererSceneContext`, refreshed every frame by `update_scene_partitions` from the context's
   parcels; `update_scene_priority` and `publish_download_priorities` read it. The load range
   (`parcels_in_range`) measures for itself, from the player, with the same nearest-point metric.
-- **Raw distance and parcel distance, no buckets.** The admission key is
-  `LoadPriority (parcel_distance, is_behind, sqr_distance)`, lower first. Parcel distance comes
-  first only so that "in front before behind" can still decide between scenes at the same parcel
-  ring: raw squared distance alone never ties, and the facing term would be dead. Spawn order and
-  the tick key use raw squared distance. unity-explorer's bucket thresholds and its tick-rate
-  table are not ported.
+- **Avatars are partitioned too, as points, and their wearables inherit it.** Every entity with
+  `PartitionedDownloads`, the content hashes its downloads are filed under, gets a `Partition`
+  from its position (`point_partition`: distance from the player, the ring of its parcel, behind
+  the camera or not). The avatar crate puts the body's and wearables' entity hashes there as
+  their pointers resolve, so a wearable's definition, model and textures queue in the avatar
+  tier at the avatar's partition, and a wearable several avatars share at the best of theirs.
+  Every avatar comes after the player's scenes and before any other scene; among avatars the
+  nearest in front comes first. Scene content stays per scene (Decision 3): the exception is
+  avatars, which unity-explorer also partitions per entity.
+- **A tier, then raw distance and parcel distance, no buckets.** The admission key is
+  `LoadPriority (tier, parcel_distance, is_behind, sqr_distance)`, lower first. The tier is the
+  band a download belongs to: the player's scenes, then avatars, then the other scenes, then
+  requests that are no scene's and no avatar's, then scenes that have left. Within a band the
+  partition decides; parcel distance comes before facing only so that "in front before behind"
+  can still decide between scenes at the same parcel ring, since raw squared distance alone never
+  ties. The tick key uses raw squared distance. unity-explorer's bucket thresholds and its
+  tick-rate table are not ported.
 - **The nearest point of the parcel rectangle, not its corner.** The distance is 0 when the
   camera is over a scene, and it is the measure `parcels_in_range` already uses.
 - **Distance from the player, facing from the rendering camera.** Distance is measured from
@@ -72,11 +83,13 @@ partition is measured the same way.
   queues the same ticket under its own scene; the download is granted once, from whichever queue
   reaches it first, so it rises with the nearest of its readers. Admission is per scene, and one
   gate covers every asset kind that downloads through `IpfsIo`; disk-cache hits take no slot.
-- **Unknown is top, departed is bottom.** A waiter whose path names no published scene keeps
-  today's place, the top: requests that are not a scene's (wearables and emotes, addressed by
-  their own entity hash; profile pictures and other URL-form paths; imposters'
-  `async_request`) and a scene not yet published. A scene that was published and no longer is,
-  because it was despawned, ranks last for as long as requests of its wait.
+- **Unknown hash is top; no hash is after the live scenes; departed is last.** A request whose
+  path carries a hash nobody has published yet (a scene or an avatar in its first frame, an
+  emote) keeps today's place, the top. A request with no hash at all (NFT images, URL-form fonts
+  and profile pictures, the imposter archives behind `async_request`) is in the `Other` tier,
+  after every live scene and avatar: an NFT frame or an imposter must not beat the active scene's
+  files. A scene that was published and no longer is, because it was despawned, is in the
+  `Departed` tier, last, for as long as requests of its wait.
 - **Keys cross the crate boundary as data.** `publish_download_priorities` writes `scene hash →
   LoadPriority` into `IpfsIo` (`set_scene_priorities`) every frame, the player's scenes at
   `LoadPriority::TOP`, because `ipfs` cannot depend on `scene_runner`. The gate keeps the map and
@@ -119,10 +132,21 @@ partition is measured the same way.
 - **Ranking every waiting request on each grant, and re-scoring them all every frame.** Linear in
   requests, which reach thousands during an initial load in a dense area; the per-scene queues
   make a grant and a key change linear in the scenes in range instead.
-- **Per-entity partition within 48 m, and an admission stage in front of each loader.**
-  unity-explorer re-partitions each loadable entity within `fastPathDistance` of the camera (48 m
-  as shipped, `PartitionAssetEntitiesSystem`); the Explorer's loaders have no admission stage to
-  feed, and one per-scene gate covers every asset kind.
+- **Per-entity partition of scene content within 48 m, and an admission stage in front of each
+  loader.** unity-explorer re-partitions each loadable entity within `fastPathDistance` of the
+  camera (48 m as shipped, `PartitionAssetEntitiesSystem`); the Explorer's loaders have no
+  admission stage to feed, and one per-scene gate covers every asset kind. Avatars are the one
+  per-entity partition kept, because their downloads carry their own hashes, not a scene's.
+- **Requests without a hash at the top.** The first-come behaviour before this change let an NFT
+  frame or an imposter archive queue ahead of the active scene's files; they rank after every
+  live scene instead.
+- **Avatars interleaved with scenes by distance.** Ranking an avatar's wearables by the same key
+  as scenes puts an avatar five parcels away behind a scene one parcel away; every avatar is
+  wanted before the non-active scenes, so avatars are a tier of their own, distance deciding
+  within it.
+- **A flat avatar tier, first come first served.** Distance order among avatars is wanted: the
+  nearest avatar's wearables first. It costs the avatars' partitions being published, tens of
+  entries a frame.
 - **Keeping the first-come semaphore for download slots.** The first scene to ask fills the queue
   whatever its distance; the gate decides at every grant instead, as unity-explorer re-sorts its
   pending loads every frame.
@@ -156,16 +180,18 @@ partition is measured the same way.
   unity-explorer's behaviour too, and the load distance bounds how many scenes compete.
 - A scene behind the camera ticks as before while frame time is spare, and is the first to tick
   less often when it is not; the player's scenes never yield.
-- NFT images and Fontsource font families load through URL-form paths (`IpfsPath::new_from_url`)
-  that name no scene, so they stay top priority and a far scene's NFT frames compete with near
-  scenes' content files. A texture or font a scene gives as a URL goes through its content-file
-  path and takes its key; JavaScript `fetch` takes no request slot at all.
+- NFT images, Fontsource font families and imposter archives name no scene, so they download
+  after every live scene's and avatar's files, however near the NFT frame is. A texture or font a
+  scene gives as a URL goes through its content-file path and takes its key; JavaScript `fetch`
+  takes no request slot at all.
 - On the headless server nothing is behind and no tick is capped; its scenes order by distance
   from the player only.
 
 ## Follow-ups
 
 - Carry the scene on URL-form asset paths (NFT images, Fontsource fonts) so they take their
-  scene's key.
+  scene's key instead of the flat rank after the live scenes.
+- Emotes load under their own entity hashes like wearables; filing them under the avatar's
+  partition is the same mechanism, not done here.
 - Loading waves (W1) sort the newly required scenes by their partition and take the first N;
   the spawn sort removed here returns with them.

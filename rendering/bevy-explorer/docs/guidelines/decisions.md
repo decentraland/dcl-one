@@ -22,7 +22,7 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
   scheduler and measure raw squared distance to the nearest point of a scene's nearest parcel
   (not its corner); downloads are admitted by parcel ring first, facing deciding within a ring,
-  then raw distance, and per scene rather than per entity. See the
+  then raw distance, per scene for scene content and per avatar for wearables. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
 
 ## Deliberate choices that look like mistakes

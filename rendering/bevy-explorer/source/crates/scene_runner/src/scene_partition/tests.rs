@@ -7,7 +7,7 @@ use bevy::{
     prelude::*,
 };
 use common::{
-    partition::{LoadPriority, ScenePartitionData},
+    partition::{LoadPriority, PartitionData, Tier},
     structs::{PrimaryCamera, PrimaryUser},
 };
 use dcl_types::SceneId;
@@ -74,7 +74,7 @@ fn partitions_a_live_scene_to_its_nearest_parcel() {
 
     world.run_system_once(update_scene_partitions).unwrap();
 
-    let partition = world.get::<ScenePartition>(scene).unwrap().0;
+    let partition = world.get::<Partition>(scene).unwrap().0;
     assert_eq!(partition.sqr_distance, 576.0);
     assert_eq!(partition.parcel_distance, 2);
     assert!(!partition.is_behind);
@@ -89,7 +89,7 @@ fn distance_from_the_player_facing_from_the_camera() {
 
     world.run_system_once(update_scene_partitions).unwrap();
 
-    let partition = world.get::<ScenePartition>(scene).unwrap().0;
+    let partition = world.get::<Partition>(scene).unwrap().0;
     assert_eq!(
         partition.sqr_distance, 0.0,
         "measured from the player, who stands on it"
@@ -106,7 +106,7 @@ fn uses_the_players_position_when_there_is_no_camera() {
 
     world.run_system_once(update_scene_partitions).unwrap();
 
-    let partition = world.get::<ScenePartition>(scene).unwrap().0;
+    let partition = world.get::<Partition>(scene).unwrap().0;
     assert!(!partition.is_behind);
     assert_eq!(partition.parcel_distance, 3);
 }
@@ -123,7 +123,7 @@ fn a_camera_that_does_not_render_gives_no_facing() {
 
     world.run_system_once(update_scene_partitions).unwrap();
 
-    let partition = world.get::<ScenePartition>(scene).unwrap().0;
+    let partition = world.get::<Partition>(scene).unwrap().0;
     assert!(!partition.is_behind);
     assert_eq!(partition.parcel_distance, 3);
     assert_eq!(partition.sqr_distance, 1600.0);
@@ -137,8 +137,76 @@ fn a_scene_without_parcels_is_nearest() {
     world.run_system_once(update_scene_partitions).unwrap();
 
     assert_eq!(
-        world.get::<ScenePartition>(scene).unwrap().0,
-        ScenePartitionData::NEAREST
+        world.get::<Partition>(scene).unwrap().0,
+        PartitionData::NEAREST
+    );
+}
+
+#[test]
+fn an_entity_with_partitioned_downloads_takes_its_positions_partition() {
+    let mut world = world_with_player(Some(Vec3::X));
+    let avatar = world
+        .spawn((
+            PartitionedDownloads(vec!["wearable".to_owned()]),
+            GlobalTransform::from_translation(Vec3::new(40.0, 0.0, -8.0)),
+        ))
+        .id();
+
+    world.run_system_once(update_scene_partitions).unwrap();
+
+    let partition = world.get::<Partition>(avatar).unwrap().0;
+    assert_eq!(partition.sqr_distance, 1024.0);
+    assert_eq!(partition.parcel_distance, 2);
+    assert!(!partition.is_behind);
+}
+
+#[test]
+fn publishes_a_wearable_by_the_best_avatar_wearing_it() {
+    let mut world = world_with_player(Some(Vec3::X));
+    world.insert_resource(IpfsResource {
+        inner: Arc::new(IpfsIo::new(
+            false,
+            Box::new(MemoryAssetReader {
+                root: Dir::default(),
+            }),
+            None,
+            Default::default(),
+            1,
+            tokio::sync::mpsc::unbounded_channel().0,
+        )),
+    });
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+    let far = PartitionData {
+        sqr_distance: 6400.0,
+        parcel_distance: 5,
+        is_behind: true,
+    };
+    world.spawn((
+        PartitionedDownloads(vec!["shared".to_owned(), "far-only".to_owned()]),
+        Partition(far),
+    ));
+    world.spawn((
+        PartitionedDownloads(vec!["shared".to_owned()]),
+        Partition(near),
+    ));
+
+    world.run_system_once(publish_download_priorities).unwrap();
+
+    let ipfs = world.resource::<IpfsResource>();
+    assert_eq!(
+        ipfs.scene_priority("shared"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+    assert_eq!(
+        ipfs.scene_priority("far-only"),
+        Some(far.load_priority(Tier::Avatar))
     );
 }
 
@@ -172,12 +240,12 @@ fn publishes_each_scenes_key_with_the_players_scene_on_top() {
     let home = world
         .spawn((
             SceneHash("home".to_owned()),
-            ScenePartition(ScenePartitionData::NEAREST),
+            Partition(PartitionData::NEAREST),
         ))
         .id();
     world.spawn((
         SceneHash("far".to_owned()),
-        ScenePartition(ScenePartitionData {
+        Partition(PartitionData {
             sqr_distance: 6400.0,
             parcel_distance: 5,
             is_behind: true,
@@ -195,10 +263,71 @@ fn publishes_each_scenes_key_with_the_players_scene_on_top() {
     assert_eq!(
         ipfs.scene_priority("far"),
         Some(LoadPriority {
+            tier: Tier::Scene,
             parcel_distance: 5,
             is_behind: true,
             sqr_distance: FloatOrd(6400.0),
         })
     );
     assert_eq!(ipfs.scene_priority("other"), None);
+}
+
+/// The publisher's per-frame work at a busy plaza: 20 scenes in range, 50 avatars with 10
+/// wearables each. Run with `--ignored --nocapture`.
+#[test]
+#[ignore]
+fn overhead_of_publishing_at_a_busy_plaza() {
+    let mut world = world_with_player(Some(Vec3::X));
+    world.insert_resource(IpfsResource {
+        inner: Arc::new(IpfsIo::new(
+            false,
+            Box::new(MemoryAssetReader {
+                root: Dir::default(),
+            }),
+            None,
+            Default::default(),
+            32,
+            tokio::sync::mpsc::unbounded_channel().0,
+        )),
+    });
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    for i in 0..20 {
+        world.spawn((
+            SceneHash(format!("scene-{i}")),
+            Partition(PartitionData {
+                sqr_distance: (i * i) as f32,
+                parcel_distance: i as u16,
+                is_behind: i % 2 == 0,
+            }),
+        ));
+    }
+    for a in 0..50 {
+        world.spawn((
+            PartitionedDownloads(
+                (0..10)
+                    .map(|w| format!("wearable-{}", (a * 7 + w) % 120))
+                    .collect(),
+            ),
+            Partition(PartitionData {
+                sqr_distance: (a * 3) as f32,
+                parcel_distance: (a / 10) as u16,
+                is_behind: a % 3 == 0,
+            }),
+        ));
+    }
+    // the systems the publisher needs, as one schedule, so the run has no one-off cost
+    let mut schedule = Schedule::default();
+    schedule.add_systems((update_scene_partitions, publish_download_priorities).chain());
+    schedule.run(&mut world);
+
+    let start = std::time::Instant::now();
+    for _ in 0..200 {
+        schedule.run(&mut world);
+    }
+    println!(
+        "publisher: 20 scenes + 50 avatars x 10 wearables: {:?} per frame (partitions + map build + publish)",
+        start.elapsed() / 200
+    );
 }

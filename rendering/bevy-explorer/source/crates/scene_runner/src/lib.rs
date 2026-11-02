@@ -54,11 +54,10 @@ use crate::{
     asset_preload::plugin::AssetPreloadPlugin,
     initialize_scene::SuperUserScene,
     scene_partition::{
-        publish_download_priorities, update_scene_partitions, ScenePartition,
-        BEHIND_SCENE_TICK_PENALTY,
+        publish_download_priorities, update_scene_partitions, Partition, BEHIND_SCENE_TICK_PENALTY,
     },
 };
-use common::partition::ScenePartitionData;
+use common::partition::PartitionData;
 
 use self::{
     initialize_scene::{
@@ -522,7 +521,7 @@ fn update_scene_priority(
     mut scenes: Query<
         (
             Entity,
-            Option<&ScenePartition>,
+            Option<&Partition>,
             &mut RendererSceneContext,
             Option<&SuperUserScene>,
         ),
@@ -598,7 +597,7 @@ fn update_scene_priority(
             allow
         })
         .filter_map(|(ent, maybe_partition, mut context, _)| {
-            let partition = maybe_partition.map_or(ScenePartitionData::NEAREST, |p| p.0);
+            let partition = maybe_partition.map_or(PartitionData::NEAREST, |p| p.0);
             let active = active_scenes.contains(&ent);
             context.priority = if active { 0.0 } else { partition.sqr_distance };
             let not_yet_run = context.last_sent < time.elapsed_secs_f64();
@@ -630,7 +629,7 @@ fn update_scene_priority(
 /// sent, 0 for the player's scenes. A scene behind the camera counts as
 /// `BEHIND_SCENE_TICK_PENALTY` times farther: it still ticks, and yields first when frame time
 /// runs short.
-fn scene_tick_key(partition: ScenePartitionData, active: bool, age: f64) -> FloatOrd {
+fn scene_tick_key(partition: PartitionData, active: bool, age: f64) -> FloatOrd {
     if active {
         return FloatOrd(0.0);
     }

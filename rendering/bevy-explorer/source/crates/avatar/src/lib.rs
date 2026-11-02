@@ -74,6 +74,7 @@ use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
     EntityDefinition, IpfsAssetServer,
 };
+use scene_runner::scene_partition::PartitionedDownloads;
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{animation::Clips, AddCrdtInterfaceExt},
@@ -613,6 +614,32 @@ fn update_render_avatar(
             .as_ref()
             .and_then(|b| WearableUrn::new(b).ok())
             .unwrap_or(base_wearables::default_bodyshape_urn());
+
+        // the avatar's downloads are filed under its body's and wearables' hashes, so they
+        // take the avatar's partition in the request-slot queue; whatever has resolved so far
+        let worn: Vec<WearableUrn> = std::iter::once(body_urn.clone())
+            .chain(
+                selection
+                    .shape
+                    .0
+                    .wearables
+                    .iter()
+                    .flat_map(|w| WearableUrn::new(w).ok()),
+            )
+            .chain(
+                base_wearables::default_wearables(&body_urn)
+                    .map(|default| default.base().to_owned()),
+            )
+            .collect();
+        let hashes =
+            common::partition::resolved_hashes(worn.iter().map(|urn| urn.as_str()), |urn| {
+                WearableUrn::new(urn)
+                    .ok()
+                    .and_then(|urn| wearable_loader.get_hash(&urn).ok())
+            });
+        commands
+            .entity(entity)
+            .try_insert(PartitionedDownloads(hashes));
 
         let body = match wearable_loader.get_representation(&body_urn, body_urn.as_str()) {
             Ok(body) => body.clone(),

@@ -15,7 +15,7 @@ fn camera(position: Vec3, forward: Vec3) -> Option<(Vec3, Vec3)> {
 fn origin_over_the_scene_is_distance_zero() {
     assert_eq!(
         scene_partition(CENTRE, camera(CENTRE, EAST), [IVec2::ZERO]),
-        ScenePartitionData {
+        PartitionData {
             sqr_distance: 0.0,
             parcel_distance: 0,
             is_behind: false
@@ -97,23 +97,57 @@ fn no_camera_means_nothing_is_behind() {
 fn no_parcels_is_nearest_and_in_front() {
     assert_eq!(
         scene_partition(CENTRE, camera(CENTRE, EAST), []),
-        ScenePartitionData::NEAREST
+        PartitionData::NEAREST
     );
 }
 
 #[test]
-fn load_priority_orders_parcel_then_facing_then_distance() {
-    let key = |parcel_distance, is_behind, sqr_distance| LoadPriority {
+fn a_point_at_the_origin_is_nearest_and_in_front() {
+    assert_eq!(
+        point_partition(CENTRE, camera(CENTRE, EAST), CENTRE),
+        PartitionData::NEAREST
+    );
+}
+
+#[test]
+fn a_point_is_measured_from_the_origin_and_ringed_by_parcel() {
+    let partition = point_partition(CENTRE, camera(CENTRE, EAST), Vec3::new(40.0, 0.0, -8.0));
+    assert_eq!(partition.sqr_distance, 1024.0);
+    assert_eq!(partition.parcel_distance, 2);
+    assert!(!partition.is_behind);
+}
+
+#[test]
+fn a_point_behind_the_camera_is_behind() {
+    let partition = point_partition(CENTRE, camera(CENTRE, EAST), Vec3::new(-24.0, 0.0, -8.0));
+    assert!(partition.is_behind);
+    assert_eq!(partition.parcel_distance, 2);
+}
+
+#[test]
+fn a_point_with_no_camera_is_never_behind() {
+    assert!(!point_partition(CENTRE, None, Vec3::new(-24.0, 0.0, -8.0)).is_behind);
+}
+
+#[test]
+fn load_priority_orders_tier_then_parcel_then_facing_then_distance() {
+    let key = |tier, parcel_distance, is_behind, sqr_distance| LoadPriority {
+        tier,
         parcel_distance,
         is_behind,
         sqr_distance: FloatOrd(sqr_distance),
     };
     let ordered = [
         LoadPriority::TOP,
-        key(0, true, 0.0),
-        key(1, false, 1000.0),
-        key(1, true, 0.0),
-        key(2, false, 0.0),
+        // every avatar before every other scene, nearest avatar first
+        key(Tier::Avatar, 0, false, 0.0),
+        key(Tier::Avatar, 5, true, 6400.0),
+        key(Tier::Scene, 0, true, 0.0),
+        key(Tier::Scene, 1, false, 1000.0),
+        key(Tier::Scene, 1, true, 0.0),
+        key(Tier::Scene, 2, false, 0.0),
+        key(Tier::Scene, 300, true, f32::MAX),
+        LoadPriority::OTHER,
         LoadPriority::BOTTOM,
     ];
     for pair in ordered.windows(2) {
@@ -125,7 +159,28 @@ fn load_priority_orders_parcel_then_facing_then_distance() {
         );
     }
     assert_eq!(
-        ScenePartitionData::NEAREST.load_priority(),
+        PartitionData::NEAREST.load_priority(Tier::Active),
         LoadPriority::TOP
     );
+    assert_eq!(
+        PartitionData::NEAREST.load_priority(Tier::Scene),
+        key(Tier::Scene, 0, false, 0.0)
+    );
+}
+
+#[test]
+fn resolved_hashes_are_collected_once_each_and_sorted() {
+    let urns = ["urn:b", "urn:a", "urn:b", "urn:c"];
+    let hashes = resolved_hashes(urns, |urn| match urn {
+        "urn:a" => Some("hash-a".to_owned()),
+        "urn:b" => Some("hash-b".to_owned()),
+        // still resolving: no hash yet
+        _ => None,
+    });
+    assert_eq!(hashes, vec!["hash-a".to_owned(), "hash-b".to_owned()]);
+}
+
+#[test]
+fn nothing_resolved_is_an_empty_list() {
+    assert!(resolved_hashes(["urn:a"], |_| None).is_empty());
 }

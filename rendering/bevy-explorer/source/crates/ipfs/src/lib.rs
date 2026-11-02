@@ -1413,7 +1413,7 @@ impl IpfsIo {
         request: reqwest::Request,
         client: reqwest::Client,
     ) -> Result<reqwest::Response, anyhow::Error> {
-        // a request slot; not a scene's, so top priority
+        // a request slot; no scene's, so after every live scene's
         let ticket = self.request_slots.ticket(None);
         let _permit = self
             .request_slots

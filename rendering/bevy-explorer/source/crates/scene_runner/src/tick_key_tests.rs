@@ -1,12 +1,12 @@
 use super::*;
-use common::partition::ScenePartitionData;
+use common::partition::PartitionData;
 
-const BEHIND_FAR: ScenePartitionData = ScenePartitionData {
+const BEHIND_FAR: PartitionData = PartitionData {
     sqr_distance: 6400.0,
     parcel_distance: 5,
     is_behind: true,
 };
-const FRONT_FAR: ScenePartitionData = ScenePartitionData {
+const FRONT_FAR: PartitionData = PartitionData {
     sqr_distance: 6400.0,
     parcel_distance: 5,
     is_behind: false,

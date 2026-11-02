@@ -4,12 +4,13 @@ use std::{
 };
 
 use bevy::math::FloatOrd;
-use common::partition::LoadPriority;
+use common::partition::{LoadPriority, Tier};
 
 use super::*;
 
 fn key(parcel_distance: u16, is_behind: bool, sqr_distance: f32) -> LoadPriority {
     LoadPriority {
+        tier: Tier::Scene,
         parcel_distance,
         is_behind,
         sqr_distance: FloatOrd(sqr_distance),
@@ -119,6 +120,32 @@ async fn unknown_scene_is_top_priority() {
     }
 
     assert_eq!(*log.lock().unwrap(), vec!["unknown", "known"]);
+}
+
+#[tokio::test]
+async fn requests_without_a_scene_rank_after_live_scenes_and_before_departed_ones() {
+    let gate = PriorityGate::new(1);
+    gate.set_priorities(priorities(&[
+        ("left", key(1, false, 100.0)),
+        ("live", key(5, true, 6400.0)),
+    ]));
+    let holder = gate.try_acquire().unwrap();
+    let log = Log::default();
+    let tasks = [
+        reader(&gate, "left", gate.ticket(scene("left")), &log),
+        reader(&gate, "imposter", gate.ticket(None), &log),
+        reader(&gate, "live", gate.ticket(scene("live")), &log),
+    ];
+    settle(&gate, 3).await;
+
+    // "left" has despawned: it is no longer published
+    gate.set_priorities(priorities(&[("live", key(5, true, 6400.0))]));
+    drop(holder);
+    for task in tasks {
+        task.await.unwrap();
+    }
+
+    assert_eq!(*log.lock().unwrap(), vec!["live", "imposter", "left"]);
 }
 
 #[tokio::test]
@@ -290,4 +317,62 @@ async fn an_unknown_scene_stays_on_top_after_a_refresh() {
     }
 
     assert_eq!(*log.lock().unwrap(), vec!["unknown", "ahead"]);
+}
+
+/// Per-frame and per-grant cost at a dense-area load: hundreds of distinct hashes queued
+/// (scenes plus wearables), thousands of waiting requests. Run with `--ignored --nocapture`.
+#[tokio::test]
+#[ignore]
+async fn overhead_at_hundreds_of_queues() {
+    const HASHES: usize = 500;
+    const REQUESTS_PER_HASH: usize = 10;
+    let gate = PriorityGate::new(1);
+    let holder = gate.try_acquire().unwrap();
+    let keys: HashMap<String, LoadPriority> = (0..HASHES)
+        .map(|i| {
+            (
+                format!("hash-{i}"),
+                key((i % 40) as u16, i % 3 == 0, i as f32),
+            )
+        })
+        .collect();
+    gate.set_priorities(keys.clone());
+    let mut tickets = Vec::new();
+    for i in 0..HASHES {
+        for _ in 0..REQUESTS_PER_HASH {
+            tickets.push(gate.ticket(scene(&format!("hash-{i}"))));
+        }
+    }
+    assert_eq!(gate.waiting(), HASHES * REQUESTS_PER_HASH);
+
+    // a frame's publish: the whole key map replaced
+    let start = std::time::Instant::now();
+    for _ in 0..100 {
+        gate.set_priorities(keys.clone());
+    }
+    let publish = start.elapsed() / 100;
+
+    // every request awaits its ticket, as downloads do; freeing the one slot then drains the
+    // whole queue, one grant per request, each permit dropped as soon as it arrives
+    let tasks: Vec<_> = tickets
+        .into_iter()
+        .map(|ticket| {
+            let gate = gate.clone();
+            tokio::spawn(async move {
+                drop(gate.acquire(ticket).await.unwrap());
+            })
+        })
+        .collect();
+    drop(holder);
+    let start = std::time::Instant::now();
+    for task in tasks {
+        task.await.unwrap();
+    }
+    let per_grant = start.elapsed() / (HASHES * REQUESTS_PER_HASH) as u32;
+    println!(
+        "gate: {HASHES} queues, {} requests: publish {:?} per frame (map clone included), grant {:?} each (task wake included)",
+        HASHES * REQUESTS_PER_HASH,
+        publish,
+        per_grant
+    );
 }

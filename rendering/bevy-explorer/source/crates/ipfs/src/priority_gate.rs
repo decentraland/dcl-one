@@ -35,7 +35,7 @@ struct GateState {
     available: usize,
     next_seq: u64,
     priorities: HashMap<String, LoadPriority>,
-    /// requests that are not a scene's
+    /// requests that are no scene's and no avatar's: after every live scene
     no_scene: VecDeque<Arc<Ticket>>,
     scenes: HashMap<String, SceneQueue>,
 }
@@ -81,8 +81,9 @@ impl PriorityGate {
         })
     }
 
-    /// Queue a request of `scene` (`None`: not a scene's). A free slot with nobody ahead is
-    /// granted at once; either way the slot arrives through `acquire`.
+    /// Queue a request of `scene` (`None`: no scene's and no avatar's, ranked after every live
+    /// scene). A free slot with nobody ahead is granted at once; either way the slot arrives
+    /// through `acquire`.
     pub fn ticket(self: &Arc<Self>, scene: Option<String>) -> Arc<Ticket> {
         let (grant, slot) = oneshot::channel();
         let ticket = {
@@ -242,7 +243,7 @@ impl GateState {
         let mut best: Option<(LoadPriority, u64, Option<&str>)> = self
             .no_scene
             .front()
-            .map(|head| (LoadPriority::TOP, head.seq, None));
+            .map(|head| (LoadPriority::OTHER, head.seq, None));
         for (hash, queue) in &self.scenes {
             let head = queue.tickets.front().expect("empty queues were dropped");
             let candidate = (self.rank(hash, queue), head.seq, Some(hash.as_str()));
