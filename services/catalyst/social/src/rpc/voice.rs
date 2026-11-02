@@ -17,6 +17,9 @@ pub mod fake {
     pub struct FakeVoiceRooms {
         db: crate::comms::gatekeeper::voice::db::VoiceDb,
         pub calls: Mutex<Vec<String>>,
+        /// Addresses the live room does not hold: an action on one is the
+        /// runtime's not-found.
+        pub absent: Mutex<Vec<String>>,
     }
 
     impl FakeVoiceRooms {
@@ -24,11 +27,20 @@ pub mod fake {
             Self {
                 db: crate::comms::gatekeeper::voice::db::VoiceDb::new(pool, Default::default()),
                 calls: Mutex::new(Vec::new()),
+                absent: Mutex::new(Vec::new()),
             }
         }
 
         fn note(&self, line: String) {
             self.calls.lock().push(line);
+        }
+
+        fn present(&self, address: &str) -> Result<(), VoiceUnavailable> {
+            if self.absent.lock().iter().any(|a| a == address) {
+                Err(VoiceUnavailable::NotFound)
+            } else {
+                Ok(())
+            }
         }
     }
 
@@ -133,7 +145,7 @@ pub mod fake {
             self.note(format!(
                 "request-to-speak {community_id} {address} {raising_hand}"
             ));
-            Ok(())
+            self.present(address)
         }
 
         async fn reject_speak_request(
@@ -142,7 +154,7 @@ pub mod fake {
             address: &str,
         ) -> Result<(), VoiceUnavailable> {
             self.note(format!("reject-speak-request {community_id} {address}"));
-            Ok(())
+            self.present(address)
         }
 
         async fn set_speaker(
@@ -152,7 +164,7 @@ pub mod fake {
             promote: bool,
         ) -> Result<(), VoiceUnavailable> {
             self.note(format!("set-speaker {community_id} {address} {promote}"));
-            Ok(())
+            self.present(address)
         }
 
         async fn kick_player(
@@ -161,7 +173,7 @@ pub mod fake {
             address: &str,
         ) -> Result<(), VoiceUnavailable> {
             self.note(format!("kick {community_id} {address}"));
-            Ok(())
+            self.present(address)
         }
 
         async fn mute_speaker(
@@ -171,7 +183,7 @@ pub mod fake {
             muted: bool,
         ) -> Result<(), VoiceUnavailable> {
             self.note(format!("mute {community_id} {address} {muted}"));
-            Ok(())
+            self.present(address)
         }
     }
 }

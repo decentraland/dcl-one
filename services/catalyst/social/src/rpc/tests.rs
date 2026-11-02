@@ -41,7 +41,9 @@ mod friends;
 mod http;
 mod private_voice;
 mod settings;
+mod social_api;
 mod socket;
+mod stream;
 mod upstream_reads;
 mod voice_bugs;
 mod voice_runtime;
@@ -1243,6 +1245,14 @@ async fn community_voice_start_join_and_ban_semantics() {
         .await
         .unwrap();
     let cid = community.to_string();
+    // the opener, a member and a stranger online: only the member is notified
+    ctx.topology()
+        .receive(&pulse_frame(vec![
+            owner.clone(),
+            member.clone(),
+            stranger.clone(),
+        ]))
+        .unwrap();
 
     let mut member_rx = ctx.pubsub().subscribe(&member);
     let response = SocialServiceImpl
@@ -1268,6 +1278,26 @@ async fn community_voice_start_join_and_ban_semantics() {
         .expect("members are told the room started");
     assert!(
         matches!(&*event, super::pubsub::SocialEvent::CommunityVoice(u) if u.community_id == cid && u.community_name == "Voice Soft Delete Community")
+    );
+    // upstream `broadcastVoiceChatStarted`: the notification row
+    let started: Vec<(String, serde_json::Value)> = sqlx::query_as(
+        "SELECT address, metadata FROM social.notifications \
+         WHERE type = 'community_voice_chat_started' AND metadata->>'communityId' = $1",
+    )
+    .bind(&cid)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        started,
+        vec![(
+            member.clone(),
+            serde_json::json!({
+                "communityId": cid,
+                "communityName": "Voice Soft Delete Community",
+                "thumbnailUrl": "",
+            })
+        )]
     );
 
     let response = SocialServiceImpl

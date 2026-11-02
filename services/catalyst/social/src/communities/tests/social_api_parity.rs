@@ -364,7 +364,7 @@ async fn a_wallets_communities_come_by_role_then_name() {
 }
 
 /// A catalogue row shaped as the captured destination (`social/community-places`).
-async fn seed_destination(
+pub(super) async fn seed_destination(
     pool: &PgPool,
     id: &str,
     title: &str,
