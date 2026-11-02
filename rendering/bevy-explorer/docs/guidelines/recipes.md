@@ -39,7 +39,7 @@ reference: `getBlockUpdateStream` (#844). The file set:
    generated type; a relay domain under `bridge-scene/src/domains/`; a message kind in
    `react-web/src/engine/protocol.ts`; a case in `useEngineSession.ts`; the mock bridge.
 
-From `rendering/bevy-explorer/source`, run `sh scripts/gen-ts-bindings.sh` before touching the TypeScript: the generated types under
+Run `just ts-bindings` before touching the TypeScript: the generated types under
 `react-web/src/engine/generated/` are gitignored, and CI regenerates them before every TS
 build, so a Rust struct change that breaks the page fails `tsc` there.
 
