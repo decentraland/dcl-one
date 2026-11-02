@@ -76,6 +76,7 @@ pub mod automatic_testing;
 pub use common::bounds_calc;
 pub mod gltf_resolver;
 pub mod initialize_scene;
+pub mod load_timing;
 pub mod permissions;
 pub mod primary_entities;
 pub mod renderer_context;
@@ -436,6 +437,11 @@ impl Plugin for SceneRunnerPlugin {
         app.add_plugins(AssetPreloadPlugin);
 
         app.add_systems(Update, update_scene_room.in_set(SceneSets::PostLoop));
+        app.init_resource::<load_timing::FirstRingTiming>();
+        app.add_systems(
+            Update,
+            load_timing::report_scene_load_times.in_set(SceneSets::PostLoop),
+        );
         app.add_systems(Update, log_app_errors.in_set(SceneSets::PostLoop));
         app.add_systems(Update, set_ui_constraints.in_set(SceneSets::PostLoop));
 

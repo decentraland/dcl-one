@@ -1790,6 +1790,7 @@ pub fn process_scene_lifecycle(
             .spawn((
                 SceneHash(required_scene_hash.clone()),
                 SceneLoading::SceneSpawned,
+                crate::load_timing::SpawnedAt(web_time::Instant::now()),
             ))
             .id();
         info!("spawning scene {:?} @ ??: {entity:?}", required_scene_hash);
