@@ -639,6 +639,19 @@ impl IpfsPath {
         }
     }
 
+    /// The scene the file belongs to, when the path names one: a scene's content file or
+    /// scene content, or the scene's own entity definition.
+    pub fn scene_hash(&self) -> Option<&str> {
+        match &self.ipfs_type {
+            IpfsType::ContentFile { content_hash, .. } => Some(content_hash),
+            IpfsType::Entity { hash, .. } => Some(hash),
+            IpfsType::SceneContent { scene_hash, .. } => Some(scene_hash),
+            IpfsType::UrlCached { .. } | IpfsType::UrlUncached { .. } | IpfsType::IndexDb { .. } => {
+                None
+            }
+        }
+    }
+
     pub fn content_path(&self) -> Option<&str> {
         if let IpfsType::ContentFile { file_path, .. } = &self.ipfs_type {
             Some(file_path)
@@ -1044,5 +1057,33 @@ mod tests {
         assert_eq!(hash("scenehash", "dance"), None);
         assert!(hash("scenehash", "https://example.com/foo.glb").is_some());
         assert_eq!(hash("otherhash", "models/emotes/foo.glb"), None);
+    }
+
+    #[test]
+    fn scene_hash_names_the_owning_scene() {
+        let content = IpfsPath::new(IpfsType::new_content_file(
+            "bafyscene".to_owned(),
+            "a.glb".to_owned(),
+        ));
+        assert_eq!(content.scene_hash(), Some("bafyscene"));
+
+        let entity = IpfsPath::new(IpfsType::Entity {
+            hash: "bafyscene".to_owned(),
+            ext: "scene_entity".to_owned(),
+        });
+        assert_eq!(entity.scene_hash(), Some("bafyscene"));
+
+        let scene_content = IpfsPath::new(IpfsType::SceneContent {
+            scene_hash: "bafyscene".to_owned(),
+            content_hash: "bafyfile".to_owned(),
+            ext: "png".to_owned(),
+        });
+        assert_eq!(scene_content.scene_hash(), Some("bafyscene"));
+
+        let url = IpfsPath::new(IpfsType::UrlUncached {
+            url: "https://example.com/a.png".to_owned(),
+            ext: "png".to_owned(),
+        });
+        assert_eq!(url.scene_hash(), None);
     }
 }
