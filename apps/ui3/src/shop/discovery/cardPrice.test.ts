@@ -5,8 +5,8 @@ import { manaWei } from "../model/money";
 import { SIGNED_OUT, web2, web3 } from "../payment/fixtures";
 import { shopListingToItem, unifiedListingToItem } from "./api";
 import { cardEligibility, cardPrice } from "./cardPrice";
-import { L1_MINT, PRIMARY_WEARABLE, RESALE_WEARABLE, STORE_EMOTE, UNPRICED_WEARABLE, saleWearable } from "./fixtures";
-import type { CatalogItem } from "./lib/catalogItem";
+import { catalogRow, L1_MINT, PRIMARY_WEARABLE, RESALE_WEARABLE, STORE_EMOTE, UNPRICED_WEARABLE, saleWearable } from "./fixtures";
+import { toCatalogItem, type CatalogItem } from "./lib/catalogItem";
 
 const SESSIONS = [SIGNED_OUT, web2(), web3()] as const;
 
@@ -84,6 +84,15 @@ describe("cards with nothing to buy", () => {
   it("a catalogue row not on sale is not for sale", () => {
     const item = { ...shopListingToItem(PRIMARY_WEARABLE), tradeId: undefined, priceCredits: 0, onSale: false };
     expect(cardPrice(item, web3()).kind).toBe("notForSale");
+  });
+
+  it("a closed mint is not for sale, even with the trade row it left behind", () => {
+    // Upstream's catalogue row for a closed mint: still on sale, price "0", no credit price, its trade row kept.
+    const item = toCatalogItem({ ...catalogRow(PRIMARY_WEARABLE), price: "0", priceCredits: 0 });
+    expect(item.hasPrimaryListing).toBe(false);
+    expect(item.tradeId).toBeTruthy();
+    expect(cardPrice(item, web3()).kind).toBe("notForSale");
+    expect(cardPrice({ ...item, hasPrimaryListing: undefined }, web3()).kind).toBe("creditsUnavailable");
   });
 });
 

@@ -4,8 +4,9 @@ use super::domain::{
     user_action_valid,
 };
 use super::helpers::{
-    FRIENDSHIP_RATE_LIMIT_MESSAGE, SocialError, empty_friends_profiles, friendship_status_invalid,
-    internal_err, invalid_req, normalize, page_friends, page_of, upsert_internal_error,
+    FRIENDSHIP_RATE_LIMIT_MESSAGE, FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH, SocialError,
+    empty_friends_profiles, friendship_status_invalid, internal_err, invalid_req, normalize,
+    page_friends, page_of, upsert_internal_error,
 };
 use crate::auth::is_eth_address;
 use crate::rpc::context::{Context, PairScope};
@@ -195,6 +196,19 @@ impl SocialServiceImpl {
             return Ok(UpsertFriendshipResponse {
                 response: Some(upsert_friendship_response::Response::InvalidRequest(
                     invalid_req("invalid target user"),
+                )),
+            });
+        }
+
+        if message
+            .as_deref()
+            .is_some_and(|m| m.chars().count() > FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH)
+        {
+            return Ok(UpsertFriendshipResponse {
+                response: Some(upsert_friendship_response::Response::InvalidRequest(
+                    invalid_req(format!(
+                        "The friendship request message cannot be longer than {FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH} characters"
+                    )),
                 )),
             });
         }

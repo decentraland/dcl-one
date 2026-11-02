@@ -52,7 +52,7 @@ impl<T> TaskExt for Task<T> {
     fn complete(&mut self) -> Option<Self::Output> {
         use futures_lite::FutureExt;
 
-        // wasm doesn't have `is_finished``, but polling is cheap as it is just a oneshot receiver
+        // polling is cheap as it is just a oneshot receiver
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
         if let std::task::Poll::Ready(res) = self.poll(&mut context) {
             Some(res)

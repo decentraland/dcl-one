@@ -34,6 +34,7 @@ mod post_edit;
 mod request_lifecycle;
 mod selected_community;
 mod social_api_parity;
+mod upstream_rules;
 pub(super) mod world_access;
 
 const ADMIN_TOKEN: &str = "cg-social-admin";
@@ -1197,30 +1198,69 @@ async fn every_route_answers_its_contract() {
         "a member may not edit: {v}"
     );
 
+    // upstream `updateEditorChoice`: global moderators only, even over the owner
     let (status, _) = hit(
         app,
         Case::new("patch", &c1_path)
-            .signed(&user)
+            .signed(&modw)
             .await
             .json(&json!({ "editorsChoice": true })),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
+    let editors_choice: bool =
+        sqlx::query_scalar("SELECT editors_choice FROM social.communities WHERE id = $1")
+            .bind(c1)
+            .fetch_one(&rig.pool)
+            .await
+            .unwrap();
+    assert!(editors_choice);
     let (status, v) = hit(
         app,
         Case::new("patch", &c1_path).json(&json!({ "editorsChoice": true })),
     )
     .await;
     assert_gate_400(status, &v, "patch unsigned");
+    for w in [&user, &m1] {
+        let (status, v) = hit(
+            app,
+            Case::new("patch", &c1_path)
+                .signed(w)
+                .await
+                .json(&json!({ "editorsChoice": false })),
+        )
+        .await;
+        assert_eq!(
+            v,
+            json!({
+                "error": "Not Authorized",
+                "message": "Only global moderators can update Editor's Choice flag"
+            }),
+            "global moderators only"
+        );
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    for body in [
+        json!({}),
+        json!({ "editorsChoice": "yes" }),
+        json!({ "editorsChoice": true, "name": "x" }),
+    ] {
+        let (status, v) = hit(
+            app,
+            Case::new("patch", &c1_path).signed(&modw).await.json(&body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}: {v}");
+    }
     let (status, v) = hit(
         app,
-        Case::new("patch", &c1_path)
-            .signed(&m1)
+        Case::new("patch", format!("/v1/communities/{missing}"))
+            .signed(&modw)
             .await
             .json(&json!({ "editorsChoice": true })),
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "owner only: {v}");
+    assert_eq!(status, StatusCode::NOT_FOUND, "{v}");
 
     let (status, _) = hit(
         app,
@@ -1236,6 +1276,24 @@ async fn every_route_answers_its_contract() {
         StatusCode::NOT_FOUND,
         "a soft-deleted community reads as missing"
     );
+    // upstream `deleteCommunity`: the owner or a global moderator
+    let c_mod_del = rig.community(&user, false).await;
+    let mod_del_path = format!("/v1/communities/{c_mod_del}");
+    let (status, v) = hit(app, Case::new("delete", &mod_del_path).signed(&m1).await).await;
+    assert_eq!(
+        (status, v),
+        (
+            StatusCode::UNAUTHORIZED,
+            json!({
+                "error": "Not Authorized",
+                "message": "The user doesn't have permission to delete this community"
+            })
+        )
+    );
+    let (status, _) = hit(app, Case::new("delete", &mod_del_path).signed(&modw).await).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = hit(app, Case::new("delete", &mod_del_path).signed(&modw).await).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "already deleted");
     let (status, v) = hit(app, Case::new("delete", &c1_path)).await;
     assert_gate_400(status, &v, "delete unsigned");
     let (status, v) = hit(app, Case::new("delete", &c1_path).forged(&user).await).await;
@@ -1449,8 +1507,15 @@ async fn every_route_answers_its_contract() {
     let (status, v) = hit(app, Case::new("post", &members).signed(&m2).await).await;
     assert_eq!(
         status,
-        StatusCode::FORBIDDEN,
+        StatusCode::UNAUTHORIZED,
         "a banned wallet cannot rejoin: {v}"
+    );
+    assert_eq!(
+        v,
+        json!({
+            "error": "Not Authorized",
+            "message": format!("The user {} is banned from community {c1}", m2.address)
+        })
     );
     let (_, v) = hit(
         app,
@@ -2252,11 +2317,6 @@ async fn an_unlisted_room_is_listed_only_for_members() {
     let (owner, member, viewer) = (wallet(), wallet(), wallet());
     let c = rig.community(&owner, false).await;
     rig.member(c, &member, "member").await;
-    sqlx::query("UPDATE social.communities SET unlisted = true WHERE id = $1")
-        .bind(c)
-        .execute(&rig.pool)
-        .await
-        .unwrap();
     rig.voice(c, &owner, "connected", true).await;
     let listed = |v: &serde_json::Value| {
         v["data"]["activeChats"]
@@ -2265,6 +2325,20 @@ async fn an_unlisted_room_is_listed_only_for_members() {
             .iter()
             .any(|x| x["communityId"] == c.to_string())
     };
+    // Control: while the community is listed, the non-member sees the room.
+    let (_, v) = hit(
+        app,
+        Case::new("get", "/v1/community-voice-chats/active")
+            .signed(&viewer)
+            .await,
+    )
+    .await;
+    assert!(listed(&v), "{v}");
+    sqlx::query("UPDATE social.communities SET unlisted = true WHERE id = $1")
+        .bind(c)
+        .execute(&rig.pool)
+        .await
+        .unwrap();
     let (_, v) = hit(
         app,
         Case::new("get", "/v1/community-voice-chats/active")
@@ -2281,6 +2355,80 @@ async fn an_unlisted_room_is_listed_only_for_members() {
     )
     .await;
     assert!(listed(&v), "{v}");
+    rig.finish();
+}
+
+/// `GET /v1/moderation/communities` as upstream's
+/// `getAllCommunitiesForModeration` answers (`communities-db.ts` at
+/// `fb3dcb8`): active communities only, the name or description matching,
+/// upstream's row (`description`, `privacy`, the member count plus one,
+/// `createdAt` with milliseconds and `Z`), the largest first.
+#[tokio::test]
+async fn the_moderation_listing_answers_upstreams_row() {
+    let modw = wallet();
+    let Some(rig) = Rig::new(admin_settings(Some(&modw))).await else {
+        return;
+    };
+    let app = &rig.app;
+    let (owner, member) = (wallet(), wallet());
+    let tag = Uuid::new_v4().simple().to_string();
+    let small = rig.community(&owner, false).await;
+    let big = rig.community(&owner, true).await;
+    let gone = rig.community(&owner, false).await;
+    rig.member(big, &member, "member").await;
+    for (id, name) in [(small, "small"), (big, "big"), (gone, "gone")] {
+        sqlx::query("UPDATE social.communities SET description = $2, name = $3, created_at = '2026-01-02 03:04:05.678912' WHERE id = $1")
+            .bind(id)
+            .bind(format!("moderation {tag}"))
+            .bind(format!("{name} {tag}"))
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("UPDATE social.communities SET active = FALSE WHERE id = $1")
+        .bind(gone)
+        .execute(&rig.pool)
+        .await
+        .unwrap();
+    let (status, v) = hit(
+        app,
+        Case::new(
+            "get",
+            format!("/v1/moderation/communities?search=moderation%20{tag}"),
+        )
+        .signed(&modw)
+        .await,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let rows = v["data"]["results"].as_array().unwrap();
+    assert_eq!(rows.len(), 2, "the inactive one is not listed: {v}");
+    assert_eq!(rows[0]["id"], big.to_string(), "the largest first");
+    let mut keys: Vec<&str> = rows[0]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    keys.sort();
+    assert_eq!(
+        keys,
+        [
+            "active",
+            "createdAt",
+            "description",
+            "id",
+            "membersCount",
+            "name",
+            "ownerAddress",
+            "privacy"
+        ]
+    );
+    assert_eq!(rows[0]["privacy"], "private");
+    assert_eq!(rows[0]["membersCount"], 3, "owner and member, plus one");
+    assert_eq!(rows[1]["membersCount"], 2);
+    assert_eq!(rows[0]["createdAt"], "2026-01-02T03:04:05.678Z");
+    assert_eq!(v["data"]["total"], 2);
     rig.finish();
 }
 

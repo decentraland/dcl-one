@@ -29,7 +29,8 @@ HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stre
                      'rendering/bevy-explorer/source/react-web/src/lib/hudAutomation.ts')
 IMAGES_INPUTS = (
     'flake.*',
-    'rendering/bevy-explorer/**',
+    'rendering/bevy-explorer/source/**',
+    'rendering/bevy-explorer/upstream.lock.json',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*.py',
     '.github/workflows/bevy-explorer-ci.yml',
@@ -40,6 +41,7 @@ IMAGES_INPUTS = (
     'infra/packages/**',
     'infra/containers/**',
     'services/catalyst/**',
+    'schemas/**',
     'library/**',
     '.cargo/**',
     'apps/sites/**',
@@ -74,7 +76,7 @@ APP_INPUTS = {
 
 
 def git(*args):
-    return subprocess.check_output(['git', *args], cwd=ROOT, text=True)
+    return subprocess.check_output(['git', *args], cwd=ROOT, text=True, env={**os.environ, 'GIT_GLOB_PATHSPECS': '1'})
 
 
 def api(path):
@@ -190,6 +192,10 @@ def select(base, head):
             # Launcher/package assembly cannot affect web or graphical/native tests.
             # Keep the headless build/smoke; main also packages all four platforms.
             affected = ('headless',)
+        elif path.startswith('apps/bevy-explorer/e2e/'):
+            # The end-to-end suite drives a built client; its own workflow (bevy-explorer-e2e.yml)
+            # checks it and runs it against the web app this workflow built.
+            affected = ()
         elif path.startswith('apps/bevy-explorer/') and path.removeprefix('apps/bevy-explorer/') in APP_INPUTS:
             affected = APP_INPUTS[path.removeprefix('apps/bevy-explorer/')]
         else:

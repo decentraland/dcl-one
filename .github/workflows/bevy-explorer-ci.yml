@@ -21,6 +21,7 @@
       - infra/packages/**
       - infra/containers/**
       - services/catalyst/**
+      - schemas/**
       - library/**
       - apps/sites/**
       - apps/ui3/**
@@ -49,6 +50,7 @@
       - infra/packages/**
       - infra/containers/**
       - services/catalyst/**
+      - schemas/**
       - library/**
       - apps/sites/**
       - apps/ui3/**
@@ -68,7 +70,7 @@
         required: false
         default: ''
 concurrency:
-  group: bevy-explorer-ci-${{ github.ref }}
+  group: bevy-explorer-ci-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || github.ref }}
   cancel-in-progress: true
 name: Bevy Explorer / CI
 jobs:
@@ -142,6 +144,8 @@ jobs:
       group: ${{ github.workflow }}-test-${{ matrix.os }}-${{ github.ref }}
       cancel-in-progress: true
     env:
+      # Use system Git for LiveKit's libyuv submodule; libgit2's macOS TLS fetch can fail.
+      CARGO_NET_GIT_FETCH_WITH_CLI: 'true'
       SCCACHE_GHA_ENABLED: 'true'
       SCCACHE_GHA_VERSION: dcl-bevy-windows-v1
     steps:

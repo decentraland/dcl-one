@@ -567,10 +567,10 @@ pub async fn add_member(
         );
     }
     if banned {
-        return err_json(
-            StatusCode::FORBIDDEN,
-            "The member is banned from this community",
-        );
+        return CommError::not_authorized(format!(
+            "The user {signer} is banned from community {uuid}"
+        ))
+        .into_response();
     }
     StatusCode::NO_CONTENT.into_response()
 }

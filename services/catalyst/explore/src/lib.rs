@@ -338,6 +338,7 @@ impl ExploreState {
                 scope,
                 self.settings.places_derive_interval,
                 self.settings.content_public_url.clone(),
+                self.storage.clone(),
             );
         }
         if let Some(source) = self.settings.places_upstream.clone() {

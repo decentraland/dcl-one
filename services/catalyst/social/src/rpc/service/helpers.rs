@@ -15,6 +15,8 @@ const MAX_PAGINATION_OFFSET: i64 = 100_000;
 
 pub(super) const FRIENDSHIP_RATE_LIMIT_MESSAGE: &str =
     "Too many friendship or block actions. Please try again later";
+/// Characters (code points) a friendship request message may carry.
+pub(super) const FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH: usize = 256;
 
 /// The errors that reach the client as a `RemoteError` (a transport-level
 /// refusal); every application outcome travels inside the response `oneof`.
@@ -29,6 +31,9 @@ pub enum SocialError {
     WritesDisabled(std::borrow::Cow<'static, str>),
 }
 
+/// What every `Internal` refusal says on the wire, whichever procedure failed.
+pub(crate) const INTERNAL_SERVER_ERROR: &str = "Internal Server Error";
+
 impl RemoteErrorResponse for SocialError {
     fn error_code(&self) -> u32 {
         match self {
@@ -37,8 +42,15 @@ impl RemoteErrorResponse for SocialError {
             SocialError::WritesDisabled(_) => 503,
         }
     }
+    /// An `Internal` detail (a database or runtime error) is logged, never sent.
     fn error_message(&self) -> String {
-        self.to_string()
+        match self {
+            SocialError::Internal(detail) => {
+                tracing::error!(detail = %detail, "social-rpc internal error");
+                INTERNAL_SERVER_ERROR.to_string()
+            }
+            _ => self.to_string(),
+        }
     }
 }
 

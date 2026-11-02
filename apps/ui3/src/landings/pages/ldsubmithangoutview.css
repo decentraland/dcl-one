@@ -1,12 +1,23 @@
 .submit-hangout {
   position: relative;
+  min-height: 65vh;
+  padding: 32px 16px 64px;
+  color: #fcfcfc;
+  background: #160e24;
+}
+
+.submit-hangout__header {
+  max-width: 680px;
+  margin: 0 auto 24px;
+}
+
+.submit-hangout__header a {
+  color: #fcfcfc;
 }
 
 .submit-hangout__controls {
-  position: fixed;
-  left: 50%;
-  bottom: 24px;
-  transform: translateX(-50%);
+  position: relative;
+  margin: 0 auto;
   z-index: 30;
   display: flex;
   flex-direction: column;
