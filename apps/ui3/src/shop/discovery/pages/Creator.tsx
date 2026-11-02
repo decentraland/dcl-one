@@ -60,13 +60,15 @@ export default function Creator() {
   const min = priceMin && !Number.isNaN(Number(priceMin)) ? Number(priceMin) : undefined;
   const max = priceMax && !Number.isNaN(Number(priceMax)) ? Number(priceMax) : undefined;
   const emoteFilters = emoteFilterBindings(category, filterState, setFilters);
+  // Nothing not for sale has a price: the range applies to the other statuses only.
+  const priced = status !== "not_for_sale";
   const filters = {
     creator: address,
     category,
     rarities: rarities.length ? rarities : undefined,
     wearableCategories: subCategory ? SUBCAT_MAP[subCategory] : undefined,
-    minPriceCredits: min,
-    maxPriceCredits: max,
+    minPriceCredits: priced ? min : undefined,
+    maxPriceCredits: priced ? max : undefined,
     isWearableSmart: smart || undefined,
     isOnSale: status === "all" ? undefined : status === "on_sale",
     sortBy: (SORTS.find((s) => s.key === sort) ?? SORTS[0]!).server,
@@ -99,7 +101,7 @@ export default function Creator() {
   const chips: FilterChip[] = [];
   if (category === "wearable" || category === "emote")
     chips.push({ key: "category", label: t(category === "emote" ? "categories.emotes" : "categories.wearables"), onRemove: () => pickCategory("all") });
-  if (min != null || max != null) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
+  if (priced && (min != null || max != null)) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
   for (const r of RARITIES) if (rarities.includes(r)) chips.push({ key: `rarity-${r}`, label: rarityLabel(r), onRemove: () => toggleRarity(r) });
   if (smart) chips.push({ key: "smart", label: t("filter.smart"), onRemove: () => setFilters({ smart: false }) });
   chips.push(...emoteFilters.chips);
@@ -148,6 +150,7 @@ export default function Creator() {
               smart={smart}
               onSmart={(v) => setFilters({ smart: v })}
               {...emoteFilters.props}
+              hidePrice={!priced}
               hideNames
             />
             <CollectionsCategory selected={collectionsMode} onToggle={toggleCollections} />

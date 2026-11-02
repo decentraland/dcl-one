@@ -99,9 +99,13 @@ describe("the collectibles grid", () => {
 
   it("Not for Sale reads the catalogue as view cards with no purchase", async () => {
     const client = catalogClient();
-    items("/shop/items?status=not_for_sale", { client });
+    items("/shop/items?status=not_for_sale&priceMin=5", { client });
     const cards = await screen.findAllByTestId("card");
     expect(lastUrl(client).searchParams.get("isOnSale")).toBe("false");
+    // Nothing not for sale has a price: no range control, none sent, no chip.
+    expect(screen.queryAllByRole("slider")).toHaveLength(0);
+    expect(lastUrl(client).searchParams.has("minPriceCredits")).toBe(false);
+    expect(screen.queryByRole("button", { name: "Remove Price filter" })).toBeNull();
     for (const card of cards) {
       expect(card.dataset.mode).toBe("view");
       expect(within(card).queryByTestId("card-cart")).toBeNull();

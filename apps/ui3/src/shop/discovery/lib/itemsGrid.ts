@@ -122,8 +122,9 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
     sortBy: sortOption.server,
     isWearableSmart: smart || undefined,
     isOnSale: status === "not_for_sale" ? false : undefined,
-    minPriceCredits: min,
-    maxPriceCredits: max,
+    // Nothing not for sale has a price, so the range applies to the other statuses only.
+    minPriceCredits: status === "not_for_sale" ? undefined : min,
+    maxPriceCredits: status === "not_for_sale" ? undefined : max,
     contractAddresses: contracts?.length ? contracts : undefined,
     ...emote,
   };

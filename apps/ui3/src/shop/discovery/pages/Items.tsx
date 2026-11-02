@@ -68,7 +68,7 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
   const clearFilters = () => setFilters(filterDefaults);
 
   const chips: FilterChip[] = [];
-  if (min != null || max != null) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
+  if (status !== "not_for_sale" && (min != null || max != null)) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
   for (const r of RARITIES) if (rarities.includes(r)) chips.push({ key: `rarity-${r}`, label: rarityLabel(r), onRemove: () => toggleRarity(r) });
   if (wearableGenders) chips.push({ key: "bodyShape", label: t(`itemDetail.gender${bodyShape[0]!.toUpperCase()}${bodyShape.slice(1)}`), onRemove: () => setFilters({ bodyShape: "all" }) });
   if (isUnified && listingType) chips.push({ key: "listingType", label: t(`filter.${listingType}`), onRemove: () => setFilters({ listingType: "all" }) });
@@ -110,6 +110,7 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
             status={status}
             onStatus={(s) => setFilters({ status: s })}
             hideStatus={!!lockStatus}
+            hidePrice={status === "not_for_sale"}
             hideNames={hideNames}
             smart={smart}
             onSmart={(v) => setFilters({ smart: v })}

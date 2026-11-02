@@ -223,6 +223,8 @@ export type FiltersProps = {
   hideNames?: boolean;
   hideAll?: boolean;
   hideStatus?: boolean;
+  /** Hides the price range, for a status whose items have no price (Not for sale). */
+  hidePrice?: boolean;
   collections?: boolean;
   onCollections?: () => void;
 };
@@ -281,6 +283,8 @@ export default function Filters(props: FiltersProps) {
 
       <hr className="shop-filters__divider" />
 
+      {props.hidePrice ? null : (
+        <>
       <FilterSection title={t("filter.price")} open={openPrice} onToggle={() => setOpenPrice((o) => !o)} summary={priceSummary} desktopStatic>
         <div className="shop-filters__prices">
           <label>
@@ -339,6 +343,8 @@ export default function Filters(props: FiltersProps) {
       </FilterSection>
 
       <hr className="shop-filters__divider" />
+        </>
+      )}
 
       <FilterSection title={t("assets.rarity")} open={openRarity} onToggle={() => setOpenRarity((o) => !o)} summary={raritySummary} testId="sidebar-section-toggle">
         <div className="shop-filters__rarities" data-testid="rarity-filter">
