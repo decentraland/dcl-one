@@ -21,7 +21,11 @@ use bevy::{
 };
 use common::structs::{AppConfig, PrimaryUser};
 use comms::{global_crdt::ForeignPlayer, profile::UserProfile};
-use scene_material::{reveal_mesh_tag, unrevealed_mesh_tag, SceneMaterial};
+use scene_material::{
+    reveal_mesh_tag, unrevealed_mesh_tag, SceneMaterial,
+    SCENE_MATERIAL_REVEAL_FULL_HEIGHT as REVEAL_HEIGHT,
+    SCENE_MATERIAL_REVEAL_HIDE_HEIGHT as HIDE_HEIGHT,
+};
 
 use crate::{mask_material::MaskMaterial, process_avatar, AvatarProcessed, AvatarSelection};
 
@@ -29,10 +33,6 @@ use crate::{mask_material::MaskMaterial, process_avatar, AvatarProcessed, Avatar
 const REVEAL_DURATION: f32 = 0.8;
 /// the bottom-up handover from the ghost to the avatar
 const HANDOVER_DURATION: f32 = 0.5;
-/// a reveal height below the feet: nothing shows
-const HIDE_HEIGHT: f32 = -0.05;
-/// a reveal height above the head: everything shows
-const REVEAL_HEIGHT: f32 = 2.05;
 
 /// the content server's BaseMale body (`urn:decentraland:off-chain:base-avatars:BaseMale`),
 /// without its textures and face masks, skinned to the "Avatar_*" armature the embedded
@@ -157,6 +157,14 @@ impl GhostAnimation {
             GhostPhase::HandingOver => Some(self.height),
             GhostPhase::Hidden => None,
         }
+    }
+
+    /// the reveal height an avatar built now is clipped to: hidden while the ghost stands in,
+    /// the current plane mid-handover so a look rebuilt then doesn't pop in above it; None once
+    /// the ghost is gone
+    fn built_avatar_reveal(&self) -> Option<f32> {
+        self.avatar_reveal()
+            .or_else(|| self.standing_in().then_some(HIDE_HEIGHT))
     }
 
     fn tick(&mut self, dt: f32) -> GhostStep {
@@ -395,7 +403,8 @@ fn dress_ghosts(
     }
 }
 
-// an avatar built while its ghost stands in is clipped away, to be revealed by the handover
+// an avatar built while its ghost stands in is clipped away, to be revealed by the handover; one
+// rebuilt mid-handover (a look change) joins the reveal at its current height
 #[allow(clippy::type_complexity)]
 fn clip_built_avatars(
     mut commands: Commands,
@@ -415,16 +424,16 @@ fn clip_built_avatars(
         let Ok(mut ghost) = ghosts.get_mut(player) else {
             continue;
         };
-        if !ghost.animation.standing_in() {
+        let Some(height) = ghost.animation.built_avatar_reveal() else {
             continue;
-        }
+        };
 
         let mut clipped = false;
         for entity in children.iter_descendants(avatar) {
             let Ok((mut mesh, mut tag)) = meshes.get_mut(entity) else {
                 continue;
             };
-            tag.0 = reveal_mesh_tag(tag.0, HIDE_HEIGHT);
+            tag.0 = reveal_mesh_tag(tag.0, height);
             // bevy's mesh extraction doesn't watch MeshTag (0.16); Mesh3d is on its list
             mesh.set_changed();
             commands.entity(entity).try_insert(RevealedBy(player));
@@ -564,6 +573,27 @@ mod tests {
         assert!(steps
             .iter()
             .all(|step| step.ghost.is_none() && !step.finished));
+    }
+
+    #[test]
+    fn avatar_rebuilt_mid_handover_joins_the_reveal() {
+        let mut animation = GhostAnimation::new();
+        // while the ghost stands in, a built avatar is clipped away
+        assert_eq!(animation.built_avatar_reveal(), Some(HIDE_HEIGHT));
+        run(&mut animation, REVEAL_DURATION + FRAME);
+        assert_eq!(animation.built_avatar_reveal(), Some(HIDE_HEIGHT));
+        animation.avatar_ready = true;
+        animation.tick(0.0);
+
+        // mid-handover, a rebuilt avatar is clipped to the plane as it stands
+        run(&mut animation, HANDOVER_DURATION / 2.0);
+        let height = animation.built_avatar_reveal().unwrap();
+        assert!(height > HIDE_HEIGHT && height < REVEAL_HEIGHT);
+        assert_eq!(animation.avatar_reveal(), Some(height));
+
+        // once the ghost is gone, nothing is clipped
+        run(&mut animation, HANDOVER_DURATION / 2.0 + FRAME);
+        assert_eq!(animation.built_avatar_reveal(), None);
     }
 
     /// runs the app until the ghost body and the idle clip are loaded
