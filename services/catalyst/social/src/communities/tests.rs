@@ -35,6 +35,7 @@ mod request_lifecycle;
 mod selected_community;
 mod social_api_parity;
 mod upstream_rules;
+mod upstream_writes;
 pub(super) mod world_access;
 
 const ADMIN_TOKEN: &str = "cg-social-admin";
@@ -336,6 +337,37 @@ impl Rig {
         .execute(&self.pool)
         .await
         .unwrap();
+    }
+
+    /// A world place in the catalogue, attached to the community; returns
+    /// the world name (`clear_world_place` removes the catalogue row).
+    async fn world_place(&self, id: CommunityId, owner: &Wallet) -> (Uuid, String) {
+        let place = Uuid::new_v4();
+        let world = format!("w{}.dcl.eth", &place.simple().to_string()[..12]);
+        social_api_parity::seed_destination(
+            &self.pool,
+            &place.to_string(),
+            "a world",
+            false,
+            Some(&world),
+        )
+        .await;
+        sqlx::query("INSERT INTO social.community_places (place_id, community_id, added_by) VALUES ($1, $2, $3)")
+            .bind(place.to_string())
+            .bind(id)
+            .bind(&owner.address)
+            .execute(&self.pool)
+            .await
+            .unwrap();
+        (place, world)
+    }
+
+    async fn clear_world_place(&self, place: Uuid) {
+        sqlx::query("DELETE FROM explore.place WHERE id = $1")
+            .bind(place.to_string())
+            .execute(&self.pool)
+            .await
+            .unwrap();
     }
 
     async fn role_of(&self, id: CommunityId, w: &Wallet) -> Option<String> {
@@ -1454,7 +1486,7 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    let (status, _) = hit(
+    let (status, v) = hit(
         app,
         Case::new("patch", &role_path)
             .signed(&user)
@@ -1463,9 +1495,12 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     assert_eq!(
-        status,
-        StatusCode::UNAUTHORIZED,
-        "ownership is not assigned here"
+        (status, v),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "Bad request", "message": format!("The user {} doesn't have any names", m1.address) })
+        ),
+        "ownership goes only to a member holding a NAME"
     );
     let (status, v) = hit(
         app,
@@ -2252,6 +2287,8 @@ async fn voice_status_derives_from_the_presence_rows() {
     let app = &rig.app;
     let (owner, a, b, gone, viewer) = (wallet(), wallet(), wallet(), wallet(), wallet());
     let c = rig.community(&owner, false).await;
+    // a non-member sees the room through the community's places
+    let (place, world) = rig.world_place(c, &owner).await;
     rig.voice(c, &owner, "connected", true).await;
     rig.voice(c, &a, "connected", false).await;
     rig.voice(c, &b, "connection_interrupted", false).await;
@@ -2296,11 +2333,13 @@ async fn voice_status_derives_from_the_presence_rows() {
     assert_eq!(chat["isMember"], false);
     assert!(chat["communityImage"].is_null());
     assert_eq!(chat["positions"], json!([]));
+    assert_eq!(chat["worlds"], json!([world]));
 
     sqlx::query("UPDATE social.community_voice_chat_users SET status = 'disconnected' WHERE community_id = $1").bind(c).execute(&rig.pool).await.unwrap();
     let (_, v) = hit(app, Case::new("get", format!("/v1/communities/{c}"))).await;
     assert_eq!(v["data"]["isLive"], false);
     assert_eq!(v["data"]["voiceChatStatus"]["participantCount"], 0);
+    rig.clear_world_place(place).await;
     rig.finish();
 }
 
@@ -2316,6 +2355,7 @@ async fn an_unlisted_room_is_listed_only_for_members() {
     let app = &rig.app;
     let (owner, member, viewer) = (wallet(), wallet(), wallet());
     let c = rig.community(&owner, false).await;
+    let (place, _) = rig.world_place(c, &owner).await;
     rig.member(c, &member, "member").await;
     rig.voice(c, &owner, "connected", true).await;
     let listed = |v: &serde_json::Value| {
@@ -2355,6 +2395,7 @@ async fn an_unlisted_room_is_listed_only_for_members() {
     )
     .await;
     assert!(listed(&v), "{v}");
+    rig.clear_world_place(place).await;
     rig.finish();
 }
 

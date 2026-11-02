@@ -5,6 +5,7 @@ use super::domain::{
 };
 use super::helpers::{SocialError, internal_err, normalize};
 use crate::comms::gatekeeper::voice::rooms::{CommunityVoiceAction, VoiceUnavailable};
+use crate::notifications::community::{Audience, CommunityEvent, notify, now_ms};
 use crate::rpc::context::Context;
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::proto::errors::ForbiddenError;
@@ -81,6 +82,28 @@ impl SocialServiceImpl {
             &community_name,
             &members,
         );
+        // upstream `broadcastVoiceChatStarted` (`logic/community/broadcaster.ts`
+        // at `b6b2cef`): the online members but the opener; the community
+        // image is empty here, as on the update above
+        let online = ctx.topology().snapshot().wallets;
+        notify(
+            ctx.db().pool(),
+            CommunityEvent {
+                kind: "community_voice_chat_started",
+                key: format!("{cid}-{}", now_ms()),
+                community_id: crate::CommunityId::from_uuid(cid),
+                metadata: serde_json::json!({
+                    "communityId": cid,
+                    "communityName": community_name,
+                    "thumbnailUrl": "",
+                }),
+            },
+            Audience::OnlineMembersExcept {
+                online: &online,
+                except: me.as_str(),
+            },
+        )
+        .await;
         Ok(StartCommunityVoiceChatResponse {
             response: Some(start_community_voice_chat_response::Response::Ok(
                 start_community_voice_chat_response::Ok {
