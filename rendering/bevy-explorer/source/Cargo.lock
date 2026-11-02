@@ -10652,6 +10652,7 @@ dependencies = [
  "console 0.1.0",
  "copypwasmta",
  "dcl_component",
+ "dcl_types",
  "futures-lite",
  "http 1.5.0",
  "input_manager",
