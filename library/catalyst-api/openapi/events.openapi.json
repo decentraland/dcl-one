@@ -102,7 +102,7 @@
             "name": "recurrent",
             "in": "query",
             "required": false,
-            "description": "Filter recurring or one-off events before pagination.",
+            "description": "Filter recurring or one-off events before pagination. Invalid values return 400.",
             "schema": {
               "type": "string",
               "enum": [
@@ -318,7 +318,8 @@
               }
             }
           }
-        }
+        },
+        "description": " Calendar assignments require bearer administration or the current edit_any_event grant; assignments sent by other signed creators are ignored."
       }
     },
     "/api/events/attending": {
@@ -511,7 +512,7 @@
             "name": "recurrent",
             "in": "query",
             "required": false,
-            "description": "Filter recurring or one-off events before pagination.",
+            "description": "Filter recurring or one-off events before pagination. Invalid values return 400.",
             "schema": {
               "type": "string",
               "enum": [
@@ -790,7 +791,8 @@
               }
             }
           }
-        }
+        },
+        "description": "Signed wallets may edit authorized native event fields. Bearer admins may also use action, actor and reason. Moderation-only bearer requests use the mirrored overlay; native content changes to mirrored events return 409. Unknown bearer fields are ignored for compatibility; unknown wallet fields are rejected."
       }
     },
     "/api/events/{event_id}/attendees": {
@@ -2037,7 +2039,7 @@
             "name": "recurrent",
             "in": "query",
             "required": false,
-            "description": "Filter recurring or one-off events before pagination.",
+            "description": "Filter recurring or one-off events before pagination. Invalid values return 400.",
             "schema": {
               "type": "string",
               "enum": [
@@ -3388,14 +3390,14 @@
               "string",
               "null"
             ],
-            "description": "Native uploaded poster URL returned by POST /api/poster; configured same-origin URLs normalize to local paths. Unchanged server-provided images remain valid when editing."
+            "description": "Local uploaded image from POST /api/poster; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
           },
           "image_vertical": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Native uploaded poster URL returned by POST /api/poster-vertical; configured same-origin URLs normalize to local paths. Unchanged server-provided images remain valid when editing."
+            "description": "Local uploaded image from POST /api/poster-vertical; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
           },
           "name": {
             "type": "string"
@@ -3467,7 +3469,8 @@
             ],
             "items": {
               "type": "string"
-            }
+            },
+            "description": "Calendar IDs. Accepted for bearer admins or wallets with edit_any_event permission; silently omitted for other signed creators."
           },
           "server": {
             "type": [
@@ -3758,7 +3761,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Public event image. Generated default posters are absolute URLs under the configured events base URL, including any mount prefix."
           },
           "image_vertical": {
             "type": [
@@ -4214,14 +4218,14 @@
               "string",
               "null"
             ],
-            "description": "Native uploaded poster URL returned by POST /api/poster; configured same-origin URLs normalize to local paths. Unchanged server-provided images remain valid when editing."
+            "description": "Local uploaded image from POST /api/poster; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
           },
           "image_vertical": {
             "type": [
               "string",
               "null"
             ],
-            "description": "Native uploaded poster URL returned by POST /api/poster-vertical; configured same-origin URLs normalize to local paths. Unchanged server-provided images remain valid when editing."
+            "description": "Local uploaded image from POST /api/poster-vertical; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
           },
           "name": {
             "type": [
@@ -4353,9 +4357,42 @@
               "null"
             ],
             "format": "int32"
+          },
+          "action": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "approve",
+              "reject",
+              "archive",
+              "feature",
+              "unfeature",
+              null
+            ],
+            "description": "Bearer admin only. Applied before explicit approved/rejected/highlighted/trending fields; signed-wallet edits reject this field."
+          },
+          "actor": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "minLength": 1,
+            "maxLength": 42,
+            "description": "Bearer admin only. Audit actor; defaults to admin. Signed-wallet edits reject this field."
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 500,
+            "description": "Bearer admin only. Moderation rejection reason; rejection_reason is also accepted. Signed-wallet edits use rejection_reason."
           }
         },
-        "additionalProperties": false
+        "additionalProperties": true,
+        "description": "Signed wallets may edit authorized native event fields. Bearer admins may also use action, actor and reason. Moderation-only bearer requests use the mirrored overlay; native content changes to mirrored events return 409. Unknown bearer fields are ignored for compatibility; unknown wallet fields are rejected."
       },
       "V1EventRecord": {
         "allOf": [

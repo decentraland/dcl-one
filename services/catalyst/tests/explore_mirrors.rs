@@ -1211,7 +1211,8 @@ async fn upsert_real_page_is_idempotent_and_serves() {
         "upsert is idempotent"
     );
 
-    let component = EventsComponent::new(pool.clone(), None);
+    let component =
+        EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
     let sample_id = events[0]["id"].as_str().unwrap();
     let rec = component
         .get(sample_id)
@@ -1662,6 +1663,7 @@ async fn an_unlisted_row_is_settled_by_the_upstream_detail_in_the_same_pass() {
             ..Default::default()
         },
         "0x00000000000000000000000000000000000000a1",
+        &catalyst::explore::Settings::for_tests(),
     )
     .await
     .expect_err("a mirrored event's own fields refuse moderation");
@@ -1995,7 +1997,8 @@ async fn the_viewers_attendance_rides_in_the_list_and_get_statements() {
     .execute(&pool)
     .await
     .unwrap();
-    let component = EventsComponent::new(pool.clone(), None);
+    let component =
+        EventsComponent::new(pool.clone(), None, "https://events.decentraland.org".into());
 
     let filters = EventListFilters {
         limit: 200,
@@ -2341,7 +2344,11 @@ async fn a_local_rsvp_outside_the_upstream_preview_keeps_the_signed_delta_estima
     event["latest_attendees"] = json!([OTHER, null]);
     let id = event["id"].as_str().unwrap();
     events_mirror::upsert_event(&db.pool, &event).await.unwrap();
-    let component = EventsComponent::new(db.pool.clone(), None);
+    let component = EventsComponent::new(
+        db.pool.clone(),
+        None,
+        "https://events.decentraland.org".into(),
+    );
     assert_eq!(
         component.get(id).await.unwrap().unwrap().total_attendees,
         100

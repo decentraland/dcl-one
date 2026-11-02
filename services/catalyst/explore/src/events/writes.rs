@@ -36,6 +36,47 @@ use super::{EventAttendeeRecord, EventRecord};
 use crate::SharedState;
 use crate::shared::errors::{ApiData, ApiError};
 
+const APPROVAL_FIELDS: &[&str] = &["approved", "rejected", "rejection_reason"];
+const ADMIN_CONTROL_FIELDS: &[&str] = &["action", "actor", "reason"];
+fn fold_admin_action(fields: &mut Map<String, Value>, patch: &AdminPatch) -> Result<(), ApiError> {
+    let mut defaults = Map::new();
+    match patch.action.as_deref() {
+        Some("approve") => {
+            defaults.insert("approved".into(), json!(true));
+            defaults.insert("rejected".into(), json!(false));
+        }
+        Some("reject" | "archive") => {
+            defaults.insert("approved".into(), json!(false));
+            defaults.insert("rejected".into(), json!(true));
+        }
+        Some("feature") => {
+            defaults.insert("highlighted".into(), json!(true));
+        }
+        Some("unfeature") => {
+            defaults.insert("highlighted".into(), json!(false));
+        }
+        Some(_) => return Err(ApiError::bad_request("unknown moderation action")),
+        None => {}
+    }
+    // Legacy precedence: action, then explicit approval, then explicit rejection.
+    if fields.get("approved") == Some(&json!(true)) {
+        defaults.insert("rejected".into(), json!(false));
+    }
+    if fields.get("rejected") == Some(&json!(true)) {
+        fields.insert("approved".into(), json!(false));
+    }
+    for (key, value) in defaults {
+        fields.entry(key).or_insert(value);
+    }
+    if let Some(reason) = &patch.reason {
+        if reason.chars().count() > 500 {
+            return Err(ApiError::bad_request("reason too long"));
+        }
+        fields.entry("rejection_reason").or_insert(json!(reason));
+    }
+    Ok(())
+}
+
 const ADMIN_SIGNER: &str = "admin";
 const DATE_FIELDS: [&str; 11] = [
     "start_at",
@@ -261,17 +302,17 @@ pub fn apply_owner_edit(
         .description
         .as_ref()
         .and_then(Option::as_ref)
-        .is_some_and(|value| value.chars().count() > 5000)
+        .is_some_and(|value| value.chars().count() > moderation::MAX_EVENT_DESCRIPTION_CHARS)
         || body
             .details
             .as_ref()
             .and_then(Option::as_ref)
-            .is_some_and(|value| value.chars().count() > 5000)
+            .is_some_and(|value| value.chars().count() > moderation::MAX_EVENT_DESCRIPTION_CHARS)
         || body
             .contact
             .as_ref()
             .and_then(Option::as_ref)
-            .is_some_and(|value| value.chars().count() > 100)
+            .is_some_and(|value| value.chars().count() > moderation::MAX_EVENT_CONTACT_CHARS)
     {
         return Err(ApiError::bad_request(
             "event text exceeds the maximum length",
@@ -287,9 +328,11 @@ pub fn apply_owner_edit(
                 .map(crate::sanitize::sanitize_asset_url)
                 .transpose()
                 .map_err(ApiError::bad_request)?;
-            raw.insert(key.into(), json!(img));
-            if key == "image" {
-                raw.insert("_image_source".into(), json!("explicit"));
+            if raw.get(key) != Some(&json!(img)) {
+                raw.insert(key.into(), json!(img));
+                if key == "image" {
+                    raw.insert("_image_source".into(), json!("explicit"));
+                }
             }
         }
     }
@@ -469,13 +512,7 @@ pub async fn create_event(
     {
         body.schedules = None;
     }
-    for image in [&mut body.image, &mut body.image_vertical]
-        .into_iter()
-        .flatten()
-    {
-        *image = super::posters::normalize_image_input(image, &state.settings)?;
-    }
-    let id = moderation::create_as(&state.pool, &body, &signer, &signer).await?;
+    let id = moderation::create_as(&state.pool, &body, &signer, &signer, &state.settings).await?;
     answer(&state, &id, Some(&signer)).await
 }
 
@@ -544,10 +581,14 @@ pub async fn patch_event(
 ) -> Result<Json<ApiData<EventRecord>>, ApiError> {
     let admin = super::handlers::is_admin_request(&headers, &state);
     let dates_present = date_key_present(&body);
-    let (signer, mut edit, permissions, admin_patch) = if admin {
+    let (signer, mut edit, permissions) = if admin {
         state.operator_writes()?;
         let mut fields: Map<String, Value> = serde_json::from_slice(&body)
             .map_err(|error| ApiError::bad_request(format!("invalid patch body: {error}")))?;
+        // Keep legacy unknown admin keys ignored and accept both reason spellings.
+        if fields.contains_key("reason") {
+            fields.remove("rejection_reason");
+        }
         let patch: AdminPatch = serde_json::from_value(json!(fields))
             .map_err(|error| ApiError::bad_request(format!("invalid patch body: {error}")))?;
         let actor = patch
@@ -559,27 +600,25 @@ pub async fn patch_event(
         if actor.is_empty() || actor.chars().count() > 42 {
             return Err(ApiError::bad_request("invalid actor"));
         }
+        let allowed = serde_json::to_value(UpdateEventBody::default())
+            .map_err(|error| ApiError::internal(error.to_string()))?;
         let content = fields.keys().any(|field| {
-            ![
-                "action",
-                "actor",
-                "approved",
-                "rejected",
-                "reason",
-                "highlighted",
-                "trending",
-            ]
-            .contains(&field.as_str())
+            !APPROVAL_FIELDS.contains(&field.as_str())
+                && !["highlighted", "trending"].contains(&field.as_str())
+                && allowed.get(field).is_some()
         });
         if !content {
-            if !moderation::moderate(&state.pool, &event_id, &patch, &actor).await? {
+            if !moderation::moderate(&state.pool, &event_id, &patch, &actor, &state.settings)
+                .await?
+            {
                 return Err(not_found(&event_id));
             }
             return answer(&state, &event_id, None).await;
         }
-        for field in ["action", "actor", "reason"] {
-            fields.remove(field);
-        }
+        fold_admin_action(&mut fields, &patch)?;
+        fields.retain(|key, _| {
+            !ADMIN_CONTROL_FIELDS.contains(&key.as_str()) && allowed.get(key).is_some()
+        });
         let edit: UpdateEventBody = serde_json::from_value(json!(fields))
             .map_err(|error| ApiError::bad_request(format!("invalid patch body: {error}")))?;
         (
@@ -590,7 +629,6 @@ pub async fn patch_event(
                 approve_any: true,
                 approve_own: true,
             },
-            Some(patch),
         )
     } else {
         state.user_writes()?;
@@ -598,7 +636,7 @@ pub async fn patch_event(
         let edit: UpdateEventBody = serde_json::from_slice(&body)
             .map_err(|error| ApiError::bad_request(format!("invalid patch body: {error}")))?;
         let permissions = super::profiles::event_permissions(&state.pool, &signer).await?;
-        (signer, edit, permissions, None)
+        (signer, edit, permissions)
     };
     super::mirror::reclaim_local(&state.pool).await?;
     let mut tx = state.pool.begin().await?;
@@ -618,9 +656,9 @@ pub async fn patch_event(
             .map_err(|_| ApiError::bad_request("invalid patch body"))?;
         if !permissions.approve_any
             || requested.as_object().is_none_or(|fields| {
-                fields.keys().any(|key| {
-                    !["approved", "rejected", "rejection_reason"].contains(&key.as_str())
-                })
+                fields
+                    .keys()
+                    .any(|key| !APPROVAL_FIELDS.contains(&key.as_str()))
             })
         {
             return Err(ApiError::forbidden(
@@ -668,14 +706,30 @@ pub async fn patch_event(
         moderation::validate_community(&mut *tx, community, &signer).await?;
     }
     let before = raw.clone();
-    for (field, image) in [
-        ("image", &mut edit.image),
-        ("image_vertical", &mut edit.image_vertical),
+    for (field, image, kind) in [
+        ("image", &mut edit.image, "poster"),
+        (
+            "image_vertical",
+            &mut edit.image_vertical,
+            "poster-vertical",
+        ),
     ] {
-        if let Some(Some(image)) = image {
-            if raw.get(field).and_then(Value::as_str) != Some(image.as_str()) {
-                *image = super::posters::normalize_image_input(image, &state.settings)?;
-                super::posters::validate_upload(&mut *tx, image).await?;
+        if let Some(Some(value)) = image {
+            let stored = raw.get(field).and_then(Value::as_str);
+            if stored == Some(value.as_str()) {
+                *image = None;
+                continue;
+            }
+            let normalized = super::posters::normalize_image_input(value, &state.settings, kind)?;
+            let unchanged = stored.is_some_and(|stored| {
+                super::posters::normalize_image_input(stored, &state.settings, kind)
+                    .is_ok_and(|stored| stored == normalized)
+            });
+            if unchanged {
+                *image = None;
+            } else {
+                *value =
+                    super::posters::resolve(&mut *tx, &normalized, &state.settings, kind).await?;
             }
         }
     }
@@ -711,6 +765,7 @@ pub async fn patch_event(
         &mut raw,
         Some(&before),
         edit.url.as_ref().is_none_or(Option::is_none),
+        &state.settings,
     )
     .await?;
     // Another reviewer's rejection is a moderation hold: self-approval cannot remove it.
@@ -733,10 +788,6 @@ pub async fn patch_event(
             }
         }
     }
-    if permissions.edit_any {
-        set_opt(&mut raw, "highlighted", &edit.highlighted);
-        set_opt(&mut raw, "trending", &edit.trending);
-    }
     if can_approve && edit.approved != Some(true) {
         if let Some(rejected) = edit.rejected {
             raw.insert("rejected".into(), json!(rejected));
@@ -754,8 +805,14 @@ pub async fn patch_event(
     if moderation::flag(&raw, "rejected") {
         raw.insert("approved".into(), json!(false));
         raw.insert("approved_by".into(), Value::Null);
-        raw.insert("highlighted".into(), json!(false));
-        raw.insert("trending".into(), json!(false));
+        if !admin {
+            raw.insert("highlighted".into(), json!(false));
+            raw.insert("trending".into(), json!(false));
+        }
+    }
+    if permissions.edit_any && (admin || !moderation::flag(&raw, "rejected")) {
+        set_opt(&mut raw, "highlighted", &edit.highlighted);
+        set_opt(&mut raw, "trending", &edit.trending);
     }
     if was_approved
         && !can_approve
@@ -766,18 +823,6 @@ pub async fn patch_event(
         raw.insert("approved_by".into(), Value::Null);
         raw.insert("highlighted".into(), json!(false));
         raw.insert("trending".into(), json!(false));
-    }
-    if let Some(patch) = admin_patch {
-        if patch.action.is_some()
-            || patch.approved.is_some()
-            || patch.rejected.is_some()
-            || patch.highlighted.is_some()
-            || patch.trending.is_some()
-            || patch.name.is_some()
-            || patch.description.is_some()
-        {
-            moderation::apply_admin_state(&mut raw, &patch, &signer)?;
-        }
     }
     raw.insert("updated_at".into(), json!(Utc::now().to_rfc3339()));
     moderation::store_locked(
@@ -1170,6 +1215,223 @@ mod tests {
         assert_eq!(raw["description"], Value::Null);
     }
 
+    #[test]
+    fn nullable_recurrence_keys_are_cleared_without_retaining_the_old_rule() {
+        let mut raw = raw();
+        raw.extend(json!({"recurrent":true,"recurrent_frequency":"MONTHLY","recurrent_setpos":-1,"recurrent_monthday":2}).as_object().unwrap().clone());
+        let edit = serde_json::from_value(json!({"recurrent":false,"recurrent_frequency":null,"recurrent_setpos":null,"recurrent_monthday":null})).unwrap();
+        apply_owner_edit(&mut raw, &edit, true).unwrap();
+        for key in [
+            "recurrent_frequency",
+            "recurrent_setpos",
+            "recurrent_monthday",
+        ] {
+            assert!(raw[key].is_null(), "{key}");
+        }
+    }
+
+    #[tokio::test]
+    async fn generated_defaults_are_absolute_in_responses_and_notification_snapshots() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let settings = Settings {
+            events_base_url: "https://native.example.org/events/".into(),
+            user_writes_enabled: true,
+            operator_writes_enabled: true,
+            events_admin_token: Some("admin-test".into()),
+            ..Settings::for_tests()
+        };
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            settings.clone(),
+            None,
+        )));
+        let (_, created) = call(
+            &app,
+            "POST",
+            "/api/events",
+            Some("signed"),
+            Some(new_event()),
+        )
+        .await;
+        let expected = "https://native.example.org/events/assets/event-default.webp";
+        assert_eq!(created["data"]["image"], expected);
+        let id = created["data"]["id"].as_str().unwrap();
+        let path = format!("/api/events/{id}");
+        // Old local rows may still contain the relative default. Reads and pure moderation
+        // must repair the projection without a historical data migration.
+        sqlx::query("UPDATE explore.event SET raw=jsonb_set(raw,'{image}',$2) WHERE id=$1")
+            .bind(id)
+            .bind(json!(super::super::posters::DEFAULT_EVENT_IMAGE))
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (status, legacy) = call(&app, "GET", &path, Some("signed"), None).await;
+        assert_eq!(status, StatusCode::OK, "{legacy}");
+        assert_eq!(legacy["data"]["image"], expected);
+        let (status, approved) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(json!({"approved":true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{approved}");
+        let image: String = sqlx::query_scalar("SELECT event->>'image' FROM social.event_notification_intents WHERE event_id=$1 AND kind='event_approved'").bind(id).fetch_one(&pool).await.unwrap();
+        assert_eq!(image, expected);
+        // The fully qualified default returned by this deployment remains an unchanged value.
+        let (status, _) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"image":expected})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let source: String =
+            sqlx::query_scalar("SELECT raw->>'_image_source' FROM explore.event WHERE id=$1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(source, "generated");
+    }
+
+    #[tokio::test]
+    async fn admin_moderation_compatibility_ignores_unknown_keys_but_refuses_mirrored_content() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let mirrored = format!("mirrored-admin-{}", uuid::Uuid::new_v4());
+        sqlx::query("INSERT INTO explore.event (id,name,origin,approved,highlighted,trending,raw) VALUES($1,'Mirrored','upstream',true,true,true,$2)").bind(&mirrored).bind(json!({"id":mirrored,"name":"Mirrored","approved":true,"highlighted":true,"trending":true})).execute(&pool).await.unwrap();
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("admin-test".into()),
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let path = format!("/api/events/{mirrored}");
+        let (status, rejected) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(json!({"rejected":true,"rejection_reason":"spam","legacy_unknown":true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{rejected}");
+        assert_eq!(rejected["data"]["rejection_reason"], "spam");
+        let (status, _) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("admin-test"),
+            Some(json!({"name":"content","approved":true})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::CONFLICT);
+        let (_, created) = call(
+            &app,
+            "POST",
+            "/api/events",
+            Some("signed"),
+            Some(new_event()),
+        )
+        .await;
+        let local = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        for (body, approved, rejected) in [
+            (
+                json!({"name":"one","action":"reject","approved":true}),
+                true,
+                false,
+            ),
+            (
+                json!({"name":"two","approved":true,"rejected":true,"highlighted":true,"trending":true}),
+                false,
+                true,
+            ),
+            (
+                json!({"name":"three","action":"reject","highlighted":true}),
+                false,
+                true,
+            ),
+        ] {
+            let (status, response) =
+                call(&app, "PATCH", &local, Some("admin-test"), Some(body)).await;
+            assert_eq!(status, StatusCode::OK, "{response}");
+            assert_eq!(response["data"]["approved"], approved);
+            assert_eq!(response["data"]["rejected"], rejected);
+            if rejected {
+                assert_eq!(response["data"]["highlighted"], true);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn unchanged_legacy_posters_keep_their_provenance_and_equivalent_absolute_spelling() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                events_base_url: "https://native.example.org/events".into(),
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let (_, created) = call(
+            &app,
+            "POST",
+            "/api/events",
+            Some("signed"),
+            Some(new_event()),
+        )
+        .await;
+        let id = created["data"]["id"].as_str().unwrap();
+        let path = format!("/api/events/{id}");
+        sqlx::query(r#"UPDATE explore.event SET raw=raw || '{"image":"/poster/legacy.webp","_image_source":"explicit"}'::jsonb WHERE id=$1"#).bind(id).execute(&pool).await.unwrap();
+        let (status, _) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"image":"https://native.example.org/events/poster/legacy.webp"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        sqlx::query(r#"UPDATE explore.event SET raw=raw || '{"image":"https://third.example.org/scene.png","_image_source":"generated"}'::jsonb WHERE id=$1"#).bind(id).execute(&pool).await.unwrap();
+        let (status, _) = call(
+            &app,
+            "PATCH",
+            &path,
+            Some("signed"),
+            Some(json!({"image":"https://third.example.org/scene.png"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let source: String =
+            sqlx::query_scalar("SELECT raw->>'_image_source' FROM explore.event WHERE id=$1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(source, "generated");
+        let (_, moved) = call(&app, "PATCH", &path, Some("signed"), Some(json!({"x":12}))).await;
+        assert_eq!(
+            moved["data"]["image"],
+            "https://native.example.org/events/assets/event-default.webp"
+        );
+    }
+
     #[tokio::test]
     async fn native_uploaded_posters_and_broad_admin_fields_preserve_privilege_boundaries() {
         let Some(pool) = crate::db::scratch::pool(6).await else {
@@ -1183,6 +1445,7 @@ mod tests {
             operator_writes_enabled: true,
             events_admin_token: Some("native-admin".into()),
             events_base_url: "https://native.example.org".into(),
+            content_public_url: "https://content.example.org".into(),
             ..Settings::for_tests()
         };
         let app = router(Arc::new(
@@ -1203,7 +1466,15 @@ mod tests {
         );
         let mut event = new_event();
         event["image"] = json!(format!("https://native.example.org{poster}"));
-        event["image_vertical"] = json!(vertical);
+        event["image_vertical"] = json!(format!("https://content.example.org{vertical}"));
+        let mut invalid = event.clone();
+        invalid["image_vertical"] = json!(poster);
+        assert_eq!(
+            call(&app, "POST", "/api/events", Some("signed"), Some(invalid))
+                .await
+                .0,
+            StatusCode::BAD_REQUEST
+        );
         let (status, created) = call(
             &app,
             "POST",
@@ -1305,6 +1576,7 @@ mod tests {
             &other,
             "0x0123456789012345678901234567890123456789",
             "test",
+            &Settings::for_tests(),
         )
         .await
         .unwrap();
@@ -1336,7 +1608,7 @@ mod tests {
             pool.clone(),
             Settings {
                 operator_writes_enabled: false,
-                ..settings
+                ..settings.clone()
             },
             None,
         )));
@@ -1373,7 +1645,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{default}");
         assert_eq!(
             default["data"]["image"],
-            super::super::posters::DEFAULT_EVENT_IMAGE
+            super::super::posters::default_image_url(&settings)
         );
         let default = app
             .clone()
@@ -1534,7 +1806,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{generated}");
         assert_eq!(
             generated["data"]["image"],
-            super::super::posters::DEFAULT_EVENT_IMAGE
+            super::super::posters::default_image_url(&Settings::for_tests())
         );
         let (status, moved) = call(
             &app,
@@ -1591,7 +1863,7 @@ mod tests {
         let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
         assert_eq!(
             created["data"]["image"],
-            super::super::posters::DEFAULT_EVENT_IMAGE
+            super::super::posters::default_image_url(&Settings::for_tests())
         );
         let (status, moved) = call(
             &app,
@@ -1604,7 +1876,7 @@ mod tests {
         assert_eq!(status, StatusCode::OK, "{moved}");
         assert_eq!(
             moved["data"]["image"],
-            super::super::posters::DEFAULT_EVENT_IMAGE
+            super::super::posters::default_image_url(&Settings::for_tests())
         );
         let (status, cleared) = call(
             &app,
@@ -1895,6 +2167,7 @@ mod tests {
             &serde_json::from_value(new_event()).unwrap(),
             &owner_address,
             "test",
+            &Settings::for_tests(),
         )
         .await
         .unwrap();
@@ -2027,6 +2300,7 @@ mod tests {
             &serde_json::from_value(new_event()).unwrap(),
             &owner,
             "test",
+            &Settings::for_tests(),
         )
         .await
         .unwrap();
@@ -2237,6 +2511,7 @@ mod tests {
             &serde_json::from_value(new_event()).unwrap(),
             &owner_address,
             "test",
+            &Settings::for_tests(),
         )
         .await
         .unwrap();
@@ -2303,6 +2578,7 @@ mod tests {
             &serde_json::from_value(new_event()).unwrap(),
             &owner,
             "test",
+            &Settings::for_tests(),
         )
         .await
         .unwrap();
@@ -2391,6 +2667,7 @@ mod tests {
                 &serde_json::from_value(new_event()).unwrap(),
                 "0xowner",
                 "test",
+                &Settings::for_tests(),
             )
             .await
             .unwrap();
@@ -2447,6 +2724,7 @@ mod tests {
                 &serde_json::from_value(new_event()).unwrap(),
                 &address,
                 "test",
+                &Settings::for_tests(),
             )
             .await
             .unwrap();
@@ -2458,6 +2736,7 @@ mod tests {
                     ..Default::default()
                 },
                 "test",
+                &Settings::for_tests(),
             )
             .await
             .unwrap();
@@ -2518,6 +2797,7 @@ mod tests {
             &serde_json::from_value(new_event()).unwrap(),
             &owner,
             "test",
+            &Settings::for_tests(),
         )
         .await
         .unwrap();
@@ -2700,6 +2980,7 @@ mod tests {
             &serde_json::from_value(body).unwrap(),
             &address,
             &address,
+            &Settings::for_tests(),
         )
         .await
         .unwrap();
@@ -2783,7 +3064,7 @@ mod tests {
             pool.clone(),
             Settings {
                 user_writes_enabled: false,
-                ..settings
+                ..settings.clone()
             },
             None,
         )));

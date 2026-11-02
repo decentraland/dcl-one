@@ -172,6 +172,7 @@ pub struct NextEvent {
 pub struct EventsComponent {
     pool: PgPool,
     rewrite_domain: Option<String>,
+    events_base_url: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -256,10 +257,11 @@ struct EventRow {
 impl EventsComponent {
     /// `rewrite_domain`: the deployment's own domain, swapped into mirrored
     /// `events-assets-*.decentraland.org` poster URLs (`None` keeps them).
-    pub fn new(pool: PgPool, rewrite_domain: Option<String>) -> Self {
+    pub fn new(pool: PgPool, rewrite_domain: Option<String>, events_base_url: String) -> Self {
         Self {
             pool,
             rewrite_domain,
+            events_base_url,
         }
     }
 
@@ -450,7 +452,14 @@ impl EventsComponent {
         let user = f.user.as_deref();
         let records = rows
             .into_iter()
-            .map(|r| event_row_to_record(r, user, self.rewrite_domain.as_deref()))
+            .map(|r| {
+                event_row_to_record(
+                    r,
+                    user,
+                    self.rewrite_domain.as_deref(),
+                    &self.events_base_url,
+                )
+            })
             .collect();
         Ok((records, total))
     }
@@ -472,7 +481,14 @@ impl EventsComponent {
         .bind(event_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| event_row_to_record(r, None, self.rewrite_domain.as_deref())))
+        Ok(row.map(|r| {
+            event_row_to_record(
+                r,
+                None,
+                self.rewrite_domain.as_deref(),
+                &self.events_base_url,
+            )
+        }))
     }
 
     /// `get` plus the viewer's attendance (local RSVP or upstream attendee) in one statement.
@@ -492,7 +508,14 @@ impl EventsComponent {
         .bind(viewer.to_lowercase())
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| event_row_to_record(r, Some(viewer), self.rewrite_domain.as_deref())))
+        Ok(row.map(|r| {
+            event_row_to_record(
+                r,
+                Some(viewer),
+                self.rewrite_domain.as_deref(),
+                &self.events_base_url,
+            )
+        }))
     }
 
     pub async fn attending(&self, user: &str) -> Result<Vec<EventRecord>, ApiError> {
@@ -503,7 +526,14 @@ impl EventsComponent {
             .await?;
         Ok(rows
             .into_iter()
-            .map(|r| event_row_to_record(r, Some(&user_lc), self.rewrite_domain.as_deref()))
+            .map(|r| {
+                event_row_to_record(
+                    r,
+                    Some(&user_lc),
+                    self.rewrite_domain.as_deref(),
+                    &self.events_base_url,
+                )
+            })
             .collect())
     }
 
@@ -522,7 +552,14 @@ impl EventsComponent {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|r| event_row_to_record(r, None, self.rewrite_domain.as_deref()))
+            .map(|r| {
+                event_row_to_record(
+                    r,
+                    None,
+                    self.rewrite_domain.as_deref(),
+                    &self.events_base_url,
+                )
+            })
             .collect())
     }
 
@@ -896,6 +933,7 @@ fn event_row_to_record(
     r: EventRow,
     verified_viewer: Option<&str>,
     rewrite_domain: Option<&str>,
+    events_base_url: &str,
 ) -> EventRecord {
     let raw = &r.raw;
     let start_at = r.start_at.map(|n| n.and_utc());
@@ -906,7 +944,12 @@ fn event_row_to_record(
         .get("image")
         .and_then(|v| v.as_str())
         .and_then(|s| sanitize_asset_url(s).ok())
-        .map(|s| rewrite_asset_url(&s, rewrite_domain));
+        .map(|s| {
+            rewrite_asset_url(
+                &posters::absolute_default_image(&s, events_base_url),
+                rewrite_domain,
+            )
+        });
     let image_vertical = raw.get("image_vertical").cloned().and_then(|v| match v {
         Value::String(s) => sanitize_asset_url(&s)
             .ok()
@@ -1120,12 +1163,23 @@ mod tests {
         let participants = std::sync::Arc::new(Participants(Default::default()));
         live.set_participants(participants.clone());
         let mut events = vec![
-            event_row_to_record(row_with(json!({"x":10,"y":20}), None, None), None, None),
-            event_row_to_record(row_with(json!({"x":10,"y":20}), None, None), None, None),
+            event_row_to_record(
+                row_with(json!({"x":10,"y":20}), None, None),
+                None,
+                None,
+                "https://events.decentraland.org",
+            ),
+            event_row_to_record(
+                row_with(json!({"x":10,"y":20}), None, None),
+                None,
+                None,
+                "https://events.decentraland.org",
+            ),
             event_row_to_record(
                 row_with(json!({"world":true,"server":"MyWorld.DCL.eth"}), None, None),
                 None,
                 None,
+                "https://events.decentraland.org",
             ),
         ];
         super::handlers::fill_connected(&mut events, &live).await;
@@ -1206,6 +1260,7 @@ mod tests {
             row_with(raw.clone(), None, None),
             None,
             Some("interconnected.online"),
+            "https://events.decentraland.org",
         );
         assert_eq!(
             rec.image.as_deref(),
@@ -1217,7 +1272,12 @@ mod tests {
                 "https://events-assets-099ac00.interconnected.online/poster/v.webp".into()
             ))
         );
-        let rec = event_row_to_record(row_with(raw, None, None), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, None, None),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(
             rec.image.as_deref(),
             Some("https://events-assets-099ac00.decentraland.org/poster/d2dfb36b6a012314.jpg")
@@ -1232,10 +1292,16 @@ mod tests {
             row_with(json!({ "featured_item": urn }), None, None),
             None,
             None,
+            "https://events.decentraland.org",
         );
         assert_eq!(rec.featured_item.as_deref(), Some(urn));
         for absent in [json!({}), json!({ "featured_item": null })] {
-            let rec = event_row_to_record(row_with(absent, None, None), None, None);
+            let rec = event_row_to_record(
+                row_with(absent, None, None),
+                None,
+                None,
+                "https://events.decentraland.org",
+            );
             assert_eq!(rec.featured_item, None);
         }
     }
@@ -1509,6 +1575,7 @@ mod tests {
             ),
             None,
             None,
+            "https://events.decentraland.org",
         );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
@@ -1522,7 +1589,12 @@ mod tests {
 
         let started = now - chrono::Duration::minutes(30);
         let raw = json!({ "recurrent_dates": [started.to_rfc3339()] });
-        let rec = event_row_to_record(row_with(raw, Some(started), Some(7_200_000)), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, Some(started), Some(7_200_000)),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
             Some(started.timestamp())
@@ -1534,7 +1606,12 @@ mod tests {
             "next_finish_at": (past + chrono::Duration::hours(2)).to_rfc3339(),
             "recurrent_dates": [past.to_rfc3339()],
         });
-        let rec = event_row_to_record(row_with(raw, Some(past), Some(7_200_000)), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, Some(past), Some(7_200_000)),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
             Some(past.timestamp())
@@ -1547,7 +1624,12 @@ mod tests {
             "next_finish_at": (running + chrono::Duration::hours(2)).to_rfc3339(),
             "recurrent_dates": [future.to_rfc3339()],
         });
-        let rec = event_row_to_record(row_with(raw, Some(past), Some(7_200_000)), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, Some(past), Some(7_200_000)),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
             Some(running.timestamp()),
@@ -1637,7 +1719,7 @@ mod tests {
         row.description = Some(
             "Join <link=\"file:///etc/passwd\">here</link> or <link=\"https://decentraland.org\">our site</link>".into(),
         );
-        let rec = event_row_to_record(row, None, None);
+        let rec = event_row_to_record(row, None, None, "https://events.decentraland.org");
         assert_eq!(
             rec.description.as_deref(),
             Some("Join here or <link=\"https://decentraland.org\">our site</link>")
@@ -1646,7 +1728,12 @@ mod tests {
         let raw = json!({
             "description": format!("<a href=\"smb://attacker/share\">x</a> <link=\"http://{metadata_ip}/\">y</link>")
         });
-        let rec = event_row_to_record(row_with(raw, None, None), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, None, None),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(rec.description.as_deref(), Some("x y"));
 
         let raw = json!({
@@ -1654,7 +1741,12 @@ mod tests {
             "image": "http://127.0.0.1/poster.png",
             "image_vertical": "javascript:alert(1)",
         });
-        let rec = event_row_to_record(row_with(raw, None, None), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, None, None),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!((rec.url, rec.image, rec.image_vertical), (None, None, None));
 
         let raw = json!({
@@ -1662,7 +1754,12 @@ mod tests {
             "image": "https://decentraland.org/poster.png",
             "image_vertical": "/poster/bafabc123",
         });
-        let rec = event_row_to_record(row_with(raw, None, None), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, None, None),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(rec.url.as_deref(), Some("https://decentraland.org/events"));
         assert_eq!(
             rec.image.as_deref(),

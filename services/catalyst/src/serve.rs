@@ -1882,6 +1882,7 @@ fn social_states(
         notifications::Settings {
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
             events_base_url: public_url.clone(),
+            events_asset_base_url: explore.settings.events_base_url.clone(),
             email: notifications::EmailConfig {
                 sendgrid_api_key: non_empty(&config.social.sendgrid_api_key),
                 from_email: non_empty(&config.social.sendgrid_from_email),

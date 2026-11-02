@@ -51,7 +51,12 @@ fn location_changed(raw: &Map<String, Value>, previous: &Map<String, Value>) -> 
         .any(|key| raw.get(*key) != previous.get(*key))
 }
 
-fn refresh_poster(raw: &mut Map<String, Value>, place: Option<&Value>, creating: bool) {
+fn refresh_poster(
+    raw: &mut Map<String, Value>,
+    place: Option<&Value>,
+    creating: bool,
+    settings: &crate::Settings,
+) {
     // Provenance is local authoring metadata in the existing document, never
     // inferred from a poster URL that an organizer may have chosen explicitly.
     let generated = text(raw, "_image_source") == Some("generated")
@@ -64,7 +69,7 @@ fn refresh_poster(raw: &mut Map<String, Value>, place: Option<&Value>, creating:
         .and_then(Value::as_str)
         .filter(|image| crate::sanitize::sanitize_asset_url(image).is_ok())
         .map(str::to_owned)
-        .unwrap_or_else(|| super::posters::DEFAULT_EVENT_IMAGE.to_owned());
+        .unwrap_or_else(|| super::posters::default_image_url(settings));
     raw.insert("image".into(), json!(fallback));
     raw.insert("_image_source".into(), json!("generated"));
 }
@@ -74,6 +79,7 @@ pub(super) async fn enrich(
     raw: &mut Map<String, Value>,
     previous: Option<&Map<String, Value>>,
     refresh_url: bool,
+    settings: &crate::Settings,
 ) -> Result<(), ApiError> {
     if refresh_url && let Some(previous) = previous {
         refresh_target(raw, previous);
@@ -120,8 +126,16 @@ pub(super) async fn enrich(
     // A transient catalogue miss must not remove an already generated scene
     // poster on an unrelated edit. A move must discard that stale fallback.
     if previous.is_none() || moved || place.is_some() {
-        refresh_poster(raw, place.as_ref(), previous.is_none());
+        refresh_poster(raw, place.as_ref(), previous.is_none(), settings);
     }
+    // Upgrade the earlier local fallback even when a missing catalogue source skips refresh.
+    if text(raw, "image") == Some(super::posters::DEFAULT_EVENT_IMAGE) {
+        raw.insert(
+            "image".into(),
+            json!(super::posters::default_image_url(settings)),
+        );
+    }
+
     Ok(())
 }
 
@@ -137,9 +151,15 @@ mod tests {
         let mut conn = pool.acquire().await.unwrap();
         let mut raw=json!({"user":"missing-profile","place_id":"missing-place","user_name":"Stored creator","scene_name":"Stored scene","estate_id":"stored-estate","estate_name":"Stored estate","x":1,"y":2,"image":"/poster/kept.webp"}).as_object().unwrap().clone();
         let previous = raw.clone();
-        enrich(&mut conn, &mut raw, Some(&previous), true)
-            .await
-            .unwrap();
+        enrich(
+            &mut conn,
+            &mut raw,
+            Some(&previous),
+            true,
+            &crate::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
         for key in [
             "user_name",
             "scene_name",
@@ -152,9 +172,15 @@ mod tests {
         let previous = raw.clone();
         raw.insert("x".into(), json!(5));
         raw.insert("place_id".into(), Value::Null);
-        enrich(&mut conn, &mut raw, Some(&previous), true)
-            .await
-            .unwrap();
+        enrich(
+            &mut conn,
+            &mut raw,
+            Some(&previous),
+            true,
+            &crate::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
         assert_eq!(raw["user_name"], "Stored creator");
         for key in ["scene_name", "estate_id", "estate_name"] {
             assert!(raw[key].is_null(), "{key} belongs to the old location");
@@ -163,9 +189,15 @@ mod tests {
         // Empty keys have no source; they must not replace stored facts.
         raw.insert("user".into(), json!(""));
         let previous = raw.clone();
-        enrich(&mut conn, &mut raw, Some(&previous), true)
-            .await
-            .unwrap();
+        enrich(
+            &mut conn,
+            &mut raw,
+            Some(&previous),
+            true,
+            &crate::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
         assert_eq!(raw["user_name"], "Stored creator");
         raw.insert(
             "image".into(),
@@ -173,21 +205,33 @@ mod tests {
         );
         raw.insert("_image_source".into(), json!("generated"));
         let previous = raw.clone();
-        enrich(&mut conn, &mut raw, Some(&previous), true)
-            .await
-            .unwrap();
+        enrich(
+            &mut conn,
+            &mut raw,
+            Some(&previous),
+            true,
+            &crate::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             raw["image"], "https://cdn.example.org/last-known-scene.png",
             "same-location source miss retains a generated scene poster"
         );
         let previous = raw.clone();
         raw.insert("x".into(), json!(8));
-        enrich(&mut conn, &mut raw, Some(&previous), true)
-            .await
-            .unwrap();
+        enrich(
+            &mut conn,
+            &mut raw,
+            Some(&previous),
+            true,
+            &crate::Settings::for_tests(),
+        )
+        .await
+        .unwrap();
         assert_eq!(
             raw["image"],
-            super::super::posters::DEFAULT_EVENT_IMAGE,
+            super::super::posters::default_image_url(&crate::Settings::for_tests()),
             "a move cannot retain the previous scene poster"
         );
     }
@@ -253,6 +297,31 @@ mod tests {
         assert_eq!(
             raw["url"],
             "https://decentraland.org/play/?realm=custom.dcl.eth&position=1,2"
+        );
+    }
+    #[tokio::test]
+    async fn an_existing_relative_default_is_upgraded_when_catalogue_metadata_is_missing() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let mut raw = json!({"image":super::super::posters::DEFAULT_EVENT_IMAGE,"_image_source":"generated","x":1,"y":2}).as_object().unwrap().clone();
+        let previous = raw.clone();
+        let settings = crate::Settings {
+            events_base_url: "https://native.example.org/events".into(),
+            ..crate::Settings::for_tests()
+        };
+        enrich(
+            &mut pool.acquire().await.unwrap(),
+            &mut raw,
+            Some(&previous),
+            true,
+            &settings,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            raw["image"],
+            "https://native.example.org/events/assets/event-default.webp"
         );
     }
 }

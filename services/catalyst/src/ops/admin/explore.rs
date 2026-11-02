@@ -716,18 +716,25 @@ pub async fn event_moderate(
         Ok(e) => e,
         Err(resp) => return resp,
     };
-    let answer =
-        match event_moderation::moderate(&explore.pool, &id, &patch, session.address()).await {
-            Ok(false) => {
-                crate::shared::errors::ApiError::not_found(format!("Not found event \"{id}\""))
-                    .into_response()
-            }
-            Ok(true) => match explore.events.get(&id).await {
-                Ok(event) => Json(json!({ "ok": true, "data": event })).into_response(),
-                Err(e) => e.into_response(),
-            },
+    let answer = match event_moderation::moderate(
+        &explore.pool,
+        &id,
+        &patch,
+        session.address(),
+        &explore.settings,
+    )
+    .await
+    {
+        Ok(false) => {
+            crate::shared::errors::ApiError::not_found(format!("Not found event \"{id}\""))
+                .into_response()
+        }
+        Ok(true) => match explore.events.get(&id).await {
+            Ok(event) => Json(json!({ "ok": true, "data": event })).into_response(),
             Err(e) => e.into_response(),
-        };
+        },
+        Err(e) => e.into_response(),
+    };
     finish(
         &state,
         Call::new(&session, DOMAIN, "events.moderate")
@@ -793,7 +800,9 @@ pub async fn event_create(
         Err(resp) => return resp,
     };
     let (answer, id) =
-        match event_moderation::create(&explore.pool, &typed, session.address()).await {
+        match event_moderation::create(&explore.pool, &typed, session.address(), &explore.settings)
+            .await
+        {
             Ok(id) => match explore.events.get(&id).await {
                 Ok(event) => (
                     Json(json!({ "ok": true, "data": event })).into_response(),

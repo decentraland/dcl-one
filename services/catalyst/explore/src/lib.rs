@@ -230,7 +230,11 @@ impl ExploreState {
         Self {
             places: PlacesComponent::new(pool.clone(), &settings.content_public_url)
                 .with_worlds_mirror(settings.worlds_upstream.is_some()),
-            events: EventsComponent::new(pool.clone(), settings.asset_rewrite_domain.clone()),
+            events: EventsComponent::new(
+                pool.clone(),
+                settings.asset_rewrite_domain.clone(),
+                settings.events_base_url.clone(),
+            ),
             schedules: SchedulesComponent::new(pool.clone()),
             live: Arc::new(places::live::Live::new(pool.clone())),
             pass_markers: copies::Markers::new(copies::MARKER_TTL),
@@ -704,7 +708,7 @@ pub fn router(state: SharedState) -> Router {
         )
         .route("/api/poster", post(events::posters::upload_poster))
         .route(
-            "/assets/event-default.webp",
+            events::posters::DEFAULT_EVENT_IMAGE,
             get(events::posters::default_image),
         )
         .route(
