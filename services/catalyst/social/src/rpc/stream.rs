@@ -624,8 +624,7 @@ fn spawn_stream(
             }
             Err(mpsc::error::TrySendError::Closed(_)) => false,
         };
-        if stream == Stream::FriendConnectivity
-            && !online_friends_snapshot(&ctx, &me, &queue).await
+        if stream == Stream::FriendConnectivity && !online_friends_snapshot(&ctx, &me, &queue).await
         {
             return;
         }

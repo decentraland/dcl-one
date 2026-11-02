@@ -149,6 +149,7 @@ async fn announce_started(ctx: &Context, me: &str, cid: Uuid, gate: &VoiceGate) 
         None => (Vec::new(), Vec::new(), None),
     };
     let update = CommunityVoiceChatUpdate {
+        stream_closed: None,
         community_id: cid.to_string(),
         created_at: chrono::Utc::now().timestamp_millis(),
         status: CommunityVoiceChatStatus::CommunityVoiceChatStarted as i32,

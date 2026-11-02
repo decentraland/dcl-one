@@ -527,6 +527,7 @@ async fn blocking_a_friend_ends_the_friendship_and_tells_them() {
     assert_eq!(
         block_updates(&events),
         [BlockUpdate {
+            stream_closed: None,
             address: a.clone(),
             is_blocked: true
         }]
@@ -557,6 +558,7 @@ async fn blocking_a_friend_ends_the_friendship_and_tells_them() {
     assert_eq!(
         block_updates(&events),
         [BlockUpdate {
+            stream_closed: None,
             address: a.clone(),
             is_blocked: false
         }]
@@ -589,6 +591,7 @@ async fn unblocking_a_stranger_only_lifts_the_block() {
     assert_eq!(
         block_updates(&events),
         [BlockUpdate {
+            stream_closed: None,
             address: a.clone(),
             is_blocked: false
         }]
@@ -791,7 +794,8 @@ async fn upsert_friendship_validates_and_reads_messages_as_upstream() {
     assert!(matches!(
         &*to_b.try_recv().unwrap(),
         SocialEvent::Friendship(FriendshipUpdate {
-            update: Some(friendship_update::Update::Request(r))
+            update: Some(friendship_update::Update::Request(r)),
+            ..
         }) if r.message.is_none()
     ));
     cleanup_pair(&rig.db, &a, &b).await;
@@ -867,7 +871,7 @@ async fn blocking_a_stranger_publishes_only_the_block_update() {
     assert_eq!(events.len(), 1);
     assert!(matches!(
         &*events[0],
-        SocialEvent::Block(BlockUpdate { address, is_blocked: true }) if *address == a
+        SocialEvent::Block(BlockUpdate { address, is_blocked: true, .. }) if *address == a
     ));
     cleanup_pair(&rig.db, &a, &b).await;
 }
@@ -925,188 +929,6 @@ async fn a_block_whose_friendship_write_fails_is_rolled_back() {
     assert_eq!(rig.friends_of(&a).await, vec![b.clone()], "still friends");
     assert!(drained(&mut to_b).is_empty());
     cleanup_pair(&rig.db, &a, &b).await;
-}
-
-/// Upstream `shouldNotify` / `sendNotification` (`src/logic/notifications.ts`)
-/// and the processor's rows (`decentraland/notifications-workers` at
-/// `0f113fb`, `processor/src/logic/event-parser.ts`): a request notifies its
-/// receiver with both parties and the message, an accept the requester
-/// without one; cancel, reject and delete notify no one; a party without a
-/// profile skips the notification.
-#[tokio::test]
-async fn a_request_and_an_accept_notify_the_receiver() {
-    let Some(pool) = scratch_pool().await else {
-        return;
-    };
-    let db = Db::new(pool.clone());
-    let ctx = profiled_ctx(db.clone(), Arc::new(FakeVoiceRooms::new(pool.clone())));
-    let (a, b, c) = (addr("fn1"), addr("fn2"), addr("fn3"));
-    let (pa, pb, pc) = (
-        deploy_profile(&pool, &a, "Alice").await,
-        deploy_profile(&pool, &b, "Bob").await,
-        deploy_profile(&pool, &c, "Carol").await,
-    );
-    let upsert = |me: &str, action| {
-        let pctx = procedure_ctx(&ctx, me, rand_transport());
-        async move {
-            SocialServiceImpl
-                .upsert_friendship(
-                    UpsertFriendshipPayload {
-                        action: Some(action),
-                    },
-                    pctx,
-                )
-                .await
-                .unwrap()
-                .response
-                .unwrap()
-        }
-    };
-    let rows = |address: String| {
-        let pool = pool.clone();
-        async move {
-            sqlx::query_as::<_, (String, serde_json::Value)>(
-                "SELECT type, metadata FROM social.notifications WHERE address = $1 ORDER BY created_at",
-            )
-            .bind(address)
-            .fetch_all(&pool)
-            .await
-            .unwrap()
-        }
-    };
-    let party = |address: &str, name: &str, entity: &str| {
-        serde_json::json!({
-            "address": address,
-            "name": name,
-            "profileImageUrl": format!("https://peer.test/profile-images/entities/{entity}/face.png"),
-            "hasClaimedName": true,
-        })
-    };
-    let action_id = |a: &str, b: &str, action: &str| {
-        let pool = pool.clone();
-        let (a, b, action) = (a.to_string(), b.to_string(), action.to_string());
-        async move {
-            sqlx::query_scalar::<_, Uuid>(
-                "SELECT fa.id FROM social.friendship_actions fa JOIN social.friendships f ON f.id = fa.friendship_id \
-                 WHERE LEAST(f.address_requester, f.address_requested) = LEAST($1, $2) \
-                   AND GREATEST(f.address_requester, f.address_requested) = GREATEST($1, $2) AND fa.action = $3 \
-                 ORDER BY fa.timestamp DESC LIMIT 1",
-            )
-            .bind(a)
-            .bind(b)
-            .bind(action)
-            .fetch_one(&pool)
-            .await
-            .unwrap()
-        }
-    };
-
-    assert!(matches!(
-        upsert(&a, request_with(Some(&b), Some("hi bob"))).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    let request_id = action_id(&a, &b, "request").await;
-    assert_eq!(
-        rows(b.clone()).await,
-        vec![(
-            "social_service_friendship_request".to_string(),
-            serde_json::json!({
-                "requestId": request_id,
-                "sender": party(&a, "Alice", &pa),
-                "receiver": party(&b, "Bob", &pb),
-                "message": "hi bob",
-            })
-        )]
-    );
-    assert!(matches!(
-        upsert(&b, accept(&a)).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    let accept_id = action_id(&a, &b, "accept").await;
-    assert_eq!(
-        rows(a.clone()).await,
-        vec![(
-            "social_service_friendship_accepted".to_string(),
-            serde_json::json!({
-                "requestId": accept_id,
-                "sender": party(&b, "Bob", &pb),
-                "receiver": party(&a, "Alice", &pa),
-            })
-        )]
-    );
-    // delete, then request, cancel; request, reject: only the requests notify
-    assert!(matches!(
-        upsert(&a, delete(&b)).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    assert!(matches!(
-        upsert(&c, request(&a)).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    assert!(matches!(
-        upsert(&c, cancel(&a)).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    assert!(matches!(
-        upsert(&c, request(&a)).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    assert!(matches!(
-        upsert(&a, reject(&c)).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    let kinds = |rows: Vec<(String, serde_json::Value)>| -> Vec<String> {
-        rows.into_iter().map(|(kind, _)| kind).collect()
-    };
-    assert_eq!(
-        kinds(rows(a.clone()).await),
-        [
-            "social_service_friendship_accepted",
-            "social_service_friendship_request",
-            "social_service_friendship_request"
-        ]
-    );
-    assert_eq!(
-        kinds(rows(b.clone()).await),
-        ["social_service_friendship_request"]
-    );
-    assert!(rows(c.clone()).await.is_empty());
-
-    // a sender without a profile notifies no one (and the upsert fails)
-    drop_profile(&pool, &c, &pc).await;
-    let d = addr("fn4");
-    let pd = deploy_profile(&pool, &d, "Dave").await;
-    let fresh = profiled_ctx(db.clone(), Arc::new(FakeVoiceRooms::new(pool.clone())));
-    let answer = SocialServiceImpl
-        .upsert_friendship(
-            UpsertFriendshipPayload {
-                action: Some(request(&d)),
-            },
-            procedure_ctx(&fresh, &c, rand_transport()),
-        )
-        .await
-        .unwrap()
-        .response
-        .unwrap();
-    assert!(
-        matches!(
-            answer,
-            upsert_friendship_response::Response::InternalServerError(_)
-        ),
-        "{answer:?}"
-    );
-    assert!(rows(d.clone()).await.is_empty());
-
-    for (address, entity) in [(&a, &pa), (&b, &pb), (&d, &pd)] {
-        drop_profile(&pool, address, entity).await;
-        let _ = sqlx::query("DELETE FROM social.notifications WHERE address = $1")
-            .bind(address)
-            .execute(&pool)
-            .await;
-    }
-    for (x, y) in [(&a, &b), (&a, &c), (&c, &d)] {
-        cleanup_pair(&db, x, y).await;
-    }
 }
 
 /// With a profile source, a wallet without a profile is left out where
@@ -1211,7 +1033,8 @@ async fn a_wallet_without_a_profile_is_left_out_with_a_profile_source() {
     assert!(matches!(
         &*to_me.try_recv().unwrap(),
         SocialEvent::Friendship(FriendshipUpdate {
-            update: Some(friendship_update::Update::Cancel(_))
+            update: Some(friendship_update::Update::Cancel(_)),
+            ..
         })
     ));
 
@@ -1261,54 +1084,235 @@ async fn upsert_with(
         .unwrap()
 }
 
-/// Upstream `friendshipAcceptedUpdateHandler` (`src/logic/updates.ts`): an
-/// accept tells each party's connectivity stream that the other is ONLINE,
-/// when the other is online.
+/// Accepting changes the connectivity audience without another Pulse frame.
+/// Each recipient learns only about peers actually online in that snapshot.
 #[tokio::test]
-async fn accepting_tells_each_party_the_other_is_online() {
+async fn accept_announces_only_current_online_friends_without_topology_change() {
     let Some(rig) = Rig::new().await else {
         return;
     };
-    let (a, b, c) = (addr("ao1"), addr("ao2"), addr("ao3"));
-    rig.ctx
-        .topology()
-        .receive(&pulse_frame(vec![a.clone(), b.clone()]))
-        .unwrap();
-    let (mut to_a, mut to_b, mut to_c) = (rig.events(&a), rig.events(&b), rig.events(&c));
-    let online_friend = |events: Vec<Arc<SocialEvent>>| -> Vec<String> {
-        events
-            .iter()
-            .filter_map(|e| match &**e {
-                SocialEvent::FriendConnectivity(u)
-                    if u.status == ConnectivityStatus::Online as i32 =>
-                {
-                    u.friend.as_ref().map(|f| f.address.clone())
-                }
-                _ => None,
-            })
-            .collect()
+    for (a_online, b_online) in [(true, true), (true, false), (false, false)] {
+        let (a, b) = (addr("ac1"), addr("ac2"));
+        let wallets = [(&a, a_online), (&b, b_online)]
+            .into_iter()
+            .filter(|(_, online)| *online)
+            .map(|(wallet, _)| wallet.clone())
+            .collect();
+        rig.ctx.topology().receive(&pulse_frame(wallets)).unwrap();
+        let generation = rig.ctx.topology().snapshot().generation;
+        let mut to_a = rig.events(&a);
+        let mut to_b = rig.events(&b);
+        assert!(matches!(
+            rig.upsert(&a, request(&b)).await,
+            upsert_friendship_response::Response::Accepted(_)
+        ));
+        drained(&mut to_a);
+        drained(&mut to_b);
+        assert!(matches!(
+            rig.upsert(&b, accept(&a)).await,
+            upsert_friendship_response::Response::Accepted(_)
+        ));
+        assert_eq!(rig.ctx.topology().snapshot().generation, generation);
+        for (recipient, peer, online, receiver) in
+            [(&a, &b, b_online, &mut to_a), (&b, &a, a_online, &mut to_b)]
+        {
+            let connectivity: Vec<_> = drained(receiver)
+                .into_iter()
+                .filter_map(|event| match event.as_ref() {
+                    SocialEvent::TopologyFriendConnectivity(update, generation) => {
+                        Some((update.clone(), *generation))
+                    }
+                    _ => None,
+                })
+                .collect();
+            if online {
+                let [(update, event_generation)] = connectivity.as_slice() else {
+                    panic!("expected one connectivity update, got {connectivity:?}");
+                };
+                assert_eq!(update.friend.as_ref().unwrap().address, *peer);
+                assert_eq!(update.status, ConnectivityStatus::Online as i32);
+                assert_eq!(*event_generation, generation);
+                let guard = rig.ctx.friend_delivery_guard(
+                    recipient.clone(),
+                    peer.clone(),
+                    true,
+                    *event_generation,
+                );
+                assert!(guard().await.unwrap());
+                rig.db.block_user(recipient, peer).await.unwrap();
+                assert!(
+                    !guard().await.unwrap(),
+                    "queued accept cannot bypass a later block"
+                );
+                rig.db.unblock_user(recipient, peer).await.unwrap();
+            } else {
+                assert!(connectivity.is_empty(), "offline peer was announced online");
+            }
+        }
+        cleanup_pair(&rig.db, &a, &b).await;
+    }
+}
+
+async fn seed_notification_profile(pool: &PgPool, address: &str, name: &str) -> String {
+    let entity = format!("bafkreifriendship{}", Uuid::new_v4().simple());
+    let metadata = serde_json::json!({ "v": { "avatars": [{
+        "name": name,
+        "hasClaimedName": true,
+        "avatar": { "snapshots": { "face256": "bafkreiface" } },
+    }] } });
+    sqlx::query(
+        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
+         entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
+         VALUES ($1, 'v3', 'profile', $2, $3, now(), ARRAY[$1], now(), '[]'::json)",
+    )
+    .bind(address)
+    .bind(&entity)
+    .bind(metadata)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'profile')")
+        .bind(address).bind(&entity).execute(pool).await.unwrap();
+    entity
+}
+
+/// Repeated request cycles have distinct committed action IDs. Only requests
+/// and acceptance create inbox/outbox rows, with the processor's metadata.
+#[tokio::test]
+async fn friendship_notifications_use_action_ids_and_preserve_profile_metadata() {
+    let Some(pool) = scratch_pool().await else {
+        return;
     };
-    assert!(matches!(
-        rig.upsert(&a, request(&b)).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    assert!(matches!(
-        rig.upsert(&b, accept(&a)).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    assert_eq!(online_friend(drained(&mut to_a)), vec![b.clone()]);
-    assert_eq!(online_friend(drained(&mut to_b)), vec![a.clone()]);
-    // c is offline: c hears a is online, a hears nothing of c
-    assert!(matches!(
-        rig.upsert(&c, request(&a)).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    assert!(matches!(
-        rig.upsert(&a, accept(&c)).await,
-        upsert_friendship_response::Response::Accepted(_)
-    ));
-    assert!(online_friend(drained(&mut to_a)).is_empty());
-    assert_eq!(online_friend(drained(&mut to_c)), vec![a.clone()]);
+    let (a, b) = (addr("fn1"), addr("fn2"));
+    let a_entity = seed_notification_profile(&pool, &a, "Alice").await;
+    let b_entity = seed_notification_profile(&pool, &b, "Bob").await;
+    let db = Db::new(pool.clone());
+    let rig = Rig {
+        db: db.clone(),
+        ctx: Context::new(
+            VoiceSettings::default(),
+            db,
+            Profiles::new(
+                Some(pool.clone()),
+                crate::communities::profiles::FaceUrls::new(
+                    None,
+                    "https://example.test/profile-images",
+                    false,
+                ),
+            ),
+            Arc::new(FakeVoiceRooms::new(pool.clone())),
+        ),
+    };
+    let with_message =
+        upsert_friendship_payload::Action::Request(upsert_friendship_payload::RequestPayload {
+            user: user(&b),
+            message: Some("hello".into()),
+        });
+    for (actor, action) in [
+        (&a, with_message),
+        (&a, cancel(&b)),
+        (&a, request(&b)),
+        (&b, reject(&a)),
+        (&a, request(&b)),
+        (&b, accept(&a)),
+        (&a, delete(&b)),
+    ] {
+        assert!(matches!(
+            rig.upsert(actor, action).await,
+            upsert_friendship_response::Response::Accepted(_)
+        ));
+    }
+    let rows: Vec<(Uuid, String, String, serde_json::Value, String)> = sqlx::query_as(
+        "SELECT n.id, n.type, n.address, n.metadata, a.action \
+         FROM social.notifications n JOIN social.friendship_actions a ON a.id = n.id \
+         WHERE n.address IN ($1, $2) ORDER BY a.\"timestamp\", a.id",
+    )
+    .bind(&a)
+    .bind(&b)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(rows.len(), 4);
+    assert_eq!(rows.iter().filter(|row| row.4 == "request").count(), 3);
+    assert_eq!(rows.iter().filter(|row| row.4 == "accept").count(), 1);
+    let mut messages = Vec::new();
+    for (id, kind, address, metadata, action) in &rows {
+        assert_eq!(metadata["requestId"], id.to_string());
+        let (sender, receiver, name, image) = if action == "request" {
+            assert_eq!(kind, "social_service_friendship_request");
+            (&a, &b, "Alice", &a_entity)
+        } else {
+            assert_eq!(kind, "social_service_friendship_accepted");
+            assert!(metadata.get("message").is_none());
+            (&b, &a, "Bob", &b_entity)
+        };
+        assert_eq!(address, receiver);
+        assert_eq!(metadata["sender"]["address"], *sender);
+        assert_eq!(metadata["receiver"]["address"], *receiver);
+        assert_eq!(metadata["sender"]["name"], name);
+        assert_eq!(metadata["sender"]["hasClaimedName"], true);
+        assert_eq!(
+            metadata["sender"]["profileImageUrl"],
+            format!("https://example.test/profile-images/entities/{image}/face.png")
+        );
+        if let Some(message) = metadata.get("message") {
+            messages.push(message.clone());
+        }
+    }
+    assert_eq!(messages, [serde_json::json!("hello")]);
+    let deliveries: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.notification_deliveries d \
+         JOIN social.notifications n ON n.id=d.notification_id WHERE n.address IN ($1,$2)",
+    )
+    .bind(&a)
+    .bind(&b)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        deliveries, 4,
+        "each inbox row uses the existing delivery outbox"
+    );
+    sqlx::query("DELETE FROM social.notifications WHERE address IN ($1,$2)")
+        .bind(&a)
+        .bind(&b)
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (address, entity) in [(&a, a_entity), (&b, b_entity)] {
+        sqlx::query("DELETE FROM content.active_pointers WHERE pointer=$1")
+            .bind(address)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM content.deployments WHERE entity_id=$1")
+            .bind(entity)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
     cleanup_pair(&rig.db, &a, &b).await;
-    cleanup_pair(&rig.db, &a, &c).await;
+}
+
+#[tokio::test]
+async fn missing_profiles_skip_friendship_notifications_without_failing_the_action() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let (a, b) = (addr("np1"), addr("np2"));
+    for (actor, action) in [(&a, request(&b)), (&b, accept(&a))] {
+        assert!(matches!(
+            rig.upsert(actor, action).await,
+            upsert_friendship_response::Response::Accepted(_)
+        ));
+    }
+    let count: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE address IN ($1,$2)")
+            .bind(&a)
+            .bind(&b)
+            .fetch_one(rig.db.pool())
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+    cleanup_pair(&rig.db, &a, &b).await;
 }

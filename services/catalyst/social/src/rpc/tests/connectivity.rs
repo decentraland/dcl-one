@@ -29,6 +29,7 @@ async fn a_member_update_reaches_the_subscriber_only_when_current_and_co_member(
     .await;
     let update = |member: &str, status: ConnectivityStatus| {
         SocialEvent::CommunityMember(CommunityMemberConnectivityUpdate {
+            stream_closed: None,
             community_id: community.to_string(),
             member: Some(User {
                 address: member.to_string(),
@@ -156,6 +157,7 @@ async fn a_live_update_published_after_subscribing_follows_the_snapshot() {
     server.state.ctx.pubsub().publish(
         &alice,
         SocialEvent::FriendConnectivity(FriendConnectivityUpdate {
+            stream_closed: None,
             friend: Some(marked),
             status: ConnectivityStatus::Online as i32,
         }),

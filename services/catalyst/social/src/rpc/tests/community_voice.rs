@@ -1,7 +1,7 @@
 //! Community voice through the RPC handlers, the cases of upstream's
 //! `logic/community-voice.spec.ts` and the community-voice
 //! `rpc-server/services` specs (`decentraland/social-service-ea` at
-//! `fb3dcb8`) Catalyst implements but the start/join test does not reach:
+//! `b6b2cefefdf727b2ed47ddb887e77d226a41eea6`) Catalyst implements but the start/join test does not reach:
 //! who may end, mute, raise a hand, promote, demote, reject and kick, in a
 //! public and a private community, and what reaches the runtime.
 
@@ -179,6 +179,19 @@ impl Rig {
         let r = SocialServiceImpl
             .start_community_voice_chat(
                 StartCommunityVoiceChatPayload {
+                    community_id: self.cid.clone(),
+                },
+                self.as_(me),
+            )
+            .await
+            .unwrap();
+        variant(&r.response)
+    }
+
+    async fn join(&self, me: &str) -> String {
+        let r = SocialServiceImpl
+            .join_community_voice_chat(
+                JoinCommunityVoiceChatPayload {
                     community_id: self.cid.clone(),
                 },
                 self.as_(me),
@@ -659,13 +672,13 @@ async fn identifiers_and_missing_communities_answer_as_upstream() {
     rig.drop().await;
 }
 
-/// Upstream `validation.ts`: every gate reads the ban, since a ban is not
-/// guaranteed to clear the role row (`:92-95`, `:141-144`); a banned target
-/// is never promoted or demoted, in a public community too (`:207-209`),
-/// yet stays rejectable; anyone demotes themselves without the moderator
-/// gate (`moderation.ts:83-125`). The answers carry upstream's messages.
+/// The refusal and success messages of the ban gates and self-demotion, as
+/// upstream's `validation.ts` (`:92-95`, `:141-144`, `:207-209`) and
+/// `moderation.ts:83-125` word them; the gate matrix itself is
+/// `bans_override_retained_roles_without_preventing_revocation` and
+/// `speakers_can_demote_themselves_without_moderator_authority`.
 #[tokio::test]
-async fn bans_and_self_demotion_follow_upstream() {
+async fn ban_and_self_demotion_answers_carry_upstreams_messages() {
     let Some(rig) = Rig::new(false).await else {
         return;
     };
@@ -1085,5 +1098,127 @@ async fn a_room_closed_out_of_band_reaches_its_audience_as_ended() {
     directory.community_voice_room_closed(id).await;
     let seen = voice_updates(&mut to_member);
     assert_eq!(seen.len(), 2, "STARTED and one ENDED: {seen:?}");
+    rig.drop().await;
+}
+
+/// Participation admits public guests, rejects bans even without a membership
+/// row, and requires private membership, in a live room of an active
+/// community (upstream validation.ts:35-55).
+#[tokio::test]
+async fn joining_public_and_private_communities_respects_membership_and_bans() {
+    for private in [false, true] {
+        let Some(rig) = Rig::new(private).await else {
+            return;
+        };
+        assert_eq!(rig.start(&rig.owner).await, "Ok");
+        assert_eq!(rig.join(&rig.member).await, "Ok");
+        rig.voice.calls.lock().clear();
+        assert_eq!(
+            rig.join(&rig.guest).await,
+            if private { "ForbiddenError" } else { "Ok" }
+        );
+        if private {
+            assert!(rig.voice.calls.lock().is_empty());
+        } else {
+            assert!(rig.runtime_saw(&format!(
+                "community-credentials {} {} none join",
+                rig.community, rig.guest
+            )));
+        }
+        for retained_role in [false, true] {
+            if retained_role {
+                sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'member')")
+                    .bind(rig.community).bind(&rig.banned).execute(&rig.pool).await.unwrap();
+            }
+            rig.voice.calls.lock().clear();
+            assert_eq!(rig.join(&rig.banned).await, "ForbiddenError");
+            assert!(rig.voice.calls.lock().is_empty());
+        }
+        sqlx::query("UPDATE social.communities SET active = FALSE WHERE id = $1")
+            .bind(rig.community)
+            .execute(&rig.pool)
+            .await
+            .unwrap();
+        assert_eq!(rig.join(&rig.owner).await, "NotFoundError");
+        assert!(rig.voice.calls.lock().is_empty());
+        rig.drop().await;
+    }
+}
+
+/// Self-demotion gives up a grant: public guests, banned participants and
+/// ordinary members may do it, while private outsiders may not (upstream
+/// moderation.ts:83-127). It does not acquire a capability through participation.
+#[tokio::test]
+async fn speakers_can_demote_themselves_without_moderator_authority() {
+    for private in [false, true] {
+        let Some(rig) = Rig::new(private).await else {
+            return;
+        };
+        for me in [&rig.member, &rig.guest, &rig.banned] {
+            rig.voice.calls.lock().clear();
+            let allowed = !private || me == &rig.member;
+            assert_eq!(
+                rig.demote(me, &checksummed(me)).await,
+                if allowed { "Ok" } else { "ForbiddenError" }
+            );
+            assert_eq!(
+                rig.runtime_saw(&format!("set-speaker {} {me} false", rig.community)),
+                allowed
+            );
+            assert_eq!(rig.promote(me, me).await, "ForbiddenError");
+        }
+        rig.drop().await;
+    }
+}
+
+/// Bans win over a retained role for hosts and moderators. A banned target can
+/// still be denied a hand request, muted or removed, but receives no speaker
+/// grants (upstream validation.ts:92-95, 141-144, 205-211).
+#[tokio::test]
+async fn bans_override_retained_roles_without_preventing_revocation() {
+    let Some(rig) = Rig::new(false).await else {
+        return;
+    };
+    sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'member')")
+        .bind(rig.community).bind(&rig.banned).execute(&rig.pool).await.unwrap();
+    assert_eq!(
+        rig.promote(&rig.moderator, &rig.banned).await,
+        "ForbiddenError"
+    );
+    assert_eq!(
+        rig.demote(&rig.moderator, &rig.banned).await,
+        "ForbiddenError"
+    );
+    assert!(rig.voice.calls.lock().is_empty());
+    assert_eq!(rig.reject(&rig.moderator, &rig.banned).await, "Ok");
+    assert_eq!(rig.mute(&rig.moderator, &rig.banned, true).await, "Ok");
+    assert_eq!(rig.kick(&rig.moderator, &rig.banned).await, "Ok");
+
+    sqlx::query("INSERT INTO social.community_bans (community_id, banned_address, banned_by) VALUES ($1, $2, $3)")
+        .bind(rig.community).bind(&rig.moderator).bind(&rig.owner).execute(&rig.pool).await.unwrap();
+    rig.voice.calls.lock().clear();
+    assert_eq!(rig.start(&rig.moderator).await, "ForbiddenError");
+    assert_eq!(rig.end(&rig.moderator).await, "ForbiddenError");
+    assert_eq!(
+        rig.promote(&rig.moderator, &rig.member).await,
+        "ForbiddenError"
+    );
+    assert_eq!(
+        rig.demote(&rig.moderator, &rig.member).await,
+        "ForbiddenError"
+    );
+    assert_eq!(
+        rig.reject(&rig.moderator, &rig.member).await,
+        "ForbiddenError"
+    );
+    assert_eq!(
+        rig.mute(&rig.moderator, &rig.member, true).await,
+        "ForbiddenError"
+    );
+    assert_eq!(
+        rig.kick(&rig.moderator, &rig.member).await,
+        "ForbiddenError"
+    );
+    assert!(rig.voice.calls.lock().is_empty());
     rig.drop().await;
 }

@@ -54,48 +54,45 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<UpsertSocialSettingsResponse, SocialError> {
         let me = Self::caller(&context)?;
-        let invalid = |message: &str| UpsertSocialSettingsResponse {
-            response: Some(upsert_social_settings_response::Response::InvalidRequest(
-                invalid_req(message),
-            )),
-        };
-        // Upstream `upsert-social-settings.ts`, then `convertRPCSettingsIntoDBSettings`
-        // (`src/logic/settings/utils.ts`): a value outside the enum is refused,
-        // not read as its default.
-        if request.private_messages_privacy.is_none()
+        let invalid = if request.private_messages_privacy.is_none()
             && request.blocked_users_messages_visibility.is_none()
             && request.show_situation_reactions.is_none()
         {
-            return Ok(invalid("At least one setting to update must be provided"));
-        }
-        let pmp = match request
+            Some("At least one setting to update must be provided")
+        } else if request
             .private_messages_privacy
-            .map(PrivateMessagePrivacySetting::try_from)
+            .is_some_and(|value| PrivateMessagePrivacySetting::try_from(value).is_err())
         {
-            Some(Ok(v)) => Some(pmp_to_db(v)),
-            Some(Err(_)) => return Ok(invalid("Unknown private messages privacy setting")),
-            None => None,
-        };
-        let bvis = match request
+            Some("Unknown private messages privacy setting")
+        } else if request
             .blocked_users_messages_visibility
-            .map(BlockedUsersMessagesVisibilitySetting::try_from)
+            .is_some_and(|value| BlockedUsersMessagesVisibilitySetting::try_from(value).is_err())
         {
-            Some(Ok(v)) => Some(bvis_to_db(v)),
-            Some(Err(_)) => {
-                return Ok(invalid("Unknown blocked users messages visibility setting"));
-            }
-            None => None,
-        };
-        let sreact = match request
+            Some("Unknown blocked users messages visibility setting")
+        } else if request
             .show_situation_reactions
-            .map(SituationReactionsVisibility::try_from)
+            .is_some_and(|value| SituationReactionsVisibility::try_from(value).is_err())
         {
-            Some(Ok(v)) => Some(sreact_to_db(v)),
-            Some(Err(_)) => {
-                return Ok(invalid("Unknown situation reactions visibility setting"));
-            }
-            None => None,
+            Some("Unknown situation reactions visibility setting")
+        } else {
+            None
         };
+        if let Some(message) = invalid {
+            return Ok(UpsertSocialSettingsResponse {
+                response: Some(upsert_social_settings_response::Response::InvalidRequest(
+                    invalid_req(message),
+                )),
+            });
+        }
+        let pmp = request
+            .private_messages_privacy
+            .map(|_| pmp_to_db(request.private_messages_privacy()));
+        let bvis = request
+            .blocked_users_messages_visibility
+            .map(|_| bvis_to_db(request.blocked_users_messages_visibility()));
+        let sreact = request
+            .show_situation_reactions
+            .map(|_| sreact_to_db(request.show_situation_reactions()));
 
         match context
             .server_context

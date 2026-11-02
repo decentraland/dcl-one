@@ -602,7 +602,8 @@ impl Db {
     }
 
     /// Upserts the friendship row and appends the action in one statement
-    /// ([`record_friendship_action`] with a fresh action id).
+    /// ([`record_friendship_action`] with a fresh action id); answers the
+    /// friendship id, the action's time and its id.
     pub async fn apply_friendship_action(
         &self,
         acting_user: &str,
@@ -611,10 +612,11 @@ impl Db {
         is_active: bool,
         existing: Option<Uuid>,
         message: Option<&str>,
-    ) -> Result<(Uuid, DateTime<Utc>), DbError> {
-        record_friendship_action(
+    ) -> Result<(Uuid, DateTime<Utc>, Uuid), DbError> {
+        let action_id = Uuid::new_v4();
+        let (id, at) = record_friendship_action(
             &self.pool,
-            Uuid::new_v4(),
+            action_id,
             acting_user,
             other,
             action,
@@ -622,7 +624,8 @@ impl Db {
             existing,
             message,
         )
-        .await
+        .await?;
+        Ok((id, at, action_id))
     }
 
     pub async fn is_friendship_blocked(&self, a: &str, b: &str) -> Result<bool, DbError> {

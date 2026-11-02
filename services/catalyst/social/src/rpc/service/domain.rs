@@ -219,6 +219,7 @@ pub(super) fn friendship_update_for(
         }
     };
     FriendshipUpdate {
+        stream_closed: None,
         update: Some(update),
     }
 }

@@ -798,14 +798,23 @@ async fn transfer_ownership(
     // the old owner's row first: one owner row per community
     // (`community_members_owner_uidx`)
     for (member, role) in [(signer, "moderator"), (target, "owner")] {
-        try_resp!(map_db(
+        let updated = try_resp!(map_db(
             sqlx::query("UPDATE social.community_members SET role = $3 WHERE community_id = $1 AND member_address = $2")
                 .bind(uuid)
                 .bind(member)
                 .bind(role)
                 .execute(&mut *tx)
                 .await
-        ));
+        ))
+        .rows_affected();
+        if updated == 0 {
+            // the target left after the standing read; dropping `tx` rolls
+            // the owner change back
+            return CommError::not_authorized(format!(
+                "The target user {target} is not a member of community {uuid}"
+            ))
+            .into_response();
+        }
     }
     try_resp!(map_db(tx.commit().await));
     state

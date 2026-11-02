@@ -19,6 +19,7 @@ use crate::rpc::proto::v2::{CommunityVoiceChatStatus, ConnectivityStatus, User};
 pub fn community_voice_ended(community: Uuid) -> CommunityVoiceChatUpdate {
     let now = chrono::Utc::now().timestamp_millis();
     CommunityVoiceChatUpdate {
+        stream_closed: None,
         community_id: community.to_string(),
         created_at: now,
         status: CommunityVoiceChatStatus::CommunityVoiceChatEnded as i32,
@@ -149,6 +150,7 @@ impl PubSub {
             .filter(|address| *address != member)
             .collect();
         let update = CommunityMemberConnectivityUpdate {
+            stream_closed: None,
             community_id: community.to_string(),
             member: Some(User {
                 address: member.clone(),
@@ -179,6 +181,7 @@ impl PubSub {
             Ok(members) => {
                 for member in members {
                     let update = CommunityMemberConnectivityUpdate {
+                        stream_closed: None,
                         community_id: community.to_string(),
                         member: Some(User {
                             address: member.clone(),
@@ -295,6 +298,7 @@ mod tests {
         ps.publish(
             "0xABC",
             SocialEvent::CommunityMember(CommunityMemberConnectivityUpdate {
+                stream_closed: None,
                 community_id: "c".into(),
                 member: None,
                 status: 0,

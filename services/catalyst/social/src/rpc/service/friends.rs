@@ -9,6 +9,7 @@ use super::helpers::{
     page_friends, page_of, upsert_internal_error,
 };
 use crate::auth::is_eth_address;
+use crate::notifications::{NewNotification, insert_notifications};
 use crate::rpc::context::{Context, PairScope};
 use crate::rpc::db::record_friendship_action;
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
@@ -78,19 +79,49 @@ pub(crate) async fn apply_friendship_action(
         friendship_update_for(action, me, &id, created_ms, message, my_profile)
     })
     .await;
-    if matches!(action, Action::Request | Action::Accept) {
-        notify_friendship_action(ctx, action, action_id, me, other, message).await;
-    }
     if action == Action::Accept {
-        announce_new_friends_online(ctx, me, other).await;
+        announce_accepted_connectivity(ctx, me, other).await;
     }
+    notify_friendship_action(ctx, action, action_id, me, other, message).await;
     Ok((id, created_ms))
 }
 
-/// Upstream `sendNotification` / `notifyFriendshipAction`: the receiver's
-/// `social_service_friendship_request` or `_accepted` row, naming both
-/// parties; skipped when either has no profile, and a failed write is
-/// logged, as the action is already committed.
+/// An accept changes the recipients of connectivity even when the Pulse wallet
+/// set stays unchanged (upstream `friendshipAcceptedUpdateHandler`). Queue only
+/// current ONLINE peers; the stream's existing relationship and topology
+/// guards recheck them before delivery. A wallet the profile source holds no
+/// profile for is skipped, as upstream's live loop skips it.
+async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
+    let snapshot = ctx.topology().snapshot();
+    for (recipient, friend) in [(other, me), (me, other)] {
+        if !snapshot.is_online(friend) {
+            continue;
+        }
+        let Some(profile) = ctx.profiles().existing_friend_profile(friend).await else {
+            continue;
+        };
+        let friend = crate::rpc::profiles::connectivity_profile(profile);
+        let address = friend.address.clone();
+        ctx.topology()
+            .deliver_if_current(snapshot.generation, &address, true, || {
+                ctx.pubsub().publish(
+                    recipient,
+                    SocialEvent::TopologyFriendConnectivity(
+                        FriendConnectivityUpdate {
+                            stream_closed: None,
+                            friend: Some(friend),
+                            status: ConnectivityStatus::Online as i32,
+                        },
+                        snapshot.generation,
+                    ),
+                );
+            });
+    }
+}
+
+/// The request/accept notification is best effort after the action commits,
+/// like upstream's notification worker. Reuse its action UUID for deduplication
+/// and the existing inbox/email outbox; missing profiles never fail the action.
 async fn notify_friendship_action(
     ctx: &Context,
     action: Action,
@@ -100,60 +131,48 @@ async fn notify_friendship_action(
     message: Option<&str>,
 ) {
     let kind = match action {
-        Action::Request => crate::notifications::friendship::REQUEST,
-        _ => crate::notifications::friendship::ACCEPTED,
+        Action::Request => "social_service_friendship_request",
+        Action::Accept => "social_service_friendship_accepted",
+        _ => return,
     };
     let profiles = ctx
         .profiles()
         .get_profiles(&[me.to_string(), other.to_string()])
         .await;
     let (Some(sender), Some(receiver)) = (profiles.get(me), profiles.get(other)) else {
-        tracing::debug!(sender = %me, receiver = %other, "friendship notification skipped: a profile could not be resolved");
+        tracing::warn!(
+            action = action.as_str(),
+            "friendship notification skipped: profile unavailable"
+        );
         return;
     };
-    fn party<'a>(
-        address: &'a str,
-        info: &'a crate::rpc::profiles::ProfileInfo,
-    ) -> crate::notifications::friendship::Party<'a> {
-        crate::notifications::friendship::Party {
-            address,
-            name: &info.name,
-            profile_image_url: &info.profile_picture_url,
-            has_claimed_name: info.has_claimed_name,
-        }
-    }
-    if let Err(error) = crate::notifications::friendship::publish(
-        ctx.db().pool(),
-        kind,
-        action_id,
-        &party(me, sender),
-        &party(other, receiver),
-        message,
-    )
-    .await
+    let Ok(address) = crate::Address::parse(other) else {
+        return;
+    };
+    let profile_metadata = |address: &str, profile: &crate::rpc::profiles::ProfileInfo| {
+        serde_json::json!({
+            "address": address,
+            "name": profile.name,
+            "profileImageUrl": profile.profile_picture_url,
+            "hasClaimedName": profile.has_claimed_name,
+        })
+    };
+    let mut metadata = serde_json::json!({
+        "requestId": action_id.to_string(),
+        "sender": profile_metadata(me, sender),
+        "receiver": profile_metadata(other, receiver),
+    });
+    if action == Action::Request
+        && let Some(message) = message.filter(|m| !m.is_empty())
     {
-        tracing::warn!(%error, %kind, "friendship notification not written");
+        metadata["message"] = serde_json::json!(message);
     }
-}
-
-/// Upstream `friendshipAcceptedUpdateHandler` (`src/logic/updates.ts`): each
-/// party's connectivity stream hears that the other, now a friend, is
-/// ONLINE, when the other is online.
-async fn announce_new_friends_online(ctx: &Context, me: &str, other: &str) {
-    for (subscriber, friend) in [(other, me), (me, other)] {
-        if !ctx.is_online(friend) {
-            continue;
-        }
-        let Some(profile) = ctx.profiles().existing_friend_profile(friend).await else {
-            continue;
-        };
-        ctx.pubsub().publish(
-            subscriber,
-            SocialEvent::FriendConnectivity(FriendConnectivityUpdate {
-                friend: Some(crate::rpc::profiles::connectivity_profile(profile)),
-                status: ConnectivityStatus::Online as i32,
-            }),
-        );
+    let notification = NewNotification {
+        id: action_id,
+        ..NewNotification::now(address, kind, metadata)
+    };
+    if let Err(error) = insert_notifications(ctx.db().pool(), &[notification]).await {
+        tracing::warn!(%error, kind, "friendship notification not written");
     }
 }
 

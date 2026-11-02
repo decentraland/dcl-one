@@ -1,10 +1,71 @@
 //! Social settings through the RPC handlers, the cases of upstream's
 //! `get-social-settings`, `upsert-social-settings`,
 //! `get-private-messages-settings` and `logic/settings` specs
-//! (`decentraland/social-service-ea` at `fb3dcb8`): the defaults of a wallet
+//! (`decentraland/social-service-ea` at `b6b2cefefdf727b2ed47ddb887e77d226a41eea6`): the defaults of a wallet
 //! without a row, the round trip of every value, and the per-address reads.
 
 use super::*;
+
+/// Wire values must be checked before prost's enum getters can replace an unknown
+/// number with the default. A closed pool proves invalid requests never reach SQL.
+#[tokio::test]
+async fn settings_reject_empty_and_unknown_wire_values_before_storage() {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://localhost/unused")
+        .unwrap();
+    pool.close().await;
+    let ctx = test_ctx(
+        Db::new(pool),
+        Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
+    );
+    let me = addr("invalid");
+    let mut cases = vec![(
+        UpsertSocialSettingsPayload::default(),
+        "At least one setting to update must be provided",
+    )];
+    for value in [-1, 2, i32::MAX] {
+        cases.extend([
+            (
+                UpsertSocialSettingsPayload {
+                    private_messages_privacy: Some(value),
+                    show_situation_reactions: Some(SituationReactionsVisibility::Hide as i32),
+                    ..Default::default()
+                },
+                "Unknown private messages privacy setting",
+            ),
+            (
+                UpsertSocialSettingsPayload {
+                    blocked_users_messages_visibility: Some(value),
+                    ..Default::default()
+                },
+                "Unknown blocked users messages visibility setting",
+            ),
+            (
+                UpsertSocialSettingsPayload {
+                    show_situation_reactions: Some(value),
+                    ..Default::default()
+                },
+                "Unknown situation reactions visibility setting",
+            ),
+        ]);
+    }
+    for (request, message) in cases {
+        let request =
+            UpsertSocialSettingsPayload::decode(request.encode_to_vec().as_slice()).unwrap();
+        let response = SocialServiceImpl
+            .upsert_social_settings(request, procedure_ctx(&ctx, &me, 42))
+            .await
+            .unwrap();
+        let response =
+            UpsertSocialSettingsResponse::decode(response.encode_to_vec().as_slice()).unwrap();
+        match response.response {
+            Some(upsert_social_settings_response::Response::InvalidRequest(error)) => {
+                assert_eq!(error.message.as_deref(), Some(message));
+            }
+            other => panic!("{message}: {other:?}"),
+        }
+    }
+}
 
 fn settings(
     pmp: PrivateMessagePrivacySetting,
@@ -220,67 +281,4 @@ async fn private_message_settings_read_per_address_with_friendship() {
     }
     forget(&db, &strict).await;
     cleanup_pair(&db, &me, &friend).await;
-}
-
-/// Upstream `upsert-social-settings.ts` (`decentraland/social-service-ea` at
-/// `b6b2cef`, `:30-41`) and `convertRPCSettingsIntoDBSettings`
-/// (`src/logic/settings/utils.ts:116-143`): an empty payload and a value
-/// outside its enum answer `invalidRequest` with upstream's message, and
-/// nothing is written.
-#[tokio::test]
-async fn an_empty_or_unknown_settings_upsert_is_refused() {
-    let Some(pool) = scratch_pool().await else {
-        return;
-    };
-    let db = Db::new(pool.clone());
-    let ctx = test_ctx(db.clone(), Arc::new(FakeVoiceRooms::new(pool)));
-    let me = addr("ss9");
-    let refused = |payload: UpsertSocialSettingsPayload| {
-        let pctx = procedure_ctx(&ctx, &me, 43);
-        async move {
-            match SocialServiceImpl
-                .upsert_social_settings(payload, pctx)
-                .await
-                .unwrap()
-                .response
-            {
-                Some(upsert_social_settings_response::Response::InvalidRequest(e)) => {
-                    e.message.unwrap_or_default()
-                }
-                other => panic!("{other:?}"),
-            }
-        }
-    };
-    assert_eq!(
-        refused(UpsertSocialSettingsPayload::default()).await,
-        "At least one setting to update must be provided"
-    );
-    assert_eq!(
-        refused(UpsertSocialSettingsPayload {
-            private_messages_privacy: Some(7),
-            ..Default::default()
-        })
-        .await,
-        "Unknown private messages privacy setting"
-    );
-    assert_eq!(
-        refused(UpsertSocialSettingsPayload {
-            private_messages_privacy: Some(PrivateMessagePrivacySetting::All as i32),
-            blocked_users_messages_visibility: Some(9),
-            ..Default::default()
-        })
-        .await,
-        "Unknown blocked users messages visibility setting"
-    );
-    assert_eq!(
-        refused(UpsertSocialSettingsPayload {
-            show_situation_reactions: Some(-1),
-            ..Default::default()
-        })
-        .await,
-        "Unknown situation reactions visibility setting"
-    );
-    assert_eq!(row_count(&db, &me).await, 0, "nothing was written");
-    let (pmp, bvis, sreact) = DEFAULTS;
-    assert_eq!(read(&ctx, &me).await, settings(pmp, bvis, sreact));
 }

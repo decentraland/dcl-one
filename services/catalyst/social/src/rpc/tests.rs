@@ -44,6 +44,7 @@ mod settings;
 mod social_api;
 mod socket;
 mod stream;
+mod subscription_lifecycle;
 mod upstream_reads;
 mod voice_bugs;
 mod voice_runtime;
@@ -274,7 +275,7 @@ async fn friendship_action_outranks_a_block_row() {
     };
     let db = Db::new(pool);
     let (a, b) = (addr("fb09"), addr("fb0a"));
-    let (id, _) = db
+    let (id, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hi"))
         .await
         .unwrap();
@@ -310,7 +311,7 @@ async fn friendship_probe_reports_last_action_and_both_block_directions() {
     assert!(probe.blocked && !probe.blocked_by, "seen from B's side");
     db.unblock_user(&b, &a).await.unwrap();
 
-    let (id, _) = db
+    let (id, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hi"))
         .await
         .unwrap();
@@ -343,11 +344,11 @@ async fn apply_without_a_known_row_reuses_the_reversed_pair() {
     };
     let db = Db::new(pool);
     let (a, b) = (addr("fb0d"), addr("fb0e"));
-    let (first, _) = db
+    let (first, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, None)
         .await
         .unwrap();
-    let (second, _) = db
+    let (second, _, _) = db
         .apply_friendship_action(&b, &a, "accept", true, None, None)
         .await
         .expect("a racing insert on the reversed pair resolves to the same row");
@@ -400,7 +401,7 @@ async fn pending_requests_list_the_latest_request_with_its_message() {
     };
     let db = Db::new(pool);
     let (a, b, c) = (addr("fb0f"), addr("fb10"), addr("fb11"));
-    let (id_ab, _) = db
+    let (id_ab, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hello b"))
         .await
         .unwrap();
@@ -447,7 +448,7 @@ async fn block_and_unblock_return_the_latest_action_in_one_statement() {
         .expect("blocking twice is idempotent");
     assert_eq!(again_at, first_at, "a repeat keeps the first block time");
 
-    let (id, _) = db
+    let (id, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, None)
         .await
         .unwrap();
