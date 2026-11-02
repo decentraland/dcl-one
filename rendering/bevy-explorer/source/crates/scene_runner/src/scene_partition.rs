@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use bevy::prelude::*;
 use common::{
     partition::{scene_partition, LoadPriority, ScenePartitionData},
@@ -14,23 +12,24 @@ use crate::{initialize_scene::SceneHash, renderer_context::RendererSceneContext,
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ScenePartition(pub ScenePartitionData);
 
-/// A scene behind the camera is sent at most this often (unity-explorer's `behindFps = 1`).
-pub const BEHIND_SCENE_TICK_INTERVAL: Duration = Duration::from_secs(1);
+/// A scene behind the camera counts as this many times farther in the tick queue: it keeps
+/// ticking, and yields first when frame time runs short.
+pub const BEHIND_SCENE_TICK_PENALTY: f32 = 4.0;
 
-/// Where partitions are measured from: the rendering camera's position and forward, or
-/// the player's position and no forward (zero: nothing is behind) when nothing renders. The
-/// headless server has a stand-in `PrimaryCamera` without a `Camera` that never turns.
+/// Where partitions are measured from: distance from the player, facing from the rendering
+/// camera (a `PrimaryCamera` with a `Camera`). Without one, as on the headless server whose
+/// stand-in `PrimaryCamera` has no `Camera` and never turns, no facing is known and nothing is
+/// behind.
 pub fn sampling_transform(
     camera: &Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
     player: &Query<&GlobalTransform, With<PrimaryUser>>,
-) -> Option<(Vec3, Vec3)> {
-    if let Ok(camera) = camera.single() {
-        return Some((camera.translation(), camera.forward().as_vec3()));
-    }
-    player
+) -> Option<(Vec3, Option<(Vec3, Vec3)>)> {
+    let player = player.single().ok()?;
+    let camera = camera
         .single()
         .ok()
-        .map(|player| (player.translation(), Vec3::ZERO))
+        .map(|camera| (camera.translation(), camera.forward().as_vec3()));
+    Some((player.translation(), camera))
 }
 
 pub fn update_scene_partitions(
@@ -39,14 +38,14 @@ pub fn update_scene_partitions(
     mut scenes: Query<(Entity, &RendererSceneContext, Option<&mut ScenePartition>)>,
     mut commands: Commands,
 ) {
-    let Some((position, forward)) = sampling_transform(&camera, &player) else {
+    let Some((origin, camera)) = sampling_transform(&camera, &player) else {
         return;
     };
 
     for (entity, context, maybe_partition) in scenes.iter_mut() {
         let partition = ScenePartition(scene_partition(
-            position,
-            forward,
+            origin,
+            camera,
             context.parcels.iter().copied(),
         ));
         match maybe_partition {

@@ -1,8 +1,6 @@
 use bevy::ecs::system::RunSystemOnce;
-use common::structs::PrimaryCamera;
 
 use super::*;
-use crate::scene_partition::ScenePartition;
 
 fn lifecycle_world() -> World {
     let mut world = World::new();
@@ -10,21 +8,7 @@ fn lifecycle_world() -> World {
     world
 }
 
-fn lifecycle_world_with(scenes: &[(IVec2, &str)], camera_forward: Vec3) -> World {
-    let mut world = World::new();
-    setup_lifecycle_with(&mut world, scenes, camera_forward);
-    world
-}
-
 fn setup_lifecycle(world: &mut World) {
-    setup_lifecycle_with(
-        world,
-        &[(IVec2::ZERO, "current"), (IVec2::X, "neighbour")],
-        Vec3::X,
-    );
-}
-
-fn setup_lifecycle_with(world: &mut World, scenes: &[(IVec2, &str)], camera_forward: Vec3) {
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
     world.init_resource::<Events<LoadSceneEvent>>();
@@ -38,29 +22,21 @@ fn setup_lifecycle_with(world: &mut World, scenes: &[(IVec2, &str)], camera_forw
     });
 
     let mut pointers = ScenePointers::default();
-    for (parcel, hash) in scenes {
+    for (parcel, hash) in [(IVec2::ZERO, "current"), (IVec2::X, "neighbour")] {
         pointers.insert(
-            *parcel,
+            parcel,
             PointerResult::Exists {
-                hash: (*hash).to_owned(),
+                hash: hash.to_owned(),
                 urn: None,
             },
         );
     }
     world.insert_resource(pointers);
 
-    // stand in the middle of parcel (0,0), the camera at the same spot
-    let position = Vec3::new(8.0, 0.0, -8.0);
+    // stand in the middle of parcel (0,0)
     world.spawn((
         PrimaryUser::default(),
-        GlobalTransform::from_translation(position),
-    ));
-    world.spawn((
-        PrimaryCamera::default(),
-        Camera::default(),
-        GlobalTransform::from(
-            Transform::from_translation(position).looking_to(camera_forward, Vec3::Y),
-        ),
+        GlobalTransform::from_translation(Vec3::new(8.0, 0.0, -8.0)),
     ));
 }
 
@@ -211,80 +187,4 @@ fn empty_definition_is_kept_without_deferring_and_despawned_out_of_range() {
         .resource::<LiveScenes>()
         .scenes
         .contains_key("current"));
-}
-
-const EAST_WEST: [(IVec2, &str); 3] = [
-    (IVec2::ZERO, "current"),
-    (IVec2::X, "east"),
-    (IVec2::NEG_X, "west"),
-];
-
-#[test]
-fn spawns_in_front_before_behind() {
-    let mut world = lifecycle_world_with(&EAST_WEST, Vec3::X);
-    spawn_current_scene(&mut world, SceneLoading::Failed);
-
-    world.run_system_once(process_scene_lifecycle).unwrap();
-
-    assert_eq!(
-        spawned_hashes(&world),
-        vec!["east".to_owned(), "west".to_owned()]
-    );
-}
-
-#[test]
-fn turning_the_camera_swaps_the_order() {
-    let mut world = lifecycle_world_with(&EAST_WEST, Vec3::NEG_X);
-    spawn_current_scene(&mut world, SceneLoading::Failed);
-
-    world.run_system_once(process_scene_lifecycle).unwrap();
-
-    assert_eq!(
-        spawned_hashes(&world),
-        vec!["west".to_owned(), "east".to_owned()]
-    );
-}
-
-#[test]
-fn nearer_scenes_spawn_first() {
-    let mut world = lifecycle_world_with(
-        &[
-            (IVec2::ZERO, "current"),
-            (IVec2::X, "near"),
-            (IVec2::new(3, 0), "far"),
-        ],
-        Vec3::X,
-    );
-    world.insert_resource(SceneLoadDistance {
-        load: 60.0,
-        unload: 10.0,
-        load_imposter: 0.0,
-    });
-    spawn_current_scene(&mut world, SceneLoading::Failed);
-
-    world.run_system_once(process_scene_lifecycle).unwrap();
-
-    assert_eq!(
-        spawned_hashes(&world),
-        vec!["near".to_owned(), "far".to_owned()]
-    );
-}
-
-#[test]
-fn a_spawned_scene_carries_its_partition() {
-    let mut world = lifecycle_world_with(&EAST_WEST, Vec3::X);
-    spawn_current_scene(&mut world, SceneLoading::Failed);
-
-    world.run_system_once(process_scene_lifecycle).unwrap();
-
-    let live = world.resource::<LiveScenes>().scenes.clone();
-    for (hash, entity) in &live {
-        assert!(
-            world.get::<ScenePartition>(*entity).is_some(),
-            "{hash} has no partition"
-        );
-    }
-    let east = world.get::<ScenePartition>(live["east"]).unwrap().0;
-    assert_eq!(east.parcel_distance, 1);
-    assert!(!east.is_behind);
 }

@@ -29,15 +29,17 @@ fn world_with_player(camera_forward: Option<Vec3>) -> World {
         GlobalTransform::from_translation(PLAYER_POS),
     ));
     if let Some(forward) = camera_forward {
-        world.spawn((
-            PrimaryCamera::default(),
-            Camera::default(),
-            GlobalTransform::from(
-                Transform::from_translation(PLAYER_POS).looking_to(forward, Vec3::Y),
-            ),
-        ));
+        spawn_rendering_camera(&mut world, PLAYER_POS, forward);
     }
     world
+}
+
+fn spawn_rendering_camera(world: &mut World, position: Vec3, forward: Vec3) {
+    world.spawn((
+        PrimaryCamera::default(),
+        Camera::default(),
+        GlobalTransform::from(Transform::from_translation(position).looking_to(forward, Vec3::Y)),
+    ));
 }
 
 fn scene_with_parcels(world: &mut World, parcels: &[IVec2]) -> Entity {
@@ -76,6 +78,23 @@ fn partitions_a_live_scene_to_its_nearest_parcel() {
     assert_eq!(partition.sqr_distance, 576.0);
     assert_eq!(partition.parcel_distance, 2);
     assert!(!partition.is_behind);
+}
+
+#[test]
+fn distance_from_the_player_facing_from_the_camera() {
+    // third person near a boundary: the camera sits two parcels east of the player, looking away
+    let mut world = world_with_player(None);
+    spawn_rendering_camera(&mut world, Vec3::new(40.0, 0.0, -8.0), Vec3::X);
+    let scene = scene_with_parcels(&mut world, &[IVec2::ZERO]);
+
+    world.run_system_once(update_scene_partitions).unwrap();
+
+    let partition = world.get::<ScenePartition>(scene).unwrap().0;
+    assert_eq!(
+        partition.sqr_distance, 0.0,
+        "measured from the player, who stands on it"
+    );
+    assert!(partition.is_behind, "every corner is behind the camera");
 }
 
 #[test]

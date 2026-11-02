@@ -6,10 +6,15 @@ use super::*;
 const CENTRE: Vec3 = Vec3::new(8.0, 1.5, -8.0);
 const EAST: Vec3 = Vec3::X;
 
+/// A camera at `position` looking along `forward`.
+fn camera(position: Vec3, forward: Vec3) -> Option<(Vec3, Vec3)> {
+    Some((position, forward))
+}
+
 #[test]
-fn camera_over_the_scene_is_distance_zero() {
+fn origin_over_the_scene_is_distance_zero() {
     assert_eq!(
-        scene_partition(CENTRE, EAST, [IVec2::ZERO]),
+        scene_partition(CENTRE, camera(CENTRE, EAST), [IVec2::ZERO]),
         ScenePartitionData {
             sqr_distance: 0.0,
             parcel_distance: 0,
@@ -20,7 +25,8 @@ fn camera_over_the_scene_is_distance_zero() {
 
 #[test]
 fn distance_is_to_the_nearest_edge_not_the_corner() {
-    let partition = scene_partition(Vec3::new(-4.0, 0.0, -8.0), EAST, [IVec2::ZERO]);
+    let origin = Vec3::new(-4.0, 0.0, -8.0);
+    let partition = scene_partition(origin, camera(origin, EAST), [IVec2::ZERO]);
     // the corner would be 4² + 8² = 80
     assert_eq!(partition.sqr_distance, 16.0);
     assert_eq!(partition.parcel_distance, 1);
@@ -28,8 +34,9 @@ fn distance_is_to_the_nearest_edge_not_the_corner() {
 }
 
 #[test]
-fn behind_when_every_corner_is_behind() {
-    let partition = scene_partition(Vec3::new(40.0, 0.0, -8.0), EAST, [IVec2::ZERO]);
+fn behind_when_every_corner_is_behind_the_camera() {
+    let origin = Vec3::new(40.0, 0.0, -8.0);
+    let partition = scene_partition(origin, camera(origin, EAST), [IVec2::ZERO]);
     assert!(partition.is_behind);
     assert_eq!(partition.sqr_distance, 576.0);
     assert_eq!(partition.parcel_distance, 2);
@@ -37,16 +44,31 @@ fn behind_when_every_corner_is_behind() {
 
 #[test]
 fn in_front_when_one_corner_is_in_front() {
-    let partition = scene_partition(Vec3::new(12.0, 0.0, -8.0), EAST, [IVec2::ZERO]);
+    let origin = Vec3::new(12.0, 0.0, -8.0);
+    let partition = scene_partition(origin, camera(origin, EAST), [IVec2::ZERO]);
     assert!(!partition.is_behind);
     assert_eq!(partition.sqr_distance, 0.0);
 }
 
 #[test]
-fn the_nearest_parcel_of_a_scene_wins() {
+fn distance_from_the_origin_facing_from_the_camera() {
+    // the player stands on the parcel while a third-person camera 32 m east looks away from it
     let partition = scene_partition(
-        Vec3::new(90.0, 0.0, -8.0),
-        Vec3::NEG_X,
+        CENTRE,
+        camera(Vec3::new(40.0, 0.0, -8.0), EAST),
+        [IVec2::ZERO],
+    );
+    assert_eq!(partition.sqr_distance, 0.0);
+    assert_eq!(partition.parcel_distance, 0);
+    assert!(partition.is_behind);
+}
+
+#[test]
+fn the_nearest_parcel_of_a_scene_wins() {
+    let origin = Vec3::new(90.0, 0.0, -8.0);
+    let partition = scene_partition(
+        origin,
+        camera(origin, Vec3::NEG_X),
         [IVec2::ZERO, IVec2::new(5, 0)],
     );
     assert_eq!(partition.sqr_distance, 0.0);
@@ -56,7 +78,7 @@ fn the_nearest_parcel_of_a_scene_wins() {
 
 #[test]
 fn parcel_distance_is_chebyshev() {
-    let distance = |parcel| scene_partition(CENTRE, EAST, [parcel]).parcel_distance;
+    let distance = |parcel| scene_partition(CENTRE, camera(CENTRE, EAST), [parcel]).parcel_distance;
     assert_eq!(distance(IVec2::new(3, 2)), 3);
     assert_eq!(distance(IVec2::new(-2, 2)), 2);
     // parcel y grows toward -z: (0, -3) is three parcels south
@@ -64,9 +86,9 @@ fn parcel_distance_is_chebyshev() {
 }
 
 #[test]
-fn no_forward_means_nothing_is_behind() {
-    // the same camera as `behind_when_every_corner_is_behind`, but no facing is known
-    let partition = scene_partition(Vec3::new(40.0, 0.0, -8.0), Vec3::ZERO, [IVec2::ZERO]);
+fn no_camera_means_nothing_is_behind() {
+    // the same geometry as `behind_when_every_corner_is_behind_the_camera`, with no camera
+    let partition = scene_partition(Vec3::new(40.0, 0.0, -8.0), None, [IVec2::ZERO]);
     assert!(!partition.is_behind);
     assert_eq!(partition.sqr_distance, 576.0);
 }
@@ -74,7 +96,7 @@ fn no_forward_means_nothing_is_behind() {
 #[test]
 fn no_parcels_is_nearest_and_in_front() {
     assert_eq!(
-        scene_partition(CENTRE, EAST, []),
+        scene_partition(CENTRE, camera(CENTRE, EAST), []),
         ScenePartitionData::NEAREST
     );
 }

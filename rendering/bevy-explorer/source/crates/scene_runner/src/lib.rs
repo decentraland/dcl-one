@@ -55,7 +55,7 @@ use crate::{
     initialize_scene::SuperUserScene,
     scene_partition::{
         publish_download_priorities, update_scene_partitions, ScenePartition,
-        BEHIND_SCENE_TICK_INTERVAL,
+        BEHIND_SCENE_TICK_PENALTY,
     },
 };
 use common::partition::ScenePartitionData;
@@ -597,7 +597,7 @@ fn update_scene_priority(
             }
             allow
         })
-        .filter_map(|(ent, maybe_partition, mut context, maybe_super)| {
+        .filter_map(|(ent, maybe_partition, mut context, _)| {
             let partition = maybe_partition.map_or(ScenePartitionData::NEAREST, |p| p.0);
             let active = active_scenes.contains(&ent);
             context.priority = if active { 0.0 } else { partition.sqr_distance };
@@ -611,9 +611,8 @@ fn update_scene_priority(
                 return None;
             }
             let age = time.elapsed_secs_f64() - context.last_sent;
-            let key = scene_tick_key(partition, active, maybe_super.is_some(), age)?;
             updates.eligible_jobs += 1;
-            Some((ent, key))
+            Some((ent, scene_tick_key(partition, active, age)))
         })
         .collect();
     updates.skipped_in_flight += skipped_in_flight;
@@ -628,23 +627,19 @@ fn update_scene_priority(
 }
 
 /// The queue key of a scene due this frame: its distance over the time since it was last
-/// sent, 0 for the player's scenes. `None` while a scene behind the camera waits out
-/// `BEHIND_SCENE_TICK_INTERVAL`; the player's and system scenes are never held back.
-fn scene_tick_key(
-    partition: ScenePartitionData,
-    active: bool,
-    super_user: bool,
-    age: f64,
-) -> Option<FloatOrd> {
-    if partition.is_behind
-        && !active
-        && !super_user
-        && age < BEHIND_SCENE_TICK_INTERVAL.as_secs_f64()
-    {
-        return None;
+/// sent, 0 for the player's scenes. A scene behind the camera counts as
+/// `BEHIND_SCENE_TICK_PENALTY` times farther: it still ticks, and yields first when frame time
+/// runs short.
+fn scene_tick_key(partition: ScenePartitionData, active: bool, age: f64) -> FloatOrd {
+    if active {
+        return FloatOrd(0.0);
     }
-    let distance = if active { 0.0 } else { partition.sqr_distance };
-    Some(FloatOrd(distance / age as f32))
+    let penalty = if partition.is_behind {
+        BEHIND_SCENE_TICK_PENALTY
+    } else {
+        1.0
+    };
+    FloatOrd(partition.sqr_distance / age as f32 * penalty)
 }
 
 // TODO: work out how to set this intelligently

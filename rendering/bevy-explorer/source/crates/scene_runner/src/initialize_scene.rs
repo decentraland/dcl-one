@@ -43,7 +43,6 @@ use scene_material::{BoundRegion, SceneBounds};
 use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
 
 use super::{update_world::CrdtExtractors, LoadSceneEvent, PrimaryUser, SceneSets, SceneUpdates};
-use crate::scene_partition::{sampling_transform, ScenePartition};
 use crate::{
     bounds_calc::scene_regions,
     parcel_to_vec3,
@@ -55,8 +54,6 @@ use crate::{
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
     SceneEntity, SceneThreadHandle,
 };
-use common::partition::scene_partition;
-use common::structs::PrimaryCamera;
 
 #[cfg(not(target_arch = "wasm32"))]
 use dcl_deno_ipc::spawn_scene;
@@ -446,7 +443,7 @@ pub(crate) fn load_scene_javascript(
         let scene_origin = Vec3::new(initial_position.x, 0.0, initial_position.y);
         let crdt_context = crdt_contexts.for_scene_hash(&definition.id);
         let Ok(global_scene) = global_scenes.get(crdt_context) else {
-            // context spawned this frame and not yet flushed — retry next frame
+            // context spawned this frame and not yet flushed â€” retry next frame
             debug!("{root:?} waiting for crdt context");
             continue;
         };
@@ -756,8 +753,8 @@ pub(crate) fn initialize_scene(
         // reaches the target after a scene update; the first two updates are the
         // engine handshake (init + onStart/composite instancing, no scene frame),
         // and the third is the first real scene update that runs main() + one system
-        // pass — so SCENE_FIRST_UPDATE_TICK lands on "main ran, one frame". Super
-        // scenes (the editor agent) and startup portables (the default controller —
+        // pass â€” so SCENE_FIRST_UPDATE_TICK lands on "main ran, one frame". Super
+        // scenes (the editor agent) and startup portables (the default controller â€”
         // parent_scene is None) are exempt: they aren't the scene being edited and must keep
         // ticking. Portables spawned BY a scene still freeze with it.
         let startup_portable = context.is_portable
@@ -1578,7 +1575,6 @@ pub fn process_scene_lifecycle(
     mut commands: Commands,
     portables: Res<PortableScenes>,
     focus: Query<&GlobalTransform, With<PrimaryUser>>,
-    camera: Query<&GlobalTransform, (With<PrimaryCamera>, With<Camera>)>,
     scene_entities: Query<
         (
             Entity,
@@ -1599,11 +1595,6 @@ pub fn process_scene_lifecycle(
     startup_scenes: Option<Res<StartupScenes>>,
 ) {
     let mut required_scene_ids: HashMap<(String, Option<String>), bool> = HashMap::new();
-
-    // partitions are measured from the camera, or the player when there is none (headless)
-    let Some((camera_position, camera_forward)) = sampling_transform(&camera, &focus) else {
-        return;
-    };
 
     // add nearby scenes to requirements
     let Ok(focus) = focus.single() else {
@@ -1641,17 +1632,6 @@ pub fn process_scene_lifecycle(
         pointers.min(),
         pointers.max(),
     );
-
-    // each scene's parcels in range: its partition until it has a context of its own
-    let mut parcels_by_hash: HashMap<String, Vec<IVec2>> = HashMap::new();
-    for (parcel, _) in &pir {
-        if let Some(PointerResult::Exists { hash, .. }) = pointers.get(parcel) {
-            parcels_by_hash
-                .entry(hash.clone())
-                .or_default()
-                .push(*parcel);
-        }
-    }
 
     required_scene_ids.extend(
         pir.iter()
@@ -1718,18 +1698,6 @@ pub fn process_scene_lifecycle(
         match keep_entities.get(&entity) {
             Some((hash, _)) => {
                 existing_ids.insert(*hash);
-                // no context yet, so the partition comes from the pointers
-                if maybe_ctx.is_none() {
-                    if let Some(parcels) = parcels_by_hash.get(&scene_hash.0) {
-                        if let Ok(mut commands) = commands.get_entity(entity) {
-                            commands.try_insert(ScenePartition(scene_partition(
-                                camera_position,
-                                camera_forward,
-                                parcels.iter().copied(),
-                            )));
-                        }
-                    }
-                }
             }
             None => {
                 if let Ok(mut commands) = commands.get_entity(entity) {
@@ -1793,15 +1761,15 @@ pub fn process_scene_lifecycle(
     }
 
     let mut defer_to_current_scene = false;
-    if let Some(current_scene) = current_scene.as_ref() {
-        if required_scene_ids.contains_key(current_scene)
+    if let Some(current_scene) = current_scene {
+        if required_scene_ids.contains_key(&current_scene)
             && (!existing_ids.contains(&current_scene.0) || current_scene_loading)
         {
             defer_to_current_scene = true;
             // if the current scene is not even spawned, spawn only that scene
             // (plus super-user scenes and portables, which are exempt).
             required_scene_ids.retain(|scene, super_user| {
-                *super_user || scene == current_scene || portable_ids.contains(scene)
+                *super_user || scene == &current_scene || portable_ids.contains(scene)
             });
         }
     }
@@ -1813,53 +1781,18 @@ pub fn process_scene_lifecycle(
         return;
     }
 
-    // spawn any newly required scenes, in unity-explorer's loading order: in front of the
-    // camera before behind, the player's scene first, then the nearest first
-    let mut to_spawn: Vec<_> = required_scene_ids
+    // spawn any newly required scenes
+    for ((required_scene_hash, maybe_urn), super_user) in required_scene_ids
         .iter()
         .filter(|((hash, _), _)| !existing_ids.contains(hash))
-        .map(|(scene, super_user)| {
-            let parcels = parcels_by_hash
-                .get(&scene.0)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
-            let partition =
-                scene_partition(camera_position, camera_forward, parcels.iter().copied());
-            let player_inside = current_scene.as_ref() == Some(scene);
-            let first_parcel = parcels
-                .iter()
-                .map(|parcel| (parcel.x, parcel.y))
-                .min()
-                .unwrap_or((i32::MAX, i32::MAX));
-            let key = (
-                partition.is_behind,
-                !player_inside,
-                FloatOrd(partition.sqr_distance),
-                first_parcel,
-            );
-            (key, scene, *super_user, partition)
-        })
-        .collect();
-    to_spawn.sort_by_key(|(key, ..)| *key);
-
-    for (_, (required_scene_hash, maybe_urn), super_user, partition) in to_spawn {
+    {
         let entity = commands
             .spawn((
                 SceneHash(required_scene_hash.clone()),
                 SceneLoading::SceneSpawned,
-                ScenePartition(partition),
             ))
             .id();
-        info!(
-            "spawning scene {:?} (parcel distance {}, {}): {entity:?}",
-            required_scene_hash,
-            partition.parcel_distance,
-            if partition.is_behind {
-                "behind"
-            } else {
-                "in front"
-            }
-        );
+        info!("spawning scene {:?} @ ??: {entity:?}", required_scene_hash);
         live_scenes
             .scenes
             .insert(required_scene_hash.clone(), entity);
@@ -1869,7 +1802,7 @@ pub fn process_scene_lifecycle(
                 Some(urn) => SceneIpfsLocation::Urn(urn.to_owned()),
                 None => SceneIpfsLocation::Hash(required_scene_hash.to_owned()),
             },
-            super_user,
+            super_user: *super_user,
         });
     }
 }

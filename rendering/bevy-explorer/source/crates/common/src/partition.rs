@@ -58,23 +58,24 @@ impl LoadPriority {
     };
 }
 
-/// `camera_pos` and `camera_forward` in world space; parcel y grows toward -z. A zero
-/// `camera_forward` means no facing is known (no rendering camera), and nothing is behind.
+/// `origin` is where distance is measured from (the player); `camera` is the position and
+/// forward the behind test uses (the rendering camera), or `None` when nothing renders, and
+/// then nothing is behind. World space; parcel y grows toward -z.
 pub fn scene_partition(
-    camera_pos: Vec3,
-    camera_forward: Vec3,
+    origin: Vec3,
+    camera: Option<(Vec3, Vec3)>,
     parcels: impl IntoIterator<Item = IVec2>,
 ) -> ScenePartitionData {
     // parcel space: x east, y north, parcel `p` spans [p * 16, (p + 1) * 16)
     let flip = Vec2::new(1.0, -1.0);
-    let camera = camera_pos.xz() * flip;
-    let forward = camera_forward.xz() * flip;
-    let camera_parcel = (camera / PARCEL_SIZE).floor().as_ivec2();
+    let origin = origin.xz() * flip;
+    let origin_parcel = (origin / PARCEL_SIZE).floor().as_ivec2();
+    let camera = camera.map(|(position, forward)| (position.xz() * flip, forward.xz() * flip));
 
     let mut partition = ScenePartitionData {
         sqr_distance: f32::MAX,
         parcel_distance: u16::MAX,
-        is_behind: true,
+        is_behind: camera.is_some(),
     };
     let mut any = false;
 
@@ -83,21 +84,23 @@ pub fn scene_partition(
         let min = parcel.as_vec2() * PARCEL_SIZE;
         let max = (parcel + 1).as_vec2() * PARCEL_SIZE;
 
-        let nearest = camera.clamp(min, max);
+        let nearest = origin.clamp(min, max);
         partition.sqr_distance = partition
             .sqr_distance
-            .min((nearest - camera).length_squared());
+            .min((nearest - origin).length_squared());
 
-        let parcel_distance = (parcel - camera_parcel).abs().max_element();
+        let parcel_distance = (parcel - origin_parcel).abs().max_element();
         partition.parcel_distance = partition
             .parcel_distance
             .min(parcel_distance.min(u16::MAX as i32) as u16);
 
-        if partition.is_behind {
-            let corners = [min, Vec2::new(min.x, max.y), Vec2::new(max.x, min.y), max];
-            partition.is_behind = corners
-                .iter()
-                .all(|corner| forward.dot(*corner - camera) < 0.0);
+        if let Some((camera, forward)) = camera {
+            if partition.is_behind {
+                let corners = [min, Vec2::new(min.x, max.y), Vec2::new(max.x, min.y), max];
+                partition.is_behind = corners
+                    .iter()
+                    .all(|corner| forward.dot(*corner - camera) < 0.0);
+            }
         }
     }
 
