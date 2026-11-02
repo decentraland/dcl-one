@@ -8,6 +8,7 @@
 // cancels; the buyer bids, cancels and bids again; the seller accepts (the buyer now owns the token);
 // the buyer lists it and the seller buys it back with MANA through the cart.
 import { mkdirSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createPublicClient, erc721Abi, erc20Abi, formatEther, http, parseEther, type Hex } from "viem";
 import { generatePrivateKey } from "viem/accounts";
 import { polygonAmoy } from "viem/chains";
@@ -18,14 +19,29 @@ import { answer, DEFAULT_RPC, keyFrom, PAGE_PROVIDER, testnetWallet, type Testne
 
 const AMOY_MANA = "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0" as const;
 const RELAYED = 4 * 60_000; // a relayed or mined step: signature, relay, inclusion, the Shop's indexing
-const OUT = new URL("../../state/shop-trade-journey/", import.meta.url).pathname;
+const OUT = fileURLToPath(new URL("../../state/shop-trade-journey/", import.meta.url));
+// The Decentraland contracts on Amoy a trade sends transactions to (the bundled contract-addresses list,
+// services/catalyst/shop/src/evm/addresses.json under `amoy`), plus the token's own collection.
+const AMOY_TRADE_CONTRACTS = [
+  AMOY_MANA,
+  "0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0", // MarketplaceV2
+  "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d", // MarketplaceV3 (off-chain trades)
+  "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7", // MarketplaceV4
+  "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d", // ERC721Bid
+  "0xe36abc9ec616c83caaa386541380829106149d68", // CollectionStore
+];
 
 const env = journeyEnv();
 const preflightOnly = process.argv.includes("--preflight");
 const sites = (env.E2E_SITES_URL ?? env.FOUNDATION_DEV_SITES_URL ?? "").replace(/\/$/, "");
 if (!sites) throw new Error("Set E2E_SITES_URL, or run under eval \"$(foundation-dev env)\" so FOUNDATION_DEV_SITES_URL names the stack");
-if (env.FOUNDATION_DEV_STACK_PROFILE && env.FOUNDATION_DEV_STACK_PROFILE !== "testnet") {
-  throw new Error(`The stack runs the ${env.FOUNDATION_DEV_STACK_PROFILE} profile; the journey needs a testnet stack (README)`);
+// Trades signed here are written to the stack's database, so it must be a testnet stack's.
+if (env.FOUNDATION_DEV_STACK_PROFILE !== "testnet") {
+  throw new Error(
+    env.FOUNDATION_DEV_STACK_PROFILE
+      ? `The stack runs the ${env.FOUNDATION_DEV_STACK_PROFILE} profile; the journey needs a testnet stack (README)`
+      : "FOUNDATION_DEV_STACK_PROFILE is not set: run under set -a; eval \"$(foundation-dev env)\"; set +a (README)",
+  );
 }
 const price = env.E2E_PRICE ?? "1";
 const repriced = env.E2E_REPRICE ?? "2";
@@ -36,10 +52,11 @@ type Actor = { name: string; wallet: TestnetWallet; context: BrowserContext; pag
 type Step = { name: string; ok: boolean; ms: number; detail?: string; tx: Hex[] };
 const steps: Step[] = [];
 
-async function actor(browser: Browser, name: string, key: Hex): Promise<Actor> {
-  const wallet = testnetWallet({ key, chainId: polygonAmoy.id });
+async function actor(browser: Browser, name: string, key: Hex, allowedTo: string[]): Promise<Actor> {
+  const wallet = testnetWallet({ key, chainId: polygonAmoy.id, allowedTo });
+  // No __SHOP_CHAIN__ override: the Shop settles on whatever the profile's VITE_SHOP_CHAIN_ID built it
+  // for, and the wallet refuses Polygon, so a stack not wired for Amoy fails at its first signature.
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
-  await context.addInitScript(`window.__SHOP_CHAIN__ = { settlementChainId: ${polygonAmoy.id} };`);
   // Only the Shop's own top-level page may reach the wallet: no iframe, no other origin.
   await context.exposeBinding("__e2eWallet", (source, req: { method: string; params?: unknown[] }) => {
     if (source.frame !== source.page.mainFrame() || new URL(source.frame.url()).origin !== new URL(sites).origin) {
@@ -89,10 +106,11 @@ async function confirm(page: Page, amount: string): Promise<void> {
   await page.getByRole("button", { name: "Proceed" }).click();
 }
 
-async function list(a: Actor, t: { contract: string; tokenId: string }, amount: string): Promise<string> {
+async function list(a: Actor, t: { contract: string; tokenId: string }, amount: string, mode: "new" | "update"): Promise<string> {
   await a.page.goto(`${tokenPath(t)}/sell`);
   await a.page.getByLabel("Price").fill(amount);
-  await a.page.getByRole("button", { name: /^(List for sale|Update)$/ }).click();
+  // An update must replace the listing: a second "List for sale" would leave the first signature live.
+  await a.page.getByRole("button", { name: mode === "update" ? "Update" : "List for sale", exact: true }).click({ timeout: 60_000 });
   await confirm(a.page, amount);
   const done = a.page.getByTestId("shop-sell-done");
   await done.waitFor({ timeout: RELAYED });
@@ -112,6 +130,15 @@ async function becomesOwner(t: { contract: string; tokenId: string }, who: Hex):
   }
 }
 
+/** The rows of the token's Bids tab that the buyer made. */
+const buyerBids = (page: Page, buyer: Hex) => page.getByTestId("shop-token-bid").filter({ has: page.locator(`a[title="${buyer.toLowerCase()}" i]`) });
+
+/** A cancel the relay carries: the wallet signs, the .zone relayer pays, and nothing is sent from here. */
+function relayed(a: Actor, before: number): void {
+  const sent = a.wallet.sent.slice(before);
+  if (sent.length) throw new Error(`the Shop fell back to a paid transaction (${sent.join(", ")}) instead of the relay`);
+}
+
 async function balances(label: string, address: Hex): Promise<{ pol: bigint; mana: bigint }> {
   const [pol, mana] = await Promise.all([
     amoy.getBalance({ address }),
@@ -126,10 +153,11 @@ async function main(): Promise<void> {
   const buyerKey = preflightOnly && !env.E2E_BUYER_KEY ? generatePrivateKey() : keyFrom(env, "E2E_BUYER_KEY");
   const token = preflightOnly && !env.E2E_TOKEN ? null : parseToken(env.E2E_TOKEN);
 
+  const allowedTo = [...AMOY_TRADE_CONTRACTS, ...(token ? [token.contract] : [])];
   const browser = await launch();
   try {
-    const seller = await actor(browser, "seller", sellerKey);
-    const buyer = await actor(browser, "buyer", buyerKey);
+    const seller = await actor(browser, "seller", sellerKey, allowedTo);
+    const buyer = await actor(browser, "buyer", buyerKey, allowedTo);
     console.log(`Stack ${sites}, settling on Amoy`);
     const s = await balances("seller", seller.wallet.address);
     const b = await balances("buyer ", buyer.wallet.address);
@@ -153,6 +181,11 @@ async function main(): Promise<void> {
         await seller.page.getByRole("heading").first().waitFor({ timeout: 60_000 });
         if (await seller.page.getByText(/not found/i).first().isVisible().catch(() => false)) throw new Error("the Shop does not know this token: has the NFT index caught up?");
       });
+      await step("no bid of the buyer is left open", seller, async () => {
+        await seller.page.goto(`${tokenPath(token)}/bids`, { waitUntil: "networkidle" });
+        const open = await buyerBids(seller.page, buyer.wallet.address).count();
+        if (open) throw new Error(`the buyer already has ${open} open bid(s) on this token, from an earlier run: cancel them first (README)`);
+      });
     }
     const short = [
       s.pol === 0n && "seller has no POL (accepting a bid pays gas)",
@@ -167,12 +200,14 @@ async function main(): Promise<void> {
     if (short.length) throw new Error(`not funded: ${short.join("; ")}`);
 
     // The seller's listing: list, reprice, cancel (cancelSignature, relayed).
-    await step(`seller lists for ${price} MANA`, seller, () => list(seller, token, price));
-    await step(`seller changes the price to ${repriced} MANA`, seller, () => list(seller, token, repriced));
-    await step("seller cancels the listing", seller, async () => {
+    await step(`seller lists for ${price} MANA`, seller, () => list(seller, token, price, "new"));
+    await step(`seller changes the price to ${repriced} MANA`, seller, () => list(seller, token, repriced, "update"));
+    await step("seller cancels the listing, relayed", seller, async () => {
+      const before = seller.wallet.sent.length;
       await seller.page.goto(`${tokenPath(token)}/cancel`);
       await seller.page.getByRole("button", { name: "Confirm" }).click();
       await seller.page.getByTestId("shop-remove-done").waitFor({ timeout: RELAYED });
+      relayed(seller, before);
     });
 
     // The buyer's bid: bid, cancel, bid again; then the seller accepts (a transaction the seller pays for).
@@ -184,24 +219,25 @@ async function main(): Promise<void> {
       await buyer.page.getByTestId("shop-bid-done").waitFor({ timeout: RELAYED });
     };
     await step(`buyer bids ${bid} MANA`, buyer, placeBid);
-    await step("buyer cancels the bid", buyer, async () => {
+    await step("buyer cancels the bid, relayed", buyer, async () => {
+      const before = buyer.wallet.sent.length;
       await buyer.page.goto(`${tokenPath(token)}/bids`);
-      await buyer.page.getByTestId("shop-token-bid").getByRole("button", { name: "Cancel" }).first().click();
+      await buyerBids(buyer.page, buyer.wallet.address).getByRole("button", { name: "Cancel" }).click();
       await buyer.page.getByText("Bid cancelled.").waitFor({ timeout: RELAYED });
+      relayed(buyer, before);
     });
     await step(`buyer bids ${bid} MANA again`, buyer, placeBid);
     await step("seller accepts the bid", seller, async () => {
       await seller.page.goto(`${tokenPath(token)}/bids`);
       // The buyer's bid, not whichever is listed first: a stale or third-party bid would send the token elsewhere.
-      const row = seller.page.getByTestId("shop-token-bid").filter({ has: seller.page.locator(`a[title="${buyer.wallet.address.toLowerCase()}" i]`) });
-      await row.getByRole("button", { name: "Accept" }).click();
+      await buyerBids(seller.page, buyer.wallet.address).getByRole("button", { name: "Accept" }).click();
       await confirm(seller.page, bid);
       await seller.page.getByTestId("shop-accept-done").waitFor({ timeout: RELAYED });
     });
     await step("the buyer owns the token on chain", buyer, () => becomesOwner(token, buyer.wallet.address));
 
     // Back to the seller: the buyer lists it, the seller buys it with MANA through the cart.
-    await step(`buyer lists it for ${price} MANA`, buyer, () => list(buyer, token, price));
+    await step(`buyer lists it for ${price} MANA`, buyer, () => list(buyer, token, price, "new"));
     await step("seller buys it back with MANA", seller, async () => {
       await seller.page.goto(tokenPath(token));
       const mana = seller.page.getByTestId("pay-mana");

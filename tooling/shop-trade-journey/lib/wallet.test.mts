@@ -104,6 +104,25 @@ describe("testnetWallet", () => {
     }
   });
 
+  it("refuses a chainId that is not a number, which viem would leave out of the signed domain", async () => {
+    const { transport } = fakeRpc();
+    const w = testnetWallet({ key: KEY, transport });
+    for (const chainId of ["80002", "0x13882"]) {
+      const json = typed(80002).replace('"chainId":80002', `"chainId":${JSON.stringify(chainId)}`);
+      assert.ok(json.includes(JSON.stringify(chainId)));
+      await assert.rejects(w.request({ method: "eth_signTypedData_v4", params: [w.address, json] }), WalletRefusal, chainId);
+    }
+  });
+
+  it("sends only to the contracts it is allowed, when given a list", async () => {
+    const { calls, transport } = fakeRpc();
+    const w = testnetWallet({ key: KEY, transport, allowedTo: ["0x00000000000000000000000000000000000000AA"] });
+    await w.request({ method: "eth_sendTransaction", params: [{ from: w.address, to: "0x00000000000000000000000000000000000000aa", data: "0x" }] });
+    await assert.rejects(w.request({ method: "eth_sendTransaction", params: [{ from: w.address, to: "0x0000000000000000000000000000000000000002", data: "0x" }] }), WalletRefusal);
+    await assert.rejects(w.request({ method: "eth_sendTransaction", params: [{ from: w.address, data: "0x60" }] }), WalletRefusal);
+    assert.equal(calls.filter((c) => c.method === "eth_sendRawTransaction").length, 1);
+  });
+
   it("refuses typed data for a mainnet domain, and acting for another address", async () => {
     const { transport } = fakeRpc();
     const w = testnetWallet({ key: KEY, transport });

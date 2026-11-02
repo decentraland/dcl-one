@@ -446,6 +446,46 @@ class DevTest(unittest.TestCase):
         for key in ('STORAGE_ROOT_FOLDER', 'AB_CDN_CACHE_DIR', 'PROFILE_IMAGES_CACHE_DIR', 'BVIMPOSTERS_STORE_ROOT'):
             self.assertTrue(Path(env[key]).is_relative_to(self.state))
 
+    def test_the_testnet_profile_trades_and_relays_on_amoy(self):
+        env = dev.runtime_env({**self.config, 'profile': 'testnet'})
+        mirror = dev.runtime_env({**self.config, 'profile': 'mirror'})
+        self.assertEqual(env['VITE_SHOP_CHAIN_ID'], '80002')
+        self.assertEqual(env['COLLECTIONS_CHAIN_ID'], '80002')
+        self.assertEqual(env['CONTRACT_ADDRESSES_CHAIN_KEY'], 'amoy')
+        self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
+        self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
+        self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
+        for key in ('VITE_SHOP_CHAIN_ID', 'COLLECTIONS_CHAIN_ID', 'CONTRACT_ADDRESSES_CHAIN_KEY'):
+            self.assertNotIn(key, mirror, key)
+        # Otherwise the mirror profile's catalogue passes, against the testnet subgraphs.
+        self.assertEqual(env['MARKETPLACE_MIRRORS_ENABLED'], 'true')
+        self.assertIn('index', dev.project({**self.config, 'profile': 'testnet'})['processes'])
+
+    def test_testnet_data_never_shares_a_database_with_another_profile(self):
+        (self.state / 'postgres').mkdir()
+        (self.state / 'postgres' / 'PG_VERSION').write_text('18')
+        def run(*argv):
+            with patch.object(dev.sys, 'argv', ['foundation-dev', *argv]), \
+                    patch.object(dev, 'supervisor_running', return_value=False):
+                return dev.main()
+        with self.assertRaisesRegex(RuntimeError, 'offline profile'):
+            run('profile', 'testnet')
+        self.assertEqual(dev.settings()['profile'], 'offline')
+        run('profile', 'mirror')  # neither is testnet: allowed over existing data
+        self.assertEqual(dev.settings()['profile'], 'mirror')
+        dev.save_json(dev.SETTINGS, {**dev.settings(), 'profile': 'testnet'})
+        with self.assertRaisesRegex(RuntimeError, 'testnet profile'):
+            run('profile', 'mirror')
+        with self.assertRaisesRegex(RuntimeError, 'not a snapshot'), patch.object(dev, 'export_trades_snapshot') as export:
+            run('trades-snapshot', str(self.state / 'out.sql.gz'))
+        export.assert_not_called()
+
+    def test_a_different_profile_in_the_environment_keeps_the_saved_one_and_says_so(self):
+        warning = io.StringIO()
+        with patch.dict(os.environ, {'FOUNDATION_DEV_PROFILE': 'testnet'}), contextlib.redirect_stderr(warning):
+            self.assertEqual(dev.settings(create=True)['profile'], 'offline')
+        self.assertIn('Using saved profile offline', warning.getvalue())
+
     def test_env_names_the_running_stack_for_shell_evaluation(self):
         out = io.StringIO()
         with patch.object(dev.sys, 'argv', ['foundation-dev', 'env']), contextlib.redirect_stdout(out):
@@ -453,6 +493,7 @@ class DevTest(unittest.TestCase):
         values = dict(line.split('=', 1) for line in out.getvalue().splitlines())
         self.assertEqual(values['FOUNDATION_DEV_API_URL'], f"http://127.0.0.1:{self.config['port']}")
         self.assertEqual(values['FOUNDATION_DEV_DATABASE_URL'], dev.database_url(self.config))
+        self.assertEqual(values['FOUNDATION_DEV_STACK_PROFILE'], 'offline')
         result = subprocess.run(['bash', '-c', 'eval "$1"; echo "$FOUNDATION_DEV_SITES_URL"', '-', out.getvalue()],
                                 capture_output=True, text=True, check=True)
         self.assertEqual(result.stdout.strip(), f"http://127.0.0.1:{self.config['port'] + 2}")

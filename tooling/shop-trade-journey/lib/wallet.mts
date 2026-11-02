@@ -3,7 +3,8 @@
 // and sending happen here, with viem, and every other call goes to the chain's public RPC.
 //
 // It refuses any chain but Amoy and Sepolia, typed data whose domain (chainId or salt) names another
-// chain or none, and transactions for a chain other than the current one.
+// chain or none, transactions for a chain other than the current one, and transactions to a contract
+// outside `allowedTo`.
 import { createPublicClient, createWalletClient, http, type Chain, type Hex, type Transport } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { polygonAmoy, sepolia } from "viem/chains";
@@ -48,7 +49,15 @@ function testnet(chainId: number): Chain {
  * transactions) carry it in `salt` as a uint256 rather than in `chainId`; a domain with neither is valid
  * on every chain, so it is refused too.
  */
-export function domainChain(domain: { chainId?: number | string | bigint; salt?: string }): number {
+export function domainChain(domain: { chainId?: unknown; salt?: unknown }): number {
+  // viem hashes chainId only when it is a number or bigint and drops any other type from the domain, so a
+  // string would pass the check below yet sign a domain that names no chain.
+  if (domain.chainId != null && typeof domain.chainId !== "number" && typeof domain.chainId !== "bigint") {
+    throw new WalletRefusal(`refused: the domain's chainId is a ${typeof domain.chainId}, not a number`);
+  }
+  if (domain.salt != null && (typeof domain.salt !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(domain.salt))) {
+    throw new WalletRefusal("refused: the domain's salt is not a 32-byte hex string");
+  }
   const ids = [domain.chainId != null ? Number(domain.chainId) : null, domain.salt != null ? Number(BigInt(domain.salt)) : null].filter((x): x is number => x != null);
   if (!ids.length) throw new WalletRefusal("refused: typed data whose domain names no chain (neither chainId nor salt) is valid on mainnet too");
   for (const id of ids) testnet(id);
@@ -56,7 +65,14 @@ export function domainChain(domain: { chainId?: number | string | bigint; salt?:
   return ids[0]!;
 }
 
-export function testnetWallet(opts: { key: Hex; chainId?: number; transport?: (chainId: number) => Transport }): TestnetWallet {
+export function testnetWallet(opts: {
+  key: Hex;
+  chainId?: number;
+  transport?: (chainId: number) => Transport;
+  /** The contracts transactions may go to (any case); unset, any. */
+  allowedTo?: string[];
+}): TestnetWallet {
+  const allowedTo = opts.allowedTo && new Set(opts.allowedTo.map((a) => a.toLowerCase()));
   const account = privateKeyToAccount(opts.key);
   const transport = opts.transport ?? ((id: number) => http(DEFAULT_RPC[id]));
   let current = testnet(opts.chainId ?? polygonAmoy.id).id;
@@ -107,7 +123,7 @@ export function testnetWallet(opts: { key: Hex; chainId?: number; transport?: (c
         case "eth_signTypedData_v4": {
           const [from, json] = params as [string, string];
           own(from);
-          const data = JSON.parse(json) as { domain: { chainId?: number | string; salt?: string }; types: Record<string, unknown>; primaryType: string; message: Record<string, unknown> };
+          const data = JSON.parse(json) as { domain: { chainId?: unknown; salt?: unknown }; types: Record<string, unknown>; primaryType: string; message: Record<string, unknown> };
           domainChain(data.domain);
           const { EIP712Domain: _domain, ...types } = data.types;
           return account.signTypedData({ domain: data.domain, types, primaryType: data.primaryType, message: data.message } as never);
@@ -115,6 +131,7 @@ export function testnetWallet(opts: { key: Hex; chainId?: number; transport?: (c
         case "eth_sendTransaction": {
           const [tx] = params as [{ from?: string; to?: Hex; data?: Hex; value?: Hex; gas?: Hex; chainId?: Hex }];
           own(tx.from);
+          if (allowedTo && !(tx.to && allowedTo.has(tx.to.toLowerCase()))) throw new WalletRefusal(`refused: a transaction to ${tx.to ?? "no contract"}, which is not one the journey trades with`);
           if (tx.chainId != null && Number(tx.chainId) !== current) {
             testnet(Number(tx.chainId));
             throw new WalletRefusal(`refused: a transaction for chain ${Number(tx.chainId)} while the wallet is on ${current}`);

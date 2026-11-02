@@ -22,10 +22,11 @@ FOUNDATION_DEV_PROFILE=testnet foundation-dev up
 ```
 
 The profile mirrors the .zone marketplace API's order book and reads Amoy and Sepolia's subgraphs and
-RPCs. It relays gasless transactions through the .zone transactions API, and builds the Shop to settle
-on Amoy. A stack that already holds data of another profile refuses to switch to it, so the two networks
+RPCs. Its relay admits Amoy's Decentraland contracts and forwards gasless transactions to the .zone
+transactions API, and it builds the Shop to settle on Amoy. The journey does not override the Shop's
+chain, so a stack that is not wired for Amoy fails at its first signature. A stack that already holds data of another profile refuses to switch to it, so the two networks
 never share a database, and a testnet stack refuses `foundation-dev trades-snapshot`. The journey refuses
-to run when `FOUNDATION_DEV_STACK_PROFILE` (from `foundation-dev env`) names another profile.
+to run unless `FOUNDATION_DEV_STACK_PROFILE` (from `foundation-dev env`) is `testnet`.
 
 ## Settings
 
@@ -52,7 +53,8 @@ A complete run ends where it started, so it can run again.
 What each step costs on Amoy:
 
 - Listing and bidding are signatures.
-- Approvals and cancels are relayed by the .zone transactions API, so they cost no gas.
+- Approvals and cancels are relayed by the .zone transactions API, so they cost no gas. Both cancel steps
+  fail if the Shop falls back to a transaction the wallet pays for.
 - Accepting a bid is a transaction the seller pays for in POL.
 - A purchase pays the price in MANA, plus gas if the relay refuses it.
 
@@ -64,7 +66,8 @@ step. Before running again:
 
 - After the seller's listing: cancel it in the Shop (`/shop/token/<contract>/<id>/cancel`), or leave it, since
   listing again replaces it.
-- After a bid: the buyer cancels it from the token's Bids tab.
+- After a bid: the buyer cancels it from the token's Bids tab. The preflight stops while the buyer has an
+  open bid on the token.
 - After the accept: the buyer owns the token. Swap `E2E_SELLER_KEY` and `E2E_BUYER_KEY` for the next run,
   or let the buyer list it and buy it back by hand.
 
@@ -77,7 +80,9 @@ there with viem. Only the Shop's own top-level page can reach it. It refuses:
 - any chain but Amoy and Sepolia;
 - typed data whose domain names another chain, in `chainId` or in `salt` (where Decentraland's trade and
   meta-transaction domains carry it), or names no chain at all;
-- a transaction for a chain other than the current one;
+- a transaction for a chain other than the current one, or to a contract outside Amoy's trade contracts
+  (MANA, the marketplaces, the bid contract, the collection store) and the token's collection;
+- a typed-data `chainId` that is not a number, since viem would leave it out of what is signed;
 - requests for another address, and `eth_sign`, `eth_signTransaction` and `eth_sendRawTransaction`.
 
 `personal_sign` is not chain-bound, which is one more reason to use a wallet that holds nothing on

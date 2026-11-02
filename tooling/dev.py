@@ -355,7 +355,11 @@ def testnet_env():
         'ETH_RPC_URL': 'https://rpc.decentraland.org/sepolia',
         'RPC_ENDPOINT_POLYGON': 'https://rpc.decentraland.org/amoy',
         'TRADE_RPC_URLS': '80002=https://rpc.decentraland.org/amoy,11155111=https://rpc.decentraland.org/sepolia',
-        # Gasless approvals and cancels: relayed by the .zone transactions API, which pays testnet gas.
+        # Gasless approvals and cancels: the local relay admits Amoy's Decentraland contracts (the bundled
+        # contract-addresses list under `amoy`) and forwards to the .zone transactions API, which pays testnet
+        # gas. The relay and the credits index check RPC_ENDPOINT_POLYGON against COLLECTIONS_CHAIN_ID.
+        'COLLECTIONS_CHAIN_ID': '80002',
+        'CONTRACT_ADDRESSES_CHAIN_KEY': 'amoy',
         'TRANSACTIONS_UPSTREAM_URL': 'https://transactions-api.decentraland.zone',
         'VITE_SHOP_CHAIN_ID': '80002',
     }
