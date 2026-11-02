@@ -44,6 +44,7 @@ fn gen_sdk_components() -> Result<()> {
         "avatar_emote_command",
         "avatar_equipped_data",
         "player_identity_data",
+        "explorer_configuration",
         "avatar_shape",
         "avatar_attach",
         "ui_transform",

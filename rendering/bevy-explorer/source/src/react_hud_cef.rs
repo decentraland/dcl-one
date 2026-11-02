@@ -48,6 +48,9 @@ use input_manager::{InputPriorities, MouseInteractionComponent};
 use std::collections::BTreeMap;
 use system_bridge::{SystemApi, SystemBridge};
 
+// The HUD's console commands (`/hud_*`), registered in every native build with the HUD.
+mod automation;
+
 pub struct ReactHudCefPlugin {
     /// The boot realm when it is an explicit destination. Injected into the page URL as ?realm= —
     /// the page skips its post-login places picker for it (parity with ?realm= on web); the native
@@ -89,6 +92,7 @@ impl Plugin for ReactHudCefPlugin {
             CefOffscreenPlugin,
             JsEmitEventPlugin::<PageEnvelope>::default(),
         ));
+        app.add_plugins(automation::HudAutomationPlugin);
         app.add_systems(Startup, spawn_hud);
         app.add_systems(
             Update,

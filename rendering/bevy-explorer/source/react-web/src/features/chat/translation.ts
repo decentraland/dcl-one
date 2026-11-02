@@ -5,62 +5,11 @@
 // nothing here is stored with the DM history. A failed request just leaves the original.
 
 import { useSyncExternalStore } from 'react'
+import { LANGUAGES } from '../../engine/generated'
+import type { Setting } from '../../engine/protocol'
 import { BASE_DOMAIN } from '../../lib/baseDomain'
 import { PREF, getPref, setPref } from '../../lib/prefs'
 import { parseMessage } from './chatText'
-
-/** The server's target languages (GET /languages), with each one's name in itself (CLDR). Kept
- *  here rather than asked of Intl.DisplayNames: Chromium's trimmed locale data lacks some. */
-export const LANGUAGES: readonly { code: string; name: string; native: string }[] = [
-  { code: 'sq', name: 'Albanian', native: 'Shqip' },
-  { code: 'ar', name: 'Arabic', native: 'العربية' },
-  { code: 'az', name: 'Azerbaijani', native: 'Azərbaycan' },
-  { code: 'eu', name: 'Basque', native: 'Euskara' },
-  { code: 'bn', name: 'Bengali', native: 'বাংলা' },
-  { code: 'bg', name: 'Bulgarian', native: 'Български' },
-  { code: 'ca', name: 'Catalan', native: 'Català' },
-  { code: 'zh-Hans', name: 'Chinese (Simplified)', native: '简体中文' },
-  { code: 'zh-Hant', name: 'Chinese (Traditional)', native: '繁體中文' },
-  { code: 'cs', name: 'Czech', native: 'Čeština' },
-  { code: 'da', name: 'Danish', native: 'Dansk' },
-  { code: 'nl', name: 'Dutch', native: 'Nederlands' },
-  { code: 'en', name: 'English', native: 'English' },
-  { code: 'eo', name: 'Esperanto', native: 'Esperanto' },
-  { code: 'et', name: 'Estonian', native: 'Eesti' },
-  { code: 'fi', name: 'Finnish', native: 'Suomi' },
-  { code: 'fr', name: 'French', native: 'Français' },
-  { code: 'gl', name: 'Galician', native: 'Galego' },
-  { code: 'de', name: 'German', native: 'Deutsch' },
-  { code: 'el', name: 'Greek', native: 'Ελληνικά' },
-  { code: 'he', name: 'Hebrew', native: 'עברית' },
-  { code: 'hi', name: 'Hindi', native: 'हिन्दी' },
-  { code: 'hu', name: 'Hungarian', native: 'Magyar' },
-  { code: 'id', name: 'Indonesian', native: 'Indonesia' },
-  { code: 'ga', name: 'Irish', native: 'Gaeilge' },
-  { code: 'it', name: 'Italian', native: 'Italiano' },
-  { code: 'ja', name: 'Japanese', native: '日本語' },
-  { code: 'ko', name: 'Korean', native: '한국어' },
-  { code: 'ky', name: 'Kyrgyz', native: 'Кыргызча' },
-  { code: 'lv', name: 'Latvian', native: 'Latviešu' },
-  { code: 'lt', name: 'Lithuanian', native: 'Lietuvių' },
-  { code: 'ms', name: 'Malay', native: 'Melayu' },
-  { code: 'nb', name: 'Norwegian', native: 'Norsk bokmål' },
-  { code: 'fa', name: 'Persian', native: 'فارسی' },
-  { code: 'pl', name: 'Polish', native: 'Polski' },
-  { code: 'pt', name: 'Portuguese', native: 'Português' },
-  { code: 'pt-BR', name: 'Portuguese (Brazil)', native: 'Português (Brasil)' },
-  { code: 'ro', name: 'Romanian', native: 'Română' },
-  { code: 'ru', name: 'Russian', native: 'Русский' },
-  { code: 'sk', name: 'Slovak', native: 'Slovenčina' },
-  { code: 'sl', name: 'Slovenian', native: 'Slovenščina' },
-  { code: 'es', name: 'Spanish', native: 'Español' },
-  { code: 'sv', name: 'Swedish', native: 'Svenska' },
-  { code: 'tl', name: 'Tagalog', native: 'Filipino' },
-  { code: 'th', name: 'Thai', native: 'ไทย' },
-  { code: 'tr', name: 'Turkish', native: 'Türkçe' },
-  { code: 'uk', name: 'Ukrainian', native: 'Українська' },
-  { code: 'ur', name: 'Urdu', native: 'اردو' }
-]
 
 /** The server language for a BCP 47 tag ("pt-BR", "zh-TW", "de-AT"), or null if it has none. */
 export function matchLanguage(tag: string): string | null {
@@ -83,9 +32,15 @@ export function systemLanguage(tags: readonly string[] = navigator.languages ?? 
   return 'en'
 }
 
-/** "Español" for "es": the language's name in itself, for choosing one. */
-export function nativeName(code: string): string {
-  return LANGUAGES.find((l) => l.code === code)?.native ?? languageName(code)
+/** The engine setting holding the player's language. Variant 0 follows the system; the others
+ *  are named with LANGUAGES' native names. */
+const LANGUAGE_SETTING = 'Language'
+
+/** The server code the engine's Language setting picks, else the system's. */
+export function languageFromSettings(settings: readonly Setting[]): string {
+  const setting = settings.find((s) => s.name === LANGUAGE_SETTING)
+  const name = setting != null && setting.value > 0 ? setting.namedVariants[setting.value]?.name : undefined
+  return LANGUAGES.find((l) => l.native === name)?.code ?? systemLanguage()
 }
 
 /** "Spanish" for "es"; the code itself for one we have no name for. */
@@ -191,10 +146,8 @@ export async function translateText(text: string, target: string): Promise<{ tex
 // ── Settings ────────────────────────────────────────────────────────────────
 
 export interface TranslationPrefs {
-  /** The server code messages are translated into. */
+  /** The server code messages are translated into: the engine's Language setting. */
   language: string
-  /** Whether the language was chosen, rather than taken from the system. */
-  languageChosen: boolean
   /** The auto-translate state of a conversation not switched on or off by hand. */
   autoDefault: boolean
   /** Conversations switched on or off by hand ('Nearby' or a lowercase wallet). */
@@ -205,8 +158,6 @@ let prefs: TranslationPrefs | null = null
 const listeners = new Set<() => void>()
 
 function readPrefs(): TranslationPrefs {
-  const chosen = getPref(PREF.chatTranslateLanguage)
-  const language = chosen != null ? matchLanguage(chosen) : null
   let channels: Record<string, boolean> = {}
   try {
     const parsed: unknown = JSON.parse(getPref(PREF.chatAutoTranslateChannels) ?? '{}')
@@ -215,8 +166,7 @@ function readPrefs(): TranslationPrefs {
     }
   } catch {}
   return {
-    language: language ?? systemLanguage(),
-    languageChosen: language != null,
+    language: systemLanguage(),
     autoDefault: getPref(PREF.chatAutoTranslateDefault) === 'true',
     channels
   }
@@ -242,10 +192,10 @@ export function useTranslationPrefs(): TranslationPrefs {
   return useSyncExternalStore(subscribe, getPrefs)
 }
 
-/** Choose the language messages are translated into; null goes back to the system's. */
-export function setTranslationLanguage(code: string | null): void {
-  setPref(PREF.chatTranslateLanguage, code ?? '')
-  updatePrefs({ ...getPrefs(), language: code ?? systemLanguage(), languageChosen: code != null })
+/** Follow the engine's settings list (pushed at start and after every change). */
+export function applyLanguageSetting(settings: readonly Setting[]): void {
+  const language = languageFromSettings(settings)
+  if (language !== getPrefs().language) updatePrefs({ ...getPrefs(), language })
 }
 
 export function setAutoTranslateDefault(on: boolean): void {

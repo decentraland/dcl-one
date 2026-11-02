@@ -112,3 +112,22 @@
     font-size: 20px;
   }
 }
+
+/* Scoped past the shared .shop-price__credits (CreditsAmount), whose gap and weight are the cards'. */
+.shop-summary__value .shop-summary__amount {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #fcfcfc;
+  font-weight: inherit;
+}
+
+.shop-summary__amount .shop-summary__coin {
+  width: 30px;
+  height: 30px;
+  color: #fcfcfc;
+  -webkit-mask-size: 24px 24px;
+  mask-size: 24px 24px;
+  -webkit-mask-position: left center;
+  mask-position: left center;
+}

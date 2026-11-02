@@ -6,11 +6,11 @@ import { SettingsPanel } from '../features/settings/SettingsPanel'
 import type { ChatLine, ChatState } from '../features/session/useEngineSession'
 import {
   TRANSLATE_URL,
+  languageFromSettings,
   matchLanguage,
   resetTranslations,
   setAutoTranslate,
   setAutoTranslateDefault,
-  setTranslationLanguage,
   splitForTranslation,
   systemLanguage,
   translateText
@@ -259,7 +259,29 @@ describe('chat translation', () => {
 })
 
 describe('translation settings', () => {
-  it('the Chat tab holds the language and the auto-translate default, kept as HUD prefs', async () => {
+  it('messages are translated into the language the engine setting picks, else the system one', () => {
+    const language = (value: number) => ({
+      name: 'Language',
+      category: 'Chat',
+      description: '',
+      minValue: 0,
+      maxValue: 2,
+      namedVariants: [
+        { name: 'System (en-GB)', description: '' },
+        { name: '日本語', description: '' },
+        { name: 'Unknown', description: '' }
+      ],
+      value,
+      default: 0,
+      stepSize: 1
+    })
+    expect(languageFromSettings([language(1)])).toBe('ja')
+    expect(languageFromSettings([language(0)])).toBe(systemLanguage())
+    expect(languageFromSettings([language(2)])).toBe(systemLanguage())
+    expect(languageFromSettings([])).toBe(systemLanguage())
+  })
+
+  it('the Chat tab holds the auto-translate default, kept as a HUD pref', async () => {
     render(
       <SettingsPanel
         settings={{ ...fakeSession().settings, open: true, list: [] }}
@@ -268,17 +290,11 @@ describe('translation settings', () => {
         onNavigate={vi.fn()}
       />
     )
-    expect(screen.getByRole('button', { name: 'Translation Language' })).toHaveTextContent(/System \(/)
-    await userEvent.click(screen.getByRole('button', { name: 'Translation Language' }))
-    expect(screen.getByRole('option', { name: 'Français' })).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('option', { name: '日本語' }))
-    expect(getPref(PREF.chatTranslateLanguage)).toBe('ja')
     await userEvent.click(screen.getByRole('switch', { name: 'Auto-Translate New Conversations' }))
     expect(getPref(PREF.chatAutoTranslateDefault)).toBe('true')
   })
 
   it('resetting the Chat tab resets translation too, conversations switched by hand included', async () => {
-    setTranslationLanguage('ja')
     setAutoTranslateDefault(true)
     setAutoTranslate('0xbob', false)
     render(
@@ -290,7 +306,6 @@ describe('translation settings', () => {
       />
     )
     await userEvent.click(screen.getByRole('button', { name: /Reset all defaults/ }))
-    expect(screen.getByRole('button', { name: 'Translation Language' })).toHaveTextContent(/System \(/)
     expect(screen.getByRole('switch', { name: 'Auto-Translate New Conversations' })).not.toBeChecked()
     expect(JSON.parse(getPref(PREF.chatAutoTranslateChannels) ?? '{}')).toEqual({})
   })

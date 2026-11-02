@@ -760,6 +760,10 @@ pub enum MigrateError {
         "0013_island_receipt_retirement requires exactly the canonical CREATEs for social, social.island_admission_fences, social.island_cleanup_dispatches and social.island_takeover_receipts, in dependency order. Nothing was applied."
     )]
     ReceiptPrerequisites,
+    #[error(
+        "0016_report_upload_capabilities requires the canonical CREATE for explore.place_reports. Nothing was applied."
+    )]
+    ReportPrerequisite,
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
 }
@@ -853,6 +857,18 @@ fn receipt_prerequisites(plan: &[Planned]) -> Result<Vec<&Planned>, MigrateError
     Ok(selected)
 }
 
+const REPORT_CAPABILITIES: &str = "0016_report_upload_capabilities";
+const REPORTS: &str = "explore.place_reports";
+
+fn report_prerequisite(plan: &[Planned]) -> Result<&Planned, MigrateError> {
+    let mut selected = plan.iter().filter(|p| matches!(&p.step, Step::Create { object: Object::Relation(name), .. } if name == REPORTS));
+    let report = selected.next().ok_or(MigrateError::ReportPrerequisite)?;
+    if selected.next().is_some() {
+        return Err(MigrateError::ReportPrerequisite);
+    }
+    Ok(report)
+}
+
 async fn create_missing(
     conn: &mut sqlx::PgConnection,
     object: &Object,
@@ -910,6 +926,16 @@ pub async fn migrate(pool: &PgPool, sql: &str, migrations: &str) -> Result<Migra
                 if let Step::Create { object, .. } = &p.step {
                     create_missing(&mut tx, object, &p.sql, &mut made, &mut done).await?;
                 }
+            }
+        }
+        // Closure-base databases predate this table. Create its canonical empty
+        // shape before 0016's scrub; existing rows still take the normal migration.
+        if step.name == REPORT_CAPABILITIES
+            && !exists(&mut tx, &Object::Relation(REPORTS.into())).await?
+        {
+            let p = report_prerequisite(&plan)?;
+            if let Step::Create { object, .. } = &p.step {
+                create_missing(&mut tx, object, &p.sql, &mut made, &mut done).await?;
             }
         }
         for (stmt, kind) in statements {
@@ -1135,6 +1161,37 @@ mod tests {
         assert!(matches!(
             receipt_prerequisites(&duplicated),
             Err(MigrateError::ReceiptPrerequisites)
+        ));
+    }
+
+    #[test]
+    fn report_prerequisite_has_no_external_dependencies_or_followups() {
+        let plan = plan(crate::SCHEMA_SQL).unwrap();
+        let report = report_prerequisite(&plan).unwrap();
+        assert!(
+            !words(&report.sql)
+                .iter()
+                .any(|word| upper(word) == "REFERENCES")
+        );
+        assert!(
+            !plan.iter().any(
+                |p| matches!(&p.step, Step::FollowUp(Object::Relation(name)) if name == REPORTS)
+            )
+        );
+        let missing: Vec<_> = plan
+            .iter()
+            .filter(|p| !std::ptr::eq(*p, report))
+            .cloned()
+            .collect();
+        assert!(matches!(
+            report_prerequisite(&missing),
+            Err(MigrateError::ReportPrerequisite)
+        ));
+        let mut duplicate = plan.clone();
+        duplicate.push(report.clone());
+        assert!(matches!(
+            report_prerequisite(&duplicate),
+            Err(MigrateError::ReportPrerequisite)
         ));
     }
 

@@ -42,7 +42,9 @@ pub struct MultipartFields {
     pub description: Option<String>,
     pub privacy: Option<String>,
     pub visibility: Option<String>,
-    pub place_ids: Vec<String>,
+    /// Upstream's `fields-validator.ts`: absent or empty means no change; a
+    /// JSON array of strings replaces the places (`[]` removes them all).
+    pub place_ids: Option<Vec<String>>,
     pub thumbnail: Option<Vec<u8>>,
 }
 
@@ -61,7 +63,7 @@ pub async fn parse_multipart(boundary: String, body: Bytes) -> Result<MultipartF
         description: None,
         privacy: None,
         visibility: None,
-        place_ids: Vec::new(),
+        place_ids: None,
         thumbnail: None,
     };
     loop {
@@ -91,14 +93,14 @@ pub async fn parse_multipart(boundary: String, body: Bytes) -> Result<MultipartF
             "visibility" => out.visibility = Some(field.text().await.unwrap_or_default()),
             "placeIds" => {
                 let raw = field.text().await.unwrap_or_default();
-                if let Ok(parsed) = serde_json::from_str::<Vec<String>>(&raw) {
-                    out.place_ids = parsed;
-                } else if !raw.trim().is_empty() {
-                    out.place_ids = raw
-                        .split(',')
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .collect();
+                if !raw.is_empty() {
+                    out.place_ids =
+                        Some(serde_json::from_str::<Vec<String>>(&raw).map_err(|_| {
+                            refuse(
+                                StatusCode::BAD_REQUEST,
+                                "placeIds must be a valid JSON array",
+                            )
+                        })?);
                 }
             }
             _ => {
@@ -285,18 +287,36 @@ mod tests {
             .expect("well-formed multipart");
         assert_eq!(fields.privacy.as_deref(), Some("Private"));
         assert_eq!(fields.visibility.as_deref(), Some("ALL"));
-        assert_eq!(fields.place_ids, vec!["a", "b"]);
+        assert_eq!(
+            fields.place_ids,
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
         assert!(
             fields.thumbnail.is_none(),
             "an empty thumbnail part is no thumbnail"
         );
-        let body = format!(
-            "--{b}\r\nContent-Disposition: form-data; name=\"placeIds\"\r\n\r\nx, y\r\n--{b}--\r\n",
-            b = boundary
-        );
-        let fields = parse_multipart(boundary.to_string(), Bytes::from(body))
+        // upstream `fields-validator.ts`: anything but a JSON array of
+        // strings is refused; an empty field is no change, `[]` clears
+        let part = |value: &str| {
+            Bytes::from(format!(
+                "--{b}\r\nContent-Disposition: form-data; name=\"placeIds\"\r\n\r\n{value}\r\n--{b}--\r\n",
+                b = boundary
+            ))
+        };
+        for bad in ["x, y", "[1]", "{}"] {
+            let refusal = parse_multipart(boundary.to_string(), part(bad))
+                .await
+                .err()
+                .unwrap_or_else(|| panic!("{bad:?} is refused"));
+            assert_eq!(refusal.status(), StatusCode::BAD_REQUEST, "{bad:?}");
+        }
+        let fields = parse_multipart(boundary.to_string(), part(""))
             .await
             .unwrap();
-        assert_eq!(fields.place_ids, vec!["x", "y"]);
+        assert_eq!(fields.place_ids, None);
+        let fields = parse_multipart(boundary.to_string(), part("[]"))
+            .await
+            .unwrap();
+        assert_eq!(fields.place_ids, Some(Vec::new()));
     }
 }

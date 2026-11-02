@@ -56,7 +56,8 @@ export function usePlaces(account?: string | null): UsePlaces {
   const [sort, updateSort] = useState<PlacesSort>('most_active')
   const [section, updateSection] = useState<PlacesSection>('all')
   const effectiveSort = section === 'all' ? sort : 'most_active'
-  const key = JSON.stringify([search.trim(), category, effectiveSort, section, account?.toLowerCase()])
+  const personalAccount = section === 'all' ? undefined : account?.toLowerCase()
+  const key = JSON.stringify([search.trim(), category, effectiveSort, section, personalAccount])
   const [page, setPage] = useState({ key, offset: 0 })
   const offset = page.key === key ? page.offset : 0
   const [resultKey, setResultKey] = useState(key)
@@ -101,7 +102,7 @@ export function usePlaces(account?: string | null): UsePlaces {
 
     const destinations = async (): Promise<{ data: DiscoverPlace[]; more: boolean }> => {
       const login = section === 'all' ? null : await getLogin()
-      if (section !== 'all' && (!login || login.guest || (account != null && login.address.toLowerCase() !== account.toLowerCase()))) {
+      if (section !== 'all' && (!login || login.guest || (personalAccount != null && login.address.toLowerCase() !== personalAccount))) {
         throw new Error(`Sign in to see ${section === 'my' ? 'your places' : 'your favourites'}.`)
       }
       const response = await fetchDestinations({
@@ -142,7 +143,7 @@ export function usePlaces(account?: string | null): UsePlaces {
     return () => {
       cancelled = true
     }
-  }, [search, category, effectiveSort, section, key, offset, attempt, account])
+  }, [search, category, effectiveSort, section, key, offset, attempt, personalAccount])
 
   const current = resultKey === key
   const loadingMore = current && loading && offset > 0

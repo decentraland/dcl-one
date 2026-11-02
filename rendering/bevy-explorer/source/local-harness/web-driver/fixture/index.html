@@ -1,0 +1,40 @@
+<!doctype html>
+<!--
+  The fixture's shell, as the web client's index.html is: a page that is not isolated and mounts
+  the app (app.html) in an iframe. The frame sits away from (0, 0) and has a border, so a click
+  that is not offset by the frame's content box lands beside its target.
+
+  ?mode=...  is passed on to app.html (see there).
+  ?probe=<url>  mounts <url> instead, a frame of another origin: this page then answers the
+  console itself and reports what the frame posts, to show that input is refused to it.
+-->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>web-driver fixture: shell</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #eee; }
+    iframe { position: absolute; left: 37px; top: 53px; width: 800px; height: 600px; border: 5px solid #c33; background: #fff; }
+  </style>
+</head>
+<body>
+  <iframe id="app" title="app"></iframe>
+  <script>
+    const params = new URLSearchParams(location.search)
+    const frame = document.getElementById('app')
+    const probe = params.get('probe')
+    frame.src = probe || `app.html${location.search}`
+    // the web client's shell focuses the app when it has loaded
+    frame.addEventListener('load', () => frame.focus())
+
+    if (probe) {
+      const messages = []
+      window.addEventListener('message', (event) => messages.push(event.data))
+      window.engine_console_command = async (line) => {
+        if (line.trim() === '/fixture_messages') return JSON.stringify(messages)
+        throw new Error(`unknown command ${line}`)
+      }
+    }
+  </script>
+</body>
+</html>

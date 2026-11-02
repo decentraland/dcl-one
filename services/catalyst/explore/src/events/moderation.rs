@@ -65,9 +65,7 @@ fn set_approved(raw: &mut Map<String, Value>, actor: &str) {
 }
 
 fn set_rejected(raw: &mut Map<String, Value>, actor: &str, reason: Option<String>) {
-    if !flag(raw, "rejected") {
-        raw.insert("rejected_by".into(), json!(actor));
-    }
+    raw.insert("rejected_by".into(), json!(actor));
     raw.insert("approved".into(), json!(false));
     raw.insert("approved_by".into(), Value::Null);
     raw.insert("rejected".into(), json!(true));
@@ -378,6 +376,7 @@ impl Decision {
 pub(super) async fn hide_mirrored_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
+    before: &Map<String, Value>,
     raw: Map<String, Value>,
     actor: &str,
 ) -> Result<(), ApiError> {
@@ -387,15 +386,10 @@ pub(super) async fn hide_mirrored_locked(
         deleted_reason: text(&raw, "deleted_reason"),
         ..Default::default()
     };
-    let before: Option<Value> =
-        sqlx::query_scalar("SELECT raw FROM explore.event WHERE id = $1 FOR UPDATE")
-            .bind(event_id)
-            .fetch_optional(&mut **tx)
-            .await?;
     super::notifications::record_transition(
         tx,
         event_id,
-        before.as_ref(),
+        Some(&Value::Object(before.clone())),
         &Value::Object(raw.clone()),
         false,
     )
@@ -705,21 +699,9 @@ pub fn build_create_raw(
     Ok(Value::Object(doc))
 }
 
-/// The old `generate_id`: a uuid-shaped sha256 of the name and the instant.
-pub(crate) fn generate_id(seed: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(seed.as_bytes());
-    hasher.update(Utc::now().timestamp_nanos_opt().unwrap_or(0).to_be_bytes());
-    let h = hex::encode(hasher.finalize());
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
+/// Event identifiers stay unique even when concurrent creates share a clock tick.
+fn generate_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// The old `resolve_location` as a query: a world event names its world by
@@ -860,7 +842,7 @@ pub async fn create_as(
         body.y,
     )
     .await?;
-    let id = generate_id(&body.name);
+    let id = generate_id();
     let mut doc = build_create_raw(body, creator, start_at, place_id.as_deref(), world, now)?;
     doc["id"] = json!(id);
     if creator != ADMIN_CREATOR {
@@ -920,6 +902,7 @@ pub async fn create_as(
 pub(super) async fn store_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
+    before: &Map<String, Value>,
     raw: Map<String, Value>,
     signer: &str,
     payload: Value,
@@ -928,16 +911,15 @@ pub(super) async fn store_locked(
     doc["id"] = json!(event_id);
     let f = super::mirror::extract_fields(&doc)
         .ok_or_else(|| ApiError::internal("event document without an id"))?;
-    let previous: Option<(Value, String)> =
-        sqlx::query_as("SELECT raw, origin FROM explore.event WHERE id = $1 FOR UPDATE")
-            .bind(event_id)
-            .fetch_optional(&mut **tx)
-            .await?;
-    let Some((before, origin)) = previous else {
-        return Err(ApiError::not_found("Event not found"));
-    };
-    super::notifications::record_transition(tx, event_id, Some(&before), &doc, origin == LOCAL)
-        .await?;
+    // The caller loaded and locked this local event before applying edits.
+    super::notifications::record_transition(
+        tx,
+        event_id,
+        Some(&Value::Object(before.clone())),
+        &doc,
+        true,
+    )
+    .await?;
     sqlx::query(
         "UPDATE explore.event SET name = $2, start_at = $3::timestamptz AT TIME ZONE 'UTC', finish_at = $4::timestamptz AT TIME ZONE 'UTC',
              next_start_at = $5::timestamptz AT TIME ZONE 'UTC', next_finish_at = $6::timestamptz AT TIME ZONE 'UTC', duration_ms = $7,
@@ -1431,7 +1413,35 @@ mod tests {
                 json!("https://decentraland.org/play/?position=10%2C20")
             )
         );
-        assert_eq!(generate_id("n").len(), 36);
+    }
+
+    #[test]
+    fn concurrent_event_creates_get_unique_canonical_uuid_ids() {
+        let barrier = std::sync::Barrier::new(8);
+        let ids = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        (0..1000).map(|_| generate_id()).collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let mut seen = std::collections::HashSet::new();
+        for id in ids {
+            let parsed = uuid::Uuid::parse_str(&id).unwrap();
+            assert_eq!(parsed.get_version_num(), 4);
+            assert_eq!(parsed.to_string(), id);
+            assert!(
+                seen.insert(id),
+                "concurrent creates must not share an event ID"
+            );
+        }
     }
 
     #[tokio::test]

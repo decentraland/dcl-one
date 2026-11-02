@@ -21,23 +21,29 @@
 //! `.merge(social::rpc::router(social_rpc))`. Routes: `GET /social-rpc`
 //! (the upgrade; the handshake accepts a signature over `/` or `/social-rpc`,
 //! the only `x-original-path` a proxy may forward), `GET /social-rpc/info`,
-//! `GET /social-rpc/health` (local), and the upstream uWS host's HTTP routes
+//! `GET /social-rpc/health` (local), the plain JSON stream
+//! `GET /social-rpc/v1/stream` (`stream`, upstream's `/v1/stream`), and the
+//! upstream uWS host's HTTP routes
 //! (`src/controllers/routes/uws.routes.ts`): `GET /social-rpc/status`, any
 //! method on `/social-rpc/health/live`,
 //! `GET /social-rpc/v1/users/{address}/privacy-settings` and a 404
 //! `{"error":"Not Found"}` for every other `/social-rpc/*` path or method,
 //! all with `Access-Control-Allow-Origin: *`; then the bearer-gated
-//! `/admin/social/*` (`admin`).
+//! `/admin/social/*` (`admin`). The procedures' HTTP twins on the social-api
+//! host are `http::router`, which `social::router` mounts beside the
+//! communities routes.
 
 pub mod admin;
 pub mod context;
 pub mod db;
+pub mod http;
 pub use crate::shared::rpc::{drpc, handshake};
 pub mod limits;
 pub mod profiles;
 pub mod proto;
 pub mod pubsub;
 pub mod service;
+pub mod stream;
 mod topology;
 pub mod voice;
 pub mod ws;
@@ -202,9 +208,10 @@ impl State {
 }
 
 /// The server with its transport handlers: a connected socket registers its
-/// identity and announces the address online (once per address, across its
-/// sockets); a closed one forgets it, announces offline and ends the call it
-/// was on (#479).
+/// identity, takes its address's socket slot (displacing the oldest past the
+/// cap, `limits::Admission`) and counts the address present (across its
+/// sockets of both protocols); a closed one forgets it, frees the slot and,
+/// when it was the address's last, ends the call it was on (#479).
 fn build_rpc_server(
     ctx: Context,
 ) -> (
@@ -220,6 +227,9 @@ fn build_rpc_server(
         let address = transport.address().to_string();
         bind_ctx.register_identity(transport_id, address.clone());
         bind_ctx.register_kill_handle(transport_id, transport.kill_handle());
+        bind_ctx
+            .admission()
+            .claim(&address, limits::Eviction::Rpc(transport.kill_handle()));
         bind_ctx.mark_online(&address);
     });
     let forget_ctx = ctx.clone();
@@ -227,6 +237,9 @@ fn build_rpc_server(
         forget_ctx.connection_closed();
         forget_ctx.forget_identity(transport_id);
         let address = transport.address().to_string();
+        forget_ctx
+            .admission()
+            .release(&address, &transport.kill_handle());
         if forget_ctx.mark_offline(&address) {
             let voice_ctx = forget_ctx.clone();
             tokio::spawn(async move {
@@ -246,6 +259,10 @@ fn build_rpc_server(
 pub fn router(state: Arc<State>) -> Router {
     Router::new()
         .route("/social-rpc", get(ws::ws_upgrade).fallback(not_found))
+        .route(
+            "/social-rpc/v1/stream",
+            get(stream::ws_upgrade).fallback(not_found),
+        )
         .route("/social-rpc/info", get(info))
         .route("/social-rpc/health", get(health))
         .route("/social-rpc/health/live", any(health_live))
@@ -258,7 +275,6 @@ pub fn router(state: Arc<State>) -> Router {
             "/social-rpc/v1/users/{address}/privacy-settings",
             get(privacy_settings).head(not_found).fallback(not_found),
         )
-        .route("/social-rpc/", any(not_found))
         .route("/social-rpc/{*rest}", any(not_found))
         .layer(axum::middleware::map_response(allow_any_origin))
         .nest("/admin/social", admin::router())
@@ -298,18 +314,14 @@ async fn privacy_settings(
     AxumState(state): AxumState<Arc<State>>,
     Path(address): Path<String>,
 ) -> Response {
-    let address = address.to_lowercase();
-    let valid = address.len() == 42
-        && address.starts_with("0x")
-        && address[2..].bytes().all(|b| b.is_ascii_hexdigit());
-    if !valid {
+    let Ok(address) = crate::shared::identity::Address::parse_untrimmed(&address) else {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "Invalid address" })),
         )
             .into_response();
-    }
-    match state.ctx.db().get_social_settings(&address).await {
+    };
+    match state.ctx.db().get_social_settings(address.as_str()).await {
         Ok(row) => Json(json!({
             "private_messages_privacy": row.unwrap_or_default().private_messages_privacy,
         }))

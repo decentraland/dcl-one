@@ -1,10 +1,11 @@
 #!/usr/bin/env sh
 # Generate the TypeScript bindings for the ~system/BevyExplorerApi boundary from the Rust
 # structs in crates/system_api_types, into react-web/src/engine/generated (+ a barrel index.ts).
-# Also writes the web param TABLE (crates/system_api_types/src/web_params.rs → webParamTable.ts):
-# the `export_` filter catches both ts-rs's export_bindings_* tests and export_web_param_table.
-# Called by `just ts-bindings` and by CI (ci.yml deploy-web, package.yml) before the
-# react-web / bridge-scene builds, which import the generated (gitignored) types.
+# Also writes the web param TABLE (crates/system_api_types/src/web_params.rs → webParamTable.ts)
+# and the language table (languages.rs → languageTable.ts): the `export_` filter catches both
+# ts-rs's export_bindings_* tests and those table exports.
+# Called by `just ts-bindings`, apps/bevy-explorer/build-web.py and bevy-explorer-desktop.yml
+# before the react-web / bridge-scene builds, which import the generated (gitignored) types.
 set -eu
 root="$(cd "$(dirname "$0")/.." && pwd)"
 # git-bash (windows CI): cargo is a native process, so hand it a windows-style path —

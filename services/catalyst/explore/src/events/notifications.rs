@@ -2,7 +2,7 @@
 //! event's own transaction; social drains the queue through its shared
 //! notification store. A mirror refresh never enqueues an authoring action.
 
-use chrono::{NaiveDateTime, Utc};
+use chrono::Utc;
 use serde_json::Value;
 use sqlx::{Postgres, Transaction};
 use uuid::Uuid;
@@ -53,19 +53,10 @@ pub async fn record_transition(
     }
     for kind in kinds {
         sqlx::query(
-            "INSERT INTO explore.event_notification_intents (id,event_id,kind,event,local_event,occurred_at) \
+            "INSERT INTO social.event_notification_intents (id,event_id,kind,event,local_event,occurred_at) \
              VALUES ($1,$2,$3,$4,$5,$6)",
         ).bind(Uuid::new_v4()).bind(event_id).bind(kind).bind(after).bind(local)
             .bind(Utc::now().naive_utc()).execute(&mut **tx).await?;
     }
     Ok(())
-}
-
-/// Stable identity for an occurrence's reminder/start dispatch, including
-/// the occurrence instant so recurring events can notify again each time.
-pub fn occurrence_id(event_id: &str, starts_at: NaiveDateTime, kind: &str) -> Uuid {
-    Uuid::new_v5(
-        &Uuid::NAMESPACE_URL,
-        format!("event-occurrence:{event_id}:{starts_at}:{kind}").as_bytes(),
-    )
 }

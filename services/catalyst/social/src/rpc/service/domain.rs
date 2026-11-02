@@ -18,7 +18,7 @@ use crate::{CommunityPermission, CommunityStanding};
 use uuid::Uuid;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(super) enum Action {
+pub(crate) enum Action {
     Request,
     Accept,
     Cancel,

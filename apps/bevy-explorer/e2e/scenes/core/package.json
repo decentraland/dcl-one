@@ -1,0 +1,9 @@
+{
+  "name": "bevy-explorer-e2e-scene-core",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Visual-regression scene: core",
+  "scripts": {
+    "build": "dcl-scene-cli build --skip-install"
+  }
+}

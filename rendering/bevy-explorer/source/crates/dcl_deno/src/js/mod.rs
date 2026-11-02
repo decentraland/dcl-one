@@ -4,13 +4,12 @@ use base64::{prelude::BASE64_URL_SAFE_NO_PAD, Engine};
 use bevy::log::{debug, error, info_span};
 use common::structs::GlobalCrdtStateUpdate;
 use dcl_js::{
-    engine::crdt_send_to_renderer, init_state, CommunicatedWithRenderer, CrdtSendsThisTick,
-    FilteredCrdtStore, KillFlag, SuperUserScene,
+    begin_tick, end_start, engine::crdt_send_to_renderer, init_state, CommunicatedWithRenderer,
+    CrdtSendsThisTick, FilteredCrdtStore, KillFlag, SuperUserScene,
 };
 use dcl_types::{
     interface::{crdt_context::CrdtContext, CrdtComponentInterfaces, CrdtStore},
-    RendererResponse, RpcCalls, SceneElapsedTime, SceneResourceCounters, SceneResponse,
-    SceneResponseSender,
+    RendererResponse, RpcCalls, SceneResourceCounters, SceneResponse, SceneResponseSender,
 };
 use deno_core::{
     anyhow::anyhow,
@@ -348,6 +347,7 @@ pub(crate) fn scene_thread(
         .borrow_mut()
         .borrow_mut::<SceneResourceCounters>()
         .run_us += thread_cpu_us().saturating_sub(run_start);
+    end_start(&mut *state.borrow_mut());
 
     debug!(
         "[scene thread {scene_id:?}] post startup, {} rpc calls",
@@ -364,36 +364,18 @@ pub(crate) fn scene_thread(
         return;
     }
 
-    // Scenes aren't driven on a fixed timestep, so a slow frame (asset load, GC, a stalled
-    // renderer round-trip) yields a huge dt. Cap it so dt-scaled scene logic (timers, animations)
-    // is never handed a multi-second step. Mirrored by MAX_SCENE_DT_SECONDS in
-    // deploy/web/sandbox_worker.js for the wasm runtime.
-    const MAX_SCENE_DT: std::time::Duration = std::time::Duration::from_secs(1);
-
-    let start_time = std::time::Instant::now();
-    let mut prev_time = start_time;
-    let mut elapsed;
     // lifetime uncaught-error count; only gates the log cap
     let mut reported_errors = 0;
     // consecutive ticks that never reached the renderer interface functions
     let mut silent_ticks = 0;
     loop {
-        let now = std::time::Instant::now();
-        let dt = now.saturating_duration_since(prev_time).min(MAX_SCENE_DT);
-        elapsed = now.saturating_duration_since(start_time);
-        prev_time = now;
-
-        state
-            .borrow_mut()
-            .put(SceneElapsedTime(elapsed.as_secs_f64()));
-        // tick boundary: reset the bounded per-tick send allowance
-        state.borrow_mut().try_take::<CrdtSendsThisTick>();
+        let dt = begin_tick(&mut *state.borrow_mut());
 
         // run the onUpdate function
         let run_start = thread_cpu_us();
         let result = rt.block_on(async {
             run_script(&mut runtime, &script, "onUpdate", |scope| {
-                vec![v8::Number::new(scope, dt.as_secs_f64()).into()]
+                vec![v8::Number::new(scope, dt).into()]
             })
             .await
         });

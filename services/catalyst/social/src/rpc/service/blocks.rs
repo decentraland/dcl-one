@@ -1,6 +1,6 @@
 use super::SocialServiceImpl;
 use super::helpers::{
-    FRIENDSHIP_RATE_LIMIT_MESSAGE, SocialError, internal_err, invalid_req, normalize,
+    FRIENDSHIP_RATE_LIMIT_MESSAGE, Refusal, SocialError, internal_err, invalid_req, normalize,
     page_blocked_users, page_of,
 };
 use crate::rpc::context::{Context, PairScope};
@@ -8,6 +8,104 @@ use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::profiles;
 use crate::rpc::proto::v2::*;
 use crate::rpc::pubsub::SocialEvent;
+
+/// Records the block and, when a friendship exists, appends the `block`
+/// action that deactivates it; the other party gets a BlockUpdate and a
+/// FriendshipUpdate::Block. Shared by the RPC procedure and `POST /v1/blocks`
+/// (upstream `applyBlock`). Answers when the block was recorded.
+pub(crate) async fn block(
+    ctx: &Context,
+    me: &str,
+    other: &str,
+) -> Result<chrono::DateTime<chrono::Utc>, Refusal> {
+    if !ctx
+        .friendship_limiter()
+        .allow(me, other, PairScope::Directional)
+    {
+        tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
+        return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
+    }
+    let db = ctx.db();
+    let blocked_at = match db.block_user_and_last(me, other).await? {
+        (blocked_at, Some(last)) => {
+            if let Err(e) = db
+                .apply_friendship_action(me, other, "block", false, Some(last.friendship_id), None)
+                .await
+            {
+                tracing::warn!(error = %e, "block: recording the friendship action failed");
+            }
+            blocked_at
+        }
+        (blocked_at, None) => blocked_at,
+    };
+    let pubsub = ctx.pubsub();
+    pubsub.publish(
+        other,
+        SocialEvent::Block(BlockUpdate {
+            address: me.to_string(),
+            is_blocked: true,
+        }),
+    );
+    pubsub.publish(
+        other,
+        SocialEvent::Friendship(FriendshipUpdate {
+            update: Some(friendship_update::Update::Block(
+                friendship_update::BlockResponse {
+                    user: Some(User {
+                        address: me.to_string(),
+                    }),
+                },
+            )),
+        }),
+    );
+    Ok(blocked_at)
+}
+
+/// Removes the block; a friendship the block had deactivated is closed with a
+/// `delete` action (the pair starts over), and the other party is told.
+/// Without a block to remove nothing is recorded or told. Shared by the RPC
+/// procedure and `DELETE /v1/blocks/{address}` (upstream `applyUnblock`).
+pub(crate) async fn unblock(ctx: &Context, me: &str, other: &str) -> Result<(), Refusal> {
+    if !ctx
+        .friendship_limiter()
+        .allow(me, other, PairScope::Directional)
+    {
+        tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
+        return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
+    }
+    let db = ctx.db();
+    let pubsub = ctx.pubsub();
+    let Some(last) = db.unblock_user_and_last(me, other).await? else {
+        return Ok(());
+    };
+    if let Some(last) = last
+        && db
+            .apply_friendship_action(me, other, "delete", false, Some(last.friendship_id), None)
+            .await
+            .is_ok()
+    {
+        pubsub.publish(
+            other,
+            SocialEvent::Friendship(FriendshipUpdate {
+                update: Some(friendship_update::Update::Delete(
+                    friendship_update::DeleteResponse {
+                        user: Some(User {
+                            address: me.to_string(),
+                        }),
+                    },
+                )),
+            }),
+        );
+    }
+    pubsub.publish(
+        other,
+        SocialEvent::Block(BlockUpdate {
+            address: me.to_string(),
+            is_blocked: false,
+        }),
+    );
+    Ok(())
+}
 
 impl SocialServiceImpl {
     /// Records the block and, when a friendship exists, appends the `block`
@@ -36,70 +134,28 @@ impl SocialServiceImpl {
                 ))),
             });
         }
-        if !context
-            .server_context
-            .friendship_limiter()
-            .allow(&me, &other, PairScope::Directional)
-        {
-            tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
-            return Ok(BlockUserResponse {
-                response: Some(block_user_response::Response::InvalidRequest(invalid_req(
-                    FRIENDSHIP_RATE_LIMIT_MESSAGE,
-                ))),
-            });
-        }
-        let db = context.server_context.db();
-        match db.block_user_and_last(&me, &other).await {
-            Ok(Some(last)) => {
-                if let Err(e) = db
-                    .apply_friendship_action(
-                        &me,
-                        &other,
-                        "block",
-                        false,
-                        Some(last.friendship_id),
-                        None,
-                    )
-                    .await
-                {
-                    tracing::warn!(error = %e, "block: recording the friendship action failed");
-                }
-            }
-            Ok(None) => {}
-            Err(e) => {
+        let blocked_at = match block(&context.server_context, &me, &other).await {
+            Ok(at) => at,
+            Err(Refusal::Internal(m) | Refusal::Failed(m)) => {
                 return Ok(BlockUserResponse {
                     response: Some(block_user_response::Response::InternalServerError(
-                        internal_err(e.to_string()),
+                        internal_err(m),
                     )),
                 });
             }
-        }
-
-        let pubsub = context.server_context.pubsub();
-        pubsub.publish(
-            &other,
-            SocialEvent::Block(BlockUpdate {
-                address: me.clone(),
-                is_blocked: true,
-            }),
-        );
-        pubsub.publish(
-            &other,
-            SocialEvent::Friendship(FriendshipUpdate {
-                update: Some(friendship_update::Update::Block(
-                    friendship_update::BlockResponse {
-                        user: Some(User {
-                            address: me.clone(),
-                        }),
-                    },
-                )),
-            }),
-        );
+            Err(refusal) => {
+                return Ok(BlockUserResponse {
+                    response: Some(block_user_response::Response::InvalidRequest(invalid_req(
+                        refusal.message(),
+                    ))),
+                });
+            }
+        };
 
         let profile = context
             .server_context
             .profiles()
-            .blocked_profile(&other, Some(chrono::Utc::now().timestamp_millis()))
+            .blocked_profile(&other, Some(blocked_at.timestamp_millis()))
             .await;
         Ok(BlockUserResponse {
             response: Some(block_user_response::Response::Ok(block_user_response::Ok {
@@ -110,6 +166,7 @@ impl SocialServiceImpl {
 
     /// Removes the block; a friendship the block had deactivated is closed with
     /// a `delete` action (the pair starts over), and the other party is told.
+    /// Without a block to remove nothing is recorded or told.
     pub(crate) async fn unblock_user(
         &self,
         request: UnblockUserPayload,
@@ -126,65 +183,23 @@ impl SocialServiceImpl {
                 });
             }
         };
-        if !context
-            .server_context
-            .friendship_limiter()
-            .allow(&me, &other, PairScope::Directional)
-        {
-            tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
-            return Ok(UnblockUserResponse {
-                response: Some(unblock_user_response::Response::InvalidRequest(
-                    invalid_req(FRIENDSHIP_RATE_LIMIT_MESSAGE),
-                )),
-            });
-        }
-        let db = context.server_context.db();
-        let pubsub = context.server_context.pubsub();
-
-        let last = match db.unblock_user_and_last(&me, &other).await {
-            Ok(v) => v,
-            Err(e) => {
+        match unblock(&context.server_context, &me, &other).await {
+            Ok(()) => {}
+            Err(Refusal::Internal(m) | Refusal::Failed(m)) => {
                 return Ok(UnblockUserResponse {
                     response: Some(unblock_user_response::Response::InternalServerError(
-                        internal_err(e.to_string()),
+                        internal_err(m),
                     )),
                 });
             }
-        };
-        if let Some(last) = last
-            && db
-                .apply_friendship_action(
-                    &me,
-                    &other,
-                    "delete",
-                    false,
-                    Some(last.friendship_id),
-                    None,
-                )
-                .await
-                .is_ok()
-        {
-            pubsub.publish(
-                &other,
-                SocialEvent::Friendship(FriendshipUpdate {
-                    update: Some(friendship_update::Update::Delete(
-                        friendship_update::DeleteResponse {
-                            user: Some(User {
-                                address: me.clone(),
-                            }),
-                        },
+            Err(refusal) => {
+                return Ok(UnblockUserResponse {
+                    response: Some(unblock_user_response::Response::InvalidRequest(
+                        invalid_req(refusal.message()),
                     )),
-                }),
-            );
+                });
+            }
         }
-
-        pubsub.publish(
-            &other,
-            SocialEvent::Block(BlockUpdate {
-                address: me.clone(),
-                is_blocked: false,
-            }),
-        );
         let profile = context
             .server_context
             .profiles()
