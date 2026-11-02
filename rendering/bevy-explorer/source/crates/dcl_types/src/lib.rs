@@ -99,6 +99,11 @@ pub fn enforce_signing_body_budget(calls: &mut Vec<RpcCall>) {
 pub struct RpcCalls(Vec<RpcCall>);
 
 impl RpcCalls {
+    /// Remaining signing-body bytes, checked before copying a JS string into WASM.
+    pub fn remaining_signing_body_bytes(&self) -> usize {
+        MAX_SIGNING_BODY_BYTES_PER_TICK.saturating_sub(self.0.iter().map(signing_body_len).sum())
+    }
+
     /// Enqueue a call for the next flush. Over the per-tick ceiling it returns an error the op
     /// propagates to its caller (`push(..)?`), so a scene spamming RPCs sees its own call fail
     /// rather than growing an unbounded outbound frame.
@@ -106,8 +111,7 @@ impl RpcCalls {
         if self.0.len() >= MAX_RPC_CALLS_PER_TICK {
             anyhow::bail!("exceeded the per-tick RPC call limit ({MAX_RPC_CALLS_PER_TICK})");
         }
-        let used: usize = self.0.iter().map(signing_body_len).sum();
-        if signing_body_len(&call) > MAX_SIGNING_BODY_BYTES_PER_TICK.saturating_sub(used) {
+        if signing_body_len(&call) > self.remaining_signing_body_bytes() {
             anyhow::bail!("per-tick signed fetch body limit exceeded");
         }
         self.0.push(call);

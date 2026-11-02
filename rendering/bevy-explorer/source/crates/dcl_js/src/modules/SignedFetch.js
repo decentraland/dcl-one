@@ -27,9 +27,20 @@ function snapshot(body) {
     return { url, init };
 }
 
+function requireBodyHash(headers, body) {
+    if (body === undefined) return;
+    const metadata = headers.find(([name]) => name.toLowerCase() === "x-identity-metadata");
+    let hash;
+    try { hash = JSON.parse(metadata?.[1]).hashPayload; } catch (_) { /* invalid or missing */ }
+    if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) {
+        throw new Error("signed fetch signer did not bind the request body");
+    }
+}
+
 module.exports.signedFetch = async function (body) {
     const { url, init } = snapshot(body);
     const headers = await Deno.core.ops.op_signed_fetch_headers(url, init.method, init.body);
+    requireBodyHash(headers, init.body);
     for (const [name, value] of headers) init.headers.push([name, value]);
     const response = await fetch(url, init);
     return {
@@ -44,6 +55,7 @@ module.exports.signedFetch = async function (body) {
 module.exports.getHeaders = async function (body) {
     const { url, init } = snapshot(body);
     const result = await Deno.core.ops.op_signed_fetch_headers(url, init.method, init.body);
+    requireBodyHash(result, init.body);
     const headers = {};
     for (const [name, value] of result) headers[name] = value;
     return { headers };

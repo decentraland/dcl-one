@@ -729,7 +729,10 @@ mod tests {
         >();
         let responder = std::thread::spawn(move || {
             for response in sign_rx {
-                response.send(Ok(vec![("x-identity-metadata".into(), "trusted".into())]));
+                response.send(Ok(vec![(
+                    "x-identity-metadata".into(),
+                    format!(r#"{{"hashPayload":"{}"}}"#, "a".repeat(64)),
+                )]));
             }
         });
         let calls = rt.block_on(async {
@@ -798,7 +801,10 @@ mod tests {
         assert_eq!(result["sent"]["body"], "piñata");
         assert_eq!(
             result["sent"]["headers"],
-            serde_json::json!([["x-identity-metadata", "trusted"]])
+            serde_json::json!([[
+                "x-identity-metadata",
+                format!(r#"{{"hashPayload":"{}"}}"#, "a".repeat(64))
+            ]])
         );
     }
 

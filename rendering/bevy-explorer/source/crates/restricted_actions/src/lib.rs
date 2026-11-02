@@ -2839,6 +2839,42 @@ mod signed_fetch_body_tests {
         assert!(signed_fetch_uri("https://user:secret@example.org/", false).is_err());
     }
     #[test]
+    fn signed_metadata_fixture_for_independent_verifier() {
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest();
+        let uri = signed_fetch_uri("https://example.org/Scene/Mixed?Ignored=YES", false).unwrap();
+        let hash_payload = futures_lite::future::block_on(signed_fetch_hash(Some("{}")));
+        let meta = SignedFetchMeta {
+            origin: Some("https://realm.example/Mixed".into()),
+            scene_id: Some("SceneMixed".into()),
+            parcel: Some("52,68".into()),
+            tld: Some(signed_fetch_tld("decentraland.zone").into()),
+            network: Some("mainnet".into()),
+            is_guest: Some(true),
+            realm: SignedFetchMetaRealm {
+                hostname: "peer.decentraland.zone".into(),
+                protocol: "v3".into(),
+                server_name: "MixedCase".into(),
+            },
+            signer: "decentraland-kernel-scene".into(),
+            hash_payload,
+        };
+        let ordinary = serde_json::to_string(&meta).unwrap();
+        let delegated = futures_lite::future::block_on(delegated_signed_fetch_meta(
+            r#"{"signer":"dcl:authoritative-server","sceneId":"SceneMixed","parcel":"52,68","realm":{"serverName":"MixedCase"}}"#, Some("{}")
+        )).unwrap();
+        for (kind, meta) in [("ordinary", ordinary), ("delegated", delegated)] {
+            let headers =
+                futures_lite::future::block_on(sign_request("POST", &uri, &wallet, meta)).unwrap();
+            println!(
+                "SIGN_FIXTURE {} {}",
+                kind,
+                serde_json::to_string(&headers).unwrap()
+            );
+        }
+    }
+
+    #[test]
     fn chooses_environment_from_trusted_base_domain() {
         assert_eq!(signed_fetch_tld("decentraland.org"), "org");
         assert_eq!(signed_fetch_tld("decentraland.zone"), "zone");

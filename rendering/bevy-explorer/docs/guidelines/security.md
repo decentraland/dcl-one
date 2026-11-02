@@ -67,6 +67,20 @@ clipboard, anything that touches the host OS or a page) must be excluded from th
 at code level, not merely denied by the permissions table: a config-driven deny is one edit away
 from being an allow. The scene promise still gets answered, with a denial.
 
+## Scene signed fetch
+
+Scene `signedFetch` and `getHeaders` bind an optional string body as a SHA-256 hash of its
+UTF-8 bytes. An empty string has a hash; an absent or null body does not. A scene can queue at
+most 10 MiB of signing bodies per tick in total; a request that exceeds the remaining allowance
+is rejected. The signed metadata environment comes from the launch base domain: `decentraland.org`,
+`.zone`, and `.today` select `org`, `zone`, and `today` respectively; other domains use `org`.
+
+Body-bearing calls require a signer that returns a valid body hash in its signed metadata. If a
+new scene runtime is paired with an older engine that does not supply one, the call is rejected
+before `signedFetch` sends a request. Bodyless calls retain their existing compatibility. The
+signature binds the normalized request path; callers using `getHeaders` must send the same method,
+URL and body they supplied for signing.
+
 ## Reporting
 
 Do not disclose a security problem in a public issue or PR. Use the private reporting

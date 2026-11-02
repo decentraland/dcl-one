@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const api = require('./SignedFetch.js');
+const metadata = JSON.stringify({ hashPayload: 'a'.repeat(64) });
 
 test('signedFetch captures request and protects identity headers', async () => {
   let resolveSign, signed, sent;
@@ -9,16 +10,16 @@ test('signedFetch captures request and protects identity headers', async () => {
   const input = { url: 'https://example.org/Path', init: { method:'POST', body:'before', headers: {'X-Identity-Metadata':'forged', 'x-authoritative-scope':'forged', accept:'text/plain'} } };
   const pending = api.signedFetch(input);
   input.url = 'https://evil.example/'; input.init.method = 'DELETE'; input.init.body = 'after'; input.init.headers.accept = 'changed';
-  resolveSign([['x-identity-metadata','trusted'],['x-identity-auth-chain-0','chain']]);
+  resolveSign([['x-identity-metadata',metadata],['x-identity-auth-chain-0','chain']]);
   await pending;
   assert.deepEqual(signed, ['https://example.org/Path','POST','before']);
   assert.equal(sent.url, 'https://example.org/Path'); assert.equal(sent.init.method, 'POST'); assert.equal(sent.init.body, 'before');
-  const headers = new Headers(sent.init.headers); assert.equal(headers.get('x-identity-metadata'),'trusted'); assert.equal(headers.get('x-authoritative-scope'),null); assert.equal(headers.get('accept'),'text/plain');
+  const headers = new Headers(sent.init.headers); assert.equal(headers.get('x-identity-metadata'),metadata); assert.equal(headers.get('x-authoritative-scope'),null); assert.equal(headers.get('accept'),'text/plain');
 });
 
 test('getHeaders passes present empty body through', async () => {
   let args;
-  global.Deno = {core:{ops:{op_signed_fetch_headers: async (...a) => { args=a; return []; }}}};
+  global.Deno = {core:{ops:{op_signed_fetch_headers: async (...a) => { args=a; return [['x-identity-metadata',metadata]]; }}}};
   await api.getHeaders({url:'https://example.org/', init:{body:''}});
   assert.deepEqual(args, ['https://example.org/', undefined, '']);
 });
@@ -70,4 +71,15 @@ test('null method and body are captured as absent', async () => {
   assert.equal(sent.method,undefined); assert.equal(sent.body,undefined);
   await api.getHeaders({url:'https://example.org/',init:{method:null,body:null}});
   assert.deepEqual(args,['https://example.org/',undefined,undefined]);
+});
+
+test('bodyful calls reject legacy or malformed metadata without issuing fetch', async () => {
+  for (const metadata of ['{}', '{"hashPayload":"bad"}', 'not-json']) {
+    let fetched = false;
+    global.Deno = {core:{ops:{op_signed_fetch_headers: async () => [['x-identity-metadata', metadata]]}}};
+    global.fetch = async () => {fetched=true; throw new Error('unexpected fetch');};
+    await assert.rejects(api.signedFetch({url:'https://example.org/',init:{body:''}}));
+    await assert.rejects(api.getHeaders({url:'https://example.org/',init:{body:'{}'}}));
+    assert.equal(fetched,false);
+  }
 });
