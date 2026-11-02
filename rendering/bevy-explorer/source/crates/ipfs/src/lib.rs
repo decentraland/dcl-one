@@ -3,6 +3,7 @@ pub mod content_hash;
 mod ipfs_debug;
 pub mod ipfs_path;
 mod priority_gate;
+pub use priority_gate::{PriorityGate, Ticket};
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;
 
@@ -84,7 +85,6 @@ use world_access::WorldCommsSecret;
 use common::util::JoinRelativeExt;
 
 use self::ipfs_path::{content_file_path, CacheKey, IpfsKey, IpfsPath, IpfsType};
-use self::priority_gate::{PriorityGate, Ticket};
 use common::partition::LoadPriority;
 
 const IPFS_IN_FLIGHT_DIAGNOSTIC_PATH: DiagnosticPath = DiagnosticPath::const_new("IPFS_IN_FLIGHT");
@@ -1036,8 +1036,10 @@ impl IpfsIo {
         }
     }
 
-    /// The download priority of every live scene, by hash; a scene not in the map, or a
-    /// request that is not a scene's, is top priority.
+    /// The download priority of every live scene and of every avatar's wearables, by hash. A
+    /// hash not in the map is top priority until it is published; a request with no hash
+    /// ranks after every published one; a hash that was published and no longer is ranks
+    /// last while requests of its wait.
     pub fn set_scene_priorities(
         &self,
         priorities: std::collections::HashMap<String, LoadPriority>,
@@ -1047,6 +1049,16 @@ impl IpfsIo {
 
     pub fn scene_priority(&self, scene: &str) -> Option<LoadPriority> {
         self.request_slots.scene_priority(scene)
+    }
+
+    /// Whether any download waits for a request slot.
+    pub fn has_pending_downloads(&self) -> bool {
+        self.request_slots.has_waiters()
+    }
+
+    /// The request slots themselves, for callers that queue their own tickets (tests).
+    pub fn request_slots(&self) -> &Arc<PriorityGate> {
+        &self.request_slots
     }
 
     pub fn set_concurrent_remote_count(&self, count: usize) {

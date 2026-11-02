@@ -28,6 +28,22 @@ fn priorities(entries: &[(&str, LoadPriority)]) -> HashMap<String, LoadPriority>
         .collect()
 }
 
+#[test]
+fn has_waiters_only_while_a_ticket_is_queued() {
+    let gate = PriorityGate::new(1);
+    assert!(!gate.has_waiters());
+    // the first ticket takes the one slot at once; the second waits for it
+    let first = gate.ticket(scene("a"));
+    assert!(!gate.has_waiters());
+    let second = gate.ticket(scene("b"));
+    assert!(gate.has_waiters());
+    // the slot comes back with the first ticket and goes to the second
+    drop(first);
+    assert!(!gate.has_waiters());
+    drop(second);
+    assert!(!gate.has_waiters());
+}
+
 /// Yield until `count` tickets are queued; a ticket that never queues fails the test.
 async fn settle(gate: &Arc<PriorityGate>, count: usize) {
     for _ in 0..1000 {

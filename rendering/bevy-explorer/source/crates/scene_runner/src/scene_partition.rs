@@ -76,7 +76,9 @@ pub fn update_scene_partitions(
 
 /// Every download priority, by content hash, for the ipfs request slots: the player's scenes
 /// first; then the avatars' bodies and wearables, nearest avatar first, a shared wearable at the
-/// best of its avatars; then the other scenes by partition.
+/// best of its avatars; then the other scenes by partition. Published only on a frame in which
+/// a download waits for a slot: the keys are read at a grant, so the steady state costs nothing,
+/// and the first frame with a waiter publishes before the next slot is granted.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, &Partition)>,
     partitioned: Query<(&Partition, &PartitionedDownloads)>,
@@ -84,6 +86,9 @@ pub fn publish_download_priorities(
     containing_scene: ContainingScene,
     ipfs: Res<IpfsResource>,
 ) {
+    if !ipfs.has_pending_downloads() {
+        return;
+    }
     let active = player
         .single()
         .map(|player| containing_scene.get(player))
@@ -102,10 +107,12 @@ pub fn publish_download_priorities(
     for (partition, downloads) in &partitioned {
         let priority = partition.0.load_priority(Tier::Avatar);
         for hash in &downloads.0 {
-            priorities
-                .entry(hash.clone())
-                .and_modify(|current| *current = (*current).min(priority))
-                .or_insert(priority);
+            match priorities.get_mut(hash) {
+                Some(current) => *current = (*current).min(priority),
+                None => {
+                    priorities.insert(hash.clone(), priority);
+                }
+            }
         }
     }
     ipfs.set_scene_priorities(priorities);

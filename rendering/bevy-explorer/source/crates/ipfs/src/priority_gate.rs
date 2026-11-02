@@ -147,13 +147,24 @@ impl PriorityGate {
     /// (despawned) ranks last for as long as requests of its wait, so they do not count as
     /// unknown and jump to the top.
     pub fn set_priorities(&self, priorities: HashMap<String, LoadPriority>) {
-        let mut state = self.state.lock().unwrap();
-        for (hash, queue) in state.scenes.iter_mut() {
-            if priorities.contains_key(hash) {
-                queue.published = true;
+        let previous = {
+            let mut state = self.state.lock().unwrap();
+            for (hash, queue) in state.scenes.iter_mut() {
+                if priorities.contains_key(hash) {
+                    queue.published = true;
+                }
             }
-        }
-        state.priorities = priorities;
+            std::mem::replace(&mut state.priorities, priorities)
+        };
+        // freed after the lock: hundreds of strings
+        drop(previous);
+    }
+
+    /// Whether any request waits for a slot. While none does, the keys are not read, so the
+    /// publisher skips the frame.
+    pub fn has_waiters(&self) -> bool {
+        let state = self.state.lock().unwrap();
+        !state.no_scene.is_empty() || state.scenes.values().any(|q| !q.tickets.is_empty())
     }
 
     pub fn scene_priority(&self, scene: &str) -> Option<LoadPriority> {

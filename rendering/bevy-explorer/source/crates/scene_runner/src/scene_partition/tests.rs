@@ -11,7 +11,7 @@ use common::{
     structs::{PrimaryCamera, PrimaryUser},
 };
 use dcl_types::SceneId;
-use ipfs::{IpfsIo, IpfsResource};
+use ipfs::{IpfsIo, IpfsResource, Ticket};
 use scene_material::SceneBounds;
 
 use super::*;
@@ -40,6 +40,30 @@ fn spawn_rendering_camera(world: &mut World, position: Vec3, forward: Vec3) {
         Camera::default(),
         GlobalTransform::from(Transform::from_translation(position).looking_to(forward, Vec3::Y)),
     ));
+}
+
+fn insert_ipfs(world: &mut World, slots: usize) {
+    world.insert_resource(IpfsResource {
+        inner: Arc::new(IpfsIo::new(
+            false,
+            Box::new(MemoryAssetReader {
+                root: Dir::default(),
+            }),
+            None,
+            Default::default(),
+            slots,
+            tokio::sync::mpsc::unbounded_channel().0,
+        )),
+    });
+}
+
+/// Fill the request slots and queue one more request, so a publish is not skipped. The
+/// tickets must outlive the publish.
+fn hold_a_waiting_download(ipfs: &IpfsIo, slots: usize) -> Vec<Arc<Ticket>> {
+    let gate = ipfs.request_slots();
+    (0..=slots)
+        .map(|i| gate.ticket(Some(format!("held-{i}"))))
+        .collect()
 }
 
 fn scene_with_parcels(world: &mut World, parcels: &[IVec2]) -> Entity {
@@ -163,18 +187,7 @@ fn an_entity_with_partitioned_downloads_takes_its_positions_partition() {
 #[test]
 fn publishes_a_wearable_by_the_best_avatar_wearing_it() {
     let mut world = world_with_player(Some(Vec3::X));
-    world.insert_resource(IpfsResource {
-        inner: Arc::new(IpfsIo::new(
-            false,
-            Box::new(MemoryAssetReader {
-                root: Dir::default(),
-            }),
-            None,
-            Default::default(),
-            1,
-            tokio::sync::mpsc::unbounded_channel().0,
-        )),
-    });
+    insert_ipfs(&mut world, 1);
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -196,6 +209,7 @@ fn publishes_a_wearable_by_the_best_avatar_wearing_it() {
         PartitionedDownloads(vec!["shared".to_owned()]),
         Partition(near),
     ));
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
 
     world.run_system_once(publish_download_priorities).unwrap();
 
@@ -213,18 +227,7 @@ fn publishes_a_wearable_by_the_best_avatar_wearing_it() {
 #[test]
 fn publishes_each_scenes_key_with_the_players_scene_on_top() {
     let mut world = world_with_player(Some(Vec3::X));
-    world.insert_resource(IpfsResource {
-        inner: Arc::new(IpfsIo::new(
-            false,
-            Box::new(MemoryAssetReader {
-                root: Dir::default(),
-            }),
-            None,
-            Default::default(),
-            1,
-            tokio::sync::mpsc::unbounded_channel().0,
-        )),
-    });
+    insert_ipfs(&mut world, 1);
     // the player stands on "home"; "far" is behind the camera, five parcels away
     let mut pointers = ScenePointers::default();
     pointers.insert(
@@ -255,6 +258,7 @@ fn publishes_each_scenes_key_with_the_players_scene_on_top() {
         .resource_mut::<LiveScenes>()
         .scenes
         .insert("home".to_owned(), home);
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
 
     world.run_system_once(publish_download_priorities).unwrap();
 
@@ -272,24 +276,41 @@ fn publishes_each_scenes_key_with_the_players_scene_on_top() {
     assert_eq!(ipfs.scene_priority("other"), None);
 }
 
+#[test]
+fn publishes_nothing_while_no_download_waits_for_a_slot() {
+    let mut world = world_with_player(Some(Vec3::X));
+    insert_ipfs(&mut world, 1);
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    world.spawn((
+        SceneHash("home".to_owned()),
+        Partition(PartitionData::NEAREST),
+    ));
+
+    world.run_system_once(publish_download_priorities).unwrap();
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("home"),
+        None,
+        "nothing waits for a slot, so nothing is published"
+    );
+
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+    world.run_system_once(publish_download_priorities).unwrap();
+    assert!(world
+        .resource::<IpfsResource>()
+        .scene_priority("home")
+        .is_some());
+}
+
 /// The publisher's per-frame work at a busy plaza: 20 scenes in range, 50 avatars with 10
-/// wearables each. Run with `--ignored --nocapture`.
+/// wearables each (353 distinct, neighbours sharing a few), with a download waiting and with
+/// none. Run with `--ignored --nocapture`.
 #[test]
 #[ignore]
 fn overhead_of_publishing_at_a_busy_plaza() {
     let mut world = world_with_player(Some(Vec3::X));
-    world.insert_resource(IpfsResource {
-        inner: Arc::new(IpfsIo::new(
-            false,
-            Box::new(MemoryAssetReader {
-                root: Dir::default(),
-            }),
-            None,
-            Default::default(),
-            32,
-            tokio::sync::mpsc::unbounded_channel().0,
-        )),
-    });
+    insert_ipfs(&mut world, 32);
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
@@ -304,11 +325,7 @@ fn overhead_of_publishing_at_a_busy_plaza() {
     // avatars spread over the plaza, partitioned from their positions
     for a in 0..50 {
         world.spawn((
-            PartitionedDownloads(
-                (0..10)
-                    .map(|w| format!("wearable-{}", (a * 7 + w) % 120))
-                    .collect(),
-            ),
+            PartitionedDownloads((0..10).map(|w| format!("wearable-{}", a * 7 + w)).collect()),
             GlobalTransform::from_translation(Vec3::new((a * 3) as f32, 0.0, -(a as f32))),
         ));
     }
@@ -317,12 +334,20 @@ fn overhead_of_publishing_at_a_busy_plaza() {
     schedule.add_systems((update_scene_partitions, publish_download_priorities).chain());
     schedule.run(&mut world);
 
+    let waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 32);
     let start = std::time::Instant::now();
     for _ in 0..200 {
         schedule.run(&mut world);
     }
+    let busy = start.elapsed() / 200;
+
+    drop(waiting);
+    let start = std::time::Instant::now();
+    for _ in 0..200 {
+        schedule.run(&mut world);
+    }
+    let idle = start.elapsed() / 200;
     println!(
-        "publisher: 20 live scenes + 50 avatars x 10 wearables: {:?} per frame (partitions, map build, publish)",
-        start.elapsed() / 200
+        "publisher: 20 live scenes + 50 avatars x 10 wearables: {busy:?} per frame with a download waiting (partitions, map build, publish); {idle:?} with none (partitions only)"
     );
 }
