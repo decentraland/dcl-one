@@ -53,7 +53,10 @@ use web_time::Instant;
 use crate::{
     asset_preload::plugin::AssetPreloadPlugin,
     initialize_scene::SuperUserScene,
-    scene_partition::{update_scene_partitions, ScenePartition, BEHIND_SCENE_TICK_INTERVAL},
+    scene_partition::{
+        publish_download_priorities, update_scene_partitions, ScenePartition,
+        BEHIND_SCENE_TICK_INTERVAL,
+    },
 };
 use common::partition::ScenePartitionData;
 
@@ -392,7 +395,12 @@ impl Plugin for SceneRunnerPlugin {
 
         app.add_systems(
             Update,
-            (update_scene_partitions, update_scene_priority, run_scene_loop)
+            (
+                update_scene_partitions,
+                publish_download_priorities,
+                update_scene_priority,
+                run_scene_loop,
+            )
                 .chain()
                 .in_set(SceneSets::RunLoop),
         );

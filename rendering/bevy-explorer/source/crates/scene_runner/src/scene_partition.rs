@@ -2,11 +2,12 @@ use std::time::Duration;
 
 use bevy::prelude::*;
 use common::{
-    partition::{scene_partition, ScenePartitionData},
+    partition::{scene_partition, LoadPriority, ScenePartitionData},
     structs::{PrimaryCamera, PrimaryUser},
 };
+use ipfs::IpfsResource;
 
-use crate::renderer_context::RendererSceneContext;
+use crate::{initialize_scene::SceneHash, renderer_context::RendererSceneContext, ContainingScene};
 
 /// Where the scene is relative to the camera, refreshed every frame for live scenes by
 /// `update_scene_partitions`, and written by the lifecycle for scenes still loading.
@@ -55,18 +56,55 @@ pub fn update_scene_partitions(
     }
 }
 
+/// Every scene's download priority, by hash, for the ipfs request slots: the player's scenes
+/// first, then by partition.
+pub fn publish_download_priorities(
+    scenes: Query<(Entity, &SceneHash, &ScenePartition)>,
+    player: Query<Entity, With<PrimaryUser>>,
+    containing_scene: ContainingScene,
+    ipfs: Res<IpfsResource>,
+) {
+    let active = player
+        .single()
+        .map(|player| containing_scene.get(player))
+        .unwrap_or_default();
+    let priorities = scenes
+        .iter()
+        .map(|(entity, hash, partition)| {
+            let priority = if active.contains(&entity) {
+                LoadPriority::TOP
+            } else {
+                partition.0.load_priority()
+            };
+            (hash.0.clone(), priority)
+        })
+        .collect();
+    ipfs.set_scene_priorities(priorities);
+}
+
 #[cfg(test)]
 mod tests {
-    use bevy::{ecs::system::RunSystemOnce, prelude::*};
+    use std::sync::Arc;
+
+    use bevy::{
+        asset::io::memory::{Dir, MemoryAssetReader},
+        ecs::system::RunSystemOnce,
+        math::FloatOrd,
+        prelude::*,
+    };
     use common::{
-        partition::ScenePartitionData,
+        partition::{LoadPriority, ScenePartitionData},
         structs::{PrimaryCamera, PrimaryUser},
     };
     use dcl_types::SceneId;
+    use ipfs::{IpfsIo, IpfsResource};
     use scene_material::SceneBounds;
 
     use super::*;
-    use crate::renderer_context::RendererSceneContext;
+    use crate::{
+        initialize_scene::{LiveScenes, PointerResult, PortableScenes, SceneHash, ScenePointers},
+        renderer_context::RendererSceneContext,
+    };
 
     const PLAYER_POS: Vec3 = Vec3::new(8.0, 0.0, -8.0);
 
@@ -149,5 +187,68 @@ mod tests {
             world.get::<ScenePartition>(scene).unwrap().0,
             ScenePartitionData::NEAREST
         );
+    }
+
+    #[test]
+    fn publishes_each_scenes_key_with_the_players_scene_on_top() {
+        let mut world = world_with_player(Some(Vec3::X));
+        world.insert_resource(IpfsResource {
+            inner: Arc::new(IpfsIo::new(
+                false,
+                Box::new(MemoryAssetReader {
+                    root: Dir::default(),
+                }),
+                None,
+                Default::default(),
+                1,
+                tokio::sync::mpsc::unbounded_channel().0,
+            )),
+        });
+        // the player stands on "home"; "far" is behind the camera, five parcels away
+        let mut pointers = ScenePointers::default();
+        pointers.insert(
+            IVec2::ZERO,
+            PointerResult::Exists {
+                hash: "home".to_owned(),
+                urn: None,
+            },
+        );
+        world.insert_resource(pointers);
+        world.init_resource::<PortableScenes>();
+        world.init_resource::<LiveScenes>();
+        let home = world
+            .spawn((
+                SceneHash("home".to_owned()),
+                ScenePartition(ScenePartitionData::NEAREST),
+            ))
+            .id();
+        world.spawn((
+            SceneHash("far".to_owned()),
+            ScenePartition(ScenePartitionData {
+                sqr_distance: 6400.0,
+                parcel_distance: 5,
+                is_behind: true,
+            }),
+        ));
+        world
+            .resource_mut::<LiveScenes>()
+            .scenes
+            .insert("home".to_owned(), home);
+
+        world
+            .run_system_once(publish_download_priorities)
+            .unwrap();
+
+        let ipfs = world.resource::<IpfsResource>();
+        assert_eq!(ipfs.scene_priority("home"), Some(LoadPriority::TOP));
+        assert_eq!(
+            ipfs.scene_priority("far"),
+            Some(LoadPriority {
+                parcel_distance: 5,
+                is_behind: true,
+                sqr_distance: FloatOrd(6400.0),
+            })
+        );
+        assert_eq!(ipfs.scene_priority("other"), None);
     }
 }
