@@ -31,7 +31,10 @@ function requireBodyHash(headers, body) {
     if (body === undefined) return;
     const metadata = headers.find(([name]) => name.toLowerCase() === "x-identity-metadata");
     let hash;
-    try { hash = JSON.parse(metadata?.[1]).hashPayload; } catch (_) { /* invalid or missing */ }
+    try {
+        const parsed = JSON.parse(metadata?.[1]);
+        if (Object.prototype.hasOwnProperty.call(parsed, "hashPayload")) hash = parsed.hashPayload;
+    } catch (_) { /* invalid or missing */ }
     if (typeof hash !== "string" || !/^[0-9a-f]{64}$/.test(hash)) {
         throw new Error("signed fetch signer did not bind the request body");
     }

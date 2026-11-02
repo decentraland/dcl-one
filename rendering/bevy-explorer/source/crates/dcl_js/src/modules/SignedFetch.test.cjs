@@ -83,3 +83,11 @@ test('bodyful calls reject legacy or malformed metadata without issuing fetch', 
     assert.equal(fetched,false);
   }
 });
+
+test('inherited metadata hash cannot satisfy body binding', async () => {
+  Object.prototype.hashPayload = 'a'.repeat(64);
+  try {
+    global.Deno = {core:{ops:{op_signed_fetch_headers: async () => [['x-identity-metadata','{}']]}}};
+    await assert.rejects(api.getHeaders({url:'https://example.org/',init:{body:''}}));
+  } finally { delete Object.prototype.hashPayload; }
+});
