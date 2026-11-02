@@ -107,6 +107,16 @@ struct ImgReprocessStats {
     swapped: usize,
 }
 
+/// Frees a `.ktx2` transcode the loader stashed when its cache write is not going to happen
+/// (uncacheable, unhashable or already queued paths), so the stash holds queued work only.
+fn drop_ktx2_result(ty: ProcessingAssetType, path: &AssetPath) {
+    if matches!(ty, ProcessingAssetType::Ktx2Cache) {
+        if let Ok(mut results) = crate::ktx2_loader::KTX2_RESULTS.lock() {
+            results.remove(&path.to_string());
+        }
+    }
+}
+
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn check_assets(
     mut a: EventReader<AssetEvent<Image>>,
@@ -144,17 +154,34 @@ fn check_assets(
                 stats.skip_unloaded += 1;
                 continue;
             };
-            if image.is_compressed() {
+            // a `.ktx2` loads compressed already; when the loader transcoded it, the dds is
+            // waiting in `KTX2_RESULTS` to be written over the cached ktx2 bytes. a cached
+            // or bc7 ktx2 has nothing waiting and is left as it is
+            let ktx2 = asset_path.label().is_none()
+                && asset_path
+                    .path()
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("ktx2"));
+            if ktx2 {
+                let waiting = crate::ktx2_loader::KTX2_RESULTS
+                    .lock()
+                    .is_ok_and(|results| results.contains_key(&asset_path.to_string()));
+                if !waiting {
+                    stats.already_compressed += 1;
+                    continue;
+                }
+            } else if image.is_compressed() {
                 // skip already processed
                 stats.already_compressed += 1;
                 continue;
             };
-            if image.width() as usize
-                * image.height() as usize
-                * image.texture_descriptor.format.pixel_size()
-                <= 1024
-                || image.height() <= 2 // bc7 requires 4x4 blocks, we won't save anything
-                || image.width() <= 2
+            if !ktx2
+                && (image.width() as usize
+                    * image.height() as usize
+                    * image.texture_descriptor.format.pixel_size()
+                    <= 1024
+                    || image.height() <= 2 // bc7 requires 4x4 blocks, we won't save anything
+                    || image.width() <= 2)
             {
                 stats.skip_tiny += 1;
                 continue;
@@ -166,6 +193,7 @@ fn check_assets(
             }
 
             let (ty, asset_path) = match asset_path.label() {
+                None if ktx2 => (ProcessingAssetType::Ktx2Cache, asset_path.clone_owned()),
                 None => (ProcessingAssetType::Image, asset_path.clone_owned()),
                 Some(label) if label.starts_with("Texture") => (
                     ProcessingAssetType::Gltf,
@@ -185,11 +213,13 @@ fn check_assets(
                 // skip ... ?
                 debug!("skip unknown {asset_path:?}");
                 stats.skip_unknown += 1;
+                drop_ktx2_result(ty, &asset_path);
                 continue;
             };
 
             if paths_processed.contains(&ipfs_path) {
                 stats.total -= 1;
+                drop_ktx2_result(ty, &asset_path);
                 continue;
             }
             paths_processed.insert(ipfs_path.clone());
@@ -197,6 +227,7 @@ fn check_assets(
             if let Ok(None) = ipfs_path.context_free_hash() {
                 // skip unhashable
                 stats.skip_unhashable += 1;
+                drop_ktx2_result(ty, &asset_path);
                 continue;
             }
 
@@ -253,6 +284,7 @@ fn check_assets(
                 .flat_map(|(ty, ipfs_path, base_path)| {
                     let Some(hash) = ipfs_path.hash(&ctx) else {
                         skip_unhashable += 1;
+                        drop_ktx2_result(ty, &base_path);
                         return None;
                     };
 
@@ -267,14 +299,19 @@ fn check_assets(
                     if ipfs_path.should_cache(&hash) && !loopback {
                         // `hash` comes from the entity json, so it must not steer the path
                         #[cfg(not(target_arch = "wasm32"))]
-                        let cache_path = std::path::Path::new(&cache_root)
+                        let Some(cache_path) = std::path::Path::new(&cache_root)
                             .join_relative(hash)
-                            .map(|p| p.to_string_lossy().into_owned())?;
+                            .map(|p| p.to_string_lossy().into_owned())
+                        else {
+                            drop_ktx2_result(ty, &base_path);
+                            return None;
+                        };
 
                         #[cfg(target_arch = "wasm32")]
                         let Ok(cache_path) = url
                         else {
                             skip_unhashable += 1;
+                            drop_ktx2_result(ty, &base_path);
                             return None;
                         };
 
@@ -285,6 +322,7 @@ fn check_assets(
                         })
                     } else {
                         skip_shouldnt_cache += 1;
+                        drop_ktx2_result(ty, &base_path);
                         None
                     }
                 })
@@ -368,6 +406,8 @@ fn pipe_events(
                     // repaired cache bytes (no need for the image-swap below)
                     ProcessingAssetType::UnloadableGltf => asset_server.reload(req.base_path),
                     ProcessingAssetType::Image => asset_server.reload(req.base_path),
+                    // the loaded image already is the transcode that was just cached
+                    ProcessingAssetType::Ktx2Cache => (),
                 };
             }
             Err(_) => {

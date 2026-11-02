@@ -39,20 +39,41 @@ pub(crate) async fn process_events(
         }
         // a gltf that failed to load shows nothing until it is repaired, while a texture
         // compression only improves one that is already showing: repairs go first, so a
-        // millisecond repair never waits behind a queue of 200ms compressions
+        // millisecond repair never waits behind a queue of 200ms compressions. ktx2 cache
+        // writes are pure i/o and free their stashed dds, so they go next
+        let priority = |req: &AssetForProcessing| match req.ty {
+            ProcessingAssetType::UnloadableGltf => 0,
+            ProcessingAssetType::Ktx2Cache => 1,
+            ProcessingAssetType::Gltf | ProcessingAssetType::Image => 2,
+        };
         let next = pending
             .iter()
-            .position(|req| matches!(req.ty, ProcessingAssetType::UnloadableGltf))
+            .enumerate()
+            .min_by_key(|(_, req)| priority(req))
+            .map(|(i, _)| i)
             .unwrap_or(0);
         let req = pending.remove(next).expect("pending is not empty");
+        let cache_write = matches!(req.ty, ProcessingAssetType::Ktx2Cache);
 
+        // the read yields the entry's key (on web, the cache entry the url resolves to)
         let Ok((raw_bytes, key)) = read_file(&req.cache_path).await else {
             error!("can't read {:?}", req.cache_path);
+            if cache_write {
+                take_ktx2_result(&req);
+            }
             let _ = resp_sx.send(Err(()));
             continue;
         };
 
         let data = match req.ty {
+            ProcessingAssetType::Ktx2Cache => match take_ktx2_result(&req) {
+                Some(dds) => dds,
+                None => {
+                    error!("no ktx2 transcode stashed for {:?}", req.base_path);
+                    let _ = resp_sx.send(Err(()));
+                    continue;
+                }
+            },
             ProcessingAssetType::Gltf | ProcessingAssetType::UnloadableGltf => {
                 let expect_repair = matches!(req.ty, ProcessingAssetType::UnloadableGltf);
                 match process_gltf(&raw_bytes, expect_repair) {
@@ -82,6 +103,14 @@ pub(crate) async fn process_events(
 
         let _ = resp_sx.send(Ok(req));
     }
+}
+
+/// The dds `Ktx2Loader` stashed for `req.base_path`, removed from the stash.
+fn take_ktx2_result(req: &AssetForProcessing) -> Option<Vec<u8>> {
+    crate::ktx2_loader::KTX2_RESULTS
+        .lock()
+        .ok()?
+        .remove(&req.base_path.to_string())
 }
 
 #[derive(Debug)]

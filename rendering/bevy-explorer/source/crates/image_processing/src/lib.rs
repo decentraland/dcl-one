@@ -21,6 +21,9 @@ pub enum ProcessingAssetType {
     // success it is reloaded in place
     UnloadableGltf,
     Image,
+    // the dds a `.ktx2` load produced (`ktx2_loader::KTX2_RESULTS`), to be written over the
+    // cached ktx2 bytes so the next load skips the transcode. nothing is reprocessed or reloaded
+    Ktx2Cache,
 }
 
 #[derive(Event, Clone)]
