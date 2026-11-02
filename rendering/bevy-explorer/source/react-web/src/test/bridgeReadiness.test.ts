@@ -243,4 +243,17 @@ describe('an unreachable bridge is surfaced, not silent', () => {
     h.driver.emit({ kind: 'bridgeUnavailable' })
     expect(h.session().fatalError).toBe(first)
   })
+
+  it('stays quiet with the HUD hidden: no panels to explain (the places embed, ?hud=0)', async () => {
+    const h = renderSession()
+    await enterAsGuest(h)
+    // read when the report lands (a ?hud=0 boot skips the lobby enterAsGuest drives)
+    history.replaceState(null, '', '/?hud=0')
+    try {
+      h.driver.emit({ kind: 'bridgeUnavailable' })
+      expect(h.session().fatalError).toBeNull()
+    } finally {
+      history.replaceState(null, '', '/')
+    }
+  })
 })
