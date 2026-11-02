@@ -25,11 +25,13 @@ export type RailProps = {
   testId?: string;
   /** "collection": the item page's collection carousel, with its larger title and arrows. */
   variant?: "collection";
+  /** The caller's own spacing around the rail. */
+  className?: string;
   renderItem?: (item: CatalogItem, index: number) => ReactNode;
   headerExtra?: ReactNode;
 };
 
-export default function Rail({ title, items, loading = false, source = "grid", viewAllTo, testId, renderItem, headerExtra, variant }: RailProps) {
+export default function Rail({ title, items, loading = false, source = "grid", viewAllTo, testId, renderItem, headerExtra, variant, className }: RailProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [pageCount, setPageCount] = useState(1);
   const [page, setPage] = useState(0);
@@ -69,7 +71,7 @@ export default function Rail({ title, items, loading = false, source = "grid", v
   const label = typeof title === "string" ? title : undefined;
 
   return (
-    <section className="shop-rail" data-testid={testId} data-variant={variant} aria-label={label}>
+    <section className={className ? `shop-rail ${className}` : "shop-rail"} data-testid={testId} data-variant={variant} aria-label={label}>
       <header className="shop-rail__head">
         <h2 className="shop-rail__title">{title}</h2>
         {headerExtra}

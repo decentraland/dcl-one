@@ -1,4 +1,4 @@
-// from: shop@2d3bf62:app/src/components/ShopFooter/ShopFooter.tsx
+// from: shop@2d3bf62:app/src/components/ShopFooter/ShopFooter.tsx; shop@3a322cf9 (the Vote link)
 
 import { useState, type FormEvent, type ReactNode } from "react";
 
@@ -19,6 +19,7 @@ const RESOURCES: FooterLink[] = [
   { label: "Creator Hub", url: "/create" },
   { label: "Docs", url: "/docs" },
   { label: "Blog", url: "/blog" },
+  { label: "Vote", url: "https://decentraland.org/dao" },
 ];
 
 const LEGAL: FooterLink[] = [

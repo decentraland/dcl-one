@@ -113,8 +113,7 @@ pointing at it (`e2e/gate.ts`).
 ## Editor gates (real engine, same config)
 
 The optional `editor.gate.spec.ts` drives the scene editor package with real clicks. It needs a built
-engine in `deploy/web/engine/pkg` (`make web` from repository-root `apps/bevy-explorer`),
-the TS bindings (`sh scripts/gen-ts-bindings.sh` from `rendering/bevy-explorer/source`), and a dcl-editor checkout whose package speaks host contract v1.1 or later (`mountHome`):
+engine in `deploy/web/engine/pkg` (`just wasm`), the TS bindings (`just ts-bindings`), and a dcl-editor checkout whose package speaks host contract v1.1 or later (`mountHome`):
 
 ```bash
 # in the dcl-editor checkout; any --editor-base will do: the page reads only the entity id from
