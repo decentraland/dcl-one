@@ -979,6 +979,50 @@ async fn the_mirrors_walk_the_subgraph_and_every_market_route_answers_over_them(
         vec![format!("{c2}-10"), format!("{c2}-5")],
         "{body}"
     );
+    // The emote attributes: c2's items 5 and 10 are emotes on sale; 5 loops
+    // with sound, 10 plays once with props.
+    let emote = |item: &'static str, looped: bool, sound: bool, geometry: bool| {
+        sqlx::query("UPDATE shop.items SET emote_loop = $1, emote_has_sound = $2, emote_has_geometry = $3 WHERE contract_address = $4 AND item_id = $5::numeric")
+            .bind(looped)
+            .bind(sound)
+            .bind(geometry)
+            .bind(c2.clone())
+            .bind(item)
+            .execute(&pool)
+    };
+    emote("5", true, true, false).await.unwrap();
+    emote("10", false, false, true).await.unwrap();
+    let picked_with = |filter: &'static str| {
+        let app = app();
+        let uri =
+            format!("/v3/catalog/unified?groupBy=item&items={c2}-5,{c2}-10&first=10&{filter}");
+        async move {
+            let (status, body) = get(app, &uri).await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            let mut ids: Vec<String> = body["data"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|d| d["itemId"].as_str().unwrap().to_string())
+                .collect();
+            ids.sort();
+            ids
+        }
+    };
+    assert_eq!(picked_with("emotePlayMode=loop").await, vec!["5"]);
+    assert_eq!(picked_with("emotePlayMode=simple").await, vec!["10"]);
+    assert_eq!(
+        picked_with("emotePlayMode=loop&emotePlayMode=simple").await,
+        vec!["10", "5"],
+        "both modes is no filter"
+    );
+    assert_eq!(picked_with("emoteHasSound=true").await, vec!["5"]);
+    assert_eq!(picked_with("emoteHasGeometry=true").await, vec!["10"]);
+    assert!(
+        picked_with("emoteHasSound=true&emoteHasGeometry=true")
+            .await
+            .is_empty()
+    );
     let (_, body) = get(
         app(),
         &format!("/v3/catalog/unified?groupBy=item&contractAddress=junk&items={c2}-5"),

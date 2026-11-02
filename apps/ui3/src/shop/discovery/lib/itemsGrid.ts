@@ -1,8 +1,9 @@
 
-import { fetchCatalogItems, fetchShopItems } from "../api";
-import { DEALS_SORTS, RELEVANCE_SORT, SORTS } from "../components/FilterBar";
+import { fetchCatalogItems, fetchShopItems, type EmoteAttributeFilters } from "../api";
+import { DEALS_SORTS, RELEVANCE_SORT, SORTS, type FilterChip } from "../components/FilterBar";
 import { STATUSES, type FilterStatus } from "../components/Filters";
 import { shopFlags } from "../flags";
+import { t } from "../intl";
 import { CATEGORIES, SUBCAT_MAP } from "./categories";
 
 export const ITEMS_PAGE_SIZE = 48;
@@ -33,8 +34,43 @@ export function itemsFilterDefaults(q: string, dealsRequested: boolean) {
     priceMax: "",
     smart: false,
     deals: false,
+    ...EMOTE_FILTER_DEFAULTS,
     sort: defaultSortFor(!!q, dealsRequested),
   };
+}
+
+/** The emote attributes in a browse page's URL state (`emotePlayMode`, `emoteSound`, `emoteProps`). */
+export const EMOTE_FILTER_DEFAULTS = { emotePlayMode: "all", emoteSound: false, emoteProps: false };
+export type EmoteFilterState = typeof EMOTE_FILTER_DEFAULTS;
+
+/**
+ * A browse page's emote filters: the sidebar props (offered only while browsing emotes), the active
+ * chips, and the state a category change resets.
+ */
+export function emoteFilterBindings(category: string, state: EmoteFilterState, set: (patch: Partial<EmoteFilterState>) => void) {
+  const emote = emoteAttributes(category, state);
+  const browsing = category === "emote";
+  const props = {
+    emotePlayMode: state.emotePlayMode,
+    onEmotePlayMode: browsing ? (v: string) => set({ emotePlayMode: v }) : undefined,
+    emoteSound: state.emoteSound,
+    onEmoteSound: browsing ? (v: boolean) => set({ emoteSound: v }) : undefined,
+    emoteProps: state.emoteProps,
+    onEmoteProps: browsing ? (v: boolean) => set({ emoteProps: v }) : undefined,
+  };
+  const chips: FilterChip[] = [];
+  if (emote.emotePlayMode) chips.push({ key: "emotePlayMode", label: t(emote.emotePlayMode === "loop" ? "filter.emoteLoop" : "filter.emotePlayOnce"), onRemove: () => set({ emotePlayMode: "all" }) });
+  if (emote.emoteHasSound) chips.push({ key: "emoteSound", label: t("filter.emoteWithSound"), onRemove: () => set({ emoteSound: false }) });
+  if (emote.emoteHasGeometry) chips.push({ key: "emoteProps", label: t("filter.emoteWithProps"), onRemove: () => set({ emoteProps: false }) });
+  const resetFor = (nextCategory: string): Partial<EmoteFilterState> => (nextCategory === "emote" ? {} : EMOTE_FILTER_DEFAULTS);
+  return { emote, props, chips, resetFor };
+}
+
+/** The emote attributes of a filter state, sent only while browsing emotes. */
+export function emoteAttributes(category: string, state: EmoteFilterState): EmoteAttributeFilters {
+  if (category !== "emote") return {};
+  const emotePlayMode = state.emotePlayMode === "simple" || state.emotePlayMode === "loop" ? state.emotePlayMode : undefined;
+  return { emotePlayMode, emoteHasSound: state.emoteSound || undefined, emoteHasGeometry: state.emoteProps || undefined };
 }
 
 export type ItemsFilterState = ReturnType<typeof itemsFilterDefaults>;
@@ -59,6 +95,7 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
   const wearableGenders = category !== "emote" && bodyShape !== "all" ? [bodyShape] : undefined;
   const sortOptions = [...(q ? [RELEVANCE_SORT] : []), ...(deals ? DEALS_SORTS : SORTS)];
   const sortOption = sortOptions.find((s) => s.key === sort) ?? sortOptions[0]!;
+  const emote = emoteAttributes(category, filterState);
 
   const unifiedFilters = {
     category,
@@ -74,6 +111,7 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
     discounted: deals || undefined,
     listingType: (flags.secondarySales ? listingType : "primary") as "primary" | "secondary" | undefined,
     contractAddresses: contracts?.length ? contracts : undefined,
+    ...emote,
   };
   const catalogFilters = {
     category,
@@ -87,9 +125,10 @@ export function itemsGrid(filterState: ItemsFilterState, q: string, { contracts,
     minPriceCredits: min,
     maxPriceCredits: max,
     contractAddresses: contracts?.length ? contracts : undefined,
+    ...emote,
   };
   const key = category === "names" || selectsNothing ? null : isUnified ? ["shop-items", unifiedFilters] : ["catalog-items", catalogFilters];
   const fetchPage = (skip: number, opts: Parameters<typeof fetchShopItems>[1]) =>
     isUnified ? fetchShopItems({ ...unifiedFilters, first: ITEMS_PAGE_SIZE, skip }, opts) : fetchCatalogItems({ ...catalogFilters, first: ITEMS_PAGE_SIZE, skip }, opts);
-  return { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, sortOptions, sortOption, key, fetchPage };
+  return { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, emote, sortOptions, sortOption, key, fetchPage };
 }

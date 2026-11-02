@@ -26,6 +26,7 @@ import type { CatalogItem } from "../lib/catalogItem";
 import { resolveGridView } from "../lib/creatorView";
 import { rarityLabel } from "../lib/rarity";
 import { routeSegment } from "../lib/routes";
+import { EMOTE_FILTER_DEFAULTS, emoteFilterBindings } from "../lib/itemsGrid";
 import { useInfiniteShopQuery, useShopQuery } from "../query";
 import "../components/browselayout.css";
 import "./creator.css";
@@ -47,7 +48,7 @@ export default function Creator() {
   useSeo({ title: name });
 
   const filterDefaults = useMemo(
-    () => ({ category: "all", status: "all", subCategory: null as string | null, rarities: [] as string[], priceMin: "", priceMax: "", smart: false, sort: "newest" }),
+    () => ({ category: "all", status: "all", subCategory: null as string | null, rarities: [] as string[], priceMin: "", priceMax: "", smart: false, ...EMOTE_FILTER_DEFAULTS, sort: "newest" }),
     [],
   );
   const [filterState, setFilters] = useUrlFilters(filterDefaults);
@@ -58,6 +59,7 @@ export default function Creator() {
 
   const min = priceMin && !Number.isNaN(Number(priceMin)) ? Number(priceMin) : undefined;
   const max = priceMax && !Number.isNaN(Number(priceMax)) ? Number(priceMax) : undefined;
+  const emoteFilters = emoteFilterBindings(category, filterState, setFilters);
   const filters = {
     creator: address,
     category,
@@ -68,6 +70,7 @@ export default function Creator() {
     isWearableSmart: smart || undefined,
     isOnSale: status === "all" ? undefined : status === "on_sale",
     sortBy: (SORTS.find((s) => s.key === sort) ?? SORTS[0]!).server,
+    ...emoteFilters.emote,
   };
   const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(address && !collectionsMode ? ["creator-items", filters] : null, (skip, signal) =>
     fetchCatalogItems({ ...filters, first: PAGE_SIZE, skip }, { signal }),
@@ -84,7 +87,7 @@ export default function Creator() {
   };
   const toggleCollections = () => navigate({ search: searchWith(new URLSearchParams(searchParams), !collectionsMode) }, { replace: true });
   const pickCategory = (key: string) => {
-    if (!collectionsMode) return setFilters({ category: key, subCategory: null });
+    if (!collectionsMode) return setFilters({ category: key, subCategory: null, ...emoteFilters.resetFor(key) });
     const next = new URLSearchParams(searchParams);
     if (key === filterDefaults.category) next.delete("category");
     else next.set("category", key);
@@ -99,6 +102,7 @@ export default function Creator() {
   if (min != null || max != null) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
   for (const r of RARITIES) if (rarities.includes(r)) chips.push({ key: `rarity-${r}`, label: rarityLabel(r), onRemove: () => toggleRarity(r) });
   if (smart) chips.push({ key: "smart", label: t("filter.smart"), onRemove: () => setFilters({ smart: false }) });
+  chips.push(...emoteFilters.chips);
   if (status !== "all") chips.push({ key: "status", label: status === "on_sale" ? t("filter.onSale") : t("filter.notForSale"), onRemove: () => setFilters({ status: "all" }) });
 
   const view = resolveGridView({
@@ -143,6 +147,7 @@ export default function Creator() {
               onStatus={(s) => setFilters({ status: s })}
               smart={smart}
               onSmart={(v) => setFilters({ smart: v })}
+              {...emoteFilters.props}
               hideNames
             />
             <CollectionsCategory selected={collectionsMode} onToggle={toggleCollections} />
