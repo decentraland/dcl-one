@@ -20,14 +20,17 @@ import { answer, DEFAULT_RPC, keyFrom, PAGE_PROVIDER, testnetWallet, type Testne
 const AMOY_MANA = "0x7ad72b9f944ea9793cf4055d88f81138cc2c63a0" as const;
 const RELAYED = 4 * 60_000; // a relayed or mined step: signature, relay, inclusion, the Shop's indexing
 const OUT = fileURLToPath(new URL("../../state/shop-trade-journey/", import.meta.url));
-// The Decentraland contracts on Amoy a trade sends transactions to (the bundled contract-addresses list,
-// services/catalyst/shop/src/evm/addresses.json under `amoy`), plus the token's own collection.
+// The Decentraland contracts on Amoy a trade sends transactions to (contracts.decentraland.org's
+// addresses.json under `amoy`), plus the token's own collection.
 const AMOY_TRADE_CONTRACTS = [
   AMOY_MANA,
-  "0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0", // MarketplaceV2
-  "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d", // MarketplaceV3 (off-chain trades)
-  "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7", // MarketplaceV4
-  "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d", // ERC721Bid
+  // The off-chain marketplaces V3, V2 and V1 (MarketplaceV5, V4 and V3 in that list), as the Shop names
+  // them in apps/ui3/src/shop/checkout/chain/contracts.ts.
+  "0x36fd1434a6c4b8ade80c9847c1d15033ce34488c",
+  "0x1b67d0e31eeb6b52d8eeed71d3616c2f5b33b8e7",
+  "0x6ab20ae56673ed65f520b7be332aeb61b3ed727d",
+  "0x0c8ad1f6aadf89d2eb19f01a100a6143108fe2b0", // MarketplaceV2: on-chain orders
+  "0x4b66eab79cc03a96fb6275cfcdf23c0db431606d", // BidV2
   "0xe36abc9ec616c83caaa386541380829106149d68", // CollectionStore
 ];
 

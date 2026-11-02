@@ -452,10 +452,11 @@ class DevTest(unittest.TestCase):
         self.assertEqual(env['VITE_SHOP_CHAIN_ID'], '80002')
         self.assertEqual(env['COLLECTIONS_CHAIN_ID'], '80002')
         self.assertEqual(env['CONTRACT_ADDRESSES_CHAIN_KEY'], 'amoy')
+        self.assertTrue(env['CONTRACT_ADDRESSES_URL'].startswith('https://'))
         self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
         self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))
-        for key in ('VITE_SHOP_CHAIN_ID', 'COLLECTIONS_CHAIN_ID', 'CONTRACT_ADDRESSES_CHAIN_KEY'):
+        for key in ('VITE_SHOP_CHAIN_ID', 'COLLECTIONS_CHAIN_ID', 'CONTRACT_ADDRESSES_CHAIN_KEY', 'CONTRACT_ADDRESSES_URL'):
             self.assertNotIn(key, mirror, key)
         # Otherwise the mirror profile's catalogue passes, against the testnet subgraphs.
         self.assertEqual(env['MARKETPLACE_MIRRORS_ENABLED'], 'true')

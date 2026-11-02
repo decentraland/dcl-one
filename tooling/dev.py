@@ -365,6 +365,9 @@ def testnet_env():
         # gas. COLLECTIONS_CHAIN_ID also keys the chain the relay verifies signatures and collections on.
         'COLLECTIONS_CHAIN_ID': '80002',
         'CONTRACT_ADDRESSES_CHAIN_KEY': 'amoy',
+        # The published list: the bundled copy predates MarketplaceV5, the off-chain V3 marketplace whose
+        # cancelSignature the Shop relays.
+        'CONTRACT_ADDRESSES_URL': 'https://contracts.decentraland.org/addresses.json',
         'TRANSACTIONS_UPSTREAM_URL': 'https://transactions-api.decentraland.zone',
         'VITE_SHOP_CHAIN_ID': '80002',
     }
