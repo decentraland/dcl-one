@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ShouldRevalidateFunctionArgs } from "react-router";
 import { Link, useNavigate, useNavigation, useRevalidator, useSearchParams } from "react-router";
 
@@ -59,8 +59,8 @@ export async function loader({ request }: Route.LoaderArgs) {
   const rawOffset = Number.parseInt(requestUrl.searchParams.get("offset") ?? "0", 10);
   const offset = Number.isFinite(rawOffset) && rawOffset > 0 ? rawOffset : 0;
 
-  const highlights = section === "all" && !category && !search;
-  const [{ sid, wrap }, placesRes, categories, liveRes, featuredRes] = await Promise.all([
+  const highlights = section === "all" && !category && !search && offset === 0;
+  const [{ sid, wrap }, placesRes, categories, featuredRes] = await Promise.all([
     pageLoader(request,  FALLBACK),
     (section === "all" ? fetchDestinations({
       limit: PLACES_LIMIT,
@@ -71,7 +71,6 @@ export async function loader({ request }: Route.LoaderArgs) {
       .then((page) => ({ ...page, unavailable: false }))
       .catch(() => ({ ...EMPTY_PAGE, unavailable: true })),
     loadCategories().catch(() => [] as Category[]),
-    highlights ? fetchDestinations({ limit: 40, order_by: "most_active" }, { signal: request.signal }).catch(() => EMPTY_PAGE) : Promise.resolve(EMPTY_PAGE),
     highlights ? fetchDestinations({ limit: 100, only_highlighted: true }, { signal: request.signal }).catch(() => EMPTY_PAGE) : Promise.resolve(EMPTY_PAGE),
   ]);
 
@@ -83,12 +82,13 @@ export async function loader({ request }: Route.LoaderArgs) {
     offset,
     places: placesRes.data,
     total: placesRes.total,
+    received: placesRes.received,
     categories,
-    live: liveRes.data,
+    live: highlights ? placesRes.data : [],
     featured: featuredRes.data,
     unavailable: placesRes.unavailable,
     layoutV2: false,
-    copy: { stamp: olderCopy(placesRes.copy, olderCopy(liveRes.copy, featuredRes.copy)), now: Date.now() },
+    copy: { stamp: olderCopy(placesRes.copy, featuredRes.copy), now: Date.now() },
   }, { status: placesRes.unavailable ? 503 : 200 });
 }
 
@@ -100,6 +100,7 @@ type LoaderData = {
   offset: number;
   places: Place[];
   total: number;
+  received?: number;
   categories: Category[];
   live: Place[];
   featured: Place[];
@@ -117,6 +118,7 @@ export async function clientLoader({
   request,
   serverLoader,
 }: Route.ClientLoaderArgs) {
+  if (isPersonal(new URL(request.url))) return serverLoader();
   const key = cache.key(request);
   const hit = cache.get(key);
   if (hit) return hit;
@@ -125,22 +127,30 @@ export async function clientLoader({
   return fresh;
 }
 
-export function shouldRevalidate({
-  currentUrl,
-  nextUrl,
-  defaultShouldRevalidate,
-}: ShouldRevalidateFunctionArgs) {
-  if (
-    currentUrl.pathname === nextUrl.pathname &&
-    currentUrl.search === nextUrl.search
-  ) {
-    return false;
+function isPersonal(url: URL): boolean {
+  return ["my", "favourites", "favorites"].includes(url.searchParams.get("tab") ?? "");
+}
+
+export function shouldRevalidate({ currentUrl, nextUrl, defaultShouldRevalidate }: ShouldRevalidateFunctionArgs) {
+  if (currentUrl.pathname === nextUrl.pathname && currentUrl.search === nextUrl.search) {
+    if (defaultShouldRevalidate) cache.delete(nextUrl.search);
+    return defaultShouldRevalidate;
+  }
+  if (currentUrl.pathname === nextUrl.pathname && isPersonal(currentUrl) && isPersonal(nextUrl)) {
+    const current = new URLSearchParams(currentUrl.search);
+    const next = new URLSearchParams(nextUrl.search);
+    current.delete("offset");
+    next.delete("offset");
+    if (current.toString() === next.toString()) return false;
   }
   return defaultShouldRevalidate;
 }
 
 export default function Places({ loaderData }: Route.ComponentProps) {
   const d = loaderData;
+  const [params] = useSearchParams();
+  const requestedOffset = Number.parseInt(params.get("offset") ?? "0", 10);
+  const offset = d.section === "all" ? d.offset : Number.isFinite(requestedOffset) && requestedOffset > 0 ? requestedOffset : 0;
 
   return (
     <PlacesExplorer
@@ -148,9 +158,10 @@ export default function Places({ loaderData }: Route.ComponentProps) {
       activeCategory={d.category}
       search={d.search}
       section={d.section}
-      offset={d.offset}
+      offset={offset}
       places={d.places}
       total={d.total}
+      received={d.received}
       categories={d.categories}
       live={d.live}
       featured={d.featured}
@@ -169,6 +180,7 @@ type ExplorerProps = {
   offset: number;
   places: Place[];
   total: number;
+  received?: number;
   categories: Category[];
   live: Place[];
   featured: Place[];
@@ -177,22 +189,9 @@ type ExplorerProps = {
   copy: CopyView;
 };
 
-type Accumulated = { key: string; offset: number; rows: Place[] };
+const subscribeHydration = () => () => {};
 
-function accumulate(
-  prev: Accumulated,
-  key: string,
-  offset: number,
-  places: Place[],
-): Accumulated {
-  const unique = (rows: Place[]) => [...new Map(rows.map((place) => [place.id, place])).values()];
-  if (prev.key !== key || offset === 0) return { key, offset, rows: unique(places) };
-  if (offset === prev.offset) return { key, offset, rows: unique([...prev.rows.slice(0, offset), ...places]) };
-  if (offset > prev.offset) {
-    return { key, offset, rows: unique([...prev.rows.slice(0, offset), ...places]) };
-  }
-  return { key, offset, rows: prev.rows.slice(0, offset + places.length) };
-}
+type LoadedPages = { key: string; pages: Record<number, DestinationPage> };
 
 function PlacesExplorer({
   sid,
@@ -202,6 +201,7 @@ function PlacesExplorer({
   offset,
   places,
   total,
+  received,
   categories,
   live,
   featured,
@@ -216,59 +216,74 @@ function PlacesExplorer({
   const auth = useAuth();
   const identity = auth.isConnected ? auth.identity : null;
   const personal = section !== "all";
-  const personalAccount = personal ? identity?.signer ?? null : null;
-  const previousAccount = useRef(personalAccount);
+  const hydrated = useSyncExternalStore(subscribeHydration, () => true, () => false);
+  const personalAccount = personal ? identity?.signer.toLowerCase() ?? null : null;
+  const previousAccount = useRef<string | null | undefined>(undefined);
+  const accountChanged = previousAccount.current !== undefined && previousAccount.current !== null && previousAccount.current !== personalAccount;
   useEffect(() => {
-    const changed = previousAccount.current !== personalAccount;
+    if (!hydrated || !personal) return;
     previousAccount.current = personalAccount;
-    if (personal && changed) setSearchParams((previous) => {
+    if (accountChanged) setSearchParams((previous) => {
       if (!previous.has("offset")) return previous;
       const next = new URLSearchParams(previous); next.delete("offset"); return next;
     }, { replace: true, preventScrollReset: true });
-  }, [personal, personalAccount, setSearchParams]);
-  const personalKey = JSON.stringify([identity?.signer, section, activeCategory, search, offset]);
+  }, [hydrated, personal, personalAccount, accountChanged, setSearchParams]);
+  const key = JSON.stringify([personal ? personalAccount ?? "signed-out" : "public", section, activeCategory, search]);
+  const personalKey = JSON.stringify([key, offset]);
   const [personalAttempt, setPersonalAttempt] = useState(0);
   const [personalRead, setPersonalRead] = useState<{ key: string; page?: DestinationPage; error?: string } | null>(null);
+  const [personalPages, setPersonalPages] = useState<LoadedPages>({ key, pages: {} });
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
   useEffect(() => {
-    if (!personal || !identity) return;
+    const currentIdentity = identityRef.current;
+    if (!hydrated || !personal || !currentIdentity || (accountChanged && offset > 0)) return;
     const controller = new AbortController();
     fetchDestinations({
       limit: PLACES_LIMIT, offset, categories: activeCategory || undefined, search: search || undefined,
-      only_favorites: section === "favourites" || undefined, owner: section === "my" ? identity.signer : undefined,
-    }, { identity, signal: controller.signal }).then(
-      (page) => { if (!controller.signal.aborted) setPersonalRead({ key: personalKey, page }); },
+      only_favorites: section === "favourites" || undefined, owner: section === "my" ? currentIdentity.signer : undefined,
+    }, { identity: currentIdentity, signal: controller.signal }).then(
+      (page) => {
+        if (controller.signal.aborted) return;
+        setPersonalRead({ key: personalKey, page });
+        setPersonalPages((previous) => ({ key, pages: { ...(previous.key === key ? previous.pages : {}), [offset]: page } }));
+      },
       (error: unknown) => { if (!controller.signal.aborted) setPersonalRead({ key: personalKey, error: error instanceof Error ? error.message : "Could not load your places." }); },
     );
     return () => controller.abort();
-  }, [personal, identity, personalKey, section, activeCategory, search, offset, personalAttempt]);
+  }, [hydrated, personal, personalAccount, key, personalKey, section, activeCategory, search, offset, personalAttempt, accountChanged]);
   const personalResult = personalRead?.key === personalKey ? personalRead : null;
   const personalLoading = personal && Boolean(identity) && !personalResult;
-  const page = personal ? personalResult?.page ?? EMPTY_PAGE : { data: places, total, copy: copy.stamp };
+  const loadedPages = personalPages.key === key ? Object.entries(personalPages.pages).filter(([start]) => Number(start) <= offset).sort(([a], [b]) => Number(a) - Number(b)) : [];
+  const lastPage = loadedPages.at(-1);
+  const page = personal ? personalResult?.page ?? lastPage?.[1] ?? EMPTY_PAGE : { data: places, total, copy: copy.stamp, received };
   const listError = personal ? personalResult?.error : unavailable ? "Places are temporarily unavailable. Please try again." : undefined;
   const highlights = !personal && !activeCategory && !search;
 
-  const key = JSON.stringify([personal ? identity?.signer ?? "signed-out" : "public", section, activeCategory, search]);
-  const [acc, setAcc] = useState<Accumulated>(() => ({
-    key,
-    offset,
-    rows: page.data,
-  }));
-
+  const [publicPages, setPublicPages] = useState<LoadedPages>(() => ({ key, pages: { [offset]: { data: places, total, received, copy: copy.stamp } } }));
   useEffect(() => {
-    setAcc((prev) => accumulate(prev, key, offset, page.data));
-  }, [key, offset, page.data]);
-
-  const rows = acc.key === key ? acc.rows : page.data;
+    if (!personal && !unavailable) setPublicPages((previous) => ({
+      key,
+      pages: { ...(previous.key === key && offset > 0 ? previous.pages : {}), [offset]: { data: places, total, received, copy: copy.stamp } },
+    }));
+  }, [personal, unavailable, key, offset, places, total, received, copy.stamp]);
+  const publicRows = publicPages.key === key
+    ? Object.entries(publicPages.pages).filter(([start]) => Number(start) <= offset).sort(([a], [b]) => Number(a) - Number(b)).flatMap(([, loaded]) => loaded.data)
+    : places;
+  const rows = [...new Map((personal ? loadedPages.flatMap(([, loaded]) => loaded.data) : publicRows).map((place) => [place.id, place])).values()];
+  // Keep first-page rails stable while subsequent pages are appended.
+  const rails = useRef({ key, live, featured });
+  if (rails.current.key !== key || (offset === 0 && !unavailable)) rails.current = { key, live, featured };
 
   useExposure(sid, rows.length, activeCategory, search);
 
-  const liveNow = highlights ? live.filter((place) => !hiddenFromBrowse(place) && (place.user_count ?? 0) > 0).sort((a, b) => (b.user_count ?? 0) - (a.user_count ?? 0)).slice(0, 4) : [];
+  const liveNow = highlights ? rails.current.live.filter((place) => !hiddenFromBrowse(place) && (place.user_count ?? 0) > 0).sort((a, b) => (b.user_count ?? 0) - (a.user_count ?? 0)).slice(0, 4) : [];
   const liveIds = new Set(liveNow.map((place) => place.id));
-  const featuredPlaces = highlights ? featured.filter((place) => !hiddenFromBrowse(place) && !liveIds.has(place.id)) : [];
+  const featuredPlaces = highlights ? rails.current.featured.filter((place) => !hiddenFromBrowse(place) && !liveIds.has(place.id)) : [];
   const featuredIds = new Set(featuredPlaces.map((place) => place.id));
   const mainRows = rows.filter((place) => (personal || Boolean(search) || Boolean(activeCategory) || !hiddenFromBrowse(place)) && (!highlights || (!liveIds.has(place.id) && !featuredIds.has(place.id))));
-  const nextOffset = offset + page.data.length;
-  const canLoadMore = nextOffset < page.total && page.data.length === PLACES_LIMIT;
+  const nextOffset = (personal && lastPage ? Number(lastPage[0]) : offset) + (page.received ?? page.data.length);
+  const canLoadMore = nextOffset < page.total && (page.received ?? page.data.length) === PLACES_LIMIT;
   const loadingMore = navigation.state === "loading" || personalLoading;
 
   function updateParam(paramKey: string, value: string) {
@@ -338,18 +353,22 @@ function PlacesExplorer({
           ))}
         </div>
 
-        {personal && !identity ? <div className="pl__statemsg"><p>Sign in to see {section === "favourites" ? "your favourites" : "your places"}.</p><button type="button" className="pl__pill" onClick={() => openSignIn()}>Sign in</button></div>
-          : listError ? <div className="pl__statemsg"><p role="alert">{listError}</p><button type="button" className="pl__pill" onClick={() => { if (personal) setPersonalAttempt((previous) => previous + 1); else void revalidator.revalidate(); }}>Retry</button></div>
-          : personalLoading && rows.length === 0 ? <p role="status">Loading your places…</p>
-          : mainRows.length > 0 ? <PlaceGrid places={mainRows} onCardClick={onCardClick} />
-          : <p className="pl__empty">{section === "favourites" ? "No favourites yet. Save places from their detail pages to find them here." : section === "my" ? "No places of your own found." : "No places found in this view."}</p>}
+        {personal && !hydrated ? <p role="status">Checking sign-in…</p>
+          : personal && !identity ? <div className="pl__statemsg"><p>Sign in to see {section === "favourites" ? "your favourites" : "your places"}.</p><button type="button" className="pl__pill" onClick={() => openSignIn()}>Sign in</button></div>
+          : <>
+            {listError && <div className="pl__statemsg"><p role="alert">{listError}</p><button type="button" className="pl__pill" onClick={() => { if (personal) { setPersonalRead(null); setPersonalAttempt((previous) => previous + 1); } else void revalidator.revalidate(); }}>Retry</button></div>}
+            {personalLoading && rows.length === 0 ? <p role="status">Loading your places…</p>
+              : mainRows.length > 0 ? <PlaceGrid places={mainRows} onCardClick={onCardClick} />
+              : !listError && (canLoadMore ? <p className="pl__empty">No visible places on this page. Load more to keep exploring.</p>
+                : liveNow.length === 0 && featuredPlaces.length === 0 ? <p className="pl__empty">{section === "favourites" ? "No favourites yet. Save places from their detail pages to find them here." : section === "my" ? "No places of your own found." : "No places found in this view."}</p> : null)}
+          </>}
 
-        {canLoadMore && !listError && (
+        {canLoadMore && (!personal || (hydrated && identity)) && (
           <div className="pl__loadmore">
             <button
               type="button"
               className="pl__pill"
-              disabled={loadingMore}
+              disabled={loadingMore || Boolean(listError)}
               onClick={() => updateParam("offset", String(nextOffset))}
             >
               {loadingMore ? "Loading\u{2026}" : "Load more places"}
