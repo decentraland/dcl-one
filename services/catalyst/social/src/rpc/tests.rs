@@ -9,6 +9,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use alloy::signers::local::PrivateKeySigner;
 use futures::{SinkExt, StreamExt};
 use prost::Message;
 use sqlx::PgPool;
@@ -23,7 +24,7 @@ use super::drpc::client::{RpcClient, RpcClientModule, ServiceClient};
 use super::drpc::service_module_definition::ProcedureContext;
 use super::drpc::stream_protocol::Generator;
 use super::drpc::transport::{Transport, TransportError, TransportMessage};
-use super::handshake::test_support::{EPHEMERAL_KEY, ROOT_KEY, frame, frame_for};
+use super::handshake::test_support::{FAR_EXPIRATION, ROOT_WALLET, frame, frame_signed};
 use super::profiles::Profiles;
 use super::proto::v2::*;
 use super::pubsub::SocialEvent;
@@ -40,7 +41,10 @@ mod friends;
 mod http;
 mod private_voice;
 mod settings;
+mod social_api;
 mod socket;
+mod stream;
+mod subscription_lifecycle;
 mod upstream_reads;
 mod voice_bugs;
 mod voice_runtime;
@@ -165,13 +169,53 @@ async fn get_blocked_users_pages_and_counts_the_full_set() {
 }
 
 #[tokio::test]
+async fn friends_are_newest_first_and_blocked_pairs_are_left_out() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let db = Db::new(pool);
+    let (a, b) = (addr("fb20"), addr("fb21"));
+    let friends = [addr("fb22"), addr("fb23"), addr("fb24")];
+    for f in &friends {
+        db.apply_friendship_action(&a, f, "accept", true, None, None)
+            .await
+            .unwrap();
+        db.apply_friendship_action(&b, f, "accept", true, None, None)
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let newest_first: Vec<String> = friends.iter().rev().cloned().collect();
+    assert_eq!(db.get_friends(&a, 10, 0).await.unwrap(), (newest_first, 3));
+
+    // A block row next to an active friendship (its friendship write failed)
+    // hides that friend from both lists and both totals, whichever side blocked.
+    db.block_user(&friends[0], &a).await.unwrap();
+    db.block_user(&b, &friends[1]).await.unwrap();
+    assert_eq!(
+        db.get_friends(&a, 10, 0).await.unwrap(),
+        (vec![friends[2].clone(), friends[1].clone()], 2)
+    );
+    assert_eq!(db.count_friends(&a).await.unwrap(), 2);
+    assert_eq!(
+        db.get_mutual_friends(&a, &b, 10, 0).await.unwrap(),
+        (vec![friends[2].clone()], 1)
+    );
+    assert_eq!(db.count_mutual_friends(&a, &b).await.unwrap(), 1);
+    for f in &friends {
+        cleanup_pair(&db, &a, f).await;
+        cleanup_pair(&db, &b, f).await;
+    }
+}
+
+#[tokio::test]
 async fn friendship_action_outranks_a_block_row() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
     let db = Db::new(pool);
     let (a, b) = (addr("fb09"), addr("fb0a"));
-    let (id, _) = db
+    let (id, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hi"))
         .await
         .unwrap();
@@ -207,7 +251,7 @@ async fn friendship_probe_reports_last_action_and_both_block_directions() {
     assert!(probe.blocked && !probe.blocked_by, "seen from B's side");
     db.unblock_user(&b, &a).await.unwrap();
 
-    let (id, _) = db
+    let (id, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hi"))
         .await
         .unwrap();
@@ -240,11 +284,11 @@ async fn apply_without_a_known_row_reuses_the_reversed_pair() {
     };
     let db = Db::new(pool);
     let (a, b) = (addr("fb0d"), addr("fb0e"));
-    let (first, _) = db
+    let (first, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, None)
         .await
         .unwrap();
-    let (second, _) = db
+    let (second, _, _) = db
         .apply_friendship_action(&b, &a, "accept", true, None, None)
         .await
         .expect("a racing insert on the reversed pair resolves to the same row");
@@ -297,7 +341,7 @@ async fn pending_requests_list_the_latest_request_with_its_message() {
     };
     let db = Db::new(pool);
     let (a, b, c) = (addr("fb0f"), addr("fb10"), addr("fb11"));
-    let (id_ab, _) = db
+    let (id_ab, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hello b"))
         .await
         .unwrap();
@@ -334,21 +378,31 @@ async fn block_and_unblock_return_the_latest_action_in_one_statement() {
     };
     let db = Db::new(pool);
     let (a, b) = (addr("fb12"), addr("fb13"));
-    assert!(
-        db.block_user_and_last(&a, &b).await.unwrap().is_none(),
-        "no friendship row yet"
-    );
+    let (first_at, last) = db.block_user_and_last(&a, &b).await.unwrap();
+    assert!(last.is_none(), "no friendship row yet");
     assert!(db.is_blocked(&a, &b).await.unwrap());
-    db.block_user_and_last(&a, &b)
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (again_at, _) = db
+        .block_user_and_last(&a, &b)
         .await
         .expect("blocking twice is idempotent");
+    assert_eq!(again_at, first_at, "a repeat keeps the first block time");
 
-    let (id, _) = db
+    let (id, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, None)
         .await
         .unwrap();
-    let last = db.unblock_user_and_last(&a, &b).await.unwrap().unwrap();
+    let last = db
+        .unblock_user_and_last(&a, &b)
+        .await
+        .unwrap()
+        .expect("a block was removed")
+        .expect("the pair has a friendship row");
     assert_eq!((last.friendship_id, last.action.as_str()), (id, "request"));
+    assert!(
+        db.unblock_user_and_last(&a, &b).await.unwrap().is_none(),
+        "no block left to remove"
+    );
     assert!(!db.is_blocked(&a, &b).await.unwrap());
 
     let (blocked, blocked_by) = db.get_blocking_status(&a).await.unwrap();
@@ -976,12 +1030,14 @@ async fn reject_and_disconnect_delete_through_voice_owner_before_signalling() {
             matches!(&*event, SocialEvent::PrivateVoice(u) if u.call_id == dropped.to_string() && u.status == PrivateVoiceChatStatus::VoiceChatEnded as i32)
         );
     }
+    // The runtime is asked about the address's accepted call first; a pending
+    // call has none, so it is deleted as pending.
     assert!(
         voice
             .calls
             .lock()
             .iter()
-            .any(|c| c == &format!("end-private {dropped} {callee}"))
+            .any(|c| c == &format!("end-private latest {callee}"))
     );
 }
 
@@ -1190,6 +1246,14 @@ async fn community_voice_start_join_and_ban_semantics() {
         .await
         .unwrap();
     let cid = community.to_string();
+    // the opener, a member and a stranger online: only the member is notified
+    ctx.topology()
+        .receive(&pulse_frame(vec![
+            owner.clone(),
+            member.clone(),
+            stranger.clone(),
+        ]))
+        .unwrap();
 
     let mut member_rx = ctx.pubsub().subscribe(&member);
     let response = SocialServiceImpl
@@ -1215,6 +1279,26 @@ async fn community_voice_start_join_and_ban_semantics() {
         .expect("members are told the room started");
     assert!(
         matches!(&*event, super::pubsub::SocialEvent::CommunityVoice(u) if u.community_id == cid && u.community_name == "Voice Soft Delete Community")
+    );
+    // upstream `broadcastVoiceChatStarted`: the notification row
+    let started: Vec<(String, serde_json::Value)> = sqlx::query_as(
+        "SELECT address, metadata FROM social.notifications \
+         WHERE type = 'community_voice_chat_started' AND metadata->>'communityId' = $1",
+    )
+    .bind(&cid)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        started,
+        vec![(
+            member.clone(),
+            serde_json::json!({
+                "communityId": cid,
+                "communityName": "Voice Soft Delete Community",
+                "thumbnailUrl": "",
+            })
+        )]
     );
 
     let response = SocialServiceImpl
@@ -1250,19 +1334,17 @@ async fn community_voice_start_join_and_ban_semantics() {
         join(&ctx, &member).await.response,
         Some(join_community_voice_chat_response::Response::Ok(_))
     ));
-    // Recorded difference (RPC.md, community voice, "Join: a public non-member
-    // joins"): upstream lets a non-member join a public community
-    // (`src/logic/community-voice/validation.ts:49-53`); Catalyst requires membership.
+    // A public guest joins with no membership role (upstream
+    // social-service-ea@b6b2cef validation.ts:49-55).
     assert!(matches!(
         join(&ctx, &stranger).await.response,
-        Some(join_community_voice_chat_response::Response::ForbiddenError(_))
+        Some(join_community_voice_chat_response::Response::Ok(_))
     ));
-    // A ban deletes the member row, so a banned wallet is refused as a
-    // non-member; a banned wallet whose row survived (a race) is refused as
-    // banned. Either way no grant is minted.
+    // A ban wins whether the member row was deleted or survived a race.
+    // Neither case mints a grant.
     let refused = join(&ctx, &banned).await;
     assert!(
-        matches!(&refused.response, Some(join_community_voice_chat_response::Response::ForbiddenError(f)) if f.message.as_deref() == Some("not a community member")),
+        matches!(&refused.response, Some(join_community_voice_chat_response::Response::ForbiddenError(f)) if f.message.as_deref() == Some("banned from this community")),
         "{refused:?}"
     );
     sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'member')")
@@ -1327,13 +1409,17 @@ struct Server {
 }
 
 async fn spawn_server(pool: Option<PgPool>, auth_window_secs: i64) -> Server {
-    spawn_server_with(pool, auth_window_secs, None).await
+    let settings = Settings {
+        auth_window_secs,
+        ..Settings::default()
+    };
+    spawn_server_with(pool, settings, None).await
 }
 
-/// [`spawn_server`] with the EIP-1654 validator the handshake uses.
+/// [`spawn_server`] with its settings and the EIP-1654 validator the handshake uses.
 async fn spawn_server_with(
     pool: Option<PgPool>,
-    auth_window_secs: i64,
+    settings: Settings,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
 ) -> Server {
     let pool = pool.unwrap_or_else(|| {
@@ -1345,10 +1431,6 @@ async fn spawn_server_with(
         Db::new(pool.clone()),
         Arc::new(FakeVoiceRooms::new(pool.clone())),
     );
-    let settings = Settings {
-        auth_window_secs,
-        ..Settings::default()
-    };
     let state = Arc::new(State::with_context(settings, ctx, eip1654));
     let jobs = Jobs::new();
     state.start_topology(&jobs, Arc::new(crate::comms::topology::Topology::default()));
@@ -1421,7 +1503,7 @@ async fn ws_handshake_garbage_or_scene_signed_frame_gets_close_3003() {
     let payload =
         crate::shared::signed_fetch::build_payload_v6("get", "/", &ts.to_string(), metadata);
     let (_, frame) =
-        super::handshake::test_support::frame_with(ROOT_KEY, ts, &payload, metadata).await;
+        super::handshake::test_support::frame_with(&ROOT_WALLET, ts, &payload, metadata).await;
     socket.send(WsMessage::Text(frame.into())).await.unwrap();
     assert_eq!(close_code(&next_message(&mut socket).await), Some(3003));
     server.jobs.shutdown(Duration::from_secs(2)).await;
@@ -1558,18 +1640,33 @@ impl SocialClient {
     }
 }
 
-/// Connects, authenticates as the wallet behind `root_key` and loads the module.
-async fn explorer(
+/// Connects, authenticates as `root` with an ephemeral key made for the
+/// call, and loads the module.
+async fn explorer_as(
     server: &Server,
-    root_key: &str,
+    root: &PrivateKeySigner,
 ) -> (String, RpcClient<TungsteniteTransport>, SocialClient) {
-    let mut socket = connect(server, "/social-rpc").await;
-    let (signer, frame) = frame_for(
-        root_key,
-        "/social-rpc",
-        chrono::Utc::now().timestamp_millis(),
+    let ts = chrono::Utc::now().timestamp_millis();
+    let payload =
+        crate::shared::signed_fetch::build_payload_v6("get", "/social-rpc", &ts.to_string(), "{}");
+    let (signer, frame) = frame_signed(
+        root,
+        &PrivateKeySigner::random(),
+        FAR_EXPIRATION,
+        ts,
+        &payload,
+        "{}",
     )
     .await;
+    signed_in(server, signer, frame).await
+}
+
+async fn signed_in(
+    server: &Server,
+    signer: String,
+    frame: String,
+) -> (String, RpcClient<TungsteniteTransport>, SocialClient) {
+    let mut socket = connect(server, "/social-rpc").await;
     socket.send(WsMessage::Text(frame.into())).await.unwrap();
     let mut client = RpcClient::new(TungsteniteTransport::new(socket))
         .await
@@ -1607,8 +1704,19 @@ async fn subscribed<T>(
     generator
 }
 
-/// A second wallet for the two-client run.
-const SECOND_ROOT_KEY: &str = "7c852118294e51e653712a81e05800f419141751be58f605c371e15141b007a6";
+/// A Pulse island frame naming `wallets` as present.
+fn pulse_frame(wallets: Vec<String>) -> Vec<u8> {
+    use crate::comms::protocol::pulse::decentraland::kernel::comms::v3::{
+        IslandData, IslandStatusMessage,
+    };
+    IslandStatusMessage {
+        data: vec![IslandData {
+            peers: wallets,
+            ..Default::default()
+        }],
+    }
+    .encode_to_vec()
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_explorers_exchange_a_friend_request_over_the_socket() {
@@ -1618,10 +1726,10 @@ async fn two_explorers_exchange_a_friend_request_over_the_socket() {
     let _turn = VOICE_TABLE.lock().await;
     let server = spawn_server(Some(pool.clone()), 5).await;
     let db = Db::new(pool.clone());
-    let _ = EPHEMERAL_KEY;
 
-    let (alice, _alice_client, alice_social) = explorer(&server, ROOT_KEY).await;
-    let (bob, _bob_client, bob_social) = explorer(&server, SECOND_ROOT_KEY).await;
+    let (alice, _alice_client, alice_social) =
+        explorer_as(&server, &PrivateKeySigner::random()).await;
+    let (bob, _bob_client, bob_social) = explorer_as(&server, &PrivateKeySigner::random()).await;
     assert_ne!(alice, bob);
     cleanup_pair(&db, &alice, &bob).await;
     let (alice_addr, bob_addr) = (
@@ -1633,17 +1741,6 @@ async fn two_explorers_exchange_a_friend_request_over_the_socket() {
         !server.state.ctx.is_online(&alice) && !server.state.ctx.is_online(&bob),
         "handshakes do not establish Pulse presence"
     );
-    let pulse_frame = |wallets: Vec<String>| {
-        crate::comms::protocol::pulse::decentraland::kernel::comms::v3::IslandStatusMessage {
-            data: vec![
-                crate::comms::protocol::pulse::decentraland::kernel::comms::v3::IslandData {
-                    peers: wallets,
-                    ..Default::default()
-                },
-            ],
-        }
-        .encode_to_vec()
-    };
     server
         .state
         .ctx

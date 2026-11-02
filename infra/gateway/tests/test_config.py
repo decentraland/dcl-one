@@ -81,6 +81,7 @@ class ConfigurationTest(unittest.TestCase):
         config = gateway.render(table, cfg, "/mime.types")
         for path in ["/places/place", "/places/world"]:
             self.assertIn(f"location = {path} {{\nproxy_pass http://apis;", config)
+            self.assertIn(f"location = {path}/ {{\nproxy_pass http://apis;", config)
             self.assertNotIn(f"location ^~ {path}/", config)
         self.assertIn("location ^~ /places/api/ {\nproxy_pass http://apis;", config)
         self.assertIn("location /places/ {\nproxy_pass http://sites;", config)

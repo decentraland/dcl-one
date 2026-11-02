@@ -158,6 +158,12 @@ CREATE INDEX place_world_local_world_name_col_idx ON explore.place_world_local (
 CREATE INDEX place_world_local_positions_path_gin
     ON explore.place_world_local USING gin ((raw->'positions') jsonb_path_ops);
 
+-- Public owner-filtered world lists probe both catalogue legs through place_indexed.
+CREATE INDEX place_world_owner_idx ON explore.place
+    (lower(COALESCE(raw->>'owner', creator_address))) WHERE world IS TRUE;
+CREATE INDEX place_world_local_owner_idx ON explore.place_world_local
+    (lower(COALESCE(raw->>'owner', creator_address))) WHERE world IS TRUE;
+
 -- The read surface for every place/world query: the mirrored leg and the local leg.
 CREATE VIEW explore.place_indexed AS
     SELECT id, base_position, title, description, creator_address, content_rating,
@@ -211,8 +217,10 @@ CREATE TABLE explore.place_ranking (
 );
 
 -- A viewer's report of a place (src/explore/places/reports.rs): POST /api/report
--- records it with the upload URL it answers, the reporter's PUT of that URL
--- stores the document in `payload`, the operator queue resolves it. `filename`
+-- records a token-free upload URL and a nullable SHA-256 capability digest.
+-- The low-volume upload probes the unique filename, requires an open report,
+-- and consumes the digest atomically; reporter-signed writes revoke it too.
+-- The reporter's PUT of that URL stores the document in `payload`, the operator queue resolves it. `filename`
 -- is the upload key (unique, the PUT's probe with the reporter).
 CREATE TABLE explore.place_reports (
     id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -220,6 +228,7 @@ CREATE TABLE explore.place_reports (
     entity_id       text,
     reporter        text NOT NULL,
     signed_url      text NOT NULL,
+    upload_token_hash bytea,
     payload         jsonb NOT NULL DEFAULT '{}'::jsonb,
     status          text NOT NULL DEFAULT 'open',
     resolution      text,
@@ -227,6 +236,7 @@ CREATE TABLE explore.place_reports (
     resolved_by     text,
     resolved_at     timestamp without time zone,
     created_at      timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT place_reports_upload_token_hash_length CHECK (upload_token_hash IS NULL OR octet_length(upload_token_hash) = 32),
     CONSTRAINT place_reports_filename_key UNIQUE (filename),
     CONSTRAINT place_reports_status_known CHECK (status IN ('open', 'resolved', 'dismissed', 'actioned')),
     CONSTRAINT place_reports_reporter_lowercase CHECK (reporter = lower(reporter))
@@ -273,31 +283,6 @@ CREATE TABLE explore.place_interaction_counts (
     CONSTRAINT place_interaction_counts_nonnegative CHECK (favorites >= 0 AND likes >= 0 AND dislikes >= 0)
 );
 
--- Qualified local voter counts are a rebuildable projection of user_likes
--- (activity >=100), updated under the interaction counter lock in the same
--- transaction. One row/entity; PK serves vote updates and world-scene reads.
--- No FK to catalogue rows: user facts outlive undeploy/redeploy of a stable
--- local place identity. REBUILD_VOTE_SCORES reproduces the projection.
--- Mirrored aggregate scores retain upstream authority: their active-voter
--- totals cannot be recovered from an already-computed Wilson bound.
-CREATE TABLE explore.place_vote_scores (
-    entity_id text PRIMARY KEY,
-    active_likes bigint NOT NULL CHECK (active_likes >= 0),
-    active_dislikes bigint NOT NULL CHECK (active_dislikes >= 0),
-    like_rate double precision GENERATED ALWAYS AS (
-        CASE WHEN active_likes + active_dislikes > 0
-             THEN active_likes::double precision / (active_likes + active_dislikes) END
-    ) STORED,
-    like_score double precision GENERATED ALWAYS AS (
-        CASE WHEN active_likes + active_dislikes > 0 THEN
-            ((active_likes::double precision + 1.9208) / (active_likes + active_dislikes)
-              - 1.96 * sqrt(active_likes::double precision * active_dislikes / (active_likes + active_dislikes) + 0.9604)
-                / (active_likes + active_dislikes))
-            / (1 + 3.8416 / (active_likes + active_dislikes)::double precision) END
-    ) STORED,
-    updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now())
-);
-
 -- ── events ─────────────────────────────────────────────────────────────────
 
 -- The mirrored leg of /api/events (src/explore/events/mirror.rs).
@@ -336,6 +321,9 @@ CREATE INDEX event_coords_idx ON explore.event (coordinates_x, coordinates_y);
 -- orders by it (moderation_pending, DESC NULLS LAST) cannot use a btree in
 -- either direction, so the old event_next_start_idx served nothing.
 CREATE INDEX event_approved_live_idx ON explore.event (approved, next_finish_at);
+-- The notification scan bounds candidates by the final series finish before
+-- expanding occurrences. next_finish_at may be stale between mirror refreshes.
+CREATE INDEX event_notifications_live_idx ON explore.event (finish_at, id) WHERE approved;
 -- The sweep's fetched_at < $1 candidates and its ORDER BY fetched_at confirmation set.
 CREATE INDEX event_fetched_at_idx ON explore.event (fetched_at);
 
@@ -434,29 +422,6 @@ CREATE TABLE explore.event_attendance_local (
 CREATE INDEX event_attendance_local_signer_action_idx
     ON explore.event_attendance_local (signer, action);
 
--- Durable event notice intents, captured with their authoring/moderation
--- transaction, or by social's bounded occurrence scanner. No FK: the event
--- mirror may remove a catalogue row while an already-committed host notice
--- still needs delivery. Payload snapshots keep that dispatch recoverable.
-CREATE TABLE explore.event_notification_intents (
-    id uuid PRIMARY KEY,
-    event_id text NOT NULL,
-    kind text NOT NULL,
-    event jsonb NOT NULL,
-    local_event boolean NOT NULL,
-    occurrence_start timestamp without time zone,
-    occurred_at timestamp without time zone NOT NULL,
-    dispatch_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
-    recipient_after text NOT NULL DEFAULT '',
-    processed_at timestamp without time zone,
-    CONSTRAINT event_notification_intents_kind_check CHECK (kind IN ('event_approved', 'event_rejected', 'event_deleted', 'event_created', 'events_starts_soon', 'events_started')),
-    CONSTRAINT event_notification_intents_occurrence_check CHECK ((kind IN ('events_starts_soon', 'events_started')) = (occurrence_start IS NOT NULL))
-);
--- The social worker claims unfinished dispatches in bounded pages; locked
--- rows are skipped, and its recipient cursor advances with delivery inserts.
-CREATE INDEX event_notification_intents_pending_idx
-    ON explore.event_notification_intents (dispatch_at, id) WHERE processed_at IS NULL;
-
 CREATE TABLE explore.schedules_local (
     id            text PRIMARY KEY,
     name          text NOT NULL,
@@ -514,6 +479,8 @@ CREATE TABLE explore.event_profile_settings (
     notify_by_email   boolean NOT NULL DEFAULT false,
     notify_by_browser boolean NOT NULL DEFAULT false,
     permissions       jsonb NOT NULL DEFAULT '[]'::jsonb,
+    -- Only an explicit moderator grant enables permission values as authority.
+    permissions_granted boolean NOT NULL DEFAULT false,
     created_at        timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at        timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     CONSTRAINT event_profile_settings_user_lowercase CHECK ("user" = lower("user"))

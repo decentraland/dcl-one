@@ -130,12 +130,20 @@ fn parse_filters(
     admin: bool,
     include_unapproved: bool,
 ) -> Result<Option<EventListFilters>, ApiError> {
-    let limit = q
-        .limit
+    let with_recurrent_dates = q
+        .with_recurrent_dates
         .as_deref()
-        .and_then(|s| s.parse::<i64>().ok())
+        .and_then(parse_bool)
+        .unwrap_or(false);
+    let requested_limit = q.limit.as_deref().and_then(|s| s.parse::<i64>().ok());
+    if with_recurrent_dates && requested_limit.is_some_and(|limit| limit > 25) {
+        return Err(ApiError::bad_request(
+            "with_recurrent_dates requires limit <= 25",
+        ));
+    }
+    let limit = requested_limit
         .map(|n| n.clamp(0, 500))
-        .unwrap_or(500);
+        .unwrap_or(if with_recurrent_dates { 25 } else { 500 });
     if limit == 0 {
         return Ok(None);
     }
@@ -238,11 +246,7 @@ fn parse_filters(
         estate_id,
         community_id,
         schedule: q.schedule.clone(),
-        with_recurrent_dates: q
-            .with_recurrent_dates
-            .as_deref()
-            .and_then(parse_bool)
-            .unwrap_or(false),
+        with_recurrent_dates,
         places_ids,
         destination_ids: Vec::new(),
         from,
@@ -561,6 +565,63 @@ pub async fn get_schedule_by_id(
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn signed_event_list_filters_use_current_trusted_admin_permissions() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let key = alloy_signer_local::PrivateKeySigner::random();
+        let address = format!("{:#x}", key.address());
+        let community = uuid::Uuid::new_v4().to_string();
+        let pending = uuid::Uuid::new_v4().to_string();
+        let public = uuid::Uuid::new_v4().to_string();
+        for (id, approved) in [(&pending, false), (&public, true)] {
+            super::super::mirror::upsert_event(&pool,&serde_json::json!({"id":id,"name":"Filter fixture","user":"0x1111111111111111111111111111111111111111","community_id":community,"approved":approved,"start_at":"2099-06-01T18:00:00Z","duration":3600000})).await.unwrap();
+        }
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions,permissions_granted) VALUES($1,'[\"edit_any_event\"]',false)").bind(&address).execute(&pool).await.unwrap();
+        let state = std::sync::Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings::for_tests(),
+            None,
+        ));
+        let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+            &key,
+            "get",
+            "/api/events",
+            "{}",
+            true,
+            &Utc::now().timestamp_millis().to_string(),
+        )
+        .await;
+        let query = EventListQuery::from_pairs(&[
+            ("community_id".into(), community),
+            ("list".into(), "all".into()),
+            ("approved".into(), "false".into()),
+        ]);
+        for granted in [false, true, false] {
+            sqlx::query("UPDATE explore.event_profile_settings SET permissions_granted=$2 WHERE \"user\"=$1").bind(&address).bind(granted).execute(&pool).await.unwrap();
+            let Json(body) =
+                list_with(&state, &headers, "get", "/api/events", &query, vec![], None)
+                    .await
+                    .unwrap();
+            let body = serde_json::to_value(body).unwrap();
+            let ids: Vec<_> = body["data"]["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|event| event["id"].as_str().unwrap())
+                .collect();
+            assert_eq!(
+                ids,
+                vec![if granted {
+                    pending.as_str()
+                } else {
+                    public.as_str()
+                }]
+            );
+        }
+    }
+
     /// A community_id query selects the WithTotal envelope. The Unity client
     /// (EventWithPlaceIdDTOListResponse) parses exactly
     /// `{"ok":true,"data":{"events":[...],"total":n}}` for this query, so the
@@ -683,6 +744,27 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(f.owner && f.creator.is_none() && f.only_attendee && f.include_deleted && f.admin);
+    }
+
+    #[test]
+    fn expanded_recurrence_pagination_rejects_oversized_limits_instead_of_skipping_rows() {
+        let mut query =
+            EventListQuery::from_pairs(&[("with_recurrent_dates".into(), "true".into())]);
+        assert_eq!(
+            parse_filters(&query, vec![], None, None, false, false)
+                .unwrap()
+                .unwrap()
+                .limit,
+            25
+        );
+        query.limit = Some("26".into());
+        assert!(parse_filters(&query, vec![], None, None, false, false).is_err());
+        query.limit = Some("25".into());
+        query.offset = Some("25".into());
+        let filters = parse_filters(&query, vec![], None, None, false, false)
+            .unwrap()
+            .unwrap();
+        assert_eq!((filters.limit, filters.offset), (25, 25));
     }
 
     #[test]

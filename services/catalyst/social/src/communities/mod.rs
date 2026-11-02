@@ -99,11 +99,11 @@ pub struct Settings {
     /// `ARCHIPELAGO_STATS_URL`: the comms presence source of `onlyOnline`;
     /// unset renders every member offline.
     pub archipelago_stats_url: Option<String>,
-    /// `COMMUNITIES_PLACES_OWNERSHIP_CHECK` (default false; the old service
-    /// checked only when `PLACES_API_URL` was set): when true, places added
-    /// to a community must be owned by the caller according to the mirrored
-    /// places catalogue (`explore.place_indexed`, a module read instead of
-    /// the old HTTP hop to the places API).
+    /// `COMMUNITIES_PLACES_OWNERSHIP_CHECK` (default true: upstream's
+    /// `validateOwnership` always asks the places API, `PLACES_API_URL` being
+    /// required): places added to a community must be owned by the caller
+    /// according to the mirrored places catalogue (`explore.place_indexed`, a
+    /// module read instead of the old HTTP hop to the places API).
     pub places_ownership_check: bool,
     /// `COMMUNITIES_MIRROR_INTERVAL_SECS` (3600): a copy is stale after
     /// twice it (`as_of::stale_after`).
@@ -256,8 +256,8 @@ impl State {
 
     /// An explore state on `pool` for the tests' communities state: its
     /// catalogue reads only, never `spawn_jobs`.
-    #[cfg(test)]
-    pub(crate) fn explore_for_tests(pool: &PgPool) -> crate::explore::SharedState {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn explore_for_tests(pool: &PgPool) -> crate::explore::SharedState {
         Arc::new(crate::explore::ExploreState::new(
             pool.clone(),
             crate::explore::Settings::for_tests(),
@@ -355,9 +355,58 @@ impl State {
         }
     }
 
+    /// Writes a community notification whose metadata is the community's
+    /// id, name and thumbnail URL (upstream's `buildThumbnailUrl`) plus
+    /// `extra`; a community that cannot be read is logged and skipped.
+    pub(crate) async fn notify_community_event(
+        &self,
+        kind: &'static str,
+        key: String,
+        community_id: CommunityId,
+        extra: serde_json::Value,
+        audience: crate::notifications::community::Audience<'_>,
+    ) {
+        let name: Option<String> = match sqlx::query_scalar(
+            "SELECT name FROM social.communities WHERE id = $1",
+        )
+        .bind(community_id)
+        .fetch_optional(&self.pool)
+        .await
+        {
+            Ok(name) => name,
+            Err(error) => {
+                tracing::warn!(%error, %community_id, kind, "community notification: name lookup failed");
+                None
+            }
+        };
+        let Some(name) = name else {
+            return;
+        };
+        let mut metadata = serde_json::json!({
+            "communityId": community_id.as_uuid(),
+            "communityName": name,
+            "thumbnailUrl": self.thumbnail_url(community_id),
+        });
+        if let (Some(m), serde_json::Value::Object(extra)) = (metadata.as_object_mut(), extra) {
+            m.extend(extra);
+        }
+        crate::notifications::community::notify(
+            &self.pool,
+            crate::notifications::community::CommunityEvent {
+                kind,
+                key,
+                community_id,
+                metadata,
+            },
+            audience,
+        )
+        .await;
+    }
+
     /// The old `PLACES_API_URL` `/api/destinations` ownership check as a
-    /// read of the mirrored catalogue: every distinct id (a place uuid or a
-    /// world name) must resolve to a place whose owner is the caller.
+    /// read of the catalogue identity and its authoritative ownership: every distinct
+    /// id (a place UUID or world name) must belong to the caller. Genesis ownership
+    /// is resolved from LAND state rather than creator-authored metadata.
     pub async fn validate_places_ownership(
         &self,
         place_ids: &[String],
@@ -372,24 +421,19 @@ impl State {
                 unique.push(id.clone());
             }
         }
-        let lowered: Vec<String> = unique.iter().map(|s| s.to_lowercase()).collect();
-        let owned: i64 = sqlx::query_scalar(
-            "SELECT COUNT(DISTINCT p.key) FROM ( \
-               SELECT CASE WHEN lower(id) = ANY($1) THEN lower(id) ELSE lower(world_name) END AS key, \
-                      lower(COALESCE(raw->>'owner', creator_address)) AS owner \
-               FROM explore.place_indexed \
-               WHERE lower(id) = ANY($1) OR lower(world_name) = ANY($1) \
-             ) p WHERE p.owner = $2",
-        )
-        .bind(&lowered)
-        .bind(signer)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "places ownership validation failed");
-            CommError::status(axum::http::StatusCode::BAD_GATEWAY, "failed to validate place ownership")
-        })?;
-        if owned as usize != unique.len() {
+        if !self
+            .explore
+            .places
+            .owns_places(&unique, signer.as_str())
+            .await
+            .map_err(|error| {
+                tracing::error!(?error, "places ownership validation failed");
+                CommError::status(
+                    axum::http::StatusCode::BAD_GATEWAY,
+                    "failed to validate place ownership",
+                )
+            })?
+        {
             return Err(CommError::not_authorized(format!(
                 "The user {} doesn't own all the places",
                 signer
@@ -545,6 +589,7 @@ pub fn router(state: SharedState) -> Router {
                 .post(referral::create_referral)
                 .patch(referral::update_referral_signed_up),
         )
+        .route("/v1/referral-email", post(referral::add_referral_email))
         .route(
             "/v1/moderation/communities",
             get(admin::get_moderation_communities),

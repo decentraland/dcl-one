@@ -95,6 +95,9 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         (catalyst::db::SCHEMA_IDENTITY, 1),
         "the closure base is stamped version 1"
     );
+    assert!(!has_column(pool, "explore.place_reports", "upload_token_hash").await);
+    assert!(!has_column(pool, "social.notifications", "in_app").await);
+    assert!(!has_column(pool, "social.event_notification_intents", "id").await);
     assert!(
         !has_column(pool, "credits.purchases", "quantity").await,
         "the fixture predates the column"
@@ -111,6 +114,26 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         .await
         .unwrap();
     sqlx::query("INSERT INTO worlds.worlds (name, owner) VALUES ('upgrade.dcl.eth', '0x' || repeat('b', 40))").execute(pool).await.unwrap();
+
+    // A settings table from the later self-writable era, before permission provenance.
+    sqlx::raw_sql(
+        r#"CREATE TABLE explore.event_profile_settings (
+        "user" text PRIMARY KEY, email text,
+        email_verified boolean NOT NULL DEFAULT false,
+        use_local_time boolean NOT NULL DEFAULT true,
+        notify_by_email boolean NOT NULL DEFAULT false,
+        notify_by_browser boolean NOT NULL DEFAULT false,
+        permissions jsonb NOT NULL DEFAULT '[]'::jsonb,
+        created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+        updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+        CONSTRAINT event_profile_settings_user_lowercase CHECK ("user" = lower("user"))
+    )"#,
+    )
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO explore.event_profile_settings (\"user\",permissions) VALUES ('0xlegacy','[\"edit_any_event\"]')")
+        .execute(pool).await.unwrap();
 
     // version 1 is another version: migrate refuses it, and the reviewed
     // release script (schemas/releases/v2-shop-schema.sql: the Shop schema
@@ -203,8 +226,35 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
             .unwrap_or_else(|e| panic!("{e}"));
+    assert!(has_column(pool, "explore.place_reports", "upload_token_hash").await);
+    assert!(has_column(pool, "social.notifications", "in_app").await);
+    assert!(has_column(pool, "social.event_notification_intents", "id").await);
     assert_eq!(done.steps, every_step);
     assert!(done.created.len() > 20, "{}", done.created.len());
+    let owner_indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT indexname FROM pg_indexes WHERE schemaname = 'explore' AND indexname IN ('place_world_owner_idx', 'place_world_local_owner_idx') ORDER BY indexname",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        owner_indexes,
+        vec!["place_world_local_owner_idx", "place_world_owner_idx"],
+        "the additive object pass installs both owner indexes after their tables exist"
+    );
+
+    let (permissions, granted): (serde_json::Value, bool) = sqlx::query_as(
+        "SELECT permissions, permissions_granted FROM explore.event_profile_settings WHERE \"user\"='0xlegacy'"
+    ).fetch_one(pool).await.unwrap();
+    assert_eq!(
+        permissions,
+        serde_json::json!(["edit_any_event"]),
+        "upgrade preserves settings data"
+    );
+    assert!(
+        !granted,
+        "self-writable legacy permissions cannot become authority"
+    );
 
     let (quantity, source, credits): (i32, Option<String>, String) =
         sqlx::query_as("SELECT quantity, source, credits::text FROM credits.purchases")

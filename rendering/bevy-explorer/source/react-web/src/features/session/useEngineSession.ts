@@ -35,6 +35,7 @@ import { useWindowKeyDown } from '../../lib/useWindowKeyDown'
 import { getCursor } from '../pointer/cursorStore'
 import { openProfileCard } from '../profileCard/ProfileCard'
 import { formatConsoleReply, parseChatCommand } from '../chat/chatCommands'
+import { applyLanguageSetting } from '../chat/translation'
 import { PARCEL_METERS, isGenesisSatelliteView } from '../map/atlas'
 import { EDITOR_BUILD } from '../editorHost/config'
 import { editorEntry } from '../editorHost/source'
@@ -1190,6 +1191,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           break
         case 'settings':
           setSettings(msg.settings)
+          applyLanguageSetting(msg.settings)
           break
         case 'bindings':
           setBindingsSnapshot(msg.bindings)
@@ -1207,6 +1209,8 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
         case 'bridgeUnavailable':
           // Every panel behind the bridge would stay empty with nothing to explain why. Not a crash:
           // the engine and the world itself are fine, so it opens as an ordinary dialog (issue #1233).
+          // With the HUD hidden (?hud=0, or a substituted ui scene) there are no panels to explain.
+          if (bootMode().hideHud) break
           setFatalError((prev) => prev ?? {
             message: 'The HUD could not reach the explorer bridge, so panels may stay empty. Restarting usually fixes it.',
             source: 'bridge'

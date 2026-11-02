@@ -65,9 +65,7 @@ fn set_approved(raw: &mut Map<String, Value>, actor: &str) {
 }
 
 fn set_rejected(raw: &mut Map<String, Value>, actor: &str, reason: Option<String>) {
-    if !flag(raw, "rejected") {
-        raw.insert("rejected_by".into(), json!(actor));
-    }
+    raw.insert("rejected_by".into(), json!(actor));
     raw.insert("approved".into(), json!(false));
     raw.insert("approved_by".into(), Value::Null);
     raw.insert("rejected".into(), json!(true));
@@ -385,9 +383,9 @@ impl Decision {
 pub(super) async fn hide_mirrored_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
+    before: &Map<String, Value>,
     raw: Map<String, Value>,
     actor: &str,
-    before: &Value,
 ) -> Result<(), ApiError> {
     let decision = Decision {
         hidden: Some(true),
@@ -398,7 +396,7 @@ pub(super) async fn hide_mirrored_locked(
     super::notifications::record_transition(
         tx,
         event_id,
-        Some(before),
+        Some(&Value::Object(before.clone())),
         &Value::Object(raw.clone()),
         false,
     )
@@ -609,13 +607,6 @@ pub fn validate_create(body: &CreateEvent, now: DateTime<Utc>) -> Result<DateTim
     Ok(start_at)
 }
 
-fn jump_in_url(world: bool, server: Option<&str>, x: i32, y: i32) -> String {
-    match server {
-        Some(s) if world && !s.is_empty() => format!("https://decentraland.org/play/?realm={s}"),
-        _ => format!("https://decentraland.org/play/?position={x}%2C{y}"),
-    }
-}
-
 /// The old `build_create_raw`: the event document a create stores, pending
 /// approval, its one occurrence the start.
 pub fn build_create_raw(
@@ -637,7 +628,9 @@ pub fn build_create_raw(
         .url
         .clone()
         .filter(|u| !u.is_empty())
-        .unwrap_or_else(|| jump_in_url(world, body.server.as_deref(), body.x, body.y));
+        .unwrap_or_else(|| {
+            super::metadata::jump_in_url(world, body.server.as_deref(), body.x, body.y)
+        });
     let mut seen = std::collections::HashSet::new();
     let schedules: Vec<String> = body
         .schedules
@@ -721,34 +714,25 @@ pub fn build_create_raw(
     Ok(Value::Object(doc))
 }
 
-/// The old `generate_id`: a uuid-shaped sha256 of the name and the instant.
-pub(crate) fn generate_id(seed: &str) -> String {
-    use sha2::{Digest, Sha256};
-    let mut hasher = Sha256::new();
-    hasher.update(seed.as_bytes());
-    hasher.update(Utc::now().timestamp_nanos_opt().unwrap_or(0).to_be_bytes());
-    let h = hex::encode(hasher.finalize());
-    format!(
-        "{}-{}-{}-{}-{}",
-        &h[0..8],
-        &h[8..12],
-        &h[12..16],
-        &h[16..20],
-        &h[20..32]
-    )
+/// Event identifiers stay unique even when concurrent creates share a clock tick.
+fn generate_id() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 /// The old `resolve_location` as a query: a world event names its world by
 /// `server` (the world's name, lowercased, when the catalogue knows it); a
 /// parcel event takes the enabled place whose positions hold the parcel
 /// (`place_positions_path_gin`), the newest deployment first.
-pub(crate) async fn resolve_location<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
+pub(crate) async fn resolve_location<'e, E>(
+    executor: E,
     world: bool,
     server: Option<&str>,
     x: i32,
     y: i32,
-) -> Result<(Option<String>, bool), ApiError> {
+) -> Result<(Option<String>, bool), ApiError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     match server.filter(|s| world && !s.is_empty()) {
         Some(name) => {
             let found: Option<(String,)> = sqlx::query_as(
@@ -775,11 +759,14 @@ pub(crate) async fn resolve_location<'e>(
 /// A community event may only be linked by an owner or moderator of that
 /// active community. This uses the shared membership authority, not a claim
 /// supplied by the event form.
-pub(super) async fn validate_community<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
+pub(super) async fn validate_community<'e, E>(
+    executor: E,
     id: &str,
     signer: &str,
-) -> Result<(), ApiError> {
+) -> Result<(), ApiError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     let id =
         uuid::Uuid::parse_str(id).map_err(|_| ApiError::bad_request("invalid community_id"))?;
     let managed: bool = sqlx::query_scalar(
@@ -802,10 +789,13 @@ pub(super) async fn validate_community<'e>(
 
 /// Validate catalogue references before committing an event. Arrays are
 /// bounded at the boundary, and the schedule check is one set query.
-pub(super) async fn validate_references<'e>(
-    executor: impl sqlx::PgExecutor<'e>,
+pub(super) async fn validate_references<'e, E>(
+    executor: E,
     raw: &Map<String, Value>,
-) -> Result<(), ApiError> {
+) -> Result<(), ApiError>
+where
+    E: sqlx::PgExecutor<'e>,
+{
     if let Some(categories) = raw.get("categories").and_then(Value::as_array) {
         let known = super::categories::list();
         if categories.len() > 25
@@ -870,12 +860,12 @@ pub async fn create_as(
         body.y,
     )
     .await?;
-    let id = generate_id(&body.name);
+    let id = generate_id();
     let mut doc = build_create_raw(body, creator, start_at, place_id.as_deref(), world, now)?;
     doc["id"] = json!(id);
     if let Some(raw) = doc.as_object_mut() {
         let mut conn = pool.acquire().await?;
-        super::metadata::enrich(&mut conn, raw).await?;
+        super::metadata::enrich(&mut conn, raw, None, true).await?;
     }
     if creator != ADMIN_CREATOR {
         if let Some(community) = body.community_id.as_deref() {
@@ -933,17 +923,24 @@ pub async fn create_as(
 pub(super) async fn store_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
+    before: &Map<String, Value>,
     raw: Map<String, Value>,
     signer: &str,
     payload: Value,
-    before: &Value,
-    local: bool,
 ) -> Result<(), ApiError> {
     let mut doc = Value::Object(raw);
     doc["id"] = json!(event_id);
     let f = super::mirror::extract_fields(&doc)
         .ok_or_else(|| ApiError::internal("event document without an id"))?;
-    super::notifications::record_transition(tx, event_id, Some(before), &doc, local).await?;
+    // The caller loaded and locked this local event before applying edits.
+    super::notifications::record_transition(
+        tx,
+        event_id,
+        Some(&Value::Object(before.clone())),
+        &doc,
+        true,
+    )
+    .await?;
     sqlx::query(
         "UPDATE explore.event SET name = $2, start_at = $3::timestamptz AT TIME ZONE 'UTC', finish_at = $4::timestamptz AT TIME ZONE 'UTC',
              next_start_at = $5::timestamptz AT TIME ZONE 'UTC', next_finish_at = $6::timestamptz AT TIME ZONE 'UTC', duration_ms = $7,
@@ -1456,7 +1453,35 @@ mod tests {
                 json!("https://decentraland.org/play/?position=10%2C20")
             )
         );
-        assert_eq!(generate_id("n").len(), 36);
+    }
+
+    #[test]
+    fn concurrent_event_creates_get_unique_canonical_uuid_ids() {
+        let barrier = std::sync::Barrier::new(8);
+        let ids = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        barrier.wait();
+                        (0..1000).map(|_| generate_id()).collect::<Vec<_>>()
+                    })
+                })
+                .collect();
+            workers
+                .into_iter()
+                .flat_map(|worker| worker.join().unwrap())
+                .collect::<Vec<_>>()
+        });
+        let mut seen = std::collections::HashSet::new();
+        for id in ids {
+            let parsed = uuid::Uuid::parse_str(&id).unwrap();
+            assert_eq!(parsed.get_version_num(), 4);
+            assert_eq!(parsed.to_string(), id);
+            assert!(
+                seen.insert(id),
+                "concurrent creates must not share an event ID"
+            );
+        }
     }
 
     #[tokio::test]

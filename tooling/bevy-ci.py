@@ -20,13 +20,17 @@ INPUTS = ('rendering/bevy-explorer/source', 'library/vendor/rusty_enet', 'toolin
           '.github/workflows/bevy-explorer-headless.yml',
           '.github/workflows/bevy-explorer-headless-build.yml',
           'tooling/ci-publication.py', '.cargo', 'rust-toolchain*')
-# Web files that the benchmark runner's own tests (rendering/bevy-explorer/source/local-harness/
-# benchmark/tests) read: a change to one is also an input of the Test Suite.
-BROWSER_LEG_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js',
-                     'rendering/bevy-explorer/source/react-web/src/features/auth/sso.ts')
+# Web files that the Test Suite's harness tests read: the benchmark runner's
+# (rendering/bevy-explorer/source/local-harness/benchmark/tests) and the web driver's
+# (local-harness/web-driver), which loads the HUD's test commands into Chrome. A change to one is
+# also an input of the Test Suite.
+HARNESS_WEB_READS = ('rendering/bevy-explorer/source/deploy/web/engine/perf_stream.js',
+                     'rendering/bevy-explorer/source/react-web/src/features/auth/sso.ts',
+                     'rendering/bevy-explorer/source/react-web/src/lib/hudAutomation.ts')
 IMAGES_INPUTS = (
     'flake.*',
-    'rendering/bevy-explorer/**',
+    'rendering/bevy-explorer/source/**',
+    'rendering/bevy-explorer/upstream.lock.json',
     'apps/bevy-explorer/build-web.py',
     'apps/bevy-explorer/install-*.py',
     '.github/workflows/bevy-explorer-ci.yml',
@@ -37,6 +41,7 @@ IMAGES_INPUTS = (
     'infra/packages/**',
     'infra/containers/**',
     'services/catalyst/**',
+    'schemas/**',
     'library/**',
     '.cargo/**',
     'apps/sites/**',
@@ -71,7 +76,7 @@ APP_INPUTS = {
 
 
 def git(*args):
-    return subprocess.check_output(['git', *args], cwd=ROOT, text=True)
+    return subprocess.check_output(['git', *args], cwd=ROOT, text=True, env={**os.environ, 'GIT_GLOB_PATHSPECS': '1'})
 
 
 def api(path):
@@ -173,10 +178,10 @@ def select(base, head):
         elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')):
             # The always-run source job executes these tests; they aren't build inputs.
             affected = ()
-        elif path in BROWSER_LEG_READS:
-            # The web lane builds and tests these files; the Test Suite runs the benchmark runner's
-            # tests, which read them (the sender the runner's receiver must accept, the guest's
-            # root-key name its reset page keeps).
+        elif path in HARNESS_WEB_READS:
+            # The web lane builds and tests these files; the Test Suite runs the harness tests,
+            # which read them (the sender the benchmark runner's receiver must accept, the guest's
+            # root-key name its reset page keeps, the HUD commands the web driver gives real input).
             affected = ('web', 'test')
         elif path.startswith(('rendering/bevy-explorer/source/react-web/',
                               'rendering/bevy-explorer/source/deploy/web/')):
@@ -187,6 +192,10 @@ def select(base, head):
             # Launcher/package assembly cannot affect web or graphical/native tests.
             # Keep the headless build/smoke; main also packages all four platforms.
             affected = ('headless',)
+        elif path.startswith('apps/bevy-explorer/e2e/'):
+            # The end-to-end suite drives a built client; its own workflow (bevy-explorer-e2e.yml)
+            # checks it and runs it against the web app this workflow built.
+            affected = ()
         elif path.startswith('apps/bevy-explorer/') and path.removeprefix('apps/bevy-explorer/') in APP_INPUTS:
             affected = APP_INPUTS[path.removeprefix('apps/bevy-explorer/')]
         else:

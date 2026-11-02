@@ -13,6 +13,7 @@ pub fn ops() -> Vec<OpDecl> {
         op_world_time(),
         op_camera_fov(),
         op_get_platform(),
+        op_get_player_language(),
     ]
 }
 
@@ -54,4 +55,10 @@ async fn op_camera_fov(op_state: Rc<RefCell<OpState>>) -> Result<f32, AnyError> 
 #[string]
 fn op_get_platform(state: &mut OpState) -> String {
     dcl_js::runtime::op_get_platform(state)
+}
+
+#[op2]
+#[string]
+fn op_get_player_language(state: &mut OpState) -> Option<String> {
+    dcl_js::runtime::op_get_player_language(state)
 }

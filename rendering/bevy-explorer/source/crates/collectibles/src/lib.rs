@@ -108,6 +108,15 @@ pub struct Collectibles<T: CollectibleType> {
 }
 
 impl<T: CollectibleType> Collectibles<T> {
+    /// The urn to name a collectible by outside the manager (on the wire): the source-collection
+    /// urn it resolved to, else the bare name it was requested by, else the urn as given.
+    pub fn source_urn<'a>(&'a self, urn: &'a CollectibleUrn<T>) -> &'a str {
+        match self.aliases.get(urn) {
+            Some(source) => source.as_str(),
+            None => urn.unknown_source_name().unwrap_or(urn.as_str()),
+        }
+    }
+
     pub fn retain(&mut self, frame: u32, f: impl Fn(&CollectibleUrn<T>) -> bool) {
         let count = self.cache.len();
         self.cache
@@ -278,13 +287,9 @@ impl<T: CollectibleType> CollectibleManager<'_, '_, T> {
         }
     }
 
-    /// The urn to name a collectible by outside the manager (on the wire): the source-collection
-    /// urn it resolved to, else the bare name it was requested by, else the urn as given.
+    /// As [`Collectibles::source_urn`].
     pub fn source_urn<'a>(&'a self, urn: &'a CollectibleUrn<T>) -> &'a str {
-        match self.collectibles.aliases.get(urn) {
-            Some(source) => source.as_str(),
-            None => urn.unknown_source_name().unwrap_or(urn.as_str()),
-        }
+        self.collectibles.source_urn(urn)
     }
 
     pub fn add_builtin(&mut self, urn: CollectibleUrn<T>, value: Collectible<T>) {

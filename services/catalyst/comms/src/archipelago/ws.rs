@@ -96,6 +96,22 @@ fn kicked_packet() -> server_packet::Message {
     })
 }
 
+async fn handle_renewal_result(
+    socket: &mut WebSocket,
+    result: Result<(), crate::archipelago::control_v4::V4Error>,
+    link: &PeerLink,
+    feed: &FeedCache,
+) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(crate::archipelago::control_v4::V4Error::AuthorityConflict) => {
+            let _ = send_packet(socket, kicked_packet(), Some(link), feed).await;
+            false
+        }
+        Err(_) => false,
+    }
+}
+
 fn heartbeat_position(
     hb: &crate::protocol::archipelago::archipelago::Heartbeat,
 ) -> Option<[f32; 3]> {
@@ -469,16 +485,11 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             _ = renewal.tick(), if registration.as_ref().is_some_and(|current| current.fence.is_some()) => {
                 let current = registration.as_ref().unwrap();
                 let owner = &current.fence.as_ref().unwrap().owner;
-                match tokio::time::timeout(
+                let result = tokio::time::timeout(
                     AUTHORITY_OPERATION_TIMEOUT, state.control_v4.renew(owner),
-                ).await {
-                    Ok(Ok(())) => {}
-                    // A newer session owns the wallet: tell the client, as the ownership poll does.
-                    Ok(Err(crate::archipelago::control_v4::V4Error::AuthorityConflict)) => {
-                        let _ = send_packet(&mut socket, kicked_packet(), Some(&current.link), &state.feed).await;
-                        break;
-                    }
-                    _ => break,
+                ).await.unwrap_or(Err(crate::archipelago::control_v4::V4Error::AuthorityUnavailable));
+                if !handle_renewal_result(&mut socket, result, &current.link, &state.feed).await {
+                    break;
                 }
             }
         }
@@ -522,6 +533,73 @@ mod tests {
     use crate::protocol::archipelago::Position;
     use crate::protocol::archipelago::archipelago::Heartbeat;
     use std::time::Duration;
+
+    #[tokio::test]
+    async fn renewal_conflict_sends_kicked_before_close_but_unavailable_only_closes() {
+        use crate::archipelago::control_v4::V4Error;
+        use futures::StreamExt;
+        use std::sync::Arc;
+        use tokio_tungstenite::tungstenite::Message as ClientMessage;
+
+        for conflict in [true, false] {
+            let state = crate::archipelago::test_support::state_over(
+                crate::archipelago::Settings::for_tests(),
+                Arc::new(crate::gatekeeper::bus::DisabledBus),
+            )
+            .await;
+            let app = Router::new().route(
+                "/",
+                get(move |upgrade: WebSocketUpgrade| {
+                    let state = state.clone();
+                    async move {
+                        upgrade.on_upgrade(move |transport| async move {
+                            let permit = state.sockets.clone().acquire_owned().await.unwrap();
+                            let mut socket = WebSocket::new(transport, state.clone(), permit);
+                            let (link, _events, _) =
+                                state.registry.on_peer_connected("wallet", "session");
+                            socket.bind_owner(&link);
+                            let result = Err(if conflict {
+                                V4Error::AuthorityConflict
+                            } else {
+                                V4Error::AuthorityUnavailable
+                            });
+                            assert!(
+                                !handle_renewal_result(&mut socket, result, &link, &state.feed)
+                                    .await
+                            );
+                            drop(socket);
+                            link.close();
+                        })
+                    }
+                }),
+            );
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            let (mut client, _) = tokio_tungstenite::connect_async(format!("ws://{address}/"))
+                .await
+                .unwrap();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                if conflict {
+                    let ClientMessage::Binary(bytes) = client.next().await.unwrap().unwrap() else {
+                        panic!("renewal conflict must send Kicked before close");
+                    };
+                    let packet = ServerPacket::decode(bytes.as_ref()).unwrap();
+                    assert!(
+                        matches!(packet.message, Some(server_packet::Message::Kicked(kicked))
+                        if kicked.reason == KickedReason::KrNewSession as i32)
+                    );
+                }
+                assert!(matches!(
+                    client.next().await.unwrap().unwrap(),
+                    ClientMessage::Close(_)
+                ));
+            })
+            .await
+            .expect("renewal failure must close promptly");
+            task.abort();
+        }
+    }
 
     #[test]
     fn reserved_auth_fields_are_rejected_without_rejecting_legacy_fields() {

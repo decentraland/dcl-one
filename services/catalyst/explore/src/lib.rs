@@ -703,7 +703,10 @@ pub fn router(state: SharedState) -> Router {
                 .delete(evp::profile_subscriptions),
         )
         .route("/api/poster", post(events::posters::upload_poster))
-        .route("/assets/event-default.webp", get(events::posters::default_image))
+        .route(
+            "/assets/event-default.webp",
+            get(events::posters::default_image),
+        )
         .route(
             "/api/poster-vertical",
             post(events::posters::upload_poster_vertical),
