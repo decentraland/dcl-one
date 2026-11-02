@@ -3,9 +3,10 @@
     pbr_fragment::pbr_input_from_vertex_output,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
     mesh_view_bindings::globals,
+    mesh_functions,
 }
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
-#import "embedded://shaders/bound_material_effect.wgsl"::apply_outline
+#import "embedded://shaders/bound_material_effect.wgsl"::{apply_outline, reveal_discard}
 #import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount}
 
 #ifdef ENVIRONMENT_MAP
@@ -51,6 +52,10 @@ fn fragment(
 #ifndef MULTISAMPLED
     let sample_index = 0u;
 #endif
+
+    if reveal_discard(mesh_functions::get_tag(in.instance_index), in.world_position.y, in.instance_index) {
+        discard;
+    }
 
     var pbr_input = pbr_input_from_vertex_output(in, is_front, false);
 

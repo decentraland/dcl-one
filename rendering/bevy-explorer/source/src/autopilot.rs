@@ -242,7 +242,8 @@ fn autopilot_fail(
     input.reply_ok("run ended");
 }
 
-#[cfg(test)]
+// These tests sign their fixture accounts with the native-only local guest wallet.
+#[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use std::time::Duration;
 
