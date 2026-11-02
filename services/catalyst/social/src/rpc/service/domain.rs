@@ -253,8 +253,7 @@ pub(super) async fn friendship_requests(
     // stays the row count), and an absent message reads `''`.
     let addrs: Vec<String> = rows.iter().map(|r| r.address.clone()).collect();
     let profiles = context.server_context.profiles();
-    let map = profiles.get_profiles(&addrs).await;
-    let strict = profiles.requires_profiles();
+    let (map, strict) = profiles.known_profiles(&addrs).await;
     let requests = rows
         .into_iter()
         .filter_map(|r| {

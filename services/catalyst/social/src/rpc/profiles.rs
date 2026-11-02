@@ -213,11 +213,33 @@ impl Profiles {
         self.pool.is_some()
     }
 
+    /// The profiles found, and whether a missing one means "no profile": a
+    /// failed read only says the source could not answer, so it leaves
+    /// nobody out (the cached profiles and placeholders, as [`Self::get_profiles`]).
+    pub async fn known_profiles(
+        &self,
+        addresses: &[String],
+    ) -> (HashMap<String, ProfileInfo>, bool) {
+        if !self.requires_profiles() {
+            return (self.get_profiles(addresses).await, false);
+        }
+        match self.get_profiles_result(addresses).await {
+            Ok(map) => (map, true),
+            Err(error) => {
+                tracing::warn!(%error, "profile query failed; keeping every wallet");
+                (self.get_profiles(addresses).await, false)
+            }
+        }
+    }
+
     /// `address`'s profile, or the placeholder; `None` only when a profile
     /// source is attached and holds no usable profile for it.
     pub async fn existing_friend_profile(&self, address: &str) -> Option<FriendProfile> {
-        let info = self.get_profile(address).await;
-        if info.is_none() && self.requires_profiles() {
+        let (mut map, strict) = self
+            .known_profiles(std::slice::from_ref(&address.to_string()))
+            .await;
+        let info = map.remove(&address.to_lowercase());
+        if info.is_none() && strict {
             return None;
         }
         Some(friend_profile(address, info.as_ref()))
@@ -227,8 +249,7 @@ impl Profiles {
     /// [`Self::existing_friend_profile`] would leave out, in input order
     /// (upstream `parseProfilesToFriends` over the registry's answer).
     pub async fn existing_friend_profiles(&self, addresses: &[String]) -> Vec<FriendProfile> {
-        let map = self.get_profiles(addresses).await;
-        let strict = self.requires_profiles();
+        let (map, strict) = self.known_profiles(addresses).await;
         addresses
             .iter()
             .filter_map(|a| {
