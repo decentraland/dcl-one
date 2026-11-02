@@ -2036,6 +2036,15 @@ impl IpfsIo {
                     warn!("[{token:?}] timeout requesting `{remote}`, retrying");
                     continue;
                 }
+                // A host that is briefly unavailable (a gateway error, or GitHub Pages' 503 under
+                // load) answers the same request a moment later: wait, then ask again.
+                Err(platform::FetchError::Status(status))
+                    if matches!(status.as_u16(), 502..=504) && attempt <= 3 =>
+                {
+                    warn!("[{token:?}] `{remote}` responded {status}, retrying");
+                    async_std::task::sleep(Duration::from_millis(500 * attempt)).await;
+                    continue;
+                }
                 Err(e) => {
                     let detail = match e {
                         platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
