@@ -78,7 +78,7 @@ from `/help` and rejected. Console commands land in `ConsoleSet::Commands`, just
 Wearables and masks come from `crates/avatar/src/material_cache.rs`, shared across avatars so
 they batch. A per-avatar value is never a material property; it goes in the entity's `MeshTag`
 (a `u32`, read in WGSL with `mesh_functions::get_tag(instance_index)`). `scene_material` owns
-the layout: the top byte is flags (`SCENE_MATERIAL_*_MESH_TAG`), the low 24 bits are shared.
+the layout: the top byte is flags (`SCENE_MATERIAL_*_MESH_TAG`); the rest is free for values.
 
 - **Budget the bits to the effect.** Work out the step the bits give against what the eye can
   see in one frame, and write the arithmetic in the PR. A value that moves centimetres per
@@ -90,7 +90,7 @@ the layout: the top byte is flags (`SCENE_MATERIAL_*_MESH_TAG`), the low 24 bits
   entity carries its own switches; the shared tag carries only the value.
 - Rust owns encode and decode, in `scene_material`, with a round-trip test that mirrors the
   WGSL decode: monotonic across the range and within half a step.
-- After writing a tag, call `set_changed` on the `Mesh3d`: the fork ignores
+- After writing a tag, call `set_changed` on the `Mesh3d`: bevy 0.16 ignores
   `Changed<MeshTag>` ([oddities](oddities.md#rendering)).
 
 ## A constant shared between Rust and WGSL
@@ -114,8 +114,7 @@ fragment.shader_defs.extend(foo_shader_defs());
 // defs are integers: metres travel as millimetres
 #ifdef FOO_MESH_TAG_MASK
 fn foo(mesh_tag: u32) -> f32 {
-    let step = mesh_tag & #{FOO_MESH_TAG_MASK};
-    return f32(#{FOO_MILLIMETRES}) * 0.001;
+    return f32(mesh_tag & #{FOO_MESH_TAG_MASK}) * f32(#{FOO_MILLIMETRES}) * 0.001;
 }
 #endif
 ```
@@ -128,7 +127,8 @@ the defs; a material extension's defs do not reach a separate material.
 ## A pipeline-compile test for a shader
 
 Every shader change gets a test that compiles every pipeline variant off-screen, `#[ignore]`d
-because CI has no GPU (the pattern is `crates/perf_output/tests/gpu_timestamps.rs`):
+because CI has no GPU. `crates/perf_output/tests/gpu_frame_time.rs` shows the headless app
+setup of step 1; no test in the repo polls the pipeline cache yet:
 
 1. A `DefaultPlugins` app with `WinitPlugin`, `LogPlugin` and `PipelinedRenderingPlugin`
    disabled and no primary window.

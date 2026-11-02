@@ -13,7 +13,7 @@ checking its licence and provenance.
 
 | | Path |
 |---|---|
-| Systems and components | `Explorer/Assets/DCL/<Area>/`: `*System.cs` holds `[Query]` methods on a `BaseUnityLoopSystem`; `*Component.cs` the Arch components |
+| Systems and components | Under `Explorer/Assets/DCL/<Area>/`, mostly in a `Systems/` folder: `*System.cs` holds `[Query]` methods on a `BaseUnityLoopSystem`; `*Component.cs` the Arch components |
 | Wiring | `Explorer/Assets/DCL/PluginSystem/Global/<Area>Plugin.cs`: which systems run and with what assets |
 | Gating | `Explorer/Assets/DCL/FeatureFlags/FeatureFlagsStrings.cs` and `FeaturesRegistry.cs`; `Explorer/Assets/DCL/Infrastructure/Global/AppArgs/AppArgsFlags.cs` |
 | Assets | `.prefab`, `.mat`, `.shader`, `.hlsl` and `.shadergraph` files next to the code; the shared avatar shaders under `unity-shared-dependencies/Runtime/Shaders/` |
@@ -88,8 +88,9 @@ Shaders load as `embedded://shaders/<file>.wgsl`.
 | `SkinnedMeshRenderer` (skinning is implicit) | Explicit: under `#ifdef SKINNED`, `skinning::skin_model(joint_indices, joint_weights, instance_index)` and `skin_normals`, as `bevy_pbr`'s `mesh.wgsl` does. A custom vertex stage without it renders the bind pose |
 | `positionOS.y` with a hip offset | Skinned object space is the bind pose here. Use world height above the mesh origin, `world_position.y - get_world_from_local(i)[3].y`; avatar origins sit at the feet, so Unity's hip offset disappears |
 | `Properties` plus `Material.SetVector` per frame | An `AsBindGroup` struct with `#[uniform(0)]` fields for what Rust changes at runtime; everything else a WGSL `const` |
-| `[HDR] _Color`, `_Emission_Intensity` | Multiply by `BRIGHTNESS * view.exposure` as `toon.wgsl` does. Unity's HDR intensity becomes the emission factor; without the scale an unlit colour renders black in this scene |
-| A dither fade near the camera | `discard_dither(...)` from `bound_material_effect.wgsl` with the avatar base opacity; dim emission by `1 - faded` so bloom does not fill discarded pixels |
+| `_Color`, a lit or unlit base colour | Multiply by `BRIGHTNESS * view.exposure` as `toon.wgsl` does for its lit term. Without the scale a colour renders black in this scene |
+| `[HDR] _Color`, `_Emission_Intensity` | Multiply by `view.exposure * EMISSIVE_BOOST` as `toon.wgsl` does for emission. Unity's HDR intensity becomes the emission factor |
+| A dither fade near the camera | `discard_dither(...)` from `bound_material_effect.wgsl` with the avatar base opacity. It returns a `Dither` whose `transparency` is how faded the fragment is; `bound_material.wgsl` feeds it in as `cap_brightness` so bloom does not fill the discarded regions |
 | `Blend SrcAlpha OneMinusSrcAlpha`, `ZWrite Off`, no ShadowCaster pass | `alpha_mode()` returning `AlphaMode::Blend`, `NotShadowCaster` on the entities, and `out.focus` written under `#ifdef TRANSPARENT_FOCUS_OUTPUT` ([platforms](platforms.md#web)) |
 | `clip` in a lit pass | Repeat the discard in the prepass shader, or depth and shadows show what colour hides. `MaskMaterial` has no prepass shader: a known gap, say so in the PR |
 | `dpdx`, `textureSample` inside a branch | Hoist above the `if` ([platforms](platforms.md#web)) |
@@ -106,7 +107,7 @@ pipeline-compile test each have a recipe in [recipes](recipes.md).
   that can land mid-way.
 - Per-avatar material properties on a shared, cached material: breaks the cache and the
   batching that `material_cache.rs` exists for.
-- An unscaled colour (no `BRIGHTNESS * view.exposure`): invisible in-world though it looks
+- An unscaled colour (no `view.exposure` factor): invisible in-world though it looks
   right in a unit test.
 - `pbr_input_from_vertex_output` and `main_pass_post_lighting_processing` in an unlit shader:
   they add UV and lighting requirements the shader does not use.
