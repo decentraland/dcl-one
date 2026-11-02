@@ -1862,7 +1862,7 @@ fn social_states(
                 .social
                 .communities_cdn_url
                 .clone()
-                .unwrap_or(public_url)
+                .unwrap_or(public_url.clone())
                 .trim_end_matches('/')
                 .to_string(),
             faces: faces.clone(),
@@ -1881,6 +1881,7 @@ fn social_states(
         pool.clone(),
         notifications::Settings {
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
+            events_base_url: public_url.clone(),
             email: notifications::EmailConfig {
                 sendgrid_api_key: non_empty(&config.social.sendgrid_api_key),
                 from_email: non_empty(&config.social.sendgrid_from_email),

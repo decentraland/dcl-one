@@ -21,6 +21,7 @@ pub mod community;
 pub mod delivery;
 pub mod email;
 pub mod errors;
+pub mod events;
 pub mod first_wear;
 pub mod handlers;
 pub mod land_transfers;
@@ -63,6 +64,8 @@ pub struct Settings {
     pub first_wear: FirstWearSettings,
     /// `NOTIFICATION_DELIVERY_INTERVAL_SECS` (default 15; floored to 1).
     pub delivery_interval: Duration,
+    /// Deployment origin used by event notice links (`/whats-on/{id}`).
+    pub events_base_url: String,
 }
 
 impl Default for Settings {
@@ -77,6 +80,7 @@ impl Default for Settings {
             first_wear_enabled: false,
             first_wear: FirstWearSettings::default(),
             delivery_interval: Duration::from_secs(15),
+            events_base_url: "https://decentraland.org".into(),
         }
     }
 }
@@ -142,6 +146,11 @@ impl State {
             },
         );
         land_transfers::spawn(self.store.pool().clone(), jobs);
+        events::spawn(
+            self.store.pool().clone(),
+            self.settings.events_base_url.clone(),
+            jobs,
+        );
         if self.settings.first_wear_enabled {
             first_wear::spawn(self, jobs);
             tracing::info!(

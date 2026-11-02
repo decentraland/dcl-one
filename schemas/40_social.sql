@@ -572,6 +572,7 @@ CREATE TABLE social.notifications (
     read boolean NOT NULL DEFAULT false,
     read_at timestamp(3) without time zone,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    in_app boolean NOT NULL DEFAULT true,
     CONSTRAINT notifications_pkey PRIMARY KEY (id),
     CONSTRAINT notifications_read_check CHECK ((read AND read_at IS NOT NULL) OR (NOT read AND read_at IS NULL))
 );
@@ -588,6 +589,38 @@ CREATE INDEX notifications_unread_idx
 -- A re-run broadcast is idempotent per recipient.
 CREATE UNIQUE INDEX notifications_broadcast_uidx
     ON social.notifications (address, broadcast_key) WHERE broadcast_key IS NOT NULL;
+
+-- Social owns event delivery intents and progress. Explore inserts transitions
+-- in its authoring transaction; Social inserts occurrence notices. No FK: the event
+-- mirror may remove a catalogue row while an already-committed host notice
+-- still needs delivery. Payload snapshots keep that dispatch recoverable.
+CREATE TABLE social.event_notification_intents (
+    id uuid PRIMARY KEY,
+    event_id text NOT NULL,
+    kind text NOT NULL,
+    event jsonb NOT NULL,
+    local_event boolean NOT NULL,
+    occurrence_start timestamp without time zone,
+    occurred_at timestamp without time zone NOT NULL,
+    dispatch_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    recipient_after text NOT NULL DEFAULT '',
+    processed_at timestamp without time zone,
+    CONSTRAINT event_notification_intents_kind_check CHECK (kind IN ('event_approved', 'event_rejected', 'event_deleted', 'event_created', 'events_starts_soon', 'events_started')),
+    CONSTRAINT event_notification_intents_occurrence_check CHECK ((kind IN ('events_starts_soon', 'events_started')) = (occurrence_start IS NOT NULL))
+);
+-- The social worker claims unfinished dispatches in bounded pages; locked
+-- rows are skipped, and its recipient cursor advances with delivery inserts.
+CREATE INDEX event_notification_intents_pending_idx
+    ON social.event_notification_intents (dispatch_at, id) WHERE processed_at IS NULL;
+
+-- A retained occurrence is the durable scan checkpoint, including empty or
+-- suppressed delivery. Catch-up is one hour; completed rows remain 30 days.
+CREATE UNIQUE INDEX event_notification_occurrence_idx
+    ON social.event_notification_intents (event_id, occurrence_start, kind)
+    WHERE occurrence_start IS NOT NULL;
+-- Completed queue retention deletes bounded old batches, never pending work.
+CREATE INDEX event_notification_retention_idx
+    ON social.event_notification_intents (processed_at, id) WHERE processed_at IS NOT NULL;
 
 -- Explicit delivery state for the out-of-process channels; the worker claims
 -- a bounded due set (`state = 'pending' AND next_attempt_at <= $now`) with

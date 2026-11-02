@@ -597,7 +597,7 @@ async fn community_events_write_the_notification_rows_upstream_publishes() {
     // `quiet` opted out of this community
     sqlx::query("INSERT INTO social.subscription_opt_outs (address, scope, scope_id) VALUES ($1, 'community', $2)")
         .bind(&quiet.address)
-        .bind(c.to_string())
+        .bind(c.to_string().to_uppercase())
         .execute(&rig.pool)
         .await
         .unwrap();

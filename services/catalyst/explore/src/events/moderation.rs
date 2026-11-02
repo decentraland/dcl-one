@@ -200,6 +200,7 @@ pub async fn moderate(
     let Some((raw, current_name, origin)) = row else {
         return Ok(false);
     };
+    let before = raw.clone();
     let mut raw = match raw {
         Value::Object(m) => m,
         _ => Map::new(),
@@ -229,6 +230,14 @@ pub async fn moderate(
         flag(&raw, "highlighted"),
         flag(&raw, "trending"),
     );
+    super::notifications::record_transition(
+        &mut tx,
+        event_id,
+        Some(&before),
+        &Value::Object(raw.clone()),
+        !mirrored,
+    )
+    .await?;
     sqlx::query(
         "UPDATE explore.event SET raw = $2, name = $3, description = $4, approved = $5, highlighted = $6, trending = $7 \
          WHERE id = $1",
@@ -367,6 +376,7 @@ impl Decision {
 pub(super) async fn hide_mirrored_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
+    before: &Map<String, Value>,
     raw: Map<String, Value>,
     actor: &str,
 ) -> Result<(), ApiError> {
@@ -376,6 +386,14 @@ pub(super) async fn hide_mirrored_locked(
         deleted_reason: text(&raw, "deleted_reason"),
         ..Default::default()
     };
+    super::notifications::record_transition(
+        tx,
+        event_id,
+        Some(&Value::Object(before.clone())),
+        &Value::Object(raw.clone()),
+        false,
+    )
+    .await?;
     sqlx::query("UPDATE explore.event SET raw = $2 WHERE id = $1")
         .bind(event_id)
         .bind(Value::Object(raw))
@@ -872,6 +890,7 @@ pub async fn create_as(
     .bind(json!({ "create": body }))
     .execute(&mut *tx)
     .await?;
+    super::notifications::record_transition(&mut tx, &id, None, &doc, true).await?;
     tx.commit().await?;
     tracing::info!(event = %id, signer = operator, creator, "event created");
     Ok(id)
@@ -883,6 +902,7 @@ pub async fn create_as(
 pub(super) async fn store_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
+    before: &Map<String, Value>,
     raw: Map<String, Value>,
     signer: &str,
     payload: Value,
@@ -891,6 +911,15 @@ pub(super) async fn store_locked(
     doc["id"] = json!(event_id);
     let f = super::mirror::extract_fields(&doc)
         .ok_or_else(|| ApiError::internal("event document without an id"))?;
+    // The caller loaded and locked this local event before applying edits.
+    super::notifications::record_transition(
+        tx,
+        event_id,
+        Some(&Value::Object(before.clone())),
+        &doc,
+        true,
+    )
+    .await?;
     sqlx::query(
         "UPDATE explore.event SET name = $2, start_at = $3::timestamptz AT TIME ZONE 'UTC', finish_at = $4::timestamptz AT TIME ZONE 'UTC',
              next_start_at = $5::timestamptz AT TIME ZONE 'UTC', next_finish_at = $6::timestamptz AT TIME ZONE 'UTC', duration_ms = $7,
