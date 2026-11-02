@@ -1,0 +1,7 @@
+node_modules/
+report/
+scenes/*/node_modules/
+scenes/*/bin/
+scenes/*/.dcl-cache/
+scenes/*/.dcl-one/
+scenes/*/main.crdt

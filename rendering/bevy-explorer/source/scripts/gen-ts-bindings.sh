@@ -4,8 +4,8 @@
 # Also writes the web param TABLE (crates/system_api_types/src/web_params.rs → webParamTable.ts)
 # and the language table (languages.rs → languageTable.ts): the `export_` filter catches both
 # ts-rs's export_bindings_* tests and those table exports.
-# Called by `just ts-bindings` and by CI (ci.yml deploy-web, package.yml) before the
-# react-web / bridge-scene builds, which import the generated (gitignored) types.
+# Called by `just ts-bindings`, apps/bevy-explorer/build-web.py and bevy-explorer-desktop.yml
+# before the react-web / bridge-scene builds, which import the generated (gitignored) types.
 set -eu
 root="$(cd "$(dirname "$0")/.." && pwd)"
 # git-bash (windows CI): cargo is a native process, so hand it a windows-style path —

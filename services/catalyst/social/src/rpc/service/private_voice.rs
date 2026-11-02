@@ -52,6 +52,14 @@ impl SocialServiceImpl {
                 "This action is not allowed because either you blocked this user or this user blocked you",
             ));
         }
+        if (pre.callee_privacy != "all" || pre.caller_privacy != "all")
+            && !pre.friends.unwrap_or(false)
+        {
+            return Ok(start_voice_forbidden(
+                "The callee or the caller are not accepting voice calls from users that are not friends",
+            ));
+        }
+        // Community-call presence is disclosed only once block and privacy allow the call.
         if pre.caller_in_community_voice {
             return Ok(start_voice_conflict(
                 "Cannot start private voice chat while in a community voice chat",
@@ -60,13 +68,6 @@ impl SocialServiceImpl {
         if pre.callee_in_community_voice {
             return Ok(start_voice_conflict(
                 "Cannot start private voice chat: the callee is in a community voice chat",
-            ));
-        }
-        if (pre.callee_privacy != "all" || pre.caller_privacy != "all")
-            && !pre.friends.unwrap_or(false)
-        {
-            return Ok(start_voice_forbidden(
-                "The callee or the caller are not accepting voice calls from users that are not friends",
             ));
         }
         if pre.busy {

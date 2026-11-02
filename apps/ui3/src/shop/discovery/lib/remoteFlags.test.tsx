@@ -94,7 +94,7 @@ describe("useRemoteFlag", () => {
     expect(flagReads()).toBe(2);
     await refreshRemoteFlags(now + 5_000);
     expect(flagReads()).toBe(2);
-    await refreshRemoteFlags(Date.now() + 11_000);
+    await refreshRemoteFlags(now + 11_000);
     expect(flagReads()).toBe(3);
   });
 
@@ -107,6 +107,26 @@ describe("useRemoteFlag", () => {
     expect(view.getByTestId("flag").textContent).toBe("true");
     await refreshRemoteFlags(Date.now() + 61_000);
     expect(flagReads()).toBe(1);
+  });
+
+  it("reads again after forgetting primed flags, even while an older read is still running", async () => {
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    vi.mocked(fetch).mockImplementationOnce(async (input) => {
+      requested.push(String(input));
+      await held;
+      return new Response(JSON.stringify({ flags: {} }));
+    });
+    const stale = refreshRemoteFlags();
+    primeRemoteFlags(null);
+    answers.push(json({ flags: ON }));
+    const view = render(<Probe />);
+    await act(async () => refreshRemoteFlags());
+    expect(flagReads()).toBe(2);
+    expect(view.getByTestId("flag").textContent).toBe("true");
+    release();
+    await act(async () => stale);
+    expect(view.getByTestId("flag").textContent).toBe("true");
   });
 
   it("survives a page invalidating its queries", async () => {

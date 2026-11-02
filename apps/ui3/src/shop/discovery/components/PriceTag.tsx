@@ -18,10 +18,14 @@ export function formatCreditsFull(n: number): string {
   return full.format(n);
 }
 
-export function CreditsAmount({ credits, testId, strike = false }: { credits: number; testId?: string; strike?: boolean }) {
+/**
+ * A credit amount: the coin, the compact figure, and "N Credits" for screen readers. `className` adds the
+ * caller's styles to the wrapper; `coinClassName` sizes the coin from CSS instead of the default 15px.
+ */
+export function CreditsAmount({ credits, testId, strike = false, className, coinClassName }: { credits: number; testId?: string; strike?: boolean; className?: string; coinClassName?: string }) {
   return (
-    <span className={`shop-price__credits${strike ? " shop-price__credits--was" : ""}`} data-testid={testId || undefined} title={t("assetCard.credits", { count: credits })}>
-      {strike ? null : <Icon name="credits" size={15} className="shop-price__mark" />}
+    <span className={`shop-price__credits${strike ? " shop-price__credits--was" : ""}${className ? ` ${className}` : ""}`} data-testid={testId || undefined} title={t("assetCard.credits", { count: credits })}>
+      {strike ? null : <Icon name="credits" size={coinClassName ? undefined : 15} className={coinClassName ? `shop-price__mark ${coinClassName}` : "shop-price__mark"} />}
       <span aria-hidden>{formatCredits(credits)}</span>
       <span className="shop-sr">{t("assetCard.credits", { count: credits })}</span>
     </span>

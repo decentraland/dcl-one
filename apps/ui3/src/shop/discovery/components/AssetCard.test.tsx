@@ -123,6 +123,14 @@ describe("the card's price row", () => {
     expect(screen.getByTestId("card-price-mana")).toHaveTextContent("MANA");
   });
 
+  it("a resale never shows the sale: no badge over its Resale tag and no struck price", async () => {
+    card(item({ ...sale, listingType: "secondary", tokenId: "7", manaWei: "4020000000000000000" }), "web3");
+    await settle();
+    expect(screen.getByTestId("card-resale")).toBeTruthy();
+    expect(screen.queryByTestId("card-sale-badge")).toBeNull();
+    expect(screen.queryByTestId("card-price-was")).toBeNull();
+  });
+
   it("the cart button takes the chips row's place only on a card that has something to buy", async () => {
     const { unmount } = card(item());
     await settle();
