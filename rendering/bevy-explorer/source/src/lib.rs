@@ -7,6 +7,8 @@ mod commands;
 mod deep_link;
 mod ext;
 mod memory;
+#[cfg(test)]
+mod memory_tests;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
