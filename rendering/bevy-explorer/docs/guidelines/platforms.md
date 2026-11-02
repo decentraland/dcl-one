@@ -79,14 +79,15 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 
 ## Memory budgets
 
-`MemoryStatus` reports engine-process RSS on desktop and live shared engine-heap allocations
-on Web. `GpuMemoryBudget` independently samples the renderer's selected native adapter or device
+`MemoryStatus` samples engine-process RSS in native rendering and headless clients, and live
+shared engine-heap allocations on Web, at most four times a second. `GpuMemoryBudget`
+independently samples the renderer's selected native adapter or device
 at most once a second. Each pool carries used bytes and a positive budget. Usage can exceed the budget.
 
 | Renderer | GPU reading |
 |---|---|
 | Windows DX12 | Current process usage and the OS budget for the local segment on the renderer's node. [DXGI fields](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_4/ns-dxgi1_4-dxgi_query_video_memory_info) |
-| Windows or Linux Vulkan | Estimated process usage and budget for each device-local heap when the driver advertises `VK_EXT_memory_budget`. Each heap has its own limit. [Vulkan memory budgets](https://docs.vulkan.org/refpages/latest/refpages/source/VkPhysicalDeviceMemoryBudgetPropertiesEXT.html) |
+| Windows or Linux Vulkan | Estimated process usage for each device-local heap with a usable driver budget. Each heap has its own limit. Requires `VK_EXT_memory_budget`. [Vulkan memory budgets](https://docs.vulkan.org/refpages/latest/refpages/source/VkPhysicalDeviceMemoryBudgetPropertiesEXT.html) |
 | macOS Metal | Allocated resource bytes and the device's recommended working set. The recommendation is advisory and includes unified-memory devices. [Metal working set](https://developer.apple.com/documentation/metal/mtldevice/recommendedmaxworkingsetsize) |
 | Browser WebGPU or renderless headless | `NotApplicable`. WebGPU exposes no driver memory budget. [WebGPU adapter interface](https://www.w3.org/TR/webgpu/#gpuadapter) |
 | Native query unsupported, failed or pending | `Unavailable`. A consumer has no current reading for this adapter. |

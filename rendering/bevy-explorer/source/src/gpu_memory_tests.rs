@@ -33,11 +33,37 @@ fn browser_gpu_budget_is_not_applicable_even_for_a_rendering_client() {
 fn native_renderer_without_a_query_is_unavailable() {
     let mut app = App::new();
     app.add_plugins(GpuMemoryPlugin);
+    app.insert_resource(GpuMemoryBudget::NotApplicable);
     app.update();
     assert_eq!(
         *app.world().resource::<GpuMemoryBudget>(),
         GpuMemoryBudget::Unavailable
     );
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+#[test]
+fn vulkan_keeps_valid_local_heaps_when_another_heap_has_no_budget() {
+    use super::native::vulkan_pools;
+    use ash::vk;
+    use common::memory::GpuMemoryPoolKind;
+
+    let local = vk::MemoryHeap::default().flags(vk::MemoryHeapFlags::DEVICE_LOCAL);
+    let heaps = [local, vk::MemoryHeap::default(), local];
+    let mut memory = vk::PhysicalDeviceMemoryBudgetPropertiesEXT::default();
+    assert_eq!(vulkan_pools(&heaps, &memory), None);
+    memory.heap_budget[1] = 100;
+    memory.heap_budget[2] = 30;
+    let pools = vulkan_pools(&heaps, &memory).unwrap();
+    assert_eq!(pools.len(), 1);
+    assert_eq!(
+        pools[0].kind,
+        GpuMemoryPoolKind::VulkanDeviceLocal { heap_index: 2 }
+    );
+    assert_eq!(pools[0].budget_bytes.get(), 30);
+    assert_eq!(pools[0].used_bytes, 0);
+    memory.heap_usage[2] = 33;
+    assert_eq!(vulkan_pools(&heaps, &memory).unwrap()[0].used_bytes, 33);
 }
 
 #[cfg(not(target_arch = "wasm32"))]

@@ -9,15 +9,32 @@ wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen_test::wasm_bindgen_test]
 fn web_reading_falls_after_an_engine_allocation_is_freed() {
+    use bevy::time::{TimePlugin, TimeUpdateStrategy};
+    use std::time::Duration;
+
     let mut app = App::new();
-    app.add_plugins(MemoryStatusPlugin);
+    app.add_plugins((TimePlugin, MemoryStatusPlugin));
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        125,
+    )));
     app.update();
+    let initial = app.world().resource::<MemoryStatus>().reading().unwrap();
     let allocation = vec![0u8; 8 << 20];
     std::hint::black_box(&allocation);
+    app.update();
+    assert_eq!(
+        app.world()
+            .resource::<MemoryStatus>()
+            .reading()
+            .unwrap()
+            .used_bytes,
+        initial.used_bytes
+    );
     app.update();
     let held = app.world().resource::<MemoryStatus>().reading().unwrap();
     assert_eq!(held.capacity_mib, 4096);
     drop(allocation);
+    app.update();
     app.update();
     let freed = app.world().resource::<MemoryStatus>().reading().unwrap();
     assert!(held.used_bytes >= freed.used_bytes + (7 << 20));

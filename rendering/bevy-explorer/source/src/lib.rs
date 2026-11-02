@@ -7,8 +7,6 @@ mod commands;
 mod deep_link;
 mod ext;
 mod gpu_memory;
-#[cfg(test)]
-mod gpu_memory_tests;
 mod memory;
 #[cfg(test)]
 mod memory_tests;

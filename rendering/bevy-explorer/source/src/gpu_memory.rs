@@ -1,6 +1,10 @@
 use bevy::prelude::*;
 use common::memory::GpuMemoryBudget;
 
+#[cfg(test)]
+#[path = "gpu_memory_tests.rs"]
+mod gpu_memory_tests;
+
 pub(crate) struct GpuMemoryPlugin;
 
 impl Plugin for GpuMemoryPlugin {
@@ -111,19 +115,29 @@ mod native {
                     }
                     output.memory_properties
                 };
-                let mut pools = Vec::new();
-                for (heap_index, heap) in properties.memory_heaps_as_slice().iter().enumerate() {
-                    if heap.flags.contains(vk::MemoryHeapFlags::DEVICE_LOCAL) {
-                        pools.push(GpuMemoryPool {
-                            kind: GpuMemoryPoolKind::VulkanDeviceLocal { heap_index },
-                            used_bytes: ext.heap_usage[heap_index],
-                            budget_bytes: NonZeroU64::new(ext.heap_budget[heap_index])?,
-                        });
-                    }
-                }
-                (!pools.is_empty()).then_some(pools)
+                vulkan_pools(properties.memory_heaps_as_slice(), &ext)
             })
         }
+    }
+
+    #[cfg(any(windows, target_os = "linux"))]
+    pub(super) fn vulkan_pools(
+        heaps: &[ash::vk::MemoryHeap],
+        reported: &ash::vk::PhysicalDeviceMemoryBudgetPropertiesEXT<'_>,
+    ) -> Option<Vec<GpuMemoryPool>> {
+        let pools: Vec<_> = heaps
+            .iter()
+            .enumerate()
+            .filter(|(_, heap)| heap.flags.contains(ash::vk::MemoryHeapFlags::DEVICE_LOCAL))
+            .filter_map(|(heap_index, _)| {
+                Some(GpuMemoryPool {
+                    kind: GpuMemoryPoolKind::VulkanDeviceLocal { heap_index },
+                    used_bytes: reported.heap_usage[heap_index],
+                    budget_bytes: NonZeroU64::new(reported.heap_budget[heap_index])?,
+                })
+            })
+            .collect();
+        (!pools.is_empty()).then_some(pools)
     }
 
     #[cfg(target_os = "macos")]
@@ -133,7 +147,8 @@ mod native {
             device
                 .wgpu_device()
                 .as_hal::<wgpu::hal::api::Metal, _, _>(|hal| {
-                    let raw = hal?.raw_device().lock();
+                    // Skip this sample if a pipeline compilation holds the device.
+                    let raw = hal?.raw_device().try_lock()?;
                     Some(vec![GpuMemoryPool {
                         kind: GpuMemoryPoolKind::MetalWorkingSet,
                         used_bytes: raw.current_allocated_size(),
