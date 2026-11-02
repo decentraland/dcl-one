@@ -17,9 +17,11 @@ pub enum MemoryPressure {
 #[derive(Clone, Copy, Debug)]
 pub struct MemoryReading {
     /// Native reports the engine process's RSS, excluding the scene sidecar and CEF helpers.
-    /// Web reports live engine heap allocations, excluding scene workers and GPU memory.
+    /// Web counts live allocations in the shared engine heap, including workers and scene relays.
+    /// The scene runtime's own WASM heap is separate. Neither platform measures GPU residency here.
     pub used_bytes: u64,
-    /// Physical RAM subject to the reported cgroup limit on native, linear memory limit on web.
+    /// Physical RAM subject to the reported cgroup limit on native. On web this is the WASM
+    /// address-space ceiling. Fragmentation and device limits can cause allocations to fail sooner.
     pub capacity_mib: u64,
     /// Capacity after applying the optional client limit.
     pub cap_mib: u64,
