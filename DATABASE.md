@@ -311,6 +311,10 @@ must be refreshed or cleared when their source location changes. This metadata
 does not establish owner identity or grant permissions. Existing nonempty posters
 without authoring provenance remain explicit: their source cannot be inferred
 reliably from the URL alone. There is no historical provenance backfill.
+The internal `_image_source` key can travel with raw document copies. Public API
+and export paths must use an explicit field projection instead of publishing the
+stored document unfiltered. `EventRecord` omits this key, and notification
+snapshots use their own allowlist.
 
 For Shop: keep explicit asset/chain/order identities, separate accounting
 facts from rebuildable projections, bound reconciliation, use exact currency

@@ -18,7 +18,7 @@ fn list_sql() -> String {
     format!(
         "SELECT a.signers, a.names, a.times, e.raw, e.fetched_at, \
           ARRAY(SELECT lower(ua.address) FROM jsonb_array_elements_text({LATEST_ATTENDEES_ARRAY_SQL}) ua(address) \
-                WHERE EXISTS (SELECT 1 FROM explore.event_attendance_local cancelled WHERE cancelled.event_id=$1 AND cancelled.signer=lower(ua.address) AND cancelled.action='cancel')) \
+                WHERE ua.address IS NOT NULL AND EXISTS (SELECT 1 FROM explore.event_attendance_local cancelled WHERE cancelled.event_id=$1 AND cancelled.signer=lower(ua.address) AND cancelled.action='cancel')) \
          FROM (SELECT coalesce(array_agg(x.signer ORDER BY x.signed_at DESC), '{{}}') AS signers, \
                       coalesce(array_agg(x.user_name ORDER BY x.signed_at DESC), '{{}}') AS names, \
                       coalesce(array_agg(x.signed_at ORDER BY x.signed_at DESC), '{{}}') AS times \

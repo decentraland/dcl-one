@@ -669,14 +669,14 @@ const EVENT_COLUMNS: &str = concat!(
      ARRAY(SELECT lower(ua.address) FROM jsonb_array_elements_text(",
     latest_attendees_array_sql!(),
     ") ua(address) \
-           WHERE EXISTS (SELECT 1 FROM explore.event_attendance_local la WHERE la.event_id=event.id AND la.signer=lower(ua.address) AND la.action='cancel')) AS cancelled_attendees"
+           WHERE ua.address IS NOT NULL AND EXISTS (SELECT 1 FROM explore.event_attendance_local la WHERE la.event_id=event.id AND la.signer=lower(ua.address) AND la.action='cancel')) AS cancelled_attendees"
 );
 
 /// Explicit local state, including cancellation, overrides a mirrored preview.
 fn attendance_sql(user: &str) -> String {
     format!(
         "COALESCE((SELECT la.action='going' FROM explore.event_attendance_local la WHERE la.event_id=event.id AND la.signer={user}), \
-        EXISTS (SELECT 1 FROM jsonb_array_elements_text({LATEST_ATTENDEES_ARRAY_SQL}) ua(address) WHERE lower(ua.address)={user}))"
+        EXISTS (SELECT 1 FROM jsonb_array_elements_text({LATEST_ATTENDEES_ARRAY_SQL}) ua(address) WHERE ua.address IS NOT NULL AND lower(ua.address)={user}))"
     )
 }
 
