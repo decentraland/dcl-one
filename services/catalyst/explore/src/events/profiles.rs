@@ -5,15 +5,15 @@
 //!   for the signer itself) and `PATCH /api/profiles/{id}/settings` (a
 //!   moderator's for anyone); `GET` of both and the moderators'
 //!   `GET /api/profiles/settings` behind a signed fetch;
-//! - `POST /api/schedules` and `PATCH /api/schedules/{id}` (a moderator's
-//!   `ScheduleUpsert` envelope);
+//! - `POST /api/schedules` and `PATCH /api/schedules/{id}` (a moderator or
+//!   trusted edit_any_schedule grant, with signed JSON or a ScheduleUpsert envelope);
 //! - `/api/profiles/subscriptions` answers 410 on every verb: web-push was
 //!   retired before the port.
 //!
 //! A moderator is a wallet in `explore.moderators`. Each envelope is logged
 //! in `explore.signed_actions` and applied in one transaction: the signer's
-//! own settings behind `DATA_WRITES_ENABLED`, the moderator-only writes (the
-//! schedules, another profile's settings) behind `OPS_WRITES_ENABLED`, the
+//! own settings behind `DATA_WRITES_ENABLED`, schedule administration and
+//! moderator-only profile administration behind `OPS_WRITES_ENABLED`, the
 //! switch of the node's moderation.
 //!
 //! Legacy notify_by_email/notify_by_browser values are stored for profile API
@@ -457,6 +457,19 @@ pub async fn profile_subscriptions() -> ApiError {
     ApiError::http(410, SUBSCRIPTIONS_RETIRED)
 }
 
+/// Both schedule encodings use the same current local authority. Legacy
+/// permission rows remain inert until a moderator explicitly grants them.
+async fn require_schedule_editor(pool: &PgPool, signer: &str) -> Result<(), ApiError> {
+    let allowed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM explore.moderators WHERE address = $1) \
+         OR EXISTS (SELECT 1 FROM explore.event_profile_settings WHERE \"user\" = $1 AND permissions_granted AND permissions ? 'edit_any_schedule')",
+    ).bind(signer.to_ascii_lowercase()).fetch_one(pool).await?;
+    if !allowed {
+        return Err(ApiError::forbidden("Forbidden"));
+    }
+    Ok(())
+}
+
 async fn apply_schedule(
     state: &SharedState,
     headers: &HeaderMap,
@@ -480,7 +493,7 @@ async fn apply_schedule(
             "schedule_id in body does not match path",
         ));
     }
-    require_moderator(&state.pool, &signer).await?;
+    require_schedule_editor(&state.pool, &signer).await?;
     let m = &signed.message;
     let id = m
         .schedule_id
@@ -572,13 +585,7 @@ async fn apply_legacy_schedule(
         .and_then(|h| h.parse::<i64>().ok())
         .ok_or_else(|| ApiError::bad_request("Invalid timestamp"))?
         / 1000;
-    let allowed: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM explore.moderators WHERE address = $1) \
-         OR EXISTS (SELECT 1 FROM explore.event_profile_settings WHERE \"user\" = $1 AND permissions_granted AND permissions ? 'edit_any_schedule')",
-    ).bind(&signer).fetch_one(&state.pool).await?;
-    if !allowed {
-        return Err(ApiError::forbidden("Forbidden"));
-    }
+    require_schedule_editor(&state.pool, &signer).await?;
     let patch = body
         .as_object()
         .ok_or_else(|| ApiError::bad_request("invalid schedule body"))?;
@@ -1017,6 +1024,131 @@ mod tests {
             load_settings(&mut conn, &target).await.unwrap()["permissions"],
             json!(["edit_any_event"])
         );
+    }
+
+    #[tokio::test]
+    async fn schedule_encodings_share_granted_authority_and_immediate_revocation() {
+        use axum::{
+            body::Body,
+            http::{Request, StatusCode},
+        };
+        use tower::ServiceExt;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let key = alloy_signer_local::PrivateKeySigner::random();
+        let signer = format!("{:#x}", key.address());
+        sqlx::query("INSERT INTO explore.event_profile_settings (\"user\", permissions, permissions_granted) VALUES ($1,'[\"edit_any_schedule\"]',false)").bind(&signer).execute(&pool).await.unwrap();
+        let existing = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO explore.schedules_local(id,name) VALUES ($1,'Existing schedule')")
+            .bind(&existing)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let app = crate::router(std::sync::Arc::new(crate::ExploreState::new(
+            pool.clone(),
+            crate::Settings {
+                operator_writes_enabled: true,
+                ..crate::Settings::for_tests()
+            },
+            None,
+        )));
+        async fn call(
+            app: &axum::Router,
+            key: &alloy_signer_local::PrivateKeySigner,
+            envelope: bool,
+            id: Option<&str>,
+            name: &str,
+        ) -> StatusCode {
+            let now = chrono::Utc::now().timestamp();
+            let (method, path) = match id {
+                Some(id) => ("patch", format!("/api/schedules/{id}")),
+                None => ("post", "/api/schedules".to_owned()),
+            };
+            let body = if envelope {
+                let message: ScheduleUpsert = serde_json::from_value(json!({"schedule_id":id,"name":name,"active_since":now,"active_until":now+3600,"signed_at":now})).unwrap();
+                serde_json::to_value(catalyst_fed::test_support::sign(
+                    key,
+                    catalyst_fed::domains::events(),
+                    message,
+                    now,
+                ))
+                .unwrap()
+            } else {
+                json!({"name":name})
+            };
+            let body = body.to_string();
+            let metadata = json!({"body_sha256":hex::encode(Sha256::digest(body.as_bytes())),"nonce":uuid::Uuid::new_v4().to_string()}).to_string();
+            let headers = crate::shared::signed_fetch::test_support::signed_headers_by(
+                key,
+                method,
+                &path,
+                &metadata,
+                true,
+                &chrono::Utc::now().timestamp_millis().to_string(),
+            )
+            .await;
+            let mut request = Request::builder()
+                .method(method.to_uppercase().as_str())
+                .uri(path)
+                .header("content-type", "application/json");
+            for (name, value) in headers.iter() {
+                request = request.header(name, value);
+            }
+            app.clone()
+                .oneshot(request.body(Body::from(body)).unwrap())
+                .await
+                .unwrap()
+                .status()
+        }
+        for (stage, granted, moderator) in [
+            ("untrusted", false, false),
+            ("granted", true, false),
+            ("revoked", false, false),
+            ("moderator", false, true),
+        ] {
+            sqlx::query("UPDATE explore.event_profile_settings SET permissions_granted=$2 WHERE \"user\"=$1").bind(&signer).bind(granted).execute(&pool).await.unwrap();
+            if moderator {
+                sqlx::query("INSERT INTO explore.moderators(address,added_at) VALUES($1,0)")
+                    .bind(&signer)
+                    .execute(&pool)
+                    .await
+                    .unwrap();
+            }
+            let expected = if granted || moderator {
+                StatusCode::OK
+            } else {
+                StatusCode::FORBIDDEN
+            };
+            for envelope in [false, true] {
+                assert_eq!(
+                    call(&app, &key, envelope, None, stage).await,
+                    expected,
+                    "{stage}, envelope={envelope}, create"
+                );
+                assert_eq!(
+                    call(&app, &key, envelope, Some(&existing), stage).await,
+                    expected,
+                    "{stage}, envelope={envelope}, patch"
+                );
+            }
+            let stored: String =
+                sqlx::query_scalar("SELECT name FROM explore.schedules_local WHERE id=$1")
+                    .bind(&existing)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                stored,
+                match stage {
+                    "untrusted" => "Existing schedule",
+                    "revoked" => "granted",
+                    _ => stage,
+                }
+            );
+        }
+        let audits: i64 = sqlx::query_scalar("SELECT count(*) FROM explore.signed_actions WHERE signer=$1 AND action_type='ScheduleUpsert'").bind(&signer).fetch_one(&pool).await.unwrap();
+        assert_eq!(audits, 8, "only authorized creates and patches are applied");
     }
 
     #[tokio::test]

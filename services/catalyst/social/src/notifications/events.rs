@@ -17,7 +17,8 @@ use crate::identity::Address;
 const PAGE: i64 = 100;
 const CATCH_UP_SECONDS: i64 = 3600;
 const PASS_BUDGET: Duration = Duration::from_secs(5);
-const SCAN_BUDGET: Duration = Duration::from_secs(2);
+const SCAN_BUDGET: Duration = Duration::from_secs(1);
+const CLEANUP_BUDGET: Duration = Duration::from_millis(500);
 const RETENTION_DAYS: i64 = 30;
 
 #[derive(sqlx::FromRow)]
@@ -70,6 +71,7 @@ const SCAN_SQL: &str = "
              ELSE jsonb_build_array(e.raw->'start_at') END)
     ) d
     WHERE e.approved AND e.finish_at > $3
+      AND e.start_at <= $3 + $2::int4 * interval '1 second'
       AND COALESCE(e.raw->>'rejected','false') <> 'true'
       AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true'
       AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true'
@@ -80,7 +82,7 @@ const SCAN_SQL: &str = "
                WHERE c.id=CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END
                  AND c.origin='local' AND c.active AND NOT c.suspended
                  AND NOT EXISTS (SELECT 1 FROM social.subscription_opt_outs o
-                     WHERE o.address=m.member_address AND o.scope='community' AND o.scope_id=e.community_id))))
+                     WHERE o.address=m.member_address AND o.scope='community' AND o.scope_id=c.id::text))))
       AND d.starts_at - $2::int4 * interval '1 second' >= $4
       AND d.starts_at - $2::int4 * interval '1 second' <= $3
       AND CASE WHEN $1='events_starts_soon' THEN d.starts_at > $3
@@ -95,13 +97,14 @@ async fn scan_kind(
     ahead: i32,
     now: NaiveDateTime,
 ) -> anyhow::Result<u64> {
+    let mut tx = timed_transaction(pool).await?;
     let rows: Vec<Occurrence> = sqlx::query_as(SCAN_SQL)
         .bind(kind)
         .bind(ahead)
         .bind(now)
         .bind(now - Span::seconds(CATCH_UP_SECONDS))
         .bind(PAGE)
-        .fetch_all(pool)
+        .fetch_all(&mut *tx)
         .await?;
     let ids: Vec<Uuid> = rows
         .iter()
@@ -116,7 +119,8 @@ async fn scan_kind(
         "INSERT INTO social.event_notification_intents (id,event_id,event,local_event,occurrence_start,occurred_at,kind) \
          SELECT n.*,$7 FROM UNNEST($1::uuid[],$2::text[],$3::jsonb[],$4::boolean[],$5::timestamp[],$6::timestamp[]) n \
          ON CONFLICT DO NOTHING",
-    ).bind(ids).bind(event_ids).bind(events).bind(local).bind(starts).bind(due).bind(kind).execute(pool).await?;
+    ).bind(ids).bind(event_ids).bind(events).bind(local).bind(starts).bind(due).bind(kind).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(rows.len() as u64)
 }
 
@@ -136,20 +140,22 @@ async fn recipients(
             SELECT $3::text AS address,false AS community,NULL::text AS community_name \
             WHERE $2 IN ('event_approved','event_rejected','event_deleted') AND $3 > $6 \
             UNION ALL \
-            SELECT a.signer,false,NULL FROM explore.event_attendance_local a JOIN explore.event e ON e.id=a.event_id \
+            (SELECT a.signer,false,NULL FROM explore.event_attendance_local a JOIN explore.event e ON e.id=a.event_id \
             WHERE a.event_id=$1 AND a.signer > $6 AND a.action='going' AND $2 IN ('events_starts_soon','events_started') \
               AND e.approved AND COALESCE(e.raw->>'rejected','false') <> 'true' \
               AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true' AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true' \
+            ORDER BY a.signer LIMIT $7) \
             UNION ALL \
-            SELECT m.member_address,true,c.name FROM social.community_members m \
+            (SELECT m.member_address,true,c.name FROM social.community_members m \
             JOIN social.communities c ON c.id=m.community_id \
-            JOIN explore.event e ON e.id=$1 AND e.community_id=$5::uuid::text AND e.origin='local' \
+            JOIN explore.event e ON e.id=$1 AND CASE WHEN pg_input_is_valid(e.community_id,'uuid') THEN e.community_id::uuid END=$5::uuid AND e.origin='local' \
             WHERE $4 AND $2 IN ('event_created','events_started') AND c.id=$5::uuid AND m.member_address > $6 \
               AND c.origin='local' AND c.active AND NOT c.suspended AND e.approved \
               AND COALESCE(e.raw->>'rejected','false') <> 'true' \
               AND COALESCE(e.raw->>'deleted_by_user','false') <> 'true' AND COALESCE(e.raw->>'deleted_by_admin','false') <> 'true' \
               AND NOT EXISTS (SELECT 1 FROM social.subscription_opt_outs o \
                   WHERE o.address=m.member_address AND o.scope='community' AND o.scope_id=$5::uuid::text) \
+            ORDER BY m.member_address LIMIT $7) \
         ) SELECT address,bool_or(community) AS community,max(community_name) AS community_name \
           FROM candidates WHERE address > $6 GROUP BY address ORDER BY address LIMIT $7",
     ).bind(&intent.event_id).bind(&intent.kind).bind(text(&intent.event,"user"))
@@ -169,8 +175,8 @@ fn metadata(intent: &Intent, recipient: &Recipient, base: &str) -> Value {
     );
     let (title, description) = match intent.kind.as_str() {
         "events_starts_soon" => (
-            "Event starts in an hour".to_string(),
-            format!("The event {name} starts in an hour."),
+            "Event starts soon".to_string(),
+            format!("The event {name} starts soon."),
         ),
         "events_started" if recipient.community => (
             "Community Event starting".into(),
@@ -192,7 +198,7 @@ fn metadata(intent: &Intent, recipient: &Recipient, base: &str) -> Value {
         ),
         _ => (name.to_string(), description),
     };
-    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":text(&intent.event,"image"),"link":link});
+    let mut metadata = json!({"eventId":intent.event_id,"title":title,"description":description,"name":name,"image":text(&intent.event,"image"),"link":link,"occurredAt":intent.occurred_at.and_utc().to_rfc3339()});
     if let Some(start) = intent.occurrence_start {
         let duration = intent
             .event
@@ -220,19 +226,47 @@ fn metadata(intent: &Intent, recipient: &Recipient, base: &str) -> Value {
     metadata
 }
 
+/// PostgreSQL cancels blocked or slow statements even if the Rust future is
+/// dropped. SET LOCAL is transaction-scoped and never leaks into pooled users.
+async fn timed_transaction(pool: &PgPool) -> Result<Transaction<'_, Postgres>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout = '500ms'")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SET LOCAL lock_timeout = '100ms'")
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
+
+fn timed_out(error: &anyhow::Error) -> bool {
+    matches!(error.downcast_ref::<sqlx::Error>(), Some(sqlx::Error::Database(db))
+        if matches!(db.code().as_deref(), Some("57014" | "55P03")))
+}
+
 async fn dispatch_page(
     pool: &PgPool,
     base: &str,
     now: NaiveDateTime,
 ) -> anyhow::Result<Option<u64>> {
-    let mut tx = pool.begin().await?;
+    // Commit fair rotation separately from delivery. If a later page times out
+    // or rolls back, another intent gets the next turn instead of starvation.
+    let mut claim = timed_transaction(pool).await?;
+    let id: Option<Uuid> = sqlx::query_scalar(
+        "UPDATE social.event_notification_intents SET dispatch_at=timezone('UTC', clock_timestamp())
+         WHERE id=(SELECT id FROM social.event_notification_intents WHERE processed_at IS NULL
+                   ORDER BY dispatch_at,id LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING id",
+    ).fetch_optional(&mut *claim).await?;
+    claim.commit().await?;
+    let Some(id) = id else { return Ok(None) };
+    let mut tx = timed_transaction(pool).await?;
     let intent: Option<Intent> = sqlx::query_as(
-        "SELECT id,event_id,kind,event,local_event,occurrence_start,occurred_at,recipient_after \
-         FROM social.event_notification_intents WHERE processed_at IS NULL ORDER BY dispatch_at,id LIMIT 1 FOR UPDATE SKIP LOCKED",
-    ).fetch_optional(&mut *tx).await?;
+        "SELECT id,event_id,kind,event,local_event,occurrence_start,occurred_at,recipient_after
+         FROM social.event_notification_intents WHERE id=$1 AND processed_at IS NULL FOR UPDATE SKIP LOCKED",
+    ).bind(id).fetch_optional(&mut *tx).await?;
     let Some(mut intent) = intent else {
         tx.commit().await?;
-        return Ok(None);
+        return Ok(Some(0));
     };
     // A queued occurrence may have been moved or removed since its snapshot.
     // Revalidate the current event under a shared row lock before delivering;
@@ -269,6 +303,10 @@ async fn dispatch_page(
     } else {
         recipients(&mut tx, &intent).await?
     };
+    let delivered_at: NaiveDateTime =
+        sqlx::query_scalar("SELECT timezone('UTC', clock_timestamp())")
+            .fetch_one(&mut *tx)
+            .await?;
     let batch: Vec<NewNotification> = recipients
         .iter()
         .filter_map(|recipient| {
@@ -278,7 +316,7 @@ async fn dispatch_page(
                 address,
                 kind: intent.kind.clone(),
                 metadata: metadata(&intent, recipient, base),
-                occurred_at: intent.occurred_at,
+                occurred_at: delivered_at,
             })
         })
         .collect();
@@ -308,6 +346,7 @@ fn stale_occurrence(intent: &Intent, now: NaiveDateTime) -> bool {
 }
 
 async fn cleanup(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<()> {
+    let mut tx = timed_transaction(pool).await?;
     // Pending work is never purged. Completed keys outlive the one-hour scan
     // window by 30 days, so cleanup cannot make an eligible occurrence new again.
     sqlx::query(
@@ -317,42 +356,62 @@ async fn cleanup(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<()> {
         ORDER BY processed_at,id LIMIT 1000 FOR UPDATE SKIP LOCKED)",
     )
     .bind(now - Span::days(RETENTION_DAYS))
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }
 
-/// Scan and dispatch within a wall-clock budget. A cancelled in-flight page
-/// rolls back; already committed queue and recipient progress survive retries.
-pub async fn run_once(pool: &PgPool, base: &str, now: NaiveDateTime) -> anyhow::Result<u64> {
-    let started = tokio::time::Instant::now();
-    let deadline = started + PASS_BUDGET;
-    let scan_deadline = started + SCAN_BUDGET;
+async fn scan_with_budget(
+    pool: &PgPool,
+    kind: &str,
+    ahead: i32,
+    now: NaiveDateTime,
+) -> anyhow::Result<()> {
     let scan = async {
-        loop {
-            let reminders = scan_kind(pool, "events_starts_soon", 3600, now).await?;
-            let starts = scan_kind(pool, "events_started", 0, now).await?;
-            if reminders < PAGE as u64 && starts < PAGE as u64 {
-                break;
-            }
-        }
+        while scan_kind(pool, kind, ahead, now).await? == PAGE as u64 {}
         Ok::<_, anyhow::Error>(())
     };
-    if let Ok(result) = tokio::time::timeout_at(scan_deadline, scan).await {
-        result?;
+    match tokio::time::timeout(SCAN_BUDGET, scan).await {
+        Ok(Err(error)) if timed_out(&error) => {
+            tracing::warn!(%error, kind, "event occurrence scan deferred");
+            Ok(())
+        }
+        Ok(result) => result,
+        Err(_) => Ok(()),
     }
+}
+
+/// Cleanup always receives a turn before scanning/dispatch. Independent scan
+/// budgets prevent one occurrence kind starving the other. Committed rotation
+/// survives a timed-out page; only timeout/lock errors are deferred.
+pub async fn run_once(pool: &PgPool, base: &str, now: NaiveDateTime) -> anyhow::Result<u64> {
+    let deadline = tokio::time::Instant::now() + PASS_BUDGET;
+    match tokio::time::timeout(CLEANUP_BUDGET, cleanup(pool, now)).await {
+        Ok(Err(error)) if timed_out(&error) => {
+            tracing::warn!(%error, "event intent cleanup deferred")
+        }
+        Ok(result) => result?,
+        Err(_) => {}
+    }
+    let (reminders, starts) = tokio::join!(
+        scan_with_budget(pool, "events_starts_soon", 3600, now),
+        scan_with_budget(pool, "events_started", 0, now),
+    );
+    reminders?;
+    starts?;
     let mut emitted = 0;
     loop {
         match tokio::time::timeout_at(deadline, dispatch_page(pool, base, now)).await {
+            Ok(Err(error)) if timed_out(&error) => {
+                tracing::warn!(%error, "event notification page deferred")
+            }
             Ok(result) => match result? {
                 Some(inserted) => emitted += inserted,
                 None => break,
             },
-            Err(_) => return Ok(emitted),
+            Err(_) => break,
         }
-    }
-    if let Ok(result) = tokio::time::timeout_at(deadline, cleanup(pool, now)).await {
-        result?;
     }
     Ok(emitted)
 }
@@ -625,6 +684,7 @@ mod tests {
         .unwrap();
         assert!(finished);
         catch_up_pages_live_audiences_and_retention(&pool).await;
+        bounded_work_preserves_fairness_cleanup_and_polling(&pool).await;
     }
 
     // The worker deliberately returns when its wall-clock budget expires.
@@ -898,6 +958,186 @@ mod tests {
             count(pool, &stale_event, "events_started", &address).await,
             0,
             "retention never makes old occurrences eligible again"
+        );
+    }
+
+    async fn bounded_work_preserves_fairness_cleanup_and_polling(pool: &PgPool) {
+        let now = chrono::DateTime::from_timestamp_micros(Utc::now().timestamp_micros())
+            .unwrap()
+            .naive_utc();
+        let address = format!("0x{}00000000", Uuid::new_v4().simple());
+        let prefix = Uuid::new_v4().simple().to_string();
+        async fn add_event(pool: &PgPool, id: &str, address: &str, start: NaiveDateTime) {
+            let raw = json!({"id":id,"name":"Fair event","approved":true,"start_at":start.and_utc().to_rfc3339(),"finish_at":(start+Span::hours(1)).and_utc().to_rfc3339(),"duration":3600000,"user":address});
+            crate::explore::events::mirror::upsert_event(pool, &raw)
+                .await
+                .unwrap();
+            crate::explore::events::attendees::rsvp_going(pool, id, address, None)
+                .await
+                .unwrap();
+        }
+        let slow = format!("{prefix}-slow");
+        let fast = format!("{prefix}-fast");
+        let start = now - Span::minutes(10);
+        add_event(pool, &slow, &address, start).await;
+        let slow_intent = occurrence_id(&slow, start, "events_started");
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurrence_start,occurred_at,dispatch_at)
+            SELECT $1,id,'events_started',raw,false,$3,$3,TIMESTAMP '1970-01-01' FROM explore.event WHERE id=$2")
+            .bind(slow_intent).bind(&slow).bind(start).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at,dispatch_at)
+            VALUES($1,$2,'event_approved',$3,false,$4,TIMESTAMP '1970-01-02')")
+            .bind(Uuid::new_v4()).bind(&fast).bind(json!({"name":"Fast","user":address})).bind(now).execute(pool).await.unwrap();
+        let mut held = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM explore.event WHERE id=$1 FOR UPDATE")
+            .bind(&slow)
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        let error = dispatch_page(pool, "https://example.org", now)
+            .await
+            .unwrap_err();
+        assert!(
+            timed_out(&error),
+            "PostgreSQL must cancel the blocked page: {error}"
+        );
+        let rotated:bool=sqlx::query_scalar("SELECT dispatch_at > TIMESTAMP '1970-01-02' AND recipient_after='' AND processed_at IS NULL FROM social.event_notification_intents WHERE id=$1")
+            .bind(slow_intent).fetch_one(pool).await.unwrap();
+        assert!(
+            rotated,
+            "claim rotation commits even when the delivery transaction rolls back"
+        );
+        dispatch_page(pool, "https://example.org", now)
+            .await
+            .unwrap();
+        assert_eq!(
+            count(pool, &fast, "event_approved", &address).await,
+            1,
+            "a blocked page cannot monopolize the queue"
+        );
+        let expired = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at,processed_at)
+            VALUES($1,'expired','event_approved','{}',false,$2,$2)")
+            .bind(expired).bind(now-Span::days(40)).execute(pool).await.unwrap();
+        run_once(pool, "https://example.org", now).await.unwrap();
+        let retained: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social.event_notification_intents WHERE id=$1)",
+        )
+        .bind(expired)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert!(
+            !retained,
+            "cleanup runs even while a blocked pending intent exhausts the dispatch budget"
+        );
+        held.rollback().await.unwrap();
+        drain_until_complete(pool, now, &slow, 1).await;
+        assert_eq!(count(pool, &slow, "events_started", &address).await, 1);
+
+        let baseline: String = sqlx::query_scalar("SHOW statement_timeout")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        let mut tx = timed_transaction(pool).await.unwrap();
+        let error = sqlx::query("SELECT pg_sleep(2)")
+            .execute(&mut *tx)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            error
+                .as_database_error()
+                .and_then(|db| db.code())
+                .as_deref(),
+            Some("57014")
+        );
+        tx.rollback().await.unwrap();
+        let restored: String = sqlx::query_scalar("SHOW statement_timeout")
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            restored, baseline,
+            "server timeouts do not leak into pooled callers"
+        );
+
+        // Delay only reminder inserts on this fixture. The independent start
+        // scanner still commits while PostgreSQL cancels the slow reminder SQL.
+        let reminder = format!("{prefix}-reminder");
+        let started = format!("{prefix}-started");
+        add_event(pool, &reminder, &address, now + Span::minutes(10)).await;
+        add_event(pool, &started, &address, now - Span::minutes(10)).await;
+        let function = format!("delay_reminder_{prefix}");
+        let trigger = format!("delay_reminder_trigger_{prefix}");
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_id='{reminder}' AND NEW.kind='events_starts_soon' THEN PERFORM pg_sleep(2); END IF; RETURN NEW; END $$")))
+            .execute(pool).await.unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {trigger} BEFORE INSERT ON social.event_notification_intents FOR EACH ROW EXECUTE FUNCTION social.{function}()")))
+            .execute(pool).await.unwrap();
+        let result = run_once(pool, "https://example.org", now).await;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP TRIGGER {trigger} ON social.event_notification_intents"
+        )))
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP FUNCTION social.{function}()"
+        )))
+        .execute(pool)
+        .await
+        .unwrap();
+        result.unwrap();
+        assert_eq!(count(pool, &started, "events_started", &address).await, 1);
+        assert_eq!(
+            count(pool, &reminder, "events_starts_soon", &address).await,
+            0
+        );
+        let from = (now - Span::minutes(5)).and_utc().timestamp_millis();
+        run_once(pool, "https://example.org", now).await.unwrap();
+        let store = super::super::NotificationsStore::new(pool.clone());
+        let fresh = store
+            .list(&address.parse().unwrap(), 100, Some(from), false)
+            .await
+            .unwrap();
+        let reminder_notice = fresh
+            .iter()
+            .find(|item| item.metadata["eventId"] == reminder)
+            .expect("incremental polling must see a newly delivered catch-up reminder");
+        assert_eq!(reminder_notice.metadata["title"], "Event starts soon");
+        assert_eq!(
+            reminder_notice.metadata["occurredAt"],
+            (now - Span::minutes(50)).and_utc().to_rfc3339()
+        );
+
+        // Community opt-outs use one canonical UUID representation even if a
+        // legacy event stores its association with uppercase hex digits.
+        let community = Uuid::new_v4();
+        let community_event = format!("{prefix}-community");
+        sqlx::query(
+            "INSERT INTO social.communities(id,name,owner_address) VALUES($1,'Canonical',$2)",
+        )
+        .bind(community)
+        .bind(&address)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO social.community_members(community_id,member_address,role) VALUES($1,$2,'member')").bind(community).bind(&address).execute(pool).await.unwrap();
+        sqlx::query("INSERT INTO social.subscription_opt_outs(address,scope,scope_id) VALUES($1,'community',$2)").bind(&address).bind(community.to_string()).execute(pool).await.unwrap();
+        let upper = community.to_string().to_uppercase();
+        sqlx::query("INSERT INTO explore.event(id,name,approved,origin,community_id,start_at,finish_at,duration_ms,raw)
+            VALUES($1,'Canonical',true,'local',$2,$3,$3+interval '1 hour',3600000,
+            jsonb_build_object('name','Canonical','approved',true,'community_id',$2::text,'start_at',$3::timestamp,'duration',3600000))")
+            .bind(&community_event).bind(&upper).bind(now-Span::minutes(5)).execute(pool).await.unwrap();
+        scan_kind(pool, "events_started", 0, now).await.unwrap();
+        let queued: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social.event_notification_intents WHERE event_id=$1)",
+        )
+        .bind(&community_event)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        assert!(
+            !queued,
+            "canonical opt-out prevents noncanonical event IDs creating empty work"
         );
     }
 }

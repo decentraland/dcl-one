@@ -26,13 +26,22 @@ Social's worker reads Explore's catalogue and local RSVP records to discover
 occurrences and rechecks recipient eligibility before inserting delivery records.
 
 Lifecycle discovery uses a rolling one-hour catch-up window and an indexable live
-event bound. Only occurrences with eligible local audiences enter the queue.
+event bound and an upper start-time bound. The same catch-up policy applies on
+first deployment: still-running occurrences with a local audience that started
+within the last hour may generate a start notice. Only occurrences with eligible
+local audiences enter the queue.
 Stable occurrence identifiers and a unique occurrence constraint retain durable
 scan progress, including due-time ties and late arrivals; there is no separate
 timestamp cursor that could permanently skip a newly approved event.
 
-The worker drains recipient pages within a five-second time budget, reserving at
-most two seconds for scanning. Cursor advancement,
+The worker drains recipient pages within a five-second time budget. Cleanup runs
+first with its own bounded opportunity, independent of dispatch backlog. Reminder
+and start scans receive separate budgets so one cannot starve the other.
+Transaction-local PostgreSQL statement and lock timeouts bound server work as
+well as client waits. Each claim commits a queue-order rotation before processing;
+a timed-out page therefore retains its recipient cursor without keeping the
+oldest queue position. Recipient candidates are limited within each ordered
+audience branch before combining them. Cursor advancement,
 notification insertion and email-outbox insertion commit atomically. Completed
 queue entries are retained for 30 days and removed in bounded batches only after
 their occurrence and processing times are older than retention. This exceeds the
@@ -43,7 +52,12 @@ shared event-row lock before each page, so an old queued start is suppressed aft
 rescheduling. An already processed or
 suppressed occurrence remains deduplicated if the same occurrence is later
 reapproved. Outage recovery does not promise delivery of every missed historical
-notice.
+notice. New notification rows use the database delivery clock for `occurred_at`,
+avoiding source-time backdating of catch-up notices in incremental bell polling.
+This preserves the feed's existing timestamp cursor semantics; it does not
+establish a commit-ordered watermark across concurrent transactions. Source event timing
+remains in the notification metadata. Reminder wording says “starts soon” rather
+than assuming that exactly one hour remains.
 
 Event notification channel preferences come from Social subscriptions, including
 per-type settings and community opt-outs. Legacy Explore profile notification
@@ -58,6 +72,8 @@ write commit together; a failed write does not consume the nonce. Signed
 federation envelopes retain their typed-payload signature and nonce checks.
 Only moderators may grant permissions or administer/read other profiles. A
 delegated event permission does not grant profile-administration authority.
+Both schedule-write encodings accept moderators or an explicitly trusted
+`edit_any_schedule` grant and observe revocation through the same authority check.
 
 ## Verification and limits
 
