@@ -86,12 +86,7 @@ pub fn scene_partition(
             .min(parcel_distance.min(u16::MAX as i32) as u16);
 
         if partition.is_behind {
-            let corners = [
-                min,
-                Vec2::new(min.x, max.y),
-                Vec2::new(max.x, min.y),
-                max,
-            ];
+            let corners = [min, Vec2::new(min.x, max.y), Vec2::new(max.x, min.y), max];
             partition.is_behind = corners
                 .iter()
                 .all(|corner| forward.dot(*corner - camera) < 0.0);
@@ -195,8 +190,16 @@ mod tests {
             key(2, false, 0.0),
         ];
         for pair in ordered.windows(2) {
-            assert!(pair[0] < pair[1], "{:?} should sort before {:?}", pair[0], pair[1]);
+            assert!(
+                pair[0] < pair[1],
+                "{:?} should sort before {:?}",
+                pair[0],
+                pair[1]
+            );
         }
-        assert_eq!(ScenePartitionData::NEAREST.load_priority(), LoadPriority::TOP);
+        assert_eq!(
+            ScenePartitionData::NEAREST.load_priority(),
+            LoadPriority::TOP
+        );
     }
 }

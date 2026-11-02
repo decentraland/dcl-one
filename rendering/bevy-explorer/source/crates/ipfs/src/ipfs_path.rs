@@ -646,9 +646,9 @@ impl IpfsPath {
             IpfsType::ContentFile { content_hash, .. } => Some(content_hash),
             IpfsType::Entity { hash, .. } => Some(hash),
             IpfsType::SceneContent { scene_hash, .. } => Some(scene_hash),
-            IpfsType::UrlCached { .. } | IpfsType::UrlUncached { .. } | IpfsType::IndexDb { .. } => {
-                None
-            }
+            IpfsType::UrlCached { .. }
+            | IpfsType::UrlUncached { .. }
+            | IpfsType::IndexDb { .. } => None,
         }
     }
 

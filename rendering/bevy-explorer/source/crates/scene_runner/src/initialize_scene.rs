@@ -44,8 +44,6 @@ use system_bridge::{LiveSceneInfo, SystemApi, SystemBridge};
 
 use super::{update_world::CrdtExtractors, LoadSceneEvent, PrimaryUser, SceneSets, SceneUpdates};
 use crate::scene_partition::{sampling_transform, ScenePartition};
-use common::partition::scene_partition;
-use common::structs::PrimaryCamera;
 use crate::{
     bounds_calc::scene_regions,
     parcel_to_vec3,
@@ -57,6 +55,8 @@ use crate::{
     vec3_to_parcel, ContainerEntity, DeletedSceneEntities, MobileUiEmulation, OutOfWorld,
     SceneEntity, SceneThreadHandle,
 };
+use common::partition::scene_partition;
+use common::structs::PrimaryCamera;
 
 #[cfg(not(target_arch = "wasm32"))]
 use dcl_deno_ipc::spawn_scene;
@@ -1646,7 +1646,10 @@ pub fn process_scene_lifecycle(
     let mut parcels_by_hash: HashMap<String, Vec<IVec2>> = HashMap::new();
     for (parcel, _) in &pir {
         if let Some(PointerResult::Exists { hash, .. }) = pointers.get(parcel) {
-            parcels_by_hash.entry(hash.clone()).or_default().push(*parcel);
+            parcels_by_hash
+                .entry(hash.clone())
+                .or_default()
+                .push(*parcel);
         }
     }
 
@@ -1820,7 +1823,8 @@ pub fn process_scene_lifecycle(
                 .get(&scene.0)
                 .map(Vec::as_slice)
                 .unwrap_or_default();
-            let partition = scene_partition(camera_position, camera_forward, parcels.iter().copied());
+            let partition =
+                scene_partition(camera_position, camera_forward, parcels.iter().copied());
             let player_inside = current_scene.as_ref() == Some(scene);
             let first_parcel = parcels
                 .iter()

@@ -38,12 +38,7 @@ impl Waiter {
             .lock()
             .unwrap()
             .iter()
-            .map(|scene| {
-                priorities
-                    .get(scene)
-                    .copied()
-                    .unwrap_or(LoadPriority::TOP)
-            })
+            .map(|scene| priorities.get(scene).copied().unwrap_or(LoadPriority::TOP))
             .min()
             .unwrap_or(LoadPriority::TOP)
     }
@@ -240,8 +235,8 @@ mod tests {
         ]));
         let holder = gate.try_acquire().unwrap();
         let log = Log::default();
-        let tasks = ["far", "near", "near_behind"]
-            .map(|name| reader(&gate, name, scenes(&[name]), &log));
+        let tasks =
+            ["far", "near", "near_behind"].map(|name| reader(&gate, name, scenes(&[name]), &log));
         settle(&gate, 3).await;
 
         drop(holder);
@@ -378,9 +373,6 @@ mod tests {
             task.await.unwrap();
         }
 
-        assert_eq!(
-            *log.lock().unwrap(),
-            vec!["far-download", "mid-download"]
-        );
+        assert_eq!(*log.lock().unwrap(), vec!["far-download", "mid-download"]);
     }
 }

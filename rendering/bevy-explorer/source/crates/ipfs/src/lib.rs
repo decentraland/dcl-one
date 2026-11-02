@@ -1038,7 +1038,10 @@ impl IpfsIo {
 
     /// The download priority of every live scene, by hash; a scene not in the map, or a
     /// request that is not a scene's, is top priority.
-    pub fn set_scene_priorities(&self, priorities: std::collections::HashMap<String, LoadPriority>) {
+    pub fn set_scene_priorities(
+        &self,
+        priorities: std::collections::HashMap<String, LoadPriority>,
+    ) {
         self.request_slots.set_priorities(priorities);
     }
 
@@ -1761,7 +1764,11 @@ impl IpfsIo {
             };
             // the scene the file belongs to decides its place in the request slot queue
             let scenes: WaiterScenes = Arc::new(std::sync::Mutex::new(
-                ipfs_path.scene_hash().map(str::to_owned).into_iter().collect(),
+                ipfs_path
+                    .scene_hash()
+                    .map(str::to_owned)
+                    .into_iter()
+                    .collect(),
             ));
 
             #[cfg(target_arch = "wasm32")]
@@ -2017,11 +2024,10 @@ impl IpfsIo {
         debug!("[{token:?}]: remote url: `{remote}` awaiting a request slot");
         // a request slot, granted nearest scene first
         let _deferred_in_flight = DeferredDropper::new(&IPFS_IN_FLIGHT);
-        let _permit = ipfs_io_read_state.send_failure(
-            self.request_slots.acquire(scenes).await.map_err(|e| {
-                AssetReaderError::Io(Arc::new(std::io::Error::new(ErrorKind::Interrupted, e)))
-            }),
-        )?;
+        let _permit =
+            ipfs_io_read_state.send_failure(self.request_slots.acquire(scenes).await.map_err(
+                |e| AssetReaderError::Io(Arc::new(std::io::Error::new(ErrorKind::Interrupted, e))),
+            ))?;
         debug!("[{token:?}]: remote url: `{remote}` proceeding");
 
         let mut attempt = 0;

@@ -235,9 +235,7 @@ mod tests {
             .scenes
             .insert("home".to_owned(), home);
 
-        world
-            .run_system_once(publish_download_priorities)
-            .unwrap();
+        world.run_system_once(publish_download_priorities).unwrap();
 
         let ipfs = world.resource::<IpfsResource>();
         assert_eq!(ipfs.scene_priority("home"), Some(LoadPriority::TOP));
