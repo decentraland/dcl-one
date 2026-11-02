@@ -256,7 +256,9 @@ bevy_simple_text_input = { git = "https://github.com/robtfm/bevy_simple_text_inp
 ], branch = "0.16" }
 directories = "6"
 sys-locale = "0.3"
-sysinfo = { version = "0.34.2", default-features = false, features = ["system"] }
+sysinfo = { version = "0.34.2", default-features = false, features = [
+  "system",
+] }
 cap = "0.1.2"
 winreg = "0.50"
 uuid = { version = "1.23", features = ["v4"] }
