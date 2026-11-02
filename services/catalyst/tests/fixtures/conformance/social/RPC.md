@@ -1,6 +1,8 @@
 # social-service-ea RPC behaviour: upstream specs and Catalyst tests
 
-Reference: `decentraland/social-service-ea` at `fb3dcb80f8cac53485696a5f7c94b720b20ae6c9`. Local:
+Reference: `decentraland/social-service-ea` at `b6b2cefefdf727b2ed47ddb887e77d226a41eea6`. The spec
+inventory below was counted at `fb3dcb8`; the HTTP routes and the `/v1/stream` socket that `b6b2cef` adds
+(upstream #503-#507) are in "HTTP twins and `/v1/stream`" at the end. Local:
 `services/catalyst/social/src/rpc` (the `/social-rpc` socket), `services/catalyst/shared/src/rpc` (handshake,
 transport, dcl-rpc) and the voice runtime in `services/catalyst/comms/src/gatekeeper/voice`.
 
@@ -90,7 +92,7 @@ parsing and the friendship notifications), 15 of them. The other 19 are not RPC 
   gates read roles from the database in `src/logic/community-voice/validation.ts`, not through it),
   `community-thumbnails` and `community/utils`;
 - SQS consumers and scheduled jobs, not the socket: `community-broadcaster`, `community-events`, `community-ranking`;
-- `referral` (HTTP and SQS; an intentional gap in `docs/compatibility.md`) and `user-mutes` (HTTP routes);
+- `referral` (HTTP and SQS; an intentional gap) and `user-mutes` (HTTP routes);
 - `queries`: it asserts the text of generated SQL, with no observable counterpart.
 
 There is no `test/unit/controllers/handlers/rpc/` at this revision. The cases are grouped below by the behaviour a
@@ -104,7 +106,7 @@ Status:
 - **n/a**: the case checks an implementation detail with no observable counterpart (mock call counts, logging,
   Sentry, metrics, Redis or wiring).
 
-Every difference is open: none is changed here. `docs/compatibility.md` summarises them.
+Every difference is open: none is changed here.
 
 Test files, relative to `services/catalyst/social/src/rpc/` unless a crate is named:
 - `tests.rs` (T);
@@ -297,7 +299,7 @@ on the zero address and a second address created for the run). The local answers
 | voice-logic | Expiry pages through batches and tells both parties | T `sweep_reclaims_the_same_rows_the_busy_check_skips`, `sweep_tick_issues_no_delete_until_a_call_is_due`; PV `the_expiry_sweep_pages_through_and_tells_both_parties` | covered, ported |
 | voice-logic | Gatekeeper fallbacks and delete races | 7 cases | n/a: one table, atomic deletes |
 | start-private-voice-chat (7) | Ok, refused, busy, in a voice chat, unknown error; the messages | T `blocked_pair_cannot_start_call_and_friends_can`, `a_missing_voice_runtime_refuses_the_call_explicitly`; PV `a_refused_start_says_why`, `either_party_already_in_a_voice_room_is_a_conflict_naming_it`; VR `a_lost_reservation_is_busy_and_rings_no_one` | covered, ported; differs: a self-call and a blocked pair get their own messages, not the not-friends one. Upstream `src/logic/voice/voice.ts:36-45`, `src/logic/voice/errors.ts:1-5`; local `social/src/rpc/service/private_voice.rs:37-53` |
-| accept-, reject-, end-private-voice-chat (10) | Ok with the call id; not found; refused | PV, T (above) | covered, ported; differs: the not-found messages are "call not found" and "no incoming call", not upstream's sentences naming the id or address. Upstream `src/logic/voice/errors.ts:19-29`; local `social/src/rpc/service/private_voice.rs:156`, `:355` |
+| accept-, reject-, end-private-voice-chat (10) | Ok with the call id; not found; refused | PV, T (above) | covered, ported; the not-found messages are upstream's sentences naming the id or address, and accepting another's call is upstream's `VoiceChatNotAllowedError` (local `social/src/rpc/service/private_voice.rs:22-29`, `:127-129`) |
 | get-incoming-private-voice-chat-requests (3) | Ok, not found, internal | PV `each_party_gets_its_own_grant_and_the_callee_sees_the_incoming_call`; FA | ported |
 | subscribe-to-private-voice-chat-updates (8) | Who receives each status | T `blocked_pair_cannot_start_call_and_friends_can`, `reject_and_disconnect_delete_through_voice_owner_before_signalling`; PV | covered, ported; differs: every update carries caller and callee, where upstream sets only the caller of REQUESTED. Upstream `src/controllers/handlers/rpc/subscribe-to-private-voice-chat-updates.ts:36-41`; local `social/src/rpc/context.rs:483-488`; stream closed differs (throughout) |
 
@@ -322,7 +324,8 @@ on the zero address and a second address created for the run). The local answers
 | all | An empty community id or target answers `invalidRequest`; a missing community answers `invalidRequest` (promote, demote, reject), not found (join, raise a hand, self-unmute) or forbidden (start, end) | — | differs: a missing community or an unparsable id is forbidden, but ok when lowering a hand or self-muting; an empty target in a public community passes the gate and the runtime's failure is logged with an ok answer. Upstream `src/controllers/handlers/rpc/promote-speaker-in-community-voice-chat.ts:34-43`, `:57-59`, `src/logic/community-voice/validation.ts:41-42`; local `social/src/rpc/service/domain.rs:373`, `social/src/rpc/service/community_voice.rs:57-59`, `:160-187`, `:412-437` |
 | start-, end-, join-, raise a hand, self-unmute | No active room answers not found; an active room answers conflict on start | — | differs: no room-live check; start mints again. Upstream `src/logic/community-voice/community-voice.ts:116-119`, `:309-312`, `src/logic/community-voice/validation.ts:41-42`; local `social/src/rpc/service/community_voice.rs:44-75`, `:111-140`, `social/src/rpc/service/domain.rs:385` |
 | start-, join- | A runtime failure is an internal error | VR `a_failed_community_grant_is_an_internal_error` | ported |
-| promote-, demote-, reject-, kick-, mute-, request-to-speak-, end- | A runtime error answers an error (not found or internal) | — | differs: logged, the answer is ok. Upstream `src/controllers/handlers/rpc/promote-speaker-in-community-voice-chat.ts:78`, `:147`; local `social/src/rpc/service/community_voice.rs:17-20` |
+| promote-, demote-, reject-, kick-, mute-, request-to-speak- | The gatekeeper's 404 (no room or no such participant) answers `notFound` "Community voice chat or participant not found for community …"; lowering a hand stays ok (#503) | `tests/social_api.rs` `a_community_room_runs_through_the_http_routes` (kick through both transports, raise and lower a hand) | ported: the runtime probes the LiveKit participant first (local `comms/src/gatekeeper/voice/rooms.rs:280`, `social/src/rpc/service/community_voice.rs:17-41`, `:130`) |
+| promote-, demote-, reject-, kick-, mute-, request-to-speak-, end- | Any other runtime error answers an internal error; end on a missing room answers not found | — | differs: logged, the answer is ok. Upstream `src/controllers/handlers/rpc/promote-speaker-in-community-voice-chat.ts`, `src/adapters/comms-gatekeeper.ts:10-14`; local `social/src/rpc/service/community_voice.rs:27-41`, `:197-219` |
 | community-voice | A ban landing during a join refuses it and evicts the seat | — | differs: the ban is read once, before the grant. Upstream `src/logic/community-voice/community-voice.ts:279-290`; local `social/src/rpc/service/community_voice.rs:111-121`, `:125-150` |
 | community-voice | STARTED carries positions, worlds and image, and reaches every subscriber of a public listed community | — | differs: empty lists, no image, members only. Upstream `src/logic/community-voice/community-voice.ts:208`, `src/logic/updates.ts:401-402`; local `social/src/rpc/service/domain.rs:312-327` |
 | community-voice | The profile reaches the room metadata | — | differs: none. Upstream `src/logic/community-voice/community-voice.ts:124`; local `comms/src/gatekeeper/voice/rooms.rs:356` |
@@ -392,3 +395,26 @@ on the zero address and a second address created for the run). The local answers
 | The event names both parties, and the message when there is one | 3 | — | differs: no event is sent. Upstream `src/logic/notifications.ts:28-60`; local `social/src/rpc/service/friends.rs:277-280` |
 | An unknown action is an error | 1 | — | n/a: the action is a closed enum (`social/src/rpc/service/domain.rs:21-28`) |
 | The SNS publish retries | 2 | — | n/a |
+
+## HTTP twins and `/v1/stream` (b6b2cef)
+
+Upstream #504-#507 serve the procedures over HTTP on the social-api host, and #503 serves the six streams over a
+plain JSON WebSocket. Locally each route calls the operation its procedure calls (`social/src/rpc/service/mod.rs`
+`ops`: `friends.rs:30` `apply_friendship_action`, `:77` `friendship_status`, `blocks.rs:16` `block`, `:68`
+`unblock`, `settings.rs:14`, `private_voice.rs:37-195`, `community_voice.rs:55-245`) and the same `Db` reads; the
+routes are `social/src/rpc/http.rs` (`ENDPOINTS.md` lists them), the stream `social/src/rpc/stream.rs`.
+
+| upstream | behaviour | local test | status |
+| --- | --- | --- | --- |
+| #504 friends | `/v2/friends`, `/v2/users/{address}/mutual-friends`, `/v1/users/{address}/friendship-status`, `/v2/friendship-requests`, `POST /v1/friendship-requests`, `PATCH /v1/friendship-requests/{address}`, `DELETE /v1/friends/{address}`: addresses only; 403 blocked, 409 invalid transition, 429 rate limited | `tests/social_api.rs` `a_friendship_runs_through_the_http_routes`, `friendship_routes_refuse_as_upstream_does`, `a_route_and_its_procedure_write_and_publish_alike` | ported; the procedure's invalid-transition message is now upstream's `InvalidFriendshipActionError` (local `social/src/rpc/service/friends.rs:22`) |
+| #505 blocks | `POST /v1/blocks`, `DELETE /v1/blocks/{address}` (idempotent), `/v1/blocking-status`, `/v2/blocks` | `tests/social_api.rs` `blocks_run_through_the_http_routes` | ported; differs: a block publishes `FriendshipUpdate::Block` whether or not a friendship existed, as the procedure does (upstream only with one, `src/logic/friends/component.ts:306`; local `social/src/rpc/service/blocks.rs:49-61`) |
+| #506 settings | `GET`/`PATCH /v1/social-settings` (the stored strings), `/v1/private-messages-settings` (at most 50, each validated, deduplicated) | `tests/social_api.rs` `settings_run_through_the_http_routes` | ported |
+| #507 voice | private calls: start, incoming, accept/reject, end; community rooms: start, end, join, kick, promote, mute, demote, raise and lower or reject a hand | `tests/social_api.rs` `a_private_call_runs_through_the_http_routes`, `a_community_room_runs_through_the_http_routes` | ported; the community gates' messages are the procedures' (the rows above) |
+| #503 stream handshake | Upgrade headers verified before the upgrade (401, 503) or the first frame (`auth_in_progress`, 3003, 3004), signed over `/v1/stream`, never `/` | `tests/stream.rs` `both_handshakes_are_over_the_stream_route_only`, `no_chain_within_the_window_closes_3004`; `stream.rs` `the_signature_is_over_the_stream_route_never_the_rpc_root` | ported; served at `/social-rpc/v1/stream` (the RPC socket's `/` is `/social-rpc`), local `social/src/rpc/mod.rs:263`, `social/src/rpc/stream.rs:98`, `:136`, `:291` |
+| #503 stream messages | `subscribe`/`subscribed`, `unsubscribe`/`end`, `ping`/`pong`, `event`; the error codes and messages of `messages.ts` | `tests/stream.rs` `a_subscription_receives_the_update_its_rpc_stream_would`; `stream.rs` `messages_parse_as_upstream_validates_them` | ported (local `social/src/rpc/stream.rs:440`, `:558`, `:692`) |
+| #503 per-address cap | `WS_MAX_CONNECTIONS_PER_ADDRESS` 8 across both protocols; the ninth closes the oldest `3005` | `tests/stream.rs` `the_ninth_socket_of_an_address_ends_its_oldest`; `limits.rs` `the_ninth_socket_displaces_the_oldest` | ported (local `social/src/rpc/limits.rs:82`, `:162`, `social/src/rpc/mod.rs:229-232`); differs: a displaced RPC socket is dropped through its kill handle without a `3005` close frame (local `social/src/rpc/limits.rs:102`) |
+| #503 subscription bucket | 2/s, burst 24 per address, surviving reconnects, 10,000 idle buckets; `rate_limited` | `limits.rs` `the_subscription_bucket_survives_a_reconnect` | ported (local `social/src/rpc/limits.rs:85-89`, `:186`) |
+| #503 limits | `STREAM_WS_*`, `WS_*` configuration | — | differs: the defaults are constants, not configuration (local `social/src/rpc/stream.rs:51-57`, `social/src/rpc/limits.rs:82-89`) |
+| #503 backpressure | Writes pause while uWS buffers; a dropped write closes 1008 `Slow consumer`; 1,000 events per subscription queue | — | differs: one queue of 1,000 per socket, and a channel lag (256, `pubsub::CHANNEL_CAP`) or a full queue closes 1008 `Subscription overflow; reconnect and resync`; no `Slow consumer` close (local `social/src/rpc/stream.rs:57`, `:609-660`) |
+| #503 metrics | `stream_ws_*`, `ws_*_by_protocol`, `ws_admission_*` | — | n/a: not emitted |
+| #503 friend connectivity | One `online` per friend online, then live updates under the RPC stream's delivery guard | — | ported without a dedicated test (local `social/src/rpc/stream.rs:664`, `:760-791`) |
