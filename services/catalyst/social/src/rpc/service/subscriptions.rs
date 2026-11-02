@@ -11,6 +11,7 @@ impl SocialServiceImpl {
     pub(crate) async fn subscribe_to_friendship_updates(
         &self,
         context: ProcedureContext<Context>,
+        cancellation: tokio_util::sync::CancellationToken,
     ) -> Result<ServerStreamResponse<FriendshipUpdate>, SocialError> {
         let me = Self::caller(&context)?;
         Ok(stream_for(
@@ -20,6 +21,7 @@ impl SocialServiceImpl {
                 SocialEvent::Friendship(u) => Some(u.clone()),
                 _ => None,
             },
+            cancellation,
         ))
     }
 
@@ -28,6 +30,7 @@ impl SocialServiceImpl {
     pub(crate) async fn subscribe_to_friend_connectivity_updates(
         &self,
         context: ProcedureContext<Context>,
+        cancellation: tokio_util::sync::CancellationToken,
     ) -> Result<ServerStreamResponse<FriendConnectivityUpdate>, SocialError> {
         let me = Self::caller(&context)?;
         let ctx = context.server_context.clone();
@@ -35,7 +38,8 @@ impl SocialServiceImpl {
 
         let (generator, yielder) =
             Generator::bounded(16, crate::comms::topology::TOPOLOGY_RECEIPT_TTL);
-        tokio::spawn(async move {
+        let closed = yielder.clone();
+        let updates = async move {
             let mut after = String::new();
             loop {
                 if rx.len() > crate::rpc::pubsub::CHANNEL_CAP {
@@ -148,6 +152,13 @@ impl SocialServiceImpl {
                     Err(RecvError::Closed) => break,
                 }
             }
+        };
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = cancellation.cancelled() => {},
+                _ = closed.closed() => {},
+                _ = updates => {},
+            }
         });
         Ok(generator)
     }
@@ -155,6 +166,7 @@ impl SocialServiceImpl {
     pub(crate) async fn subscribe_to_block_updates(
         &self,
         context: ProcedureContext<Context>,
+        cancellation: tokio_util::sync::CancellationToken,
     ) -> Result<ServerStreamResponse<BlockUpdate>, SocialError> {
         let me = Self::caller(&context)?;
         Ok(stream_for(
@@ -164,12 +176,14 @@ impl SocialServiceImpl {
                 SocialEvent::Block(u) => Some(u.clone()),
                 _ => None,
             },
+            cancellation,
         ))
     }
 
     pub(crate) async fn subscribe_to_community_member_connectivity_updates(
         &self,
         context: ProcedureContext<Context>,
+        cancellation: tokio_util::sync::CancellationToken,
     ) -> Result<ServerStreamResponse<CommunityMemberConnectivityUpdate>, SocialError> {
         let me = Self::caller(&context)?;
         let ctx = context.server_context.clone();
@@ -177,7 +191,8 @@ impl SocialServiceImpl {
         let mut rx = ctx.pubsub().subscribe(&me);
         let (generator, yielder) =
             Generator::bounded(16, crate::comms::topology::TOPOLOGY_RECEIPT_TTL);
-        tokio::spawn(async move {
+        let closed = yielder.clone();
+        let updates = async move {
             let mut after = None;
             loop {
                 if rx.len() > crate::rpc::pubsub::CHANNEL_CAP {
@@ -248,6 +263,13 @@ impl SocialServiceImpl {
                     Err(RecvError::Lagged(_)) | Err(RecvError::Closed) => break,
                 }
             }
+        };
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = cancellation.cancelled() => {},
+                _ = closed.closed() => {},
+                _ = updates => {},
+            }
         });
         Ok(generator)
     }
@@ -255,6 +277,7 @@ impl SocialServiceImpl {
     pub(crate) async fn subscribe_to_private_voice_chat_updates(
         &self,
         context: ProcedureContext<Context>,
+        cancellation: tokio_util::sync::CancellationToken,
     ) -> Result<ServerStreamResponse<PrivateVoiceChatUpdate>, SocialError> {
         let me = Self::caller(&context)?;
         Ok(stream_for(
@@ -264,12 +287,14 @@ impl SocialServiceImpl {
                 SocialEvent::PrivateVoice(u) => Some(u.clone()),
                 _ => None,
             },
+            cancellation,
         ))
     }
 
     pub(crate) async fn subscribe_to_community_voice_chat_updates(
         &self,
         context: ProcedureContext<Context>,
+        cancellation: tokio_util::sync::CancellationToken,
     ) -> Result<ServerStreamResponse<CommunityVoiceChatUpdate>, SocialError> {
         let me = Self::caller(&context)?;
         Ok(stream_for(
@@ -279,12 +304,14 @@ impl SocialServiceImpl {
                 SocialEvent::CommunityVoice(u) => Some(u.clone()),
                 _ => None,
             },
+            cancellation,
         ))
     }
 }
 
 fn friend_replay_update(friend: FriendProfile, online: bool) -> FriendConnectivityUpdate {
     FriendConnectivityUpdate {
+        stream_closed: None,
         friend: Some(friend),
         status: if online {
             ConnectivityStatus::Online
@@ -303,6 +330,7 @@ fn community_replay_update(
         return None;
     }
     Some(CommunityMemberConnectivityUpdate {
+        stream_closed: None,
         community_id: community.to_string(),
         member: Some(User {
             address: member.to_string(),

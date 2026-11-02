@@ -42,6 +42,7 @@ pub(crate) async fn block(
     pubsub.publish(
         other,
         SocialEvent::Block(BlockUpdate {
+            stream_closed: None,
             address: me.to_string(),
             is_blocked: true,
         }),
@@ -49,6 +50,7 @@ pub(crate) async fn block(
     pubsub.publish(
         other,
         SocialEvent::Friendship(FriendshipUpdate {
+            stream_closed: None,
             update: Some(friendship_update::Update::Block(
                 friendship_update::BlockResponse {
                     user: Some(User {
@@ -87,6 +89,7 @@ pub(crate) async fn unblock(ctx: &Context, me: &str, other: &str) -> Result<(), 
         pubsub.publish(
             other,
             SocialEvent::Friendship(FriendshipUpdate {
+                stream_closed: None,
                 update: Some(friendship_update::Update::Delete(
                     friendship_update::DeleteResponse {
                         user: Some(User {
@@ -100,6 +103,7 @@ pub(crate) async fn unblock(ctx: &Context, me: &str, other: &str) -> Result<(), 
     pubsub.publish(
         other,
         SocialEvent::Block(BlockUpdate {
+            stream_closed: None,
             address: me.to_string(),
             is_blocked: false,
         }),

@@ -44,6 +44,7 @@ mod settings;
 mod social_api;
 mod socket;
 mod stream;
+mod subscription_lifecycle;
 mod upstream_reads;
 mod voice_bugs;
 mod voice_runtime;
@@ -214,7 +215,7 @@ async fn friendship_action_outranks_a_block_row() {
     };
     let db = Db::new(pool);
     let (a, b) = (addr("fb09"), addr("fb0a"));
-    let (id, _) = db
+    let (id, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hi"))
         .await
         .unwrap();
@@ -250,7 +251,7 @@ async fn friendship_probe_reports_last_action_and_both_block_directions() {
     assert!(probe.blocked && !probe.blocked_by, "seen from B's side");
     db.unblock_user(&b, &a).await.unwrap();
 
-    let (id, _) = db
+    let (id, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hi"))
         .await
         .unwrap();
@@ -283,11 +284,11 @@ async fn apply_without_a_known_row_reuses_the_reversed_pair() {
     };
     let db = Db::new(pool);
     let (a, b) = (addr("fb0d"), addr("fb0e"));
-    let (first, _) = db
+    let (first, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, None)
         .await
         .unwrap();
-    let (second, _) = db
+    let (second, _, _) = db
         .apply_friendship_action(&b, &a, "accept", true, None, None)
         .await
         .expect("a racing insert on the reversed pair resolves to the same row");
@@ -340,7 +341,7 @@ async fn pending_requests_list_the_latest_request_with_its_message() {
     };
     let db = Db::new(pool);
     let (a, b, c) = (addr("fb0f"), addr("fb10"), addr("fb11"));
-    let (id_ab, _) = db
+    let (id_ab, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hello b"))
         .await
         .unwrap();
@@ -387,7 +388,7 @@ async fn block_and_unblock_return_the_latest_action_in_one_statement() {
         .expect("blocking twice is idempotent");
     assert_eq!(again_at, first_at, "a repeat keeps the first block time");
 
-    let (id, _) = db
+    let (id, _, _) = db
         .apply_friendship_action(&a, &b, "request", false, None, None)
         .await
         .unwrap();
@@ -1333,19 +1334,17 @@ async fn community_voice_start_join_and_ban_semantics() {
         join(&ctx, &member).await.response,
         Some(join_community_voice_chat_response::Response::Ok(_))
     ));
-    // Recorded difference (RPC.md, community voice, "Join: a public non-member
-    // joins"): upstream lets a non-member join a public community
-    // (`src/logic/community-voice/validation.ts:49-53`); Catalyst requires membership.
+    // A public guest joins with no membership role (upstream
+    // social-service-ea@b6b2cef validation.ts:49-55).
     assert!(matches!(
         join(&ctx, &stranger).await.response,
-        Some(join_community_voice_chat_response::Response::ForbiddenError(_))
+        Some(join_community_voice_chat_response::Response::Ok(_))
     ));
-    // A ban deletes the member row, so a banned wallet is refused as a
-    // non-member; a banned wallet whose row survived (a race) is refused as
-    // banned. Either way no grant is minted.
+    // A ban wins whether the member row was deleted or survived a race.
+    // Neither case mints a grant.
     let refused = join(&ctx, &banned).await;
     assert!(
-        matches!(&refused.response, Some(join_community_voice_chat_response::Response::ForbiddenError(f)) if f.message.as_deref() == Some("not a community member")),
+        matches!(&refused.response, Some(join_community_voice_chat_response::Response::ForbiddenError(f)) if f.message.as_deref() == Some("banned from this community")),
         "{refused:?}"
     );
     sqlx::query("INSERT INTO social.community_members (community_id, member_address, role) VALUES ($1, $2, 'member')")

@@ -253,7 +253,12 @@ pub(super) fn start_voice_internal(msg: impl Into<String>) -> StartPrivateVoiceC
 
 /// A subscription stream: the address's channel filtered by `pick`; a lagged
 /// receiver logs and continues (the client is told nothing, as upstream).
-pub(super) fn stream_for<T, F>(pubsub: &PubSub, address: &str, pick: F) -> Generator<T>
+pub(super) fn stream_for<T, F>(
+    pubsub: &PubSub,
+    address: &str,
+    pick: F,
+    cancellation: tokio_util::sync::CancellationToken,
+) -> Generator<T>
 where
     T: Send + Sync + 'static,
     F: Fn(&SocialEvent) -> Option<T> + Send + 'static,
@@ -262,7 +267,12 @@ where
     let mut rx = pubsub.subscribe(address);
     tokio::spawn(async move {
         loop {
-            match rx.recv().await {
+            let event = tokio::select! {
+                _ = cancellation.cancelled() => break,
+                _ = yielder.closed() => break,
+                event = rx.recv() => event,
+            };
+            match event {
                 Ok(event) => {
                     if let Some(item) = pick(&event)
                         && yielder.r#yield(item).await.is_err()
@@ -292,31 +302,57 @@ mod pubsub_routing_tests {
     async fn one_publish_reaches_only_the_matching_stream_in_order() {
         let ps = PubSub::new();
 
-        let mut cm = stream_for(&ps, "0xme", |e| match e {
-            SocialEvent::CommunityMember(u) => Some(u.clone()),
-            _ => None,
-        });
-        let mut fr = stream_for(&ps, "0xme", |e| match e {
-            SocialEvent::Friendship(u) => Some(u.clone()),
-            _ => None,
-        });
-        let mut blk = stream_for(&ps, "0xme", |e| match e {
-            SocialEvent::Block(u) => Some(u.clone()),
-            _ => None,
-        });
-        let mut pv = stream_for(&ps, "0xme", |e| match e {
-            SocialEvent::PrivateVoice(u) => Some(u.clone()),
-            _ => None,
-        });
-        let mut cv = stream_for(&ps, "0xme", |e| match e {
-            SocialEvent::CommunityVoice(u) => Some(u.clone()),
-            _ => None,
-        });
+        let mut cm = stream_for(
+            &ps,
+            "0xme",
+            |e| match e {
+                SocialEvent::CommunityMember(u) => Some(u.clone()),
+                _ => None,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let mut fr = stream_for(
+            &ps,
+            "0xme",
+            |e| match e {
+                SocialEvent::Friendship(u) => Some(u.clone()),
+                _ => None,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let mut blk = stream_for(
+            &ps,
+            "0xme",
+            |e| match e {
+                SocialEvent::Block(u) => Some(u.clone()),
+                _ => None,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let mut pv = stream_for(
+            &ps,
+            "0xme",
+            |e| match e {
+                SocialEvent::PrivateVoice(u) => Some(u.clone()),
+                _ => None,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let mut cv = stream_for(
+            &ps,
+            "0xme",
+            |e| match e {
+                SocialEvent::CommunityVoice(u) => Some(u.clone()),
+                _ => None,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
         let mut fc_rx = ps.subscribe("0xme");
 
         ps.publish(
             "0xme",
             SocialEvent::CommunityMember(CommunityMemberConnectivityUpdate {
+                stream_closed: None,
                 community_id: "a".into(),
                 member: None,
                 status: 0,
@@ -325,6 +361,7 @@ mod pubsub_routing_tests {
         ps.publish(
             "0xme",
             SocialEvent::CommunityMember(CommunityMemberConnectivityUpdate {
+                stream_closed: None,
                 community_id: "b".into(),
                 member: None,
                 status: 0,

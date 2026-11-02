@@ -179,6 +179,7 @@ async fn a_friendship_runs_through_the_http_routes() {
     assert!(body["data"]["createdAt"].is_i64());
     match &*to_b.try_recv().unwrap() {
         SocialEvent::Friendship(FriendshipUpdate {
+            stream_closed: None,
             update: Some(friendship_update::Update::Request(r)),
         }) => {
             assert_eq!(r.friend.as_ref().unwrap().address, a);
@@ -227,6 +228,7 @@ async fn a_friendship_runs_through_the_http_routes() {
     assert!(matches!(
         &*to_a.try_recv().unwrap(),
         SocialEvent::Friendship(FriendshipUpdate {
+            stream_closed: None,
             update: Some(friendship_update::Update::Accept(_))
         })
     ));
@@ -460,12 +462,14 @@ async fn blocks_run_through_the_http_routes() {
     assert!(body["data"]["blockedAt"].is_i64());
     assert!(matches!(
         &*to_b.try_recv().unwrap(),
-        SocialEvent::Block(BlockUpdate { address, is_blocked: true }) if *address == a
+        SocialEvent::Block(BlockUpdate {
+            stream_closed: None, address, is_blocked: true }) if *address == a
     ));
     // The procedure's FriendshipUpdate::Block follows, as on the RPC socket.
     assert!(matches!(
         &*to_b.try_recv().unwrap(),
         SocialEvent::Friendship(FriendshipUpdate {
+            stream_closed: None,
             update: Some(friendship_update::Update::Block(_))
         })
     ));
@@ -522,6 +526,7 @@ async fn blocks_run_through_the_http_routes() {
         matches!(
             &*lifted,
             SocialEvent::Block(BlockUpdate {
+                stream_closed: None,
                 is_blocked: false,
                 ..
             })
@@ -594,6 +599,7 @@ async fn a_route_and_its_procedure_write_and_publish_alike() {
 
     let request_of = |event: &SocialEvent| match event {
         SocialEvent::Friendship(FriendshipUpdate {
+            stream_closed: None,
             update: Some(friendship_update::Update::Request(r)),
         }) => (
             r.friend.as_ref().unwrap().address.clone(),

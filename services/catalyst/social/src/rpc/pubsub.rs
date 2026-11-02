@@ -90,6 +90,7 @@ mod tests {
         ps.publish(
             "0xABC",
             SocialEvent::CommunityMember(CommunityMemberConnectivityUpdate {
+                stream_closed: None,
                 community_id: "c".into(),
                 member: None,
                 status: 0,
