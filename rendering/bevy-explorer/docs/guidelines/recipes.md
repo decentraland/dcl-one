@@ -72,3 +72,74 @@ param handed to a wasm export, like `?guest=`.
 `add_preview_console_command` registers it only in preview mode; outside preview it is absent
 from `/help` and rejected. Console commands land in `ConsoleSet::Commands`, just before
 `SceneSets::Init`, so their effects are visible to the scene loop in the same frame.
+
+## Per-avatar data on a shared material
+
+Wearables and masks come from `crates/avatar/src/material_cache.rs`, shared across avatars so
+they batch. A per-avatar value is never a material property; it goes in the entity's `MeshTag`
+(a `u32`, read in WGSL with `mesh_functions::get_tag(instance_index)`). `scene_material` owns
+the layout: the top byte is flags (`SCENE_MATERIAL_*_MESH_TAG`), the low 24 bits are shared.
+
+- **Budget the bits to the effect.** Work out the step the bits give against what the eye can
+  see in one frame, and write the arithmetic in the PR. A value that moves centimetres per
+  frame does not need millimetre steps; one byte is usually enough.
+- **No flag bit beside a value field.** For a range, 0 means none and `1..=255` spans the
+  range. Encode both ends of the range, so a "hidden" value sits past the mesh rather than at
+  a boundary where a strict comparison in the shader leaves a sliver.
+- **Modes live in the unique material, not the tag.** A material that is already one per
+  entity carries its own switches; the shared tag carries only the value.
+- Rust owns encode and decode, in `scene_material`, with a round-trip test that mirrors the
+  WGSL decode: monotonic across the range and within half a step.
+- After writing a tag, call `set_changed` on the `Mesh3d`: the fork ignores
+  `Changed<MeshTag>` ([oddities](oddities.md#rendering)).
+
+## A constant shared between Rust and WGSL
+
+A WGSL literal with a comment "keep in sync with" a Rust constant is rejected in review. Push
+the constant as a shader def from the material's `specialize` and read it as `#{NAME}`:
+
+```rust
+// scene_material: the one definition, for every pipeline whose shader imports the function
+pub fn foo_shader_defs() -> [ShaderDefVal; 2] {
+    [
+        ShaderDefVal::UInt("FOO_MESH_TAG_MASK".to_owned(), SCENE_MATERIAL_FOO_MESH_TAG_MASK),
+        ShaderDefVal::Int("FOO_MILLIMETRES".to_owned(), SCENE_MATERIAL_FOO_MILLIMETRES),
+    ]
+}
+// in each Material's specialize whose shader calls the function:
+fragment.shader_defs.extend(foo_shader_defs());
+```
+
+```wgsl
+// defs are integers: metres travel as millimetres
+#ifdef FOO_MESH_TAG_MASK
+fn foo(mesh_tag: u32) -> f32 {
+    let step = mesh_tag & #{FOO_MESH_TAG_MASK};
+    return f32(#{FOO_MILLIMETRES}) * 0.001;
+}
+#endif
+```
+
+The `#ifdef` matters: naga_oil preprocesses the whole imported file, so a shader that imports
+an unrelated function from the same file, from a material that does not push the defs, fails
+without it. Every `Material` whose shader calls the function needs a `specialize` that pushes
+the defs; a material extension's defs do not reach a separate material.
+
+## A pipeline-compile test for a shader
+
+Every shader change gets a test that compiles every pipeline variant off-screen, `#[ignore]`d
+because CI has no GPU (the pattern is `crates/perf_output/tests/gpu_timestamps.rs`):
+
+1. A `DefaultPlugins` app with `WinitPlugin`, `LogPlugin` and `PipelinedRenderingPlugin`
+   disabled and no primary window.
+2. A camera rendering to an `Image`, with `DepthPrepass` and `NormalPrepass`, and a shadowing
+   `DirectionalLight`, so the prepass and shadow variants compile too.
+3. One entity per material and tag variant the change touches.
+4. Update until the `RenderApp`'s `PipelineCache` has nothing pending, then assert that no
+   pipeline is in an error state.
+
+The crate needs `assets` and `naga_oil` as dev-dependencies, the latter only to enable its
+`override_any` feature for the crate. Run with
+`cargo test -p <crate> <test> -- --ignored --nocapture`. The native pass compiles the same
+variants as web, but the web-only rules on the [platforms](platforms.md#web) page still need
+the web build once.
