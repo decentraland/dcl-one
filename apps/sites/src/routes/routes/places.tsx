@@ -234,7 +234,7 @@ function PlacesExplorer({
   const [personalRead, setPersonalRead] = useState<{ key: string; page?: DestinationPage; error?: string } | null>(null);
   const [personalPages, setPersonalPages] = useState<LoadedPages>({ key, pages: {} });
   const identityRef = useRef(identity);
-  identityRef.current = identity;
+  useEffect(() => { identityRef.current = identity; }, [identity]);
   useEffect(() => {
     const currentIdentity = identityRef.current;
     if (!hydrated || !personal || !currentIdentity || (accountChanged && offset > 0)) return;
@@ -272,14 +272,18 @@ function PlacesExplorer({
     : places;
   const rows = [...new Map((personal ? loadedPages.flatMap(([, loaded]) => loaded.data) : publicRows).map((place) => [place.id, place])).values()];
   // Keep first-page rails stable while subsequent pages are appended.
-  const rails = useRef({ key, live, featured });
-  if (rails.current.key !== key || (offset === 0 && !unavailable)) rails.current = { key, live, featured };
+  const [initialRails, setInitialRails] = useState(() => ({ key, live, featured }));
+  useEffect(() => {
+    if (offset === 0 && !unavailable) setInitialRails({ key, live, featured });
+  }, [key, offset, unavailable, live, featured]);
+  const rails = offset === 0 && !unavailable ? { live, featured }
+    : initialRails.key === key ? initialRails : { live: [], featured: [] };
 
   useExposure(sid, rows.length, activeCategory, search);
 
-  const liveNow = highlights ? rails.current.live.filter((place) => !hiddenFromBrowse(place) && (place.user_count ?? 0) > 0).sort((a, b) => (b.user_count ?? 0) - (a.user_count ?? 0)).slice(0, 4) : [];
+  const liveNow = highlights ? rails.live.filter((place) => !hiddenFromBrowse(place) && (place.user_count ?? 0) > 0).sort((a, b) => (b.user_count ?? 0) - (a.user_count ?? 0)).slice(0, 4) : [];
   const liveIds = new Set(liveNow.map((place) => place.id));
-  const featuredPlaces = highlights ? rails.current.featured.filter((place) => !hiddenFromBrowse(place) && !liveIds.has(place.id)) : [];
+  const featuredPlaces = highlights ? rails.featured.filter((place) => !hiddenFromBrowse(place) && !liveIds.has(place.id)) : [];
   const featuredIds = new Set(featuredPlaces.map((place) => place.id));
   const mainRows = rows.filter((place) => (personal || Boolean(search) || Boolean(activeCategory) || !hiddenFromBrowse(place)) && (!highlights || (!liveIds.has(place.id) && !featuredIds.has(place.id))));
   const nextOffset = (personal && lastPage ? Number(lastPage[0]) : offset) + (page.received ?? page.data.length);

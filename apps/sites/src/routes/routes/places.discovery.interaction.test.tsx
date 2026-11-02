@@ -91,6 +91,19 @@ describe("when interacting with Places discovery", () => {
     });
   });
 
+  describe("and signing credentials refresh for the same account", () => {
+    it("should use the latest committed identity for the next page without reloading the first", async () => {
+      await open("/places?tab=favourites");
+      await screen.findByRole("button", { name: "Load more places" });
+      changeIdentity({ ...identity, expiration: "2099-02-01T00:00:00Z" });
+      expect(fetchDestinations).toHaveBeenCalledOnce();
+      vi.mocked(fetchDestinations).mockResolvedValueOnce(second);
+      await user.click(screen.getByRole("button", { name: "Load more places" }));
+      await screen.findByText("Last place", { exact: true });
+      expect(fetchDestinations).toHaveBeenLastCalledWith(expect.objectContaining({ offset: 60 }), expect.objectContaining({ identity: expect.objectContaining({ signer: identity.signer, expiration: "2099-02-01T00:00:00Z" }) }));
+    });
+  });
+
   describe("and the next personal page fails", () => {
     beforeEach(() => { vi.mocked(fetchDestinations).mockResolvedValueOnce(page).mockRejectedValueOnce(new Error("Please retry your places")); });
     it("should keep loaded rows through an error and retry only the failed offset", async () => {
@@ -145,7 +158,8 @@ describe("when interacting with Places discovery", () => {
     it("should retain the original live rail while appending later results once", async () => {
       await open("/places");
       await user.click(screen.getByRole("button", { name: "Load more places" }));
-      await screen.findByRole("link", { name: /Last place/ });
+      // Wait for the card title before computing accessible names across the full grid.
+      await screen.findByText("Last place", { exact: true });
       expect(screen.getByRole("region", { name: "Live places" }).textContent).toContain("Place 0");
       expect(screen.getByRole("region", { name: "Live places" }).textContent).not.toContain("Last place");
       expect(screen.getAllByRole("link")).toHaveLength(61);
