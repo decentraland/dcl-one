@@ -18,6 +18,13 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
 
+- **Scene and download priority without distance buckets.** unity-explorer ranks scenes and
+  asset loads by distance buckets and a bucket-indexed tick-rate table. We keep the aging
+  scheduler and measure raw squared distance to the nearest point of a scene's nearest parcel
+  (not its corner); downloads are admitted by parcel ring first, facing deciding within a ring,
+  then raw distance, and per scene rather than per entity. See the
+  [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+
 ## Deliberate choices that look like mistakes
 
 - **`UnapprovedPathMode::Allow`** in the asset server: bevy's check only admits paths under
