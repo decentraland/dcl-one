@@ -3203,6 +3203,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "cap"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6f125eb85b84a24c36b02ed1d22c9dd8632f53b3cde6e4d23512f94021030003"
+
+[[package]]
 name = "cast"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4454,6 +4460,7 @@ version = "0.1.0"
 dependencies = [
  "analytics",
  "anyhow",
+ "ash",
  "assets",
  "async-std",
  "av",
@@ -4464,6 +4471,7 @@ dependencies = [
  "bevy_kira_audio",
  "bevy_simple_text_input",
  "build-time",
+ "cap",
  "cef_offscreen",
  "chrono",
  "clap",
@@ -4509,6 +4517,7 @@ dependencies = [
  "serde",
  "serde_json",
  "social",
+ "sysinfo",
  "system_api_types",
  "system_bridge",
  "system_ui",
@@ -4525,10 +4534,12 @@ dependencies = [
  "wallet",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-bindgen-test",
  "web-fs",
  "web-sys",
  "web-time",
  "wgpu",
+ "windows 0.58.0",
  "winit",
  "world_ui",
  "zip 2.4.2",
@@ -8625,6 +8636,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ntapi"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3b335231dfd352ffb0f8017f3b6027a4917f7df785ea2143d8af2adc66980ae"
+dependencies = [
+ "winapi",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12265,6 +12285,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8eab9a99a024a169fe8a903cf9d4a3b3601109bcc13bd9e3c6fff259138626c4"
 dependencies = [
  "libc",
+]
+
+[[package]]
+name = "sysinfo"
+version = "0.34.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4b93974b3d3aeaa036504b8eefd4c039dced109171c1ae973f1dc63b2c7e4b2"
+dependencies = [
+ "libc",
+ "memchr",
+ "ntapi",
+ "objc2-core-foundation",
+ "windows 0.54.0",
 ]
 
 [[package]]
