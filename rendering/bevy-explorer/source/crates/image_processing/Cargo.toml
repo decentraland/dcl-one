@@ -39,6 +39,9 @@ image = { workspace = true }
 ddsfile = "0.5.2"
 # KHR_texture_basisu textures: pure Rust, so the same transcoder runs on web
 basisu = "0.1"
+# prebaked BC7 in a KTX2 container, zstd-supercompressed for the download; both pure Rust
+ktx2 = "0.3"
+ruzstd = "0.8"
 gltf = "1.4"
 gltf-json = { version = "1.4", features = ["extensions"] }
 draco-oxide-decoder = { workspace = true }

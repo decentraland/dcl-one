@@ -178,6 +178,12 @@ fn compress_decoded(img: image::DynamicImage) -> Result<Vec<u8>, ImageProcessErr
 pub(crate) fn transcode_ktx2(bytes: &[u8]) -> Result<Vec<u8>, ImageProcessError> {
     use basisu::{DecodeFlags, TargetFormat, Transcoder};
 
+    // a ktx2 that already holds bc7 blocks (prebaked, zstd-supercompressed for the download)
+    // is unwrapped, not transcoded
+    if let Some(dds) = unwrap_bc7_ktx2(bytes) {
+        return dds;
+    }
+
     let texture = Transcoder::new(bytes).map_err(|_| ImageProcessError::CantLoad)?;
     let level = (0..texture.level_count())
         .find(|&level| {
@@ -207,6 +213,45 @@ pub(crate) fn transcode_ktx2(bytes: &[u8]) -> Result<Vec<u8>, ImageProcessError>
     let img = image::RgbaImage::from_raw(info.width, info.height, rgba)
         .ok_or(ImageProcessError::CantLoad)?;
     compress_decoded(image::DynamicImage::ImageRgba8(img))
+}
+
+/// `Some` when `bytes` is a ktx2 whose payload is BC7: its base level as a dds, decompressed
+/// when the file is zstd-supercompressed. `None` for any other format, basisu included. The
+/// colour space comes from the gltf through the loader's settings, as it does for a dds, so the
+/// file's own sRGB/linear format flag is not read.
+fn unwrap_bc7_ktx2(bytes: &[u8]) -> Option<Result<Vec<u8>, ImageProcessError>> {
+    use ktx2::{Format, SupercompressionScheme};
+
+    let reader = ktx2::Reader::new(bytes).ok()?;
+    let header = reader.header();
+    if !header
+        .format
+        .is_some_and(|format| format == Format::BC7_UNORM_BLOCK || format == Format::BC7_SRGB_BLOCK)
+    {
+        return None;
+    }
+
+    let unwrap = || {
+        let level = reader.levels().next().ok_or(ImageProcessError::CantLoad)?;
+        let blocks = match header.supercompression_scheme {
+            None => level.to_vec(),
+            Some(scheme) if scheme == SupercompressionScheme::Zstandard => {
+                let mut decoder = ruzstd::decoding::StreamingDecoder::new(level)
+                    .map_err(|_| ImageProcessError::CantLoad)?;
+                let mut blocks = Vec::new();
+                std::io::Read::read_to_end(&mut decoder, &mut blocks)
+                    .map_err(|_| ImageProcessError::CantLoad)?;
+                blocks
+            }
+            Some(_) => return Err(ImageProcessError::CantLoad),
+        };
+        let (width, height) = (header.pixel_width, header.pixel_height);
+        if blocks.len() != (width.div_ceil(4) * height.div_ceil(4)) as usize * 16 {
+            return Err(ImageProcessError::CantLoad);
+        }
+        bc7_dds(width, height, blocks)
+    };
+    Some(unwrap())
 }
 
 const KTX2_MAGIC: &[u8] = b"\xABKTX 20\xBB\r\n\x1A\n";
@@ -643,6 +688,9 @@ mod tests {
     // 8x8 and 6x6 UASTC gradients, zstd-supercompressed (`basisu -uastc -ktx2`)
     const UASTC_8: &[u8] = include_bytes!("../../testdata/uastc_8.ktx2");
     const UASTC_6: &[u8] = include_bytes!("../../testdata/uastc_6.ktx2");
+    // the same 32x32 image as `prebake --no-mips` wrote it, and wrapped in a zstd ktx2
+    const BC7_32_DDS: &[u8] = include_bytes!("../../testdata/bc7_32.dds");
+    const BC7_32_KTX2: &[u8] = include_bytes!("../../testdata/bc7_32.ktx2");
 
     fn dds_size(bytes: &[u8]) -> (u32, u32) {
         let dds = Dds::read(&mut std::io::Cursor::new(bytes)).unwrap();
@@ -655,6 +703,20 @@ mod tests {
         assert_eq!(dds_size(&transcode_ktx2(UASTC_8).unwrap()), (8, 8));
         // not whole blocks: decoded and encoded like a png of that size
         assert_eq!(dds_size(&transcode_ktx2(UASTC_6).unwrap()), (8, 8));
+    }
+
+    #[test]
+    fn bc7_ktx2_unwraps_to_the_same_dds() {
+        assert_eq!(transcode_ktx2(BC7_32_KTX2).unwrap(), BC7_32_DDS);
+    }
+
+    #[test]
+    fn bc7_ktx2_with_a_short_level_is_an_error() {
+        // claim 64x64 in the header while keeping the 32x32 payload
+        let mut bytes = BC7_32_KTX2.to_vec();
+        bytes[20..24].copy_from_slice(&64u32.to_le_bytes());
+        bytes[24..28].copy_from_slice(&64u32.to_le_bytes());
+        assert!(transcode_ktx2(&bytes).is_err());
     }
 
     #[test]
