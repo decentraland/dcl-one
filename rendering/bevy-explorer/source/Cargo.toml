@@ -256,6 +256,8 @@ bevy_simple_text_input = { git = "https://github.com/robtfm/bevy_simple_text_inp
 ], branch = "0.16" }
 directories = "6"
 sys-locale = "0.3"
+sysinfo = { version = "0.34.2", default-features = false, features = ["system"] }
+cap = "0.1.2"
 winreg = "0.50"
 uuid = { version = "1.23", features = ["v4"] }
 build-time = "0.1.3"
@@ -419,12 +421,14 @@ bevy_simple_text_input = { workspace = true }
 
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sysinfo = { workspace = true }
 dcl_deno = { workspace = true }
 dcl_deno_ipc = { workspace = true }
 mimalloc = { workspace = true }
 cef_offscreen = { workspace = true, optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
+cap = { workspace = true }
 # parking_lot only parks with Atomics.wait (instead of panicking on contention) behind its
 # `nightly` feature; bevy_asset's locks are contended once systems run on the compute workers.
 parking_lot = { version = "0.12", features = ["nightly"] }
@@ -451,6 +455,9 @@ winit = { version = "0.30", default-features = false }
 
 [build-dependencies]
 prost-build = "0.11.8"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = { workspace = true }
 
 [patch.crates-io]
 # livekit 0.9.7 plus two commits: participant_identity on RoomEvent::DataReceived (the sender

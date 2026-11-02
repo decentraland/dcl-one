@@ -6,6 +6,7 @@ mod autopilot;
 mod commands;
 mod deep_link;
 mod ext;
+mod memory;
 #[cfg(target_arch = "wasm32")]
 mod web;
 pub mod world_state;
@@ -613,7 +614,8 @@ impl DecentralandApp {
         app.insert_resource(decentraland_app_config.app_config);
 
         // Plugins
-        app.add_plugins(SceneRunnerPlugin)
+        app.add_plugins(memory::MemoryStatusPlugin)
+            .add_plugins(SceneRunnerPlugin)
             .add_plugins(AVPlayerPlugin)
             .add_plugins(RestrictedActionsPlugin)
             .add_plugins(UtilsPlugin)

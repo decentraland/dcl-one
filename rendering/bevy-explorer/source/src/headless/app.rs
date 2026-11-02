@@ -112,6 +112,7 @@ pub fn assemble(
     // ---- render-free plugin set (mirrors scene_runner TestPlugins) ----
     app.add_plugins(FrameCountPlugin)
         .add_plugins(TimePlugin)
+        .add_plugins(crate::memory::MemoryStatusPlugin)
         .add_plugins(TransformPlugin)
         .add_plugins(DiagnosticsPlugin)
         .add_plugins(IpfsIoPlugin {
