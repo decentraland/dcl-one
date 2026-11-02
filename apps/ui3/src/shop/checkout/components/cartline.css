@@ -1,4 +1,4 @@
-/* from: shop@2d3bf62:app/src/pages/Cart.styles.ts (Card, Thumb, ThumbCheck, Info, Desc, Name, Creator,
+/* from: shop@3a322cf9:app/src/pages/Cart.styles.ts (Card, Thumb, Info, Desc, Name, Creator,
    CreatorTag, Foot, Stepper, Step, Qty, Price, PriceWas, Actions, Fav, Remove, Unavailable). Scoped to
    .shop-cartline. Breakpoints are the cart's own (1080 two-column, 880 mobile), not the app's. */
 .shop-cartline {
@@ -6,18 +6,14 @@
   display: flex;
   align-items: stretch;
   gap: 12px;
-  border: 1px solid var(--shop-card-line, rgba(160, 155, 168, 0.25));
-  border-radius: var(--shop-radius-card, 12px);
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.4);
   overflow: hidden;
   color: #fcfcfc;
 }
 
 .shop-cartline[data-unavailable] [data-thumb] {
   opacity: 0.5;
-}
-
-.shop-cartline[data-unavailable] [data-check] {
-  display: none;
 }
 
 .shop-cartline[data-unavailable] [data-desc] {
@@ -32,8 +28,10 @@
   width: 172px;
   height: 171px;
   overflow: hidden;
-  border-radius: var(--shop-radius-card, 12px);
-  background: var(--shop-media, #ecebed);
+  /* The rarity's tile, as the cards draw it (rarityCardPalette): its wash and its outline. */
+  border: 1.5px solid var(--tile-stroke, transparent);
+  border-radius: 16px;
+  background: var(--tile-bg, #ecebed);
 }
 
 .shop-cartline__thumb img {
@@ -48,18 +46,6 @@
   inset: 0;
   display: grid;
   place-items: center;
-}
-
-.shop-cartline__check {
-  position: absolute;
-  top: 7.5px;
-  left: 7.5px;
-  display: grid;
-  place-items: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  background: #34ce77;
 }
 
 .shop-cartline__main {
@@ -96,26 +82,8 @@ a.shop-cartline__name:hover {
   text-decoration: underline;
 }
 
-.shop-cartline__creator .shop-badge {
-  display: inline-flex;
-  color: var(--shop-gray-4, #cfcdd4);
-  font-size: 10px;
-  line-height: 1.43;
-  text-decoration: none;
-}
-
-.shop-cartline__creator .shop-badge__avatar {
-  display: none;
-}
-
-.shop-cartline__creator .shop-badge__name {
-  color: inherit;
-  font-size: 10px;
-  line-height: 1.43;
-}
-
-.shop-cartline__creator a.shop-badge:hover .shop-badge__name {
-  color: #fcfcfc;
+.shop-cartline__creator {
+  align-self: flex-start;
 }
 
 .shop-cartline__tag {
@@ -200,6 +168,18 @@ a.shop-cartline__name:hover {
   gap: 4px;
   font-size: inherit;
   font-weight: inherit;
+}
+
+/* Scoped past the shared .shop-price__credits (CreditsAmount): the line's own gap and weight. */
+.shop-cartline__price .shop-cartline__amount {
+  gap: 4px;
+  font-weight: inherit;
+}
+
+.shop-cartline__price .shop-cartline__coin {
+  width: 24px;
+  height: 24px;
+  color: #fcfcfc;
 }
 
 .shop-cartline__was {
@@ -331,5 +311,10 @@ a.shop-cartline__name:hover {
 
   .shop-cartline__price {
     font-size: 20px;
+  }
+
+  .shop-cartline__price .shop-cartline__coin {
+    width: 20px;
+    height: 20px;
   }
 }

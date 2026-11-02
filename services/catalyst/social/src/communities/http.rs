@@ -149,6 +149,9 @@ pub enum CommError {
         status: StatusCode,
         error: String,
     },
+    /// `{ error: <the status text>, message }`, as upstream's
+    /// `friends-errors.ts` and `voice-chats-errors.ts` answer.
+    Named(StatusCode, String),
     /// A handler's own `{ message }` body, without `error` (upstream's
     /// moderation refusal, capture `social/moderation-communities-signed-not-moderator`).
     MessageOnly(StatusCode, String),
@@ -187,6 +190,10 @@ impl IntoResponse for CommError {
                 (StatusCode::NOT_FOUND, error_body("Not Found", message))
             }
             CommError::Status(code, message) => (code, error_body(message.clone(), message)),
+            CommError::Named(code, message) => (
+                code,
+                error_body(code.canonical_reason().unwrap_or_default(), message),
+            ),
             CommError::SignedFetchGate { status, error } => {
                 (status, error_body(error, ADR44_MESSAGE))
             }

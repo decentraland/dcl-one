@@ -1,6 +1,6 @@
-// from: shop@2d3bf62:app/src/components/OutfitsRow/OutfitsRow.tsx, app/src/components/OutfitsRow/OutfitsRow.styles.ts,
+// from: shop@3a322cf9:app/src/components/OutfitsRow/OutfitsRow.tsx, app/src/components/OutfitsRow/OutfitsRow.styles.ts,
 //       app/src/components/OutfitCard/OutfitCard.tsx, app/src/components/OutfitCard/OutfitCard.styles.ts,
-//       app/src/lib/outfits.ts (outfitGradient, outfitFade, isBuyableFromCreator)
+//       app/src/lib/outfits.ts (outfitGradient, outfitFade, orderOutfitsByRecency, isBuyableFromCreator)
 
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import { Link } from "react-router";
@@ -8,14 +8,13 @@ import { Link } from "react-router";
 import { isShopApiError } from "../../api/client";
 import { shopClient } from "../../api/shop";
 import { shopCart } from "../../cart/store";
-import { CreditsAmount } from "../../credits/components/Amount";
 import { SHOP_BASE } from "../../routes";
 import { fetchCatalogByIds } from "../api";
 import { cartInputFor } from "../components/AssetCard";
+import { formatCredits, formatCreditsFull } from "../components/PriceTag";
 import Icon from "../components/Icon";
 import { t } from "../intl";
 import type { CatalogItem } from "../lib/catalogItem";
-import { isListingForSale } from "../lib/pricing";
 import { railGeometry, railPageFromGeometry, scrollRailToPage } from "../lib/pagedRail";
 import { useShopQuery } from "../query";
 import carouselArrow from "../icons/carousel-arrow.svg?url";
@@ -33,6 +32,7 @@ type OutfitSummary = {
   items: { contractAddress: string; itemId: string }[];
   gradientFrom: string;
   gradientTo: string;
+  createdAt: number;
 };
 
 function tr(key: string, fallback: string, vars?: Record<string, string | number>): string {
@@ -53,6 +53,7 @@ function parseOutfits(body: unknown): OutfitSummary[] {
       items: raw.items.filter((i) => i && typeof i.contractAddress === "string" && typeof i.itemId === "string"),
       gradientFrom: raw.gradientFrom ?? "",
       gradientTo: raw.gradientTo ?? "",
+      createdAt: typeof raw.createdAt === "number" ? raw.createdAt : 0,
     });
   }
   return out;
@@ -78,10 +79,31 @@ function rgba(hex: string, a: number) {
   return `rgba(${(v >> 16) & 0xff}, ${(v >> 8) & 0xff}, ${v & 0xff}, ${a})`;
 }
 
+// A live mint with supply left, sold by its creator for credits.
 function isBuyableFromCreator(item: CatalogItem): boolean {
-  if (item.onSale === false || item.listingType === "secondary" || item.tokenId) return false;
-  if ((item.available ?? 0) <= 0) return false;
-  return item.hasPrimaryListing === true || isListingForSale(item) || item.priceCredits > 0 || !!item.manaWei;
+  if (item.priceCredits <= 0) return false;
+  return item.hasPrimaryListing === true && (item.available ?? 0) > 0;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+const RECENCY_BUCKETS_MS = [7, 21, 60, 365].map((days) => days * DAY_MS);
+
+function shuffle<T>(items: readonly T[]): T[] {
+  const out = [...items];
+  for (let i = out.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [out[i], out[j]] = [out[j]!, out[i]!];
+  }
+  return out;
+}
+
+// Shuffled, newer age buckets first: a fresh drop leads while every visit still varies.
+export function orderOutfitsByRecency<T extends { createdAt: number }>(outfits: readonly T[], now = Date.now()): T[] {
+  const bucket = (o: T) => {
+    const i = RECENCY_BUCKETS_MS.findIndex((limit) => now - o.createdAt < limit);
+    return i === -1 ? RECENCY_BUCKETS_MS.length : i;
+  };
+  return shuffle(outfits).sort((a, b) => bucket(a) - bucket(b));
 }
 
 function OutfitCard({ outfit, byKey, resolving }: { outfit: OutfitSummary; byKey: Map<string, CatalogItem>; resolving: boolean }) {
@@ -107,11 +129,11 @@ function OutfitCard({ outfit, byKey, resolving }: { outfit: OutfitSummary; byKey
 
   return (
     <Link className="shop-outfit-card" to={`${SHOP_BASE}/items/outfits/${outfit.id}`} data-testid="outfit-card">
-      <span className="shop-outfit-card__frame" style={{ background: `radial-gradient(65.83% 65.83% at 50% 50%, ${to} 0%, ${from} 100%)` }} />
+      <span className="shop-outfit-card__frame" data-testid="outfit-card-thumb" style={{ background: `radial-gradient(65.83% 65.83% at 50% 50%, ${to} 0%, ${from} 100%)` }} />
       <span className="shop-outfit-card__mask">{thumb ? <img className="shop-outfit-card__thumb" src={thumb} alt={outfit.name} loading="lazy" /> : null}</span>
       <span className="shop-outfit-card__fade" style={{ background: `linear-gradient(180deg, ${rgba(to, 0)} 0%, ${rgba(to, 0.8)} 100%)` }} />
       <span className="shop-outfit-card__scrim" />
-      <span className="shop-outfit-card__body">
+      <span className="shop-outfit-card__body" data-testid="outfit-card-info">
         <span className="shop-outfit-card__top">
           <span className="shop-outfit-card__name">{outfit.name}</span>
           <span className="shop-outfit-card__meta">{tr("outfits.card.items", t("outfit.items", { count: outfit.items.length }), { count: outfit.items.length })}</span>
@@ -121,7 +143,8 @@ function OutfitCard({ outfit, byKey, resolving }: { outfit: OutfitSummary; byKey
             </span>
           ) : priced ? (
             <span className="shop-outfit-card__price">
-              <CreditsAmount credits={credits} size={16} />
+              <Icon name="credits" size={16} /> <span title={formatCreditsFull(credits)} aria-hidden>{formatCredits(credits)}</span>
+              <span className="shop-sr">{t("assetCard.credits", { count: credits })}</span>
             </span>
           ) : null}
         </span>
@@ -136,8 +159,9 @@ function OutfitCard({ outfit, byKey, resolving }: { outfit: OutfitSummary; byKey
 
 export default function OverviewOutfitsRow() {
   const outfitsQ = useShopQuery(["overview-outfits"], (signal) => fetchOutfits(signal), { staleMs: 60_000 });
-  const outfits = useMemo(() => outfitsQ.data ?? [], [outfitsQ.data]);
-  const ids = useMemo(() => Array.from(new Set(outfits.flatMap((o) => o.items.map(itemKey)))), [outfits]);
+  const outfits = useMemo(() => orderOutfitsByRecency(outfitsQ.data ?? []), [outfitsQ.data]);
+  // From the feed's order, not the shuffled one, so the lookup's cache key is the same on every visit.
+  const ids = useMemo(() => Array.from(new Set((outfitsQ.data ?? []).flatMap((o) => o.items.map(itemKey)))).sort(), [outfitsQ.data]);
   const itemsQ = useShopQuery(ids.length ? ["overview-outfit-items", ...ids] : null, (signal) => fetchCatalogByIds(ids, { signal }), { staleMs: 60_000 });
   const byKey = useMemo(() => {
     const m = new Map<string, CatalogItem>();
@@ -211,7 +235,7 @@ export default function OverviewOutfitsRow() {
       </header>
       <div className="shop-rail__viewport shop-outfits-row__viewport">
         {showControls ? (
-          <button type="button" className="shop-rail__arrow" data-side="left" onClick={() => scrollToPage(page - 1)} disabled={page <= 0} aria-label={t("overview.previous")}>
+          <button type="button" className="shop-rail__arrow" data-side="left" data-testid="outfits-row-prev" onClick={() => scrollToPage(page - 1)} disabled={page <= 0} aria-label={t("overview.previous")}>
             <img src={carouselArrow} alt="" />
           </button>
         ) : null}
@@ -221,13 +245,13 @@ export default function OverviewOutfitsRow() {
           ))}
         </div>
         {showControls ? (
-          <button type="button" className="shop-rail__arrow" data-side="right" onClick={() => scrollToPage(page + 1)} disabled={page >= pageCount - 1} aria-label={t("overview.next")}>
+          <button type="button" className="shop-rail__arrow" data-side="right" data-testid="outfits-row-next" onClick={() => scrollToPage(page + 1)} disabled={page >= pageCount - 1} aria-label={t("overview.next")}>
             <img src={carouselArrow} alt="" />
           </button>
         ) : null}
       </div>
       {showControls ? (
-        <div className="shop-rail__dots" role="group" aria-label={t("overview.carouselPages", { title })}>
+        <div className="shop-rail__dots" role="group" data-testid="outfits-row-dots" aria-label={t("overview.carouselPages", { title })}>
           {Array.from({ length: dotCount }, (_, i) => (
             <button
               key={i}

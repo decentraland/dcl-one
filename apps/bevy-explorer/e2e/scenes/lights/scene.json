@@ -1,0 +1,52 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "lights",
+    "description": "Visual regression scene lights (from explorer-automation 955b338)"
+  },
+  "owner": "",
+  "contact": {
+    "name": "explorer-automation",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": [
+      "120,0",
+      "121,0",
+      "122,0",
+      "120,1",
+      "121,1",
+      "121,2",
+      "121,3"
+    ],
+    "base": "120,0"
+  },
+  "spawnPoints": [
+    {
+      "name": "default",
+      "default": true,
+      "position": {
+        "x": [
+          8
+        ],
+        "y": [
+          0
+        ],
+        "z": [
+          8
+        ]
+      },
+      "cameraTarget": {
+        "x": 8,
+        "y": 1,
+        "z": 8
+      }
+    }
+  ],
+  "skyboxConfig": {
+    "fixedTime": 43200
+  }
+}

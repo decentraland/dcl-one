@@ -18,8 +18,7 @@ pub mod sitemap;
 pub mod v1;
 pub mod writes;
 
-use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Serialize;
@@ -27,7 +26,6 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::sanitize::{sanitize_asset_url, sanitize_event_description, validate_event_url};
-use crate::shared::cache::{TtlCache, cache_get, cache_put};
 use crate::shared::errors::ApiError;
 
 #[derive(Debug, Clone, Serialize)]
@@ -167,11 +165,7 @@ pub struct NextEvent {
 pub struct EventsComponent {
     pool: PgPool,
     rewrite_domain: Option<String>,
-    moderators: TtlCache<HashSet<String>>,
 }
-
-/// Read-side moderator visibility only; writes keep their own gate.
-const MODERATOR_SET_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Default)]
 pub struct EventListFilters {
@@ -255,25 +249,7 @@ impl EventsComponent {
         Self {
             pool,
             rewrite_domain,
-            moderators: Default::default(),
         }
-    }
-
-    pub async fn viewer_is_moderator(&self, address: &str) -> Result<bool, ApiError> {
-        let address = address.to_ascii_lowercase();
-        if let Some(set) = cache_get(&self.moderators, "all") {
-            return Ok(set.contains(&address));
-        }
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT address FROM explore.moderators")
-            .fetch_all(&self.pool)
-            .await?;
-        let set: HashSet<String> = rows
-            .into_iter()
-            .map(|(a,)| a.to_ascii_lowercase())
-            .collect();
-        let hit = set.contains(&address);
-        cache_put(&self.moderators, "all".to_string(), set, MODERATOR_SET_TTL);
-        Ok(hit)
     }
 
     fn destination_clause(ids: &[String], binds: &mut Vec<EventBind>) -> String {
@@ -1610,7 +1586,7 @@ mod tests {
             };
             let mut binds = Vec::new();
             let sql = build_list_sql(&filters, false, &mut binds);
-            assert!(sql.contains("LIMIT 100"));
+            assert!(sql.contains("LIMIT 100)"));
             assert!(
                 matches!(binds.get(binds.len()-2),Some(EventBind::Int64(value)) if *value==limit)
             );

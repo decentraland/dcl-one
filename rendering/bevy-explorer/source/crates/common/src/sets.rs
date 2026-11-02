@@ -38,6 +38,10 @@ pub struct RealmLifecycle;
 #[derive(SystemSet, Debug, PartialEq, Eq, Hash, Clone)]
 pub enum PostUpdateSets {
     EarlyTransformPropagate,
+    /// Re-applies billboard rotations (against the previous frame's camera) that a scene
+    /// transform write replaced, so local transforms read below are billboarded. `Billboard`
+    /// faces this frame's camera.
+    EarlyBillboard,
     ColliderUpdate,
     PlayerUpdate,
     CameraUpdate,

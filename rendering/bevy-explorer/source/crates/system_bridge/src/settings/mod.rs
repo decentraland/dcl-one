@@ -10,6 +10,7 @@ use crate::{
 };
 use ambient_brightness_setting::AmbientSetting;
 use anyhow::anyhow;
+use avatar_ghosts_setting::AvatarGhostsSetting;
 use avatar_outline_setting::AvatarOutlineSetting;
 use bevy::{
     app::{Plugin, Update},
@@ -29,12 +30,13 @@ use common::{
     sets::SceneSets,
     structs::{
         AaSetting, AppConfig, BloomSetting, CameraSmoothing, DofSetting, FogSetting,
-        ParcelGrassConfig, ParcelGrassSetting, PointAtMarkerVisibility, PreviewMode,
-        SessionGraphics, ShadowSetting, SkyReflectionSetting, WindowSetting,
+        ParcelGrassConfig, ParcelGrassSetting, PlayerLanguage, PointAtMarkerVisibility,
+        PreviewMode, SessionGraphics, ShadowSetting, SkyReflectionSetting, WindowSetting,
     },
 };
 use constrain_ui::ConstrainUiSetting;
 use frame_rate::FpsTargetSetting;
+use language_setting::LanguageSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
@@ -50,6 +52,7 @@ use volume_settings::{
 
 pub mod aa_settings;
 pub mod ambient_brightness_setting;
+pub mod avatar_ghosts_setting;
 pub mod avatar_outline_setting;
 pub mod bloom_settings;
 pub mod cache_size;
@@ -61,6 +64,7 @@ pub mod dof_setting;
 pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
+pub mod language_setting;
 pub mod load_distance;
 pub mod max_avatars;
 pub mod max_downloads;
@@ -163,6 +167,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<OobSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<CelShadingSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarOutlineSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<AvatarGhostsSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AaSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AmbientSetting>(app, &mut settings, &mut schedule, &config);
         if is_fullscreen_available() {
@@ -192,6 +197,8 @@ impl Plugin for SettingBridgePlugin {
         add_int_setting::<AvatarVolumeSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<DmPrivacy>(app, &mut settings, &mut schedule, &config);
+        app.init_resource::<PlayerLanguage>();
+        add_enum_setting::<LanguageSetting>(app, &mut settings, &mut schedule, &config);
 
         add_enum_setting::<ConstrainUiSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<WalkSpeedSetting>(app, &mut settings, &mut schedule, &config);

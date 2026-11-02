@@ -44,7 +44,7 @@ pub struct SegmentEventCommonExplorerFields {
     pub session_id: String,
     // Explorer’s release used.
     pub renderer_version: String,
-    // `prod` or `dev`, the Segment source this run reports to (`segment_system::environment`).
+    // `prod` or `dev` (`segment_system::environment`); the data stack filters on it.
     pub environment: String,
     // The landing page's Segment anonymous id, handed over by the host so the warehouse joins
     // this session to the web visit that led to it (as the launcher does for the desktop client).

@@ -13,8 +13,10 @@ const BLOCKED_USERS_DEFAULT_LIMIT: i64 = 200;
 const BLOCKED_USERS_MAX_LIMIT: i64 = 200;
 const MAX_PAGINATION_OFFSET: i64 = 100_000;
 
-pub(super) const FRIENDSHIP_RATE_LIMIT_MESSAGE: &str =
+pub(crate) const FRIENDSHIP_RATE_LIMIT_MESSAGE: &str =
     "Too many friendship or block actions. Please try again later";
+/// Characters (code points) a friendship request message may carry.
+pub(crate) const FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH: usize = 256;
 
 /// The errors that reach the client as a `RemoteError` (a transport-level
 /// refusal); every application outcome travels inside the response `oneof`.
@@ -29,6 +31,62 @@ pub enum SocialError {
     WritesDisabled(std::borrow::Cow<'static, str>),
 }
 
+/// Why an operation the RPC procedure and its HTTP route share (upstream's
+/// one logic component behind both transports) did not happen. The kind is
+/// the status upstream's HTTP error middlewares answer (`friends-errors.ts`,
+/// `voice-chats-errors.ts`: 400, 403, 404, 409, 429); each procedure maps it
+/// onto its own response `oneof`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    Invalid(String),
+    Forbidden(String),
+    NotFound(String),
+    Conflict(String),
+    RateLimited(String),
+    /// A failure the procedure answers inside its `oneof`; the detail is
+    /// logged, never sent.
+    Internal(String),
+    /// A database or voice-runtime error raised with `?`: the procedure
+    /// answers it as a dcl-rpc remote error (`SocialError::Internal`).
+    Failed(String),
+}
+
+impl Refusal {
+    pub fn message(&self) -> &str {
+        match self {
+            Refusal::Invalid(m)
+            | Refusal::Forbidden(m)
+            | Refusal::NotFound(m)
+            | Refusal::Conflict(m)
+            | Refusal::RateLimited(m)
+            | Refusal::Internal(m)
+            | Refusal::Failed(m) => m,
+        }
+    }
+}
+
+/// The domain gates' `?` (a database error inside them).
+impl From<SocialError> for Refusal {
+    fn from(e: SocialError) -> Self {
+        Refusal::Failed(e.to_string())
+    }
+}
+
+impl From<crate::rpc::db::DbError> for Refusal {
+    fn from(e: crate::rpc::db::DbError) -> Self {
+        Refusal::Failed(e.to_string())
+    }
+}
+
+impl From<crate::comms::gatekeeper::voice::rooms::VoiceUnavailable> for Refusal {
+    fn from(e: crate::comms::gatekeeper::voice::rooms::VoiceUnavailable) -> Self {
+        Refusal::Failed(e.to_string())
+    }
+}
+
+/// What every `Internal` refusal says on the wire, whichever procedure failed.
+pub(crate) const INTERNAL_SERVER_ERROR: &str = "Internal Server Error";
+
 impl RemoteErrorResponse for SocialError {
     fn error_code(&self) -> u32 {
         match self {
@@ -37,8 +95,15 @@ impl RemoteErrorResponse for SocialError {
             SocialError::WritesDisabled(_) => 503,
         }
     }
+    /// An `Internal` detail (a database or runtime error) is logged, never sent.
     fn error_message(&self) -> String {
-        self.to_string()
+        match self {
+            SocialError::Internal(detail) => {
+                tracing::error!(detail = %detail, "social-rpc internal error");
+                INTERNAL_SERVER_ERROR.to_string()
+            }
+            _ => self.to_string(),
+        }
     }
 }
 
@@ -54,7 +119,7 @@ impl From<crate::comms::gatekeeper::voice::rooms::VoiceUnavailable> for SocialEr
     }
 }
 
-pub(super) fn normalize(addr: &str) -> String {
+pub(crate) fn normalize(addr: &str) -> String {
     addr.trim().to_lowercase()
 }
 

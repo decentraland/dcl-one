@@ -25,7 +25,24 @@ mod private_voice;
 mod settings;
 mod subscriptions;
 
-pub use helpers::SocialError;
+pub(crate) use domain::Action;
+pub use helpers::{Refusal, SocialError};
+
+/// The operations each procedure shares with its HTTP route (`rpc::http`).
+pub(crate) mod ops {
+    pub(crate) use super::blocks::{block, unblock};
+    pub(crate) use super::community_voice::{
+        end_community_voice_chat, join_community_voice_chat, kick_player, mute_speaker,
+        reject_speak_request, request_to_speak, set_speaker, start_community_voice_chat,
+    };
+    pub(crate) use super::friends::{apply_friendship_action, friendship_status};
+    pub(crate) use super::helpers::FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH;
+    pub(crate) use super::private_voice::{
+        accept_private_voice_chat, end_private_voice_chat, incoming_not_found,
+        reject_private_voice_chat, start_private_voice_chat,
+    };
+    pub(crate) use super::settings::{MAX_USER_ADDRESSES, private_messages_settings};
+}
 
 pub const MODULE_NAME: &str = "SocialService";
 
