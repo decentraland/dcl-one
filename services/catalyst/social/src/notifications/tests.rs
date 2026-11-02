@@ -820,7 +820,7 @@ async fn set_email_and_confirm_email_validate_before_touching_the_mailer() {
 }
 
 #[tokio::test]
-async fn opaque_opt_out_ids_work_with_custom_and_generic_plans_on_one_connection() {
+async fn opaque_and_uuid_opt_out_ids_work_with_custom_and_generic_plans_on_one_connection() {
     let Some(pool) = crate::db::scratch::pool(1).await else {
         return;
     };
@@ -862,6 +862,50 @@ async fn opaque_opt_out_ids_work_with_custom_and_generic_plans_on_one_connection
             assert!(
                 !store
                     .delete_opt_out(&address, "community", &scope_id)
+                    .await
+                    .unwrap()
+            );
+        }
+        let community = Uuid::new_v4();
+        let upper = community.to_string().to_uppercase();
+        let canonical = community.to_string();
+        let other = fresh_address();
+        store
+            .create_opt_out(&other, "community", &canonical)
+            .await
+            .unwrap();
+        for _ in 0..8 {
+            store
+                .create_opt_out(&address, "community", &upper)
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .is_opted_out(&address, "community", &canonical)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                store
+                    .is_opted_out(&address, "community", &upper)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                store
+                    .delete_opt_out(&address, "community", &upper)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                !store
+                    .is_opted_out(&address, "community", &canonical)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                store
+                    .is_opted_out(&other, "community", &canonical)
                     .await
                     .unwrap()
             );

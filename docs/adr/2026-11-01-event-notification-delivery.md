@@ -72,6 +72,9 @@ per-type settings and community opt-outs. Community UUID scopes are normalized
 on write and lookup; event and community delivery also recognize existing
 non-canonical UUID scopes. Lookup parameters are parsed in Rust and bound as
 optional UUIDs, preserving opaque legacy scope IDs without unsafe parameter casts.
+UUID spellings accepted by Rust, including `urn:uuid:` prefixes, refer to the
+same canonical community scope. Checks and deletion remain restricted to the
+authenticated caller's address; opaque non-UUID IDs retain exact matching.
 Legacy Explore profile notification
 settings remain a separate contract. Event-only in-app suppression does not
 change unrelated producers. Suppressed event rows are stored as read with a
@@ -88,6 +91,32 @@ Both schedule-write encodings accept moderators or an explicitly trusted
 `edit_any_schedule` grant and observe revocation through the same authority check.
 
 ## Verification and limits
+
+### Monitoring scan deferrals
+
+A successful periodic pass does not prove occurrence discovery completed: scan
+timeouts deliberately preserve the normal delivery cadence. Configure the
+deployment's log alerting to match error-level events from
+`catalyst_social::notifications::events` with
+`operation="event_occurrence_scan"` and `reason="database_timeout"` or
+`reason="budget_exhausted"`. The corresponding messages are
+`event occurrence scan deferred; retaining normal delivery cadence` or
+`event occurrence scan exceeded budget; retaining normal delivery cadence`.
+Group by occurrence `kind` and alert when deferrals persist across three normal
+one-minute passes. Monitor `event intent cleanup deferred` and
+`event intent cleanup exceeded budget` independently; delivery can succeed while
+retention is failing. Alert routing is deployment configuration and is not
+installed by this PR.
+
+On an alert, check database lock waits and statement duration, catalogue size and
+recurrence-list lengths, and the age of unfinished
+`social.event_notification_intents`. Check committed suppression warnings for
+`event_ended` or `reminder_expired` to identify notices that aged out. Restore
+discovery and retention capacity without enabling job backoff for expected scan
+deferrals or delivering expired notices. The rolling catch-up window remains one
+hour; recovery does not replay notices that have already aged out.
+
+### Regression coverage
 
 Regression coverage must include moderator authority on self and other-address
 paths, altered bodies and replay, channel preferences, local audience filtering,

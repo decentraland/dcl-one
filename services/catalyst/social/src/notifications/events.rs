@@ -396,9 +396,16 @@ async fn scan_with_budget(
         while scan_kind(pool, kind, ahead, now).await? == PAGE as u64 {}
         Ok::<_, anyhow::Error>(())
     };
+    within_scan_budget(kind, scan).await
+}
+
+async fn within_scan_budget(
+    kind: &str,
+    scan: impl std::future::Future<Output = anyhow::Result<()>>,
+) -> anyhow::Result<()> {
     match tokio::time::timeout(SCAN_BUDGET, scan).await {
         Ok(Err(error)) if timed_out(&error) => {
-            tracing::error!(%error,kind,"event occurrence scan deferred; retaining normal delivery cadence");
+            tracing::error!(%error,kind,operation="event_occurrence_scan",reason="database_timeout","event occurrence scan deferred; retaining normal delivery cadence");
             Ok(())
         }
         Ok(result) => {
@@ -407,6 +414,8 @@ async fn scan_with_budget(
         Err(_) => {
             tracing::error!(
                 kind,
+                operation = "event_occurrence_scan",
+                reason = "budget_exhausted",
                 "event occurrence scan exceeded budget; retaining normal delivery cadence"
             );
             Ok(())
@@ -471,6 +480,15 @@ pub fn spawn(pool: PgPool, base: String, jobs: &crate::jobs::Jobs) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn client_scan_budget_defers_without_backoff() {
+        let started = tokio::time::Instant::now();
+        within_scan_budget("events_started", std::future::pending())
+            .await
+            .unwrap();
+        assert_eq!(started.elapsed(), SCAN_BUDGET);
+    }
     use crate::explore::events::moderation::{self, AdminPatch, CreateEvent};
 
     const HOST: &str = "0x1111111111111111111111111111111111111111";
@@ -1293,6 +1311,33 @@ mod tests {
         assert_eq!(
             count(pool, &expired_reminder, "events_starts_soon", &address).await,
             0
+        );
+        // A real PostgreSQL lock timeout takes the same observable deferral
+        // path as statement cancellation, without backing off delivery.
+        let lock_event = format!("{prefix}-scan-lock");
+        add_event(pool, &lock_event, &address, now + Span::minutes(10)).await;
+        let mut held = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE social.event_notification_intents IN SHARE MODE")
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        let error = scan_kind(pool, "events_starts_soon", 3600, now)
+            .await
+            .unwrap_err();
+        let database_error = error
+            .downcast_ref::<sqlx::Error>()
+            .unwrap()
+            .as_database_error()
+            .unwrap();
+        assert_eq!(database_error.code().as_deref(), Some("55P03"));
+        scan_with_budget(pool, "events_starts_soon", 3600, now)
+            .await
+            .expect("lock timeout preserves normal cadence");
+        held.rollback().await.unwrap();
+        drain_until_complete(pool, now, &lock_event, 1).await;
+        assert_eq!(
+            count(pool, &lock_event, "events_starts_soon", &address).await,
+            1
         );
     }
 }
