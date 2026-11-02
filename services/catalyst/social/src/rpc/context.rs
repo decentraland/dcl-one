@@ -5,7 +5,7 @@
 
 use crate::comms::gatekeeper::voice::rooms::VoiceRooms;
 use crate::rpc::db::Db;
-use crate::rpc::limits::FriendshipMutationLimiter;
+use crate::rpc::limits::{Admission, FriendshipMutationLimiter};
 use crate::rpc::profiles::Profiles;
 use crate::rpc::proto::v2::{
     CommunityMemberConnectivityUpdate, ConnectivityStatus, FriendConnectivityUpdate,
@@ -46,6 +46,7 @@ pub struct ContextInner {
     pub voice: Arc<dyn VoiceRooms>,
     pub profiles: Profiles,
     friendship_limiter: FriendshipMutationLimiter,
+    admission: Admission,
     identities: DashMap<u32, String>,
     presence: DashMap<String, u32>,
     topology: std::sync::OnceLock<Arc<crate::comms::topology::Topology>>,
@@ -83,6 +84,7 @@ impl Context {
             voice,
             profiles,
             friendship_limiter: FriendshipMutationLimiter::new(),
+            admission: Admission::default(),
             identities: DashMap::new(),
             presence: DashMap::new(),
             topology: std::sync::OnceLock::new(),
@@ -118,6 +120,10 @@ impl Context {
     }
     pub fn friendship_limiter(&self) -> &FriendshipMutationLimiter {
         &self.0.friendship_limiter
+    }
+    /// The per-address socket cap and subscription bucket of both sockets.
+    pub fn admission(&self) -> &Admission {
+        &self.0.admission
     }
 
     /// The identity of a transport is fixed at the handshake; a procedure

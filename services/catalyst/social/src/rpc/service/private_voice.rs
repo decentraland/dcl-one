@@ -1,7 +1,8 @@
 use super::SocialServiceImpl;
+use super::friends::BLOCKED_MESSAGE;
 use super::helpers::{
-    SocialError, internal_err, invalid_req, normalize, start_voice_conflict, start_voice_forbidden,
-    start_voice_internal, start_voice_invalid,
+    Refusal, SocialError, internal_err, invalid_req, normalize, start_voice_conflict,
+    start_voice_forbidden, start_voice_internal, start_voice_invalid,
 };
 use crate::comms::gatekeeper::voice::db::PendingPrivateCall;
 use crate::rpc::context::Context;
@@ -12,6 +13,206 @@ use crate::rpc::pubsub::SocialEvent;
 use uuid::Uuid;
 
 const VOICE_RUNTIME_UNAVAILABLE: &str = "voice runtime unavailable";
+/// Upstream `VoiceChatNotAllowedError`.
+const VOICE_CHAT_NOT_ALLOWED: &str =
+    "The callee or the caller are not accepting voice calls from users that are not friends";
+const BUSY: &str = "One of the users is busy calling someone else";
+
+/// Upstream `VoiceChatNotFoundError`.
+pub(crate) fn call_not_found(id: impl std::fmt::Display) -> Refusal {
+    Refusal::NotFound(format!("The voice chat with id {id} was not found"))
+}
+
+/// Upstream `IncomingVoiceChatNotFoundError`.
+pub(crate) fn incoming_not_found(address: &str) -> String {
+    format!("The incoming voice chat for the address {address} was not found")
+}
+
+/// The gates run in the old precedence, all from one read: self-call,
+/// block, the privacy settings (`all` on both sides or friends), either
+/// party in a community room, busy, either party in a private room; then the
+/// locked insert, and the callee is told REQUESTED. With no voice runtime the
+/// call is refused up front rather than rung with nothing to connect to.
+/// Shared by the procedure and `POST /v1/private-voice-chats`.
+pub(crate) async fn start_private_voice_chat(
+    ctx: &Context,
+    me: &str,
+    callee: &str,
+) -> Result<Uuid, Refusal> {
+    if callee == me {
+        return Err(Refusal::Forbidden(
+            "Cannot start a private voice chat with yourself".into(),
+        ));
+    }
+    if !ctx.voice().is_configured() {
+        return Err(Refusal::Internal(VOICE_RUNTIME_UNAVAILABLE.into()));
+    }
+    let expiration_ms = ctx.voice_settings().private_voice_chat_expiration_ms;
+    let pre = ctx
+        .db()
+        .private_voice_preflight(me, callee, expiration_ms)
+        .await?;
+    if pre.blocked {
+        return Err(Refusal::Forbidden(BLOCKED_MESSAGE.into()));
+    }
+    if (pre.callee_privacy != "all" || pre.caller_privacy != "all") && !pre.friends.unwrap_or(false)
+    {
+        return Err(Refusal::Forbidden(VOICE_CHAT_NOT_ALLOWED.into()));
+    }
+    // Community-call presence is disclosed only once block and privacy allow the call.
+    if pre.caller_in_community_voice {
+        return Err(Refusal::Conflict(
+            "Cannot start private voice chat while in a community voice chat".into(),
+        ));
+    }
+    if pre.callee_in_community_voice {
+        return Err(Refusal::Conflict(
+            "Cannot start private voice chat: the callee is in a community voice chat".into(),
+        ));
+    }
+    if pre.busy {
+        return Err(Refusal::Conflict(BUSY.into()));
+    }
+    for (in_voice, address) in [(pre.callee_in_voice, callee), (pre.caller_in_voice, me)] {
+        if in_voice {
+            return Err(Refusal::Conflict(format!(
+                "One of the users is already in a voice chat: {address}"
+            )));
+        }
+    }
+
+    let outcome = ctx
+        .voice()
+        .create_pending_private_call(me, callee, expiration_ms)
+        .await
+        .map_err(|e| Refusal::Internal(e.to_string()))?;
+    if outcome.started.is_some() {
+        ctx.db()
+            .note_private_voice_due(chrono::Utc::now().timestamp_millis() + expiration_ms);
+    }
+    for expired in &outcome.expired {
+        ctx.publish_private_voice(expired, PrivateVoiceChatStatus::VoiceChatExpired);
+    }
+    let Some(id) = outcome.started else {
+        return Err(Refusal::Conflict(BUSY.into()));
+    };
+    ctx.pubsub().publish(
+        callee,
+        SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+            call_id: id.to_string(),
+            status: PrivateVoiceChatStatus::VoiceChatRequested as i32,
+            caller: Some(User {
+                address: me.to_string(),
+            }),
+            callee: Some(User {
+                address: callee.to_string(),
+            }),
+            credentials: None,
+        }),
+    );
+    Ok(id)
+}
+
+/// Only the callee accepts; the grants come from the voice runtime (a
+/// missing one is an explicit internal error, never an empty URL) and the
+/// caller receives ACCEPTED with their own grant. Answers the callee's URL.
+pub(crate) async fn accept_private_voice_chat(
+    ctx: &Context,
+    me: &str,
+    id: Uuid,
+) -> Result<String, Refusal> {
+    let Some(chat) = ctx.db().get_private_voice_chat(id).await? else {
+        return Err(call_not_found(id));
+    };
+    if chat.callee_address != me {
+        return Err(Refusal::Forbidden(VOICE_CHAT_NOT_ALLOWED.into()));
+    }
+    let urls = ctx
+        .voice()
+        .private_voice_credentials(id, &chat.callee_address, &chat.caller_address)
+        .await
+        .map_err(|e| Refusal::Internal(format!("private voice credentials: {e}")))?;
+    let url_of = |address: &str| {
+        urls.get(&address.to_lowercase())
+            .cloned()
+            .unwrap_or_default()
+    };
+    ctx.pubsub().publish(
+        &chat.caller_address,
+        SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+            call_id: id.to_string(),
+            status: PrivateVoiceChatStatus::VoiceChatAccepted as i32,
+            caller: Some(User {
+                address: chat.caller_address.clone(),
+            }),
+            callee: Some(User {
+                address: chat.callee_address.clone(),
+            }),
+            credentials: Some(PrivateVoiceChatCredentials {
+                connection_url: url_of(&chat.caller_address),
+            }),
+        }),
+    );
+    Ok(url_of(&chat.callee_address))
+}
+
+/// Deletes the pending call and tells the caller. Only the callee rejects,
+/// as upstream (`voice.ts:156-157`); anyone else, and an accepted call, get
+/// the unknown call's not-found and nothing changes.
+pub(crate) async fn reject_private_voice_chat(
+    ctx: &Context,
+    me: &str,
+    id: Uuid,
+) -> Result<(), Refusal> {
+    let call = PendingPrivateCall::Rejected {
+        id,
+        callee: me.to_string(),
+    };
+    let Some(chat) = ctx.voice().finish_pending_private_call(call).await? else {
+        return Err(call_not_found(id));
+    };
+    ctx.pubsub().publish(
+        &chat.caller_address,
+        SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+            call_id: id.to_string(),
+            status: PrivateVoiceChatStatus::VoiceChatRejected as i32,
+            caller: Some(User {
+                address: chat.caller_address.clone(),
+            }),
+            callee: Some(User {
+                address: chat.callee_address.clone(),
+            }),
+            credentials: None,
+        }),
+    );
+    Ok(())
+}
+
+/// Ends the call and tells both parties. Only a party ends it, as upstream
+/// (`voice.ts:189-191`); anyone else gets the unknown call's not-found and
+/// nothing changes. An accepted call ends through the voice runtime, which
+/// deletes the row and then the room; a pending one has no room.
+pub(crate) async fn end_private_voice_chat(
+    ctx: &Context,
+    me: &str,
+    id: Uuid,
+) -> Result<(), Refusal> {
+    let chat = match ctx.voice().end_private_voice_chat(Some(id), me).await? {
+        Some(chat) => chat,
+        None => {
+            let pending = PendingPrivateCall::Ended {
+                id,
+                party: me.to_string(),
+            };
+            ctx.voice()
+                .finish_pending_private_call(pending)
+                .await?
+                .ok_or_else(|| call_not_found(id))?
+        }
+    };
+    ctx.publish_private_voice(&chat, PrivateVoiceChatStatus::VoiceChatEnded);
+    Ok(())
+}
 
 impl SocialServiceImpl {
     /// The gates run in the old precedence, all from one read: self-call,
@@ -33,101 +234,19 @@ impl SocialServiceImpl {
                 ));
             }
         };
-        let ctx = &context.server_context;
-        if callee == me {
-            return Ok(start_voice_forbidden(
-                "Cannot start a private voice chat with yourself",
-            ));
-        }
-        if !ctx.voice().is_configured() {
-            return Ok(start_voice_internal(VOICE_RUNTIME_UNAVAILABLE));
-        }
-        let expiration_ms = ctx.voice_settings().private_voice_chat_expiration_ms;
-        let pre = ctx
-            .db()
-            .private_voice_preflight(&me, &callee, expiration_ms)
-            .await?;
-        if pre.blocked {
-            return Ok(start_voice_forbidden(
-                "This action is not allowed because either you blocked this user or this user blocked you",
-            ));
-        }
-        if (pre.callee_privacy != "all" || pre.caller_privacy != "all")
-            && !pre.friends.unwrap_or(false)
-        {
-            return Ok(start_voice_forbidden(
-                "The callee or the caller are not accepting voice calls from users that are not friends",
-            ));
-        }
-        // Community-call presence is disclosed only once block and privacy allow the call.
-        if pre.caller_in_community_voice {
-            return Ok(start_voice_conflict(
-                "Cannot start private voice chat while in a community voice chat",
-            ));
-        }
-        if pre.callee_in_community_voice {
-            return Ok(start_voice_conflict(
-                "Cannot start private voice chat: the callee is in a community voice chat",
-            ));
-        }
-        if pre.busy {
-            return Ok(start_voice_conflict(
-                "One of the users is busy calling someone else",
-            ));
-        }
-        if pre.callee_in_voice {
-            return Ok(start_voice_conflict(format!(
-                "One of the users is already in a voice chat: {callee}"
-            )));
-        }
-        if pre.caller_in_voice {
-            return Ok(start_voice_conflict(format!(
-                "One of the users is already in a voice chat: {me}"
-            )));
-        }
-
-        let outcome = match ctx
-            .voice()
-            .create_pending_private_call(&me, &callee, expiration_ms)
-            .await
-        {
-            Ok(o) => o,
-            Err(e) => return Ok(start_voice_internal(e.to_string())),
-        };
-        if outcome.started.is_some() {
-            ctx.db()
-                .note_private_voice_due(chrono::Utc::now().timestamp_millis() + expiration_ms);
-        }
-        for expired in &outcome.expired {
-            ctx.publish_private_voice(expired, PrivateVoiceChatStatus::VoiceChatExpired);
-        }
-        match outcome.started {
-            Some(id) => {
-                ctx.pubsub().publish(
-                    &callee,
-                    SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+        match start_private_voice_chat(&context.server_context, &me, &callee).await {
+            Ok(id) => Ok(StartPrivateVoiceChatResponse {
+                response: Some(start_private_voice_chat_response::Response::Ok(
+                    start_private_voice_chat_response::Ok {
                         call_id: id.to_string(),
-                        status: PrivateVoiceChatStatus::VoiceChatRequested as i32,
-                        caller: Some(User {
-                            address: me.clone(),
-                        }),
-                        callee: Some(User {
-                            address: callee.clone(),
-                        }),
-                        credentials: None,
-                    }),
-                );
-                Ok(StartPrivateVoiceChatResponse {
-                    response: Some(start_private_voice_chat_response::Response::Ok(
-                        start_private_voice_chat_response::Ok {
-                            call_id: id.to_string(),
-                        },
-                    )),
-                })
-            }
-            None => Ok(start_voice_conflict(
-                "One of the users is busy calling someone else",
-            )),
+                    },
+                )),
+            }),
+            Err(Refusal::Forbidden(m)) => Ok(start_voice_forbidden(m)),
+            Err(Refusal::Conflict(m)) => Ok(start_voice_conflict(m)),
+            Err(Refusal::Invalid(m)) => Ok(start_voice_invalid(m)),
+            Err(Refusal::Failed(m)) => Err(SocialError::Internal(m)),
+            Err(refusal) => Ok(start_voice_internal(refusal.message())),
         }
     }
 
@@ -149,77 +268,30 @@ impl SocialServiceImpl {
                 ),
             });
         };
-        let ctx = &context.server_context;
-        let Some(chat) = ctx.db().get_private_voice_chat(id).await? else {
-            return Ok(AcceptPrivateVoiceChatResponse {
-                response: Some(accept_private_voice_chat_response::Response::NotFound(
-                    NotFoundError {
-                        message: Some("call not found".into()),
-                    },
-                )),
-            });
-        };
-        if chat.callee_address != me {
-            return Ok(AcceptPrivateVoiceChatResponse {
-                response: Some(
-                    accept_private_voice_chat_response::Response::ForbiddenError(ForbiddenError {
-                        message: Some("not the callee".into()),
-                    }),
-                ),
-            });
-        }
-
-        let urls = match ctx
-            .voice()
-            .private_voice_credentials(id, &chat.callee_address, &chat.caller_address)
-            .await
-        {
-            Ok(urls) => urls,
-            Err(e) => {
-                return Ok(AcceptPrivateVoiceChatResponse {
-                    response: Some(
-                        accept_private_voice_chat_response::Response::InternalServerError(
-                            internal_err(format!("private voice credentials: {e}")),
-                        ),
-                    ),
-                });
-            }
-        };
-        let caller_url = urls
-            .get(&chat.caller_address.to_lowercase())
-            .cloned()
-            .unwrap_or_default();
-        let callee_url = urls
-            .get(&chat.callee_address.to_lowercase())
-            .cloned()
-            .unwrap_or_default();
-
-        ctx.pubsub().publish(
-            &chat.caller_address,
-            SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
-                call_id: request.call_id.clone(),
-                status: PrivateVoiceChatStatus::VoiceChatAccepted as i32,
-                caller: Some(User {
-                    address: chat.caller_address.clone(),
-                }),
-                callee: Some(User {
-                    address: chat.callee_address.clone(),
-                }),
-                credentials: Some(PrivateVoiceChatCredentials {
-                    connection_url: caller_url,
-                }),
-            }),
-        );
-
-        Ok(AcceptPrivateVoiceChatResponse {
-            response: Some(accept_private_voice_chat_response::Response::Ok(
+        let response = match accept_private_voice_chat(&context.server_context, &me, id).await {
+            Ok(connection_url) => accept_private_voice_chat_response::Response::Ok(
                 accept_private_voice_chat_response::Ok {
                     call_id: request.call_id,
-                    credentials: Some(PrivateVoiceChatCredentials {
-                        connection_url: callee_url,
-                    }),
+                    credentials: Some(PrivateVoiceChatCredentials { connection_url }),
                 },
-            )),
+            ),
+            Err(Refusal::NotFound(m)) => {
+                accept_private_voice_chat_response::Response::NotFound(NotFoundError {
+                    message: Some(m),
+                })
+            }
+            Err(Refusal::Forbidden(m)) => {
+                accept_private_voice_chat_response::Response::ForbiddenError(ForbiddenError {
+                    message: Some(m),
+                })
+            }
+            Err(Refusal::Failed(m)) => return Err(SocialError::Internal(m)),
+            Err(refusal) => accept_private_voice_chat_response::Response::InternalServerError(
+                internal_err(refusal.message()),
+            ),
+        };
+        Ok(AcceptPrivateVoiceChatResponse {
+            response: Some(response),
         })
     }
 
@@ -241,40 +313,21 @@ impl SocialServiceImpl {
                 ),
             });
         };
-        let ctx = &context.server_context;
-        let Some(chat) = ctx
-            .voice()
-            .finish_pending_private_call(PendingPrivateCall::Rejected { id, callee: me })
-            .await?
-        else {
-            return Ok(RejectPrivateVoiceChatResponse {
-                response: Some(reject_private_voice_chat_response::Response::NotFound(
-                    NotFoundError {
-                        message: Some("call not found".into()),
-                    },
-                )),
-            });
-        };
-        ctx.pubsub().publish(
-            &chat.caller_address,
-            SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
-                call_id: request.call_id.clone(),
-                status: PrivateVoiceChatStatus::VoiceChatRejected as i32,
-                caller: Some(User {
-                    address: chat.caller_address.clone(),
-                }),
-                callee: Some(User {
-                    address: chat.callee_address.clone(),
-                }),
-                credentials: None,
-            }),
-        );
-        Ok(RejectPrivateVoiceChatResponse {
-            response: Some(reject_private_voice_chat_response::Response::Ok(
+        let response = match reject_private_voice_chat(&context.server_context, &me, id).await {
+            Ok(()) => reject_private_voice_chat_response::Response::Ok(
                 reject_private_voice_chat_response::Ok {
                     call_id: request.call_id,
                 },
-            )),
+            ),
+            Err(Refusal::NotFound(m)) => {
+                reject_private_voice_chat_response::Response::NotFound(NotFoundError {
+                    message: Some(m),
+                })
+            }
+            Err(refusal) => return Err(SocialError::Internal(refusal.message().to_string())),
+        };
+        Ok(RejectPrivateVoiceChatResponse {
+            response: Some(response),
         })
     }
 
@@ -297,32 +350,21 @@ impl SocialServiceImpl {
                 )),
             });
         };
-        let ctx = &context.server_context;
-        let chat = match ctx.voice().end_private_voice_chat(Some(id), &me).await? {
-            Some(chat) => chat,
-            None => {
-                let pending = PendingPrivateCall::Ended { id, party: me };
-                match ctx.voice().finish_pending_private_call(pending).await? {
-                    Some(chat) => chat,
-                    None => {
-                        return Ok(EndPrivateVoiceChatResponse {
-                            response: Some(end_private_voice_chat_response::Response::NotFound(
-                                NotFoundError {
-                                    message: Some("call not found".into()),
-                                },
-                            )),
-                        });
-                    }
-                }
-            }
-        };
-        ctx.publish_private_voice(&chat, PrivateVoiceChatStatus::VoiceChatEnded);
-        Ok(EndPrivateVoiceChatResponse {
-            response: Some(end_private_voice_chat_response::Response::Ok(
-                end_private_voice_chat_response::Ok {
+        let response = match end_private_voice_chat(&context.server_context, &me, id).await {
+            Ok(()) => {
+                end_private_voice_chat_response::Response::Ok(end_private_voice_chat_response::Ok {
                     call_id: request.call_id,
-                },
-            )),
+                })
+            }
+            Err(Refusal::NotFound(m)) => {
+                end_private_voice_chat_response::Response::NotFound(NotFoundError {
+                    message: Some(m),
+                })
+            }
+            Err(refusal) => return Err(SocialError::Internal(refusal.message().to_string())),
+        };
+        Ok(EndPrivateVoiceChatResponse {
+            response: Some(response),
         })
     }
 
@@ -353,7 +395,7 @@ impl SocialServiceImpl {
                 response: Some(
                     get_incoming_private_voice_chat_request_response::Response::NotFound(
                         NotFoundError {
-                            message: Some("no incoming call".into()),
+                            message: Some(incoming_not_found(&me)),
                         },
                     ),
                 ),

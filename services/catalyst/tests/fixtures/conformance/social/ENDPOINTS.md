@@ -11,14 +11,16 @@ directory per service with the raw response (`<name>.raw.json` +
 
 Sources: social-api and rpc-social-service-ea are read from a fresh clone of
 `github.com/decentraland/social-service-ea` at the pinned revision below (committed
-2026-10-21; production's rpc-host `/status` reported the same `commitHash` on
-2026-10-26). The other services were read at the revision each checkout had on
+2026-10-30). The captured fixtures were recorded against production running
+`fb3dcb80f8cac53485696a5f7c94b720b20ae6c9` (the rpc-host `/status` `commitHash` on
+2026-10-26); the routes that revision lacks (the friends, blocks, settings and voice
+HTTP routes and `/v1/stream`, upstream #503-#507) have no capture. The other services were read at the revision each checkout had on
 2026-09-25 (not pinned by local checkout; the SHA is what
 `git -c safe.directory='*' -C <repo> show HEAD:<path>` resolved to):
 
 | service | source |
 | --- | --- |
-| social-api, rpc-social-service-ea | `github.com/decentraland/social-service-ea` @ `fb3dcb80f8cac53485696a5f7c94b720b20ae6c9`: `src/controllers/routes/http.routes.ts` (social-api, the API http-server), `src/controllers/routes/uws.routes.ts` and `src/controllers/handlers/uws/{status,privacy,ws}-handler.ts` (rpc host, the uWS server), `src/components.ts` (both servers and the http-server status checks), `docs/openapi.yaml` |
+| social-api, rpc-social-service-ea | `github.com/decentraland/social-service-ea` @ `b6b2cefefdf727b2ed47ddb887e77d226a41eea6`: `src/controllers/routes/http.routes.ts` (social-api, the API http-server), `src/controllers/handlers/http/*` and `schemas.ts`, `src/controllers/middlewares/{friends,voice-chats}-errors.ts`, `src/controllers/routes/uws.routes.ts` and `src/controllers/handlers/uws/{status,privacy,ws,stream-ws}-handler.ts` (rpc host, the uWS server), `src/adapters/stream-sessions/`, `src/logic/ws-admission/`, `src/components.ts` (both servers and the http-server status checks), `docs/openapi.yaml`, `docs/websocket-stream-protocol.md` |
 | comms-gatekeeper | `github.com-decentraland/comms-gatekeeper` @ `105df71d2ff434e6d9a0c3385494dd7367158abd`: `src/controllers/routes.ts`, `src/logic/utils.ts` (metadata keys), `docs/openapi.yaml` |
 | notifications | `github.com-decentraland/notifications-workers` @ `0f113fba0bfc33856b8e184474b99e9c28046370`: `inbox/src/controllers/routes.ts`, `docs/openapi.yaml` |
 | badges | no pinned upstream checkout recorded; `src/social/badges/mod.rs` is a local route inventory, not external evidence |
@@ -73,6 +75,21 @@ token or an operator role, is listed as not capturable.
 | GET | `/v2/members/{address}/requests` | signed | shape only | `member-requests-v2-unauth` |
 | GET | `/v2/communities/{id}/posts` | | yes | `community-posts-v2` |
 | OPTIONS | any | CORS preflight | yes | `preflight-communities` |
+| GET | `/v2/friends` | `limit`, `offset`; signed | no capture (#504) | local `social/src/rpc/http.rs:42`, `:259` |
+| DELETE | `/v1/friends/{address}` | signed | no: write | local `social/src/rpc/http.rs:43`, `:452` (the path parameter is named `{peer}`, as the local `/v1/friends/{peer}/messages`) |
+| GET | `/v2/users/{address}/mutual-friends` | `limit`, `offset`; signed | no capture (#504) | local `social/src/rpc/http.rs:44`, `:283` |
+| GET | `/v1/users/{address}/friendship-status` | signed | no capture (#504) | local `social/src/rpc/http.rs:48`, `:310` |
+| GET | `/v2/friendship-requests` | `direction` `received`/`sent`, `limit`, `offset`; signed | no capture (#504) | local `social/src/rpc/http.rs:52`, `:325` |
+| POST | `/v1/friendship-requests` | `{address, message?}`; signed | no: write | local `social/src/rpc/http.rs:53`, `:375` |
+| PATCH | `/v1/friendship-requests/{address}` | `{intention: accepted\|rejected\|cancelled}`; signed | no: write | local `social/src/rpc/http.rs:54`, `:414` |
+| GET | `/v2/blocks` | `limit`, `offset`; signed | no capture (#505) | local `social/src/rpc/http.rs:58`, `:474` |
+| POST | `/v1/blocks`; DELETE `/v1/blocks/{address}` | `{address}`; signed | no: write | local `social/src/rpc/http.rs:59-60`, `:498`, `:517` |
+| GET | `/v1/blocking-status` | signed | no capture (#505) | local `social/src/rpc/http.rs:61`, `:535` |
+| GET, PATCH | `/v1/social-settings` | PATCH body: at least one of the three settings; signed | GET no capture, PATCH no: write (#506) | local `social/src/rpc/http.rs:62`, `:569`, `:586` |
+| GET | `/v1/private-messages-settings` | `addresses` (repeated, at most 50); signed | no capture (#506) | local `social/src/rpc/http.rs:66`, `:624` |
+| POST | `/v1/private-voice-chats`; PATCH/DELETE `/v1/private-voice-chats/{callId}` | `{calleeAddress}`, `{intention: accepted\|rejected}`; signed | no: write | local `social/src/rpc/http.rs:70`, `:75`, `:661`, `:707`, `:739` |
+| GET | `/v1/private-voice-chats/incoming` | signed | no capture (#507) | local `social/src/rpc/http.rs:71`, `:687` |
+| POST | `/v1/community-voice-chats`; DELETE `/v1/community-voice-chats/{communityId}`; POST `.../participants`, DELETE `.../participants/{address}`; PUT/PATCH/DELETE `.../speakers/{address}`; POST `.../speak-requests`, DELETE `.../speak-requests/{address}` | signed | no: write | local `social/src/rpc/http.rs:79-104`, `:757-905` |
 | GET | `/health/live`, `/health/ready`, `/health/startup` | `@dcl/http-server` status checks (`src/components.ts`) | yes | `health-live` (200 `alive`, `text/plain`), `health-ready`, `health-startup` (200 `{"details":{"httpServer":{"status":"pass"}},"status":"pass"}`, `application/health+json`) |
 | GET | unknown path | | yes | `unknown-path-404` |
 
@@ -80,6 +97,37 @@ Local routes with no production counterpart on this host, not captured:
 `PATCH /v1/communities/{id}/posts/{postId}`, `/v1/friends`,
 `/v1/friends/{peer}/messages`, `/v1/admin/communities[...]`,
 `/social/communities/{id}/raw-thumbnail.png`, `/federation/communities/*`.
+
+### The social RPC's HTTP twins (#504-#507)
+
+These routes answer from the same operations as their RPC procedures
+(`social/src/rpc/service/mod.rs` `ops`), so they write the same rows and publish
+the same updates; `social/src/rpc/tests/social_api.rs` covers each route, the
+signed-fetch gate, the body and path checks and a route/procedure parity case.
+Refusals render `{ error, message }`: 400 `Bad request` for the path and body
+checks with upstream's messages (`Invalid address`, `You cannot block yourself`,
+`direction must be one of: received, sent`, `At most 50 addresses can be
+requested`, `Invalid callId`, ...), 403 `Forbidden`, 404 `Not Found`, 409
+`Conflict` and 429 `Too Many Requests` as upstream's `friends-errors.ts` and
+`voice-chats-errors.ts` map them (local `social/src/rpc/http.rs:130`,
+`social/src/communities/http.rs:193`). Open differences:
+
+- A body that fails the schema answers 400 `{ error: "Bad request", message }`
+  with an AJV-style message (local `social/src/rpc/http.rs:198`); the shape
+  `@dcl/schema-validator-component` answers is not in the pinned source and is
+  not verified.
+- The refusal messages that come from the shared operations are the local
+  procedures' where those differ from upstream's (for example the community
+  voice gates' `requires moderator or owner role`, `not a community member`;
+  `RPC.md` lists them).
+- A friendship request's `createdAt` is the action's time, as the procedure's
+  `accepted.created_at` (upstream: the friendship row's `created_at`, upstream
+  `src/logic/friends/component.ts:552`).
+- `PATCH /v1/social-settings` writes the row only: local Comms Gatekeeper reads
+  the same table, so there is no remote privacy sync to order.
+- A non-`DELETE` method on `/v1/community-voice-chats/active` answers 405 from
+  the listing route, where upstream would treat `active` as a community id.
+- `docs/openapi.yaml`'s new paths are not in the served `/social-api/openapi.json`.
 
 ### Community writes and notifications (read at `social-service-ea` @ `b6b2cef`)
 
@@ -99,7 +147,7 @@ upstream source (paths below are in `decentraland/social-service-ea` at
 | `GET /v1/community-voice-chats/active`: a non-member's room carries the positions and worlds of the community's places and is listed only when it has one; a member's carries none; a community that bans the caller is not listed | `src/logic/community-voice/community-voice.ts` `getActiveCommunityVoiceChatsForUser`, `src/utils/places.ts` | `social/src/communities/voice.rs:20`, `queries.rs:1225`, `places.rs:126` | `a_non_member_sees_a_room_only_through_its_places_and_never_when_banned`, `tests.rs` `voice_status_derives_from_the_presence_rows` |
 | bans rows: `bannedAt` with milliseconds and `Z`; v1 and v2 carry the caller's `friendshipStatus` | `communities-db.ts` `getBannedMembers`, `src/logic/community/utils.ts` `mapMembersWithProfiles` | `social/src/communities/dto.rs:266`, `members.rs:318` | `ban_rows_carry_millisecond_banned_at_and_the_friendship_status` |
 | `isHostingLiveEvent` on the signed `GET /v1/communities/{id}` and `/v2/communities/{id}` (absent from the public read), `false` on create; read from explore's events (`community_id`, live list) in process | `src/logic/community/events.ts` `isCurrentlyHostingEvents`, `communities.ts` `getCommunity` | `social/src/communities/communities.rs:369`, `:458`, `:467` | `a_signed_detail_says_whether_the_community_hosts_a_live_event` |
-| notification rows (`social.notifications`, an opted-out recipient skipped, one row per type, recipient and event key): `community_request_to_join_received` (owner and moderators), `_request_to_join_accepted`, `_invite_received`, `_post_added` (members but the author), `_member_removed` (kick), `_member_banned` (a member only, keyed per wallet), `_renamed` (every member), `_deleted` (members but the owner), `_deleted_content_violation` (the owner, when a global moderator deletes), `_ownership_transferred` (the new owner), `_voice_chat_started` (online members but the opener) | `src/logic/community/broadcaster.ts`, `requests.ts`, `posts.ts`, `members.ts`, `bans.ts`, `communities.ts`, `src/logic/community-voice/community-voice.ts`; `processor/src/logic/event-parser.ts` | `social/src/notifications/community.rs:108`, `communities/mod.rs:361`, `requests.rs:622`, `posts.rs:260`, `members.rs:653`, `:885`, `communities.rs:894`, `:1041`, `rpc/service/community_voice.rs:92` | `community_events_write_the_notification_rows_upstream_publishes`, `a_global_moderators_deletion_tells_the_owner_of_the_violation`, `the_owner_role_transfers_ownership_to_a_named_member`, `rpc/tests.rs` `community_voice_start_join_and_ban_semantics` |
+| notification rows (`social.notifications`, an opted-out recipient skipped, one row per type, recipient and event key): `community_request_to_join_received` (owner and moderators), `_request_to_join_accepted`, `_invite_received`, `_post_added` (members but the author), `_member_removed` (kick), `_member_banned` (a member only, keyed per wallet), `_renamed` (every member), `_deleted` (members but the owner), `_deleted_content_violation` (the owner, when a global moderator deletes), `_ownership_transferred` (the new owner), `_voice_chat_started` (online members but the opener) | `src/logic/community/broadcaster.ts`, `requests.ts`, `posts.ts`, `members.ts`, `bans.ts`, `communities.ts`, `src/logic/community-voice/community-voice.ts`; `processor/src/logic/event-parser.ts` | `social/src/notifications/community.rs:108`, `communities/mod.rs:361`, `requests.rs:622`, `posts.rs:260`, `members.rs:653`, `:885`, `communities.rs:894`, `:1041`, `rpc/service/community_voice.rs:91` | `community_events_write_the_notification_rows_upstream_publishes`, `a_global_moderators_deletion_tells_the_owner_of_the_violation`, `the_owner_role_transfers_ownership_to_a_named_member`, `rpc/tests.rs` `community_voice_start_join_and_ban_semantics` |
 | `POST /v1/referral-email`: signed; 400 "You must have at least 100 accepted invites to set an email", "Email is required", "Email is too long", "Email contains invalid characters", "Invalid email format", then once per 24 hours ("Email can only be updated once per day. Last update was less than 24 hours ago for user: {address}"); 204, the lower-cased email kept in `social.referral_emails` | `src/logic/referral/referral.ts` `setReferralEmail`, `src/controllers/handlers/http/add-referral-email-handler.ts` | `social/src/communities/referral.rs:249`, `:270`, `schemas/40_social.sql:746` | `referral_email_is_checked_and_kept_once_a_day`, `referral.rs` `referral_emails_are_checked_in_upstreams_order` |
 
 Remaining differences, with their reason:
@@ -142,6 +190,7 @@ of a wrapped handler, `/health/live` and the catch-all carries
 | GET | `/status` | | yes | `status` (`{"version","currentTime","commitHash"}`, all three volatile) |
 | ANY | `/health/live` | | yes | `health-live` (200 `alive`, no content-type) |
 | GET | `/v1/users/{address}/privacy-settings` | address lower-cased | yes | `privacy-settings-unknown` (200 `{"private_messages_privacy":"all"}` for an address without a settings row), `-bad-address` (400 `{"error":"Invalid address"}`) |
+| GET (WS upgrade) | `/v1/stream` | plain JSON stream (#503); the signed-fetch chain as upgrade headers or the first frame, signed over `/v1/stream` | no capture | local `social/src/rpc/mod.rs:263`, `social/src/rpc/stream.rs:136` |
 | GET | `/metrics` | Prometheus | no: operator | |
 | ANY | unknown path | | yes | `unknown-path-404` (404 `{"error":"Not Found"}`, JSON) |
 
@@ -289,8 +338,7 @@ bearer-token and moderator routes beyond their error shape (`POST
 mirror on production and `COMMUNITIES_ADMIN_TOKEN` set (setup and every row:
 `tests/conformance/REPORT.md`, "Node setup" and "social"): social-api 32 of
 53 identical and 21 different, none genuine (`communities-list-only-voice-chat`
-and `community-v2-by-id` differ only in the keys `docs/compatibility.md`
-records as social-api extensions; the rest is the live listing, profiles not
+and `community-v2-by-id` differ only in keys that are social-api extensions; the rest is the live listing, profiles not
 synced, the mirror's empty member, post and place lists, and two messages that
 name the replay's own signer); social-rpc 5 of 5 identical. The member, post
 and place lists of the captured community, which the mirror does not copy, are
