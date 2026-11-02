@@ -1,0 +1,15 @@
+.root { max-width: 1200px; margin: 0 auto; padding: 24px; color: var(--text); background: var(--panel); }
+.navigation, .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 20px 0; }
+.discoveryNavigation { max-width: 1200px; margin: 0 auto; padding: 0 24px; box-sizing: border-box; color: var(--text); background: var(--panel); }
+.link { display: inline-block; color: inherit; text-decoration: underline; margin: 8px 16px 8px 0; }
+.label { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.input { padding: 8px; border: 1px solid var(--ink-45); border-radius: 6px; font: inherit; background: var(--panel); color: var(--text); max-width: 100%; box-sizing: border-box; }
+.button { padding: 8px 16px; border: 1px solid var(--ink-45); border-radius: 999px; margin: 4px; cursor: pointer; font: inherit; background: var(--panel); color: var(--text); }
+.button:disabled { opacity: .5; cursor: default; }
+.button:hover:enabled { border-color: var(--brand); }
+.list { list-style: none; padding: 0; }
+.item { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 16px; border-bottom: 1px solid var(--line); padding: 20px 0; overflow-wrap: anywhere; }
+.image { object-fit: cover; border-radius: 8px; }
+.details { flex: 1; min-width: min(300px, 100%); }
+.editor { border: 1px solid var(--ink-45); border-radius: 12px; padding: 20px; margin-top: 24px; }
+.button:focus-visible, .input:focus-visible, .link:focus-visible { outline: 2px solid var(--brand); outline-offset: 3px; }
