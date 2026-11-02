@@ -221,3 +221,66 @@ async fn private_message_settings_read_per_address_with_friendship() {
     forget(&db, &strict).await;
     cleanup_pair(&db, &me, &friend).await;
 }
+
+/// Upstream `upsert-social-settings.ts` (`decentraland/social-service-ea` at
+/// `b6b2cef`, `:30-41`) and `convertRPCSettingsIntoDBSettings`
+/// (`src/logic/settings/utils.ts:116-143`): an empty payload and a value
+/// outside its enum answer `invalidRequest` with upstream's message, and
+/// nothing is written.
+#[tokio::test]
+async fn an_empty_or_unknown_settings_upsert_is_refused() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let db = Db::new(pool.clone());
+    let ctx = test_ctx(db.clone(), Arc::new(FakeVoiceRooms::new(pool)));
+    let me = addr("ss9");
+    let refused = |payload: UpsertSocialSettingsPayload| {
+        let pctx = procedure_ctx(&ctx, &me, 43);
+        async move {
+            match SocialServiceImpl
+                .upsert_social_settings(payload, pctx)
+                .await
+                .unwrap()
+                .response
+            {
+                Some(upsert_social_settings_response::Response::InvalidRequest(e)) => {
+                    e.message.unwrap_or_default()
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+    };
+    assert_eq!(
+        refused(UpsertSocialSettingsPayload::default()).await,
+        "At least one setting to update must be provided"
+    );
+    assert_eq!(
+        refused(UpsertSocialSettingsPayload {
+            private_messages_privacy: Some(7),
+            ..Default::default()
+        })
+        .await,
+        "Unknown private messages privacy setting"
+    );
+    assert_eq!(
+        refused(UpsertSocialSettingsPayload {
+            private_messages_privacy: Some(PrivateMessagePrivacySetting::All as i32),
+            blocked_users_messages_visibility: Some(9),
+            ..Default::default()
+        })
+        .await,
+        "Unknown blocked users messages visibility setting"
+    );
+    assert_eq!(
+        refused(UpsertSocialSettingsPayload {
+            show_situation_reactions: Some(-1),
+            ..Default::default()
+        })
+        .await,
+        "Unknown situation reactions visibility setting"
+    );
+    assert_eq!(row_count(&db, &me).await, 0, "nothing was written");
+    let (pmp, bvis, sreact) = DEFAULTS;
+    assert_eq!(read(&ctx, &me).await, settings(pmp, bvis, sreact));
+}

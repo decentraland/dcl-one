@@ -10,6 +10,7 @@ use super::helpers::{
 };
 use crate::auth::is_eth_address;
 use crate::rpc::context::{Context, PairScope};
+use crate::rpc::db::record_friendship_action;
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::proto::errors::InvalidFriendshipAction;
 use crate::rpc::proto::v2::*;
@@ -26,7 +27,11 @@ pub(crate) const INVALID_FRIENDSHIP_ACTION_MESSAGE: &str =
 /// `applyFriendshipAction`, behind both `upsertFriendship` variants): the
 /// message bound, the rate limiter, the block check, the state machine, the
 /// write (row + action in one statement), then the update to the other
-/// party. Answers the friendship id and the action's time in milliseconds.
+/// party, the notification of a request or an accept, and, for an accept,
+/// each party's open connectivity stream told the other is online. An
+/// explicit empty message is no message (upstream
+/// `parseUpsertFriendshipRequest`). Answers the friendship id and the
+/// action's time in milliseconds.
 pub(crate) async fn apply_friendship_action(
     ctx: &Context,
     me: &str,
@@ -34,6 +39,7 @@ pub(crate) async fn apply_friendship_action(
     action: Action,
     message: Option<&str>,
 ) -> Result<(uuid::Uuid, i64), Refusal> {
+    let message = message.filter(|m| !m.is_empty());
     if message.is_some_and(|m| m.chars().count() > FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH) {
         return Err(Refusal::Invalid(format!(
             "The friendship request message cannot be longer than {FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH} characters"
@@ -55,21 +61,100 @@ pub(crate) async fn apply_friendship_action(
     if !user_action_valid(me, action, other, last.as_ref()) {
         return Err(Refusal::Conflict(INVALID_FRIENDSHIP_ACTION_MESSAGE.into()));
     }
-    let (id, created_at) = db
-        .apply_friendship_action(
-            me,
-            other,
-            action.as_str(),
-            action.implies_active(),
-            last.as_ref().map(|l| l.friendship_id),
-            message,
-        )
-        .await?;
+    let action_id = uuid::Uuid::new_v4();
+    let (id, created_at) = record_friendship_action(
+        db.pool(),
+        action_id,
+        me,
+        other,
+        action.as_str(),
+        action.implies_active(),
+        last.as_ref().map(|l| l.friendship_id),
+        message,
+    )
+    .await?;
     let created_ms = created_at.timestamp_millis();
-    let my_profile = ctx.profiles().friend_profile(me).await;
-    let update = friendship_update_for(action, me, &id, created_ms, message, my_profile);
-    ctx.pubsub().publish(other, SocialEvent::Friendship(update));
+    ctx.publish_friendship(me, other, |my_profile| {
+        friendship_update_for(action, me, &id, created_ms, message, my_profile)
+    })
+    .await;
+    if matches!(action, Action::Request | Action::Accept) {
+        notify_friendship_action(ctx, action, action_id, me, other, message).await;
+    }
+    if action == Action::Accept {
+        announce_new_friends_online(ctx, me, other).await;
+    }
     Ok((id, created_ms))
+}
+
+/// Upstream `sendNotification` / `notifyFriendshipAction`: the receiver's
+/// `social_service_friendship_request` or `_accepted` row, naming both
+/// parties; skipped when either has no profile, and a failed write is
+/// logged, as the action is already committed.
+async fn notify_friendship_action(
+    ctx: &Context,
+    action: Action,
+    action_id: uuid::Uuid,
+    me: &str,
+    other: &str,
+    message: Option<&str>,
+) {
+    let kind = match action {
+        Action::Request => crate::notifications::friendship::REQUEST,
+        _ => crate::notifications::friendship::ACCEPTED,
+    };
+    let profiles = ctx
+        .profiles()
+        .get_profiles(&[me.to_string(), other.to_string()])
+        .await;
+    let (Some(sender), Some(receiver)) = (profiles.get(me), profiles.get(other)) else {
+        tracing::debug!(sender = %me, receiver = %other, "friendship notification skipped: a profile could not be resolved");
+        return;
+    };
+    fn party<'a>(
+        address: &'a str,
+        info: &'a crate::rpc::profiles::ProfileInfo,
+    ) -> crate::notifications::friendship::Party<'a> {
+        crate::notifications::friendship::Party {
+            address,
+            name: &info.name,
+            profile_image_url: &info.profile_picture_url,
+            has_claimed_name: info.has_claimed_name,
+        }
+    }
+    if let Err(error) = crate::notifications::friendship::publish(
+        ctx.db().pool(),
+        kind,
+        action_id,
+        &party(me, sender),
+        &party(other, receiver),
+        message,
+    )
+    .await
+    {
+        tracing::warn!(%error, %kind, "friendship notification not written");
+    }
+}
+
+/// Upstream `friendshipAcceptedUpdateHandler` (`src/logic/updates.ts`): each
+/// party's connectivity stream hears that the other, now a friend, is
+/// ONLINE, when the other is online.
+async fn announce_new_friends_online(ctx: &Context, me: &str, other: &str) {
+    for (subscriber, friend) in [(other, me), (me, other)] {
+        if !ctx.is_online(friend) {
+            continue;
+        }
+        let Some(profile) = ctx.profiles().existing_friend_profile(friend).await else {
+            continue;
+        };
+        ctx.pubsub().publish(
+            subscriber,
+            SocialEvent::FriendConnectivity(FriendConnectivityUpdate {
+                friend: Some(crate::rpc::profiles::connectivity_profile(profile)),
+                status: ConnectivityStatus::Online as i32,
+            }),
+        );
+    }
 }
 
 /// The status `me` reads for the pair: the last action, or the block rows
@@ -112,7 +197,7 @@ impl SocialServiceImpl {
         let profiles = context
             .server_context
             .profiles()
-            .friend_profiles(&friends)
+            .existing_friend_profiles(&friends)
             .await;
         Ok(PaginatedFriendsProfilesResponse {
             friends: profiles,
@@ -145,7 +230,7 @@ impl SocialServiceImpl {
         let profiles = context
             .server_context
             .profiles()
-            .friend_profiles(&friends)
+            .existing_friend_profiles(&friends)
             .await;
         Ok(PaginatedFriendsProfilesResponse {
             friends: profiles,
@@ -206,57 +291,62 @@ impl SocialServiceImpl {
         }
     }
 
-    /// One friendship action: the rate limiter, the block check, the state
-    /// machine, the write (row + action in one statement), then the update to
-    /// the other party.
+    /// One friendship action (upstream `upsert-friendship.ts`): an unknown
+    /// action is an invalid request, a request to yourself an invalid
+    /// action, an address that is not one an invalid request; then the
+    /// shared operation, and the receiver's profile for the answer. With a
+    /// profile source, a party without a profile answers
+    /// `internalServerError` after the write and the update, as upstream's
+    /// `ProfileNotFoundError`.
     pub(crate) async fn upsert_friendship(
         &self,
         request: UpsertFriendshipPayload,
         context: ProcedureContext<Context>,
     ) -> Result<UpsertFriendshipResponse, SocialError> {
         let me = Self::caller(&context)?;
-
-        let (action, other, message) = match request.action {
-            Some(upsert_friendship_payload::Action::Request(p)) => (
-                Action::Request,
-                p.user.map(|u| normalize(&u.address)).unwrap_or_default(),
-                p.message,
+        let invalid_request = |message: &str| UpsertFriendshipResponse {
+            response: Some(upsert_friendship_response::Response::InvalidRequest(
+                invalid_req(message),
+            )),
+        };
+        let invalid_action = |message: String| UpsertFriendshipResponse {
+            response: Some(
+                upsert_friendship_response::Response::InvalidFriendshipAction(
+                    InvalidFriendshipAction {
+                        message: Some(message),
+                    },
+                ),
             ),
-            Some(upsert_friendship_payload::Action::Accept(p)) => (
-                Action::Accept,
-                p.user.map(|u| normalize(&u.address)).unwrap_or_default(),
-                None,
-            ),
-            Some(upsert_friendship_payload::Action::Reject(p)) => (
-                Action::Reject,
-                p.user.map(|u| normalize(&u.address)).unwrap_or_default(),
-                None,
-            ),
-            Some(upsert_friendship_payload::Action::Delete(p)) => (
-                Action::Delete,
-                p.user.map(|u| normalize(&u.address)).unwrap_or_default(),
-                None,
-            ),
-            Some(upsert_friendship_payload::Action::Cancel(p)) => (
-                Action::Cancel,
-                p.user.map(|u| normalize(&u.address)).unwrap_or_default(),
-                None,
-            ),
-            None => {
-                return Ok(UpsertFriendshipResponse {
-                    response: Some(upsert_friendship_response::Response::InvalidRequest(
-                        invalid_req("missing action"),
-                    )),
-                });
-            }
         };
 
-        if other.is_empty() || other == me {
-            return Ok(UpsertFriendshipResponse {
-                response: Some(upsert_friendship_response::Response::InvalidRequest(
-                    invalid_req("invalid target user"),
-                )),
-            });
+        let target = |user: Option<User>| user.map(|u| normalize(&u.address)).unwrap_or_default();
+        let (action, other, message) = match request.action {
+            Some(upsert_friendship_payload::Action::Request(p)) => {
+                (Action::Request, target(p.user), p.message)
+            }
+            Some(upsert_friendship_payload::Action::Accept(p)) => {
+                (Action::Accept, target(p.user), None)
+            }
+            Some(upsert_friendship_payload::Action::Reject(p)) => {
+                (Action::Reject, target(p.user), None)
+            }
+            Some(upsert_friendship_payload::Action::Delete(p)) => {
+                (Action::Delete, target(p.user), None)
+            }
+            Some(upsert_friendship_payload::Action::Cancel(p)) => {
+                (Action::Cancel, target(p.user), None)
+            }
+            None => return Ok(invalid_request("Unknown message")),
+        };
+        if action == Action::Request && other == me {
+            return Ok(invalid_action(
+                "You cannot send a friendship request to yourself".into(),
+            ));
+        }
+        if !is_eth_address(&other) {
+            return Ok(invalid_request(
+                "Invalid user address in the request payload",
+            ));
         }
 
         let (id, created_ms) = match apply_friendship_action(
@@ -270,32 +360,24 @@ impl SocialServiceImpl {
         {
             Ok(v) => v,
             Err(Refusal::Invalid(m) | Refusal::RateLimited(m)) => {
-                return Ok(UpsertFriendshipResponse {
-                    response: Some(upsert_friendship_response::Response::InvalidRequest(
-                        invalid_req(m),
-                    )),
-                });
+                return Ok(invalid_request(&m));
             }
             Err(Refusal::Internal(m) | Refusal::Failed(m)) => {
                 return Ok(upsert_internal_error(m));
             }
-            Err(refusal) => {
-                return Ok(UpsertFriendshipResponse {
-                    response: Some(
-                        upsert_friendship_response::Response::InvalidFriendshipAction(
-                            InvalidFriendshipAction {
-                                message: Some(refusal.message().to_string()),
-                            },
-                        ),
-                    ),
-                });
-            }
+            Err(refusal) => return Ok(invalid_action(refusal.message().to_string())),
         };
-        let other_profile = context
-            .server_context
-            .profiles()
-            .friend_profile(&other)
-            .await;
+        let profiles = context.server_context.profiles();
+        if profiles.existing_friend_profile(&me).await.is_none() {
+            return Ok(upsert_internal_error(format!(
+                "Profile not found for address {me}"
+            )));
+        }
+        let Some(other_profile) = profiles.existing_friend_profile(&other).await else {
+            return Ok(upsert_internal_error(format!(
+                "Profile not found for address {other}"
+            )));
+        };
 
         Ok(UpsertFriendshipResponse {
             response: Some(upsert_friendship_response::Response::Accepted(
@@ -303,7 +385,9 @@ impl SocialServiceImpl {
                     id: id.to_string(),
                     created_at: created_ms,
                     friend: Some(other_profile),
-                    message,
+                    // upstream `parseFriendshipRequestToFriendshipRequestResponse`:
+                    // `metadata?.message || ''`
+                    message: Some(message.unwrap_or_default()),
                 },
             )),
         })

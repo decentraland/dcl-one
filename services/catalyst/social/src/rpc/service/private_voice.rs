@@ -1,5 +1,4 @@
 use super::SocialServiceImpl;
-use super::friends::BLOCKED_MESSAGE;
 use super::helpers::{
     Refusal, SocialError, internal_err, invalid_req, normalize, start_voice_conflict,
     start_voice_forbidden, start_voice_internal, start_voice_invalid,
@@ -39,10 +38,11 @@ pub(crate) async fn start_private_voice_chat(
     me: &str,
     callee: &str,
 ) -> Result<Uuid, Refusal> {
+    // Upstream `startPrivateVoiceChat` (`src/logic/voice/voice.ts:36-58`): a
+    // self-call, a blocked pair and the privacy refusal are all
+    // `VoiceChatNotAllowedError`.
     if callee == me {
-        return Err(Refusal::Forbidden(
-            "Cannot start a private voice chat with yourself".into(),
-        ));
+        return Err(Refusal::Forbidden(VOICE_CHAT_NOT_ALLOWED.into()));
     }
     if !ctx.voice().is_configured() {
         return Err(Refusal::Internal(VOICE_RUNTIME_UNAVAILABLE.into()));
@@ -53,7 +53,7 @@ pub(crate) async fn start_private_voice_chat(
         .private_voice_preflight(me, callee, expiration_ms)
         .await?;
     if pre.blocked {
-        return Err(Refusal::Forbidden(BLOCKED_MESSAGE.into()));
+        return Err(Refusal::Forbidden(VOICE_CHAT_NOT_ALLOWED.into()));
     }
     if (pre.callee_privacy != "all" || pre.caller_privacy != "all") && !pre.friends.unwrap_or(false)
     {
@@ -210,7 +210,7 @@ pub(crate) async fn end_private_voice_chat(
                 .ok_or_else(|| call_not_found(id))?
         }
     };
-    ctx.publish_private_voice(&chat, PrivateVoiceChatStatus::VoiceChatEnded);
+    ctx.publish_private_voice_ended_by(&chat, me);
     Ok(())
 }
 

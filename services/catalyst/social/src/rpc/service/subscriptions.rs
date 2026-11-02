@@ -236,6 +236,17 @@ impl SocialServiceImpl {
                         let update = match &*event {
                             SocialEvent::TopologyCommunityMember(update, _)
                             | SocialEvent::CommunityMember(update) => update.clone(),
+                            SocialEvent::CommunityMemberStatus(update) => {
+                                // delivered as published: a bounded stream
+                                // sends guarded items only, so its guard
+                                // always admits it
+                                let admit: crate::rpc::drpc::stream_protocol::DeliveryGuard =
+                                    std::sync::Arc::new(|| Box::pin(async { Ok(true) }));
+                                if yielder.yield_guarded(update.clone(), admit).await.is_err() {
+                                    break;
+                                }
+                                continue;
+                            }
                             _ => continue,
                         };
                         let Some(guard) = ctx.event_delivery_guard(&me, &event) else {
@@ -257,11 +268,21 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<ServerStreamResponse<PrivateVoiceChatUpdate>, SocialError> {
         let me = Self::caller(&context)?;
+        // Upstream `parseEmittedUpdateToPrivateVoiceChatUpdate`
+        // (`subscribe-to-private-voice-chat-updates.ts:36-41`): the caller only
+        // on REQUESTED, never the callee.
         Ok(stream_for(
             context.server_context.pubsub(),
             &me,
             |e| match e {
-                SocialEvent::PrivateVoice(u) => Some(u.clone()),
+                SocialEvent::PrivateVoice(u) => Some(PrivateVoiceChatUpdate {
+                    caller: u
+                        .caller
+                        .clone()
+                        .filter(|_| u.status == PrivateVoiceChatStatus::VoiceChatRequested as i32),
+                    callee: None,
+                    ..u.clone()
+                }),
                 _ => None,
             },
         ))

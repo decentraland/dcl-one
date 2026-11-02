@@ -537,7 +537,7 @@ pub async fn add_member(
         Ok(s) => s,
         Err(r) => return r,
     };
-    let gate: Option<(bool, bool, bool)> = try_resp!(map_db(
+    let gate: Option<(bool, bool, bool, bool)> = try_resp!(map_db(
         sqlx::query_as(
             "WITH c AS (SELECT active, private FROM social.communities WHERE id = $1), \
                   b AS (SELECT COALESCE(bool_or(active), FALSE) AS banned FROM social.community_bans \
@@ -545,15 +545,15 @@ pub async fn add_member(
                   ins AS (INSERT INTO social.community_members (community_id, member_address, role) \
                           SELECT $1, $2, 'member' FROM c, b \
                           WHERE c.active AND NOT c.private AND NOT b.banned \
-                          ON CONFLICT (community_id, member_address) DO NOTHING) \
-             SELECT c.active, c.private, b.banned FROM c, b",
+                          ON CONFLICT (community_id, member_address) DO NOTHING RETURNING 1) \
+             SELECT c.active, c.private, b.banned, EXISTS (SELECT 1 FROM ins) FROM c, b",
         )
         .bind(uuid)
         .bind(&signer)
         .fetch_optional(&state.pool)
         .await
     ));
-    let Some((active, private, banned)) = gate else {
+    let Some((active, private, banned, joined)) = gate else {
         return err_json(
             StatusCode::NOT_FOUND,
             format!("Community not found: {uuid}"),
@@ -575,6 +575,10 @@ pub async fn add_member(
             "The user {signer} is banned from community {uuid}"
         ))
         .into_response();
+    }
+    if joined {
+        // upstream `joinCommunity`: a new member is ONLINE to the members
+        state.member_status_changed(uuid, &signer, true).await;
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -643,6 +647,9 @@ pub async fn remove_member(
     if removed {
         tracing::info!(community_id = %uuid, member = %target, "community member left");
         state.member_removed_from_worlds(uuid, &target);
+        // upstream `leaveCommunity` / `kickMember`: OFFLINE to the members
+        // and the wallet that left
+        state.member_status_changed(uuid, &target, false).await;
         if target != signer {
             state
                 .evict_from_private_community_voice(uuid, &target)
@@ -883,6 +890,9 @@ pub async fn ban_member(
     state
         .evict_from_private_community_voice(uuid, &target)
         .await;
+    // upstream `banMember`: OFFLINE to the members and the banned wallet,
+    // a member or not
+    state.member_status_changed(uuid, &target, false).await;
     if removed {
         state.member_removed_from_worlds(uuid, &target);
         // upstream `banMember`: only a member is told, under a key stable

@@ -23,6 +23,7 @@ pub mod email;
 pub mod errors;
 pub mod events;
 pub mod first_wear;
+pub mod friendship;
 pub mod handlers;
 pub mod land_transfers;
 pub(crate) mod moderation;

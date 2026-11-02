@@ -479,11 +479,10 @@ async fn either_party_already_in_a_voice_room_is_a_conflict_naming_it() {
     rig.forget(&[&caller, &callee, &third]).await;
 }
 
-/// The start's refusal messages. Recorded difference (RPC.md, private voice,
-/// "start-private-voice-chat (7)"): upstream answers a self-call and a blocked
-/// pair with the not-friends message (`VoiceChatNotAllowedError`,
-/// `src/logic/voice/voice.ts:36-45`, `src/logic/voice/errors.ts:1-5`);
-/// Catalyst names each refusal.
+/// The start's refusal messages: a self-call and a blocked pair answer the
+/// not-friends message, as upstream's `VoiceChatNotAllowedError`
+/// (`src/logic/voice/voice.ts:36-58`, `src/logic/voice/errors.ts:1-5` at
+/// `b6b2cef`).
 #[tokio::test]
 async fn a_refused_start_says_why() {
     let Some(rig) = Rig::new().await else {
@@ -500,17 +499,71 @@ async fn a_refused_start_says_why() {
         message(rig.start(&caller, " ").await).as_deref(),
         Some("Callee address is missing in the request payload")
     );
+    let not_allowed = Some(
+        "The callee or the caller are not accepting voice calls from users that are not friends",
+    );
     assert_eq!(
         message(rig.start(&caller, &caller).await).as_deref(),
-        Some("Cannot start a private voice chat with yourself")
+        not_allowed
     );
     rig.db.block_user(&caller, &callee).await.unwrap();
     assert_eq!(
         message(rig.start(&caller, &callee).await).as_deref(),
-        Some(
-            "This action is not allowed because either you blocked this user or this user blocked you"
-        )
+        not_allowed
     );
     cleanup_pair(&rig.db, &caller, &callee).await;
     rig.forget(&[&caller, &callee]).await;
+}
+
+/// Upstream `parseEmittedUpdateToPrivateVoiceChatUpdate`
+/// (`subscribe-to-private-voice-chat-updates.ts:36-41` at `b6b2cef`): an
+/// update names the caller on REQUESTED only and never the callee; and an end
+/// tells only the party that did not end it (`src/logic/voice/voice.ts:203-208`).
+#[tokio::test]
+async fn updates_name_the_caller_of_a_request_only_and_an_end_tells_the_other_party() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let (caller, callee) = (addr("pvu1"), addr("pvu2"));
+    let subscribe = |me: &str| {
+        let pctx = procedure_ctx(&rig.ctx, me, rand_id());
+        async move {
+            SocialServiceImpl
+                .subscribe_to_private_voice_chat_updates(pctx)
+                .await
+                .unwrap()
+        }
+    };
+    let (mut to_caller, mut to_callee) = (subscribe(&caller).await, subscribe(&callee).await);
+    let call_id = rig.call(&caller, &callee).await;
+    let requested = next_update(&mut to_callee).await;
+    assert_eq!(
+        requested.status,
+        PrivateVoiceChatStatus::VoiceChatRequested as i32
+    );
+    assert_eq!(requested.caller.map(|u| u.address), Some(caller.clone()));
+    assert!(requested.callee.is_none());
+    assert!(matches!(
+        rig.end(&caller, &call_id).await,
+        end_private_voice_chat_response::Response::Ok(_)
+    ));
+    let ended = next_update(&mut to_callee).await;
+    assert_eq!(ended.status, PrivateVoiceChatStatus::VoiceChatEnded as i32);
+    assert!(
+        ended.caller.is_none() && ended.callee.is_none(),
+        "{ended:?}"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), to_caller.next())
+            .await
+            .is_err(),
+        "the ender hears nothing"
+    );
+    rig.forget(&[&caller, &callee]).await;
+}
+
+fn rand_id() -> u32 {
+    static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(20_000);
+    NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
