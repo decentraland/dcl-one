@@ -5,7 +5,21 @@ use crate::rpc::context::Context;
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::proto::v2::*;
 
-const MAX_USER_ADDRESSES: usize = 50;
+/// Upstream `MAX_PRIVATE_MESSAGES_SETTINGS_ADDRESSES`, for both transports.
+pub(crate) const MAX_USER_ADDRESSES: usize = 50;
+
+/// `(address, privacy, is_friend)` per distinct target at its first
+/// occurrence, as both the procedure and `GET /v1/private-messages-settings`
+/// answer it (upstream `settings.getPrivateMessagesSettings`).
+pub(crate) async fn private_messages_settings(
+    ctx: &Context,
+    me: &str,
+    mut targets: Vec<String>,
+) -> Result<Vec<(String, String, bool)>, crate::rpc::db::DbError> {
+    let mut seen = std::collections::HashSet::new();
+    targets.retain(|t| seen.insert(t.clone()));
+    ctx.db().private_messages_settings(me, &targets).await
+}
 
 impl SocialServiceImpl {
     /// An absent row reads as upstream's defaults (`all`, `show_messages`,
@@ -77,7 +91,7 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<GetPrivateMessagesSettingsResponse, SocialError> {
         let me = Self::caller(&context)?;
-        let mut targets: Vec<String> = request.user.iter().map(|u| normalize(&u.address)).collect();
+        let targets: Vec<String> = request.user.iter().map(|u| normalize(&u.address)).collect();
         if targets.len() > MAX_USER_ADDRESSES {
             return Ok(GetPrivateMessagesSettingsResponse {
                 response: Some(
@@ -88,14 +102,7 @@ impl SocialServiceImpl {
             });
         }
         // One entry per address, at its first occurrence; the limit counts the request as sent.
-        let mut seen = std::collections::HashSet::new();
-        targets.retain(|t| seen.insert(t.clone()));
-        let rows = match context
-            .server_context
-            .db()
-            .private_messages_settings(&me, &targets)
-            .await
-        {
+        let rows = match private_messages_settings(&context.server_context, &me, targets).await {
             Ok(r) => r,
             Err(e) => {
                 return Ok(GetPrivateMessagesSettingsResponse {
