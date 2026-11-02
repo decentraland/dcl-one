@@ -178,3 +178,38 @@ fn dropping_the_receiver_early_still_notifies_the_engine() {
     bridge.settle();
     assert_eq!(bridge.route_to_engine(), 0);
 }
+
+#[test]
+fn sign_request_body_crosses_messagepack_bridge() {
+    let mut bridge = Bridge::new();
+    let _guard = bridge.rt.enter();
+    for body in [None, Some(""), Some("piñata\r\n🦊")] {
+        let (response, mut rx) = RpcResultSender::channel();
+        let call = RpcCall::SignRequest {
+            method: "POST".into(),
+            uri: "https://example.org/Path".into(),
+            body: body.map(str::to_owned),
+            response,
+        };
+        let bytes = rmp_encode(&call).unwrap();
+        let decoded: RpcCall = rmp_serde::from_slice(&bytes).unwrap();
+        match decoded {
+            RpcCall::SignRequest {
+                method,
+                uri,
+                body: decoded_body,
+                response,
+            } => {
+                assert_eq!(method, "POST");
+                assert_eq!(uri, "https://example.org/Path");
+                assert_eq!(decoded_body.as_deref(), body);
+                response.send(Ok(vec![("x-identity-metadata".into(), "MixedCase".into())]));
+            }
+            _ => panic!("wrong RPC variant"),
+        }
+        bridge.settle();
+        bridge.route_to_scene();
+        bridge.settle();
+        assert_eq!(rx.try_recv().unwrap().unwrap()[0].1, "MixedCase");
+    }
+}

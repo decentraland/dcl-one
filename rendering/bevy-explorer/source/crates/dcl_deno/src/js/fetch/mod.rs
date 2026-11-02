@@ -697,8 +697,9 @@ pub async fn op_signed_fetch_headers(
     state: Rc<RefCell<OpState>>,
     #[string] uri: String,
     #[string] method: Option<String>,
+    #[string] body: Option<String>,
 ) -> Result<Vec<(String, String)>, AnyError> {
-    dcl_js::fetch::op_signed_fetch_headers(state, uri, method).await
+    dcl_js::fetch::op_signed_fetch_headers(state, uri, method, body).await
 }
 
 use core::future::Future;

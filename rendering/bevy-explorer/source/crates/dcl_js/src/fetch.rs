@@ -11,6 +11,7 @@ pub async fn op_signed_fetch_headers(
     state: Rc<RefCell<impl State>>,
     uri: String,
     method: Option<String>,
+    body: Option<String>,
 ) -> Result<Vec<(String, String)>, anyhow::Error> {
     debug!("op_signed_fetch_headers");
 
@@ -22,6 +23,7 @@ pub async fn op_signed_fetch_headers(
         .push(RpcCall::SignRequest {
             method: method.unwrap_or_else(|| String::from("get")),
             uri,
+            body,
             response: sx,
         })?;
 

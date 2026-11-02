@@ -6,6 +6,7 @@ pub async fn op_signed_fetch_headers(
     state: &WorkerContext,
     uri: String,
     method: Option<String>,
+    body: Option<String>,
 ) -> Result<JsValue, WasmError> {
-    serde_result!(dcl_js::fetch::op_signed_fetch_headers(state.rc(), uri, method).await)
+    serde_result!(dcl_js::fetch::op_signed_fetch_headers(state.rc(), uri, method, body).await)
 }

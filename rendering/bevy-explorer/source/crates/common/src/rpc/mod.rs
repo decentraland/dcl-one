@@ -324,6 +324,7 @@ pub enum RpcCall {
     SignRequest {
         method: String,
         uri: String,
+        body: Option<String>,
         response: RpcResultSender<Result<Vec<(String, String)>, String>>,
     },
     ReadFile {

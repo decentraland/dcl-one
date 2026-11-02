@@ -2197,6 +2197,33 @@ struct SignedFetchMeta {
     is_guest: Option<bool>,
     realm: SignedFetchMetaRealm,
     signer: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hash_payload: Option<String>,
+}
+
+fn signed_fetch_hash(body: Option<&str>) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    body.map(|body| format!("{:x}", Sha256::digest(body.as_bytes())))
+}
+
+fn delegated_signed_fetch_meta(
+    meta: &str,
+    body: Option<&str>,
+) -> Result<String, serde_json::Error> {
+    let Some(hash) = signed_fetch_hash(body) else {
+        return Ok(meta.to_owned());
+    };
+    let mut value: serde_json::Value = serde_json::from_str(meta)?;
+    value["hashPayload"] = hash.into();
+    Ok(value.to_string())
+}
+
+fn signed_fetch_tld(domain: &str) -> &'static str {
+    match domain {
+        "decentraland.zone" => "zone",
+        "decentraland.today" => "today",
+        _ => "org",
+    }
 }
 
 /// `realm.hostname` in the shape unity sends: the bare host for the `main` realm (the
@@ -2252,6 +2279,7 @@ fn handle_sign_request(
             RpcCall::SignRequest {
                 method,
                 uri,
+                body,
                 response,
             },
         ) = (&ev.origin, &ev.call)
@@ -2287,7 +2315,13 @@ fn handle_sign_request(
                 })
             {
                 let method = method.clone();
-                let meta = delegation.meta.clone();
+                let meta = match delegated_signed_fetch_meta(&delegation.meta, body.as_deref()) {
+                    Ok(meta) => meta,
+                    Err(e) => {
+                        response.send(Err(format!("invalid delegation metadata: {e}")));
+                        continue;
+                    }
+                };
                 let scope_header = delegation.scope_header.clone();
                 let ephemeral = delegation.wallet.clone();
                 let task = IoTaskPool::get().spawn_compat(async move {
@@ -2318,6 +2352,8 @@ fn handle_sign_request(
             let hostname = signed_fetch_realm_hostname(&realm.about_url, &realm_name);
 
             let method = method.clone();
+            let hash_payload = signed_fetch_hash(body.as_deref());
+            let tld = signed_fetch_tld(common::base_domain::get()).to_owned();
             let scene = scene.to_string();
             let wallet = wallet.clone();
             let ipfs = ipfs.ipfs().clone();
@@ -2333,7 +2369,7 @@ fn handle_sign_request(
                     origin: Some(base_url.clone()),
                     scene_id: Some(scene),
                     parcel: Some(scene_meta.scene.base),
-                    tld: Some("org".to_owned()),
+                    tld: Some(tld),
                     network: Some("mainnet".to_owned()),
                     is_guest: Some(is_guest),
                     realm: SignedFetchMetaRealm {
@@ -2342,6 +2378,7 @@ fn handle_sign_request(
                         server_name: realm_name,
                     },
                     signer: "decentraland-kernel-scene".to_owned(),
+                    hash_payload,
                 };
                 debug!("signed fetch meta {:?}", meta);
 
@@ -2728,5 +2765,55 @@ mod signed_fetch_identity_tests {
             signed_fetch_realm_hostname("http://127.0.0.1:8000/about", "LocalPreview"),
             "127.0.0.1"
         );
+    }
+}
+
+#[cfg(test)]
+mod signed_fetch_body_tests {
+    use super::*;
+    #[test]
+    fn hashes_utf8_body_and_distinguishes_absence() {
+        for (body, expected) in [
+            (None, None),
+            (
+                Some(""),
+                Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+            ),
+            (
+                Some("{}"),
+                Some("44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"),
+            ),
+            (
+                Some("piñata\r\n🦊"),
+                Some("867ee32bed3423b5d737ff3d6afa68cf9478857edba007c744c63d507b8a4d30"),
+            ),
+        ] {
+            assert_eq!(signed_fetch_hash(body).as_deref(), expected);
+        }
+    }
+    #[test]
+    fn delegation_claims_are_preserved_when_body_is_bound() {
+        let original = r#"{"signer":"dcl:authoritative-server","sceneId":"Mixed","parcel":"1,2"}"#;
+        assert_eq!(
+            delegated_signed_fetch_meta(original, None).unwrap(),
+            original
+        );
+        let meta: serde_json::Value =
+            serde_json::from_str(&delegated_signed_fetch_meta(original, Some("{}")).unwrap())
+                .unwrap();
+        assert_eq!(meta["sceneId"], "Mixed");
+        assert_eq!(meta["signer"], "dcl:authoritative-server");
+        assert_eq!(meta["parcel"], "1,2");
+        assert_eq!(
+            meta["hashPayload"],
+            "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a"
+        );
+    }
+    #[test]
+    fn chooses_environment_from_trusted_base_domain() {
+        assert_eq!(signed_fetch_tld("decentraland.org"), "org");
+        assert_eq!(signed_fetch_tld("decentraland.zone"), "zone");
+        assert_eq!(signed_fetch_tld("decentraland.today"), "today");
+        assert_eq!(signed_fetch_tld("custom.example"), "org");
     }
 }

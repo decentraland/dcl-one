@@ -1,38 +1,43 @@
-module.exports.signedFetch = async function (body) { 
-    const headers = await Deno.core.ops.op_signed_fetch_headers(body.url, body.init?.method);
-
-    if (!body.init) {
-        body.init = { headers: {} };
+function snapshot(body) {
+    const url = body.url;
+    const init = { ...body.init };
+    const headers = [];
+    const add = (name, value) => {
+        const lower = name.toLowerCase();
+        if (!lower.startsWith("x-identity-") && lower !== "x-authoritative-scope") {
+            headers.push([name, value]);
+        }
+    };
+    const input = init.headers;
+    if (Array.isArray(input)) {
+        for (const [name, value] of input) add(name, value);
+    } else if (input && typeof input.forEach === "function") {
+        input.forEach((value, name) => add(name, value));
+    } else if (input) {
+        for (const [name, value] of Object.entries(input)) add(name, value);
     }
+    init.headers = headers;
+    return { url, init };
+}
 
-    if (!body.init.hasOwnProperty("headers")) {
-        body.init.headers = {};
-    }
-
-    for (var i=0; i< headers.length; i++) {
-        body.init.headers[headers[i][0]] = headers[i][1];
-    }
-
-    let response = await fetch(body.url, body.init);
-    let text = await response.text();
-
+module.exports.signedFetch = async function (body) {
+    const { url, init } = snapshot(body);
+    const headers = await Deno.core.ops.op_signed_fetch_headers(url, init.method, init.body);
+    for (const [name, value] of headers) init.headers.push([name, value]);
+    const response = await fetch(url, init);
     return {
         ok: response.ok,
         status: response.status,
         statusText: response.statusText,
         headers: response.headers,
-        body: text,
+        body: await response.text(),
     };
-}
+};
 
-module.exports.getHeaders = async function (body) { 
-    const result = await Deno.core.ops.op_signed_fetch_headers(body.url, body.init?.method)
-
-    const headers = {}
-    for (var i=0; i< result.length; i++) {
-        headers[result[i][0]] = result[i][1];
-    }
-    return {
-        headers
-    }
-}
+module.exports.getHeaders = async function (body) {
+    const { url, init } = snapshot(body);
+    const result = await Deno.core.ops.op_signed_fetch_headers(url, init.method, init.body);
+    const headers = {};
+    for (const [name, value] of result) headers[name] = value;
+    return { headers };
+};

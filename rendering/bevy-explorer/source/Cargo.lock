@@ -10685,6 +10685,7 @@ dependencies = [
  "scene_runner",
  "serde",
  "serde_json",
+ "sha2",
  "system_bridge",
  "tokio",
  "ui_core",
