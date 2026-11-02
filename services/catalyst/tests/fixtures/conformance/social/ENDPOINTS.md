@@ -177,6 +177,13 @@ Remaining differences, with their reason:
   to validate place ownership"; upstream's failed places API call is a 500.
 - Notification rows are written before the response, not through a queue;
   `MEMBER_LEFT` writes none, as the processor has no row for it.
+- Nothing here sets a referral to `tier_granted` (that is `finalizeReferral`,
+  above), so `GET /v1/referral-progress` counts no accepted invite and
+  `POST /v1/referral-email` always answers the 100-invites refusal.
+- `POST /v1/referral-email` checks the body after the invites count, with
+  `setReferralEmail`'s messages; upstream's `AddReferralEmailSchema`
+  (`schemas.ts:179`: `email` required, an email-format string, no other key)
+  refuses a malformed body first, with the schema validator's message.
 
 ## rpc-social-service-ea.decentraland.org (Catalyst: `/social-rpc`)
 
