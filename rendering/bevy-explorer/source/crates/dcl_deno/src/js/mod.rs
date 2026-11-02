@@ -699,6 +699,109 @@ mod tests {
             .map_err(|e| e.to_string())
     }
 
+    #[test]
+    fn signed_fetch_scene_module_passes_body_through_runtime_ops() {
+        let (mut runtime, _) =
+            create_runtime(false, false, "test-signed-fetch", false, Default::default());
+        let op_state = runtime.op_state();
+        op_state.borrow_mut().put(context(false));
+        op_state.borrow_mut().put(dcl_types::RpcCalls::default());
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let _guard = rt.enter();
+        runtime.execute_script("<test>", ascii_str!(r#"
+            globalThis.fetch = async (url, init) => {
+                globalThis.__sent = JSON.stringify({ url, method: init.method, body: init.body, headers: init.headers });
+                return { ok: true, status: 200, statusText: 'OK', headers: {}, text: async () => '' };
+            };
+            globalThis.__done = false;
+            (async () => {
+                const api = require('~system/SignedFetch');
+                await api.getHeaders({url:'https://example.org/First', init:{method:'POST',body:''}});
+                await api.signedFetch({url:'https://example.org/Second', init:{method:'PUT',body:'pi\u00f1ata',headers:{'X-Identity-Metadata':'forged'}}});
+                globalThis.__done = true;
+            })();
+        "#)).unwrap();
+        let (sign_sx, sign_rx) = std::sync::mpsc::channel::<
+            common::rpc::RpcResultSender<Result<Vec<(String, String)>, String>>,
+        >();
+        let responder = std::thread::spawn(move || {
+            for response in sign_rx {
+                response.send(Ok(vec![("x-identity-metadata".into(), "trusted".into())]));
+            }
+        });
+        let calls = rt.block_on(async {
+            let dispatch = async {
+                let mut observed = Vec::new();
+                while observed.len() < 2 {
+                    tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+                    let calls = std::mem::take(
+                        &mut **op_state.borrow_mut().borrow_mut::<dcl_types::RpcCalls>(),
+                    );
+                    for call in calls {
+                        if let common::rpc::RpcCall::SignRequest(common::rpc::SignRequest {
+                            method,
+                            uri,
+                            body,
+                            response,
+                        }) = call
+                        {
+                            observed.push((method, uri, body));
+                            sign_sx.send(response).unwrap();
+                        }
+                    }
+                }
+                observed
+            };
+            tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                let (result, observed) = tokio::join!(
+                    runtime.run_event_loop(deno_core::PollEventLoopOptions::default()),
+                    dispatch
+                );
+                result.unwrap();
+                observed
+            })
+            .await
+            .expect("signed fetch did not finish")
+        });
+        drop(sign_sx);
+        responder.join().unwrap();
+        assert_eq!(
+            calls,
+            vec![
+                (
+                    "POST".into(),
+                    "https://example.org/First".into(),
+                    Some("".into())
+                ),
+                (
+                    "PUT".into(),
+                    "https://example.org/Second".into(),
+                    Some("piñata".into())
+                )
+            ]
+        );
+        let value = runtime
+            .execute_script(
+                "<test>",
+                ascii_str!("JSON.stringify({done: __done, sent: JSON.parse(__sent)})"),
+            )
+            .unwrap();
+        let scope = &mut runtime.handle_scope();
+        let result: serde_json::Value = serde_json::from_str(
+            &deno_core::v8::Local::new(scope, value).to_rust_string_lossy(scope),
+        )
+        .unwrap();
+        assert_eq!(result["done"], true);
+        assert_eq!(result["sent"]["body"], "piñata");
+        assert_eq!(
+            result["sent"]["headers"],
+            serde_json::json!([["x-identity-metadata", "trusted"]])
+        );
+    }
+
     /// The scene bundle shares a realm with the runtime, so anything left on the global
     /// object is scene-reachable -- and `Deno.core.ops` is every op with none of the checks
     /// the `~system/*` wrappers apply. This is the property, not an implementation detail.

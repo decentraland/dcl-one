@@ -50,3 +50,24 @@ test('works in a scene global without a Headers constructor', async () => {
   await context.module.exports.signedFetch({url:'https://example.org/',init:{headers:{'X-Identity-Metadata':'bad',accept:'ok'}}});
   assert.equal(sent.init.headers.find(([key]) => key.toLowerCase() === 'x-identity-metadata')[1], 'engine');
 });
+
+test('rejects mutable non-string request fields before signing', async () => {
+  global.Deno = {core:{ops:{op_signed_fetch_headers: async () => { throw new Error('must not sign'); }}}};
+  for (const input of [
+    {url:{toString:()=> 'https://example.org/'}},
+    {url:'https://example.org/',init:{method:{toString:()=> 'POST'}}},
+    {url:'https://example.org/',init:{body:{toString:()=> '{}'}}},
+    {url:'https://example.org/',init:{headers:{accept:{toString:()=> 'text/plain'}}}},
+  ]) await assert.rejects(api.signedFetch(input), TypeError);
+});
+
+test('null method and body are captured as absent', async () => {
+  let args, sent;
+  global.Deno = {core:{ops:{op_signed_fetch_headers: async (...a) => {args=a; return [];}}}};
+  global.fetch = async (_, init) => {sent=init; return {ok:true,status:200,statusText:'OK',headers:{},text:async()=>''};};
+  await api.signedFetch({url:'https://example.org/',init:{method:null,body:null}});
+  assert.deepEqual(args,['https://example.org/',undefined,undefined]);
+  assert.equal(sent.method,undefined); assert.equal(sent.body,undefined);
+  await api.getHeaders({url:'https://example.org/',init:{method:null,body:null}});
+  assert.deepEqual(args,['https://example.org/',undefined,undefined]);
+});

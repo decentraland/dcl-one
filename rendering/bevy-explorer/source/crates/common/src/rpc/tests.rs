@@ -179,27 +179,85 @@ fn dropping_the_receiver_early_still_notifies_the_engine() {
     assert_eq!(bridge.route_to_engine(), 0);
 }
 
+#[derive(serde::Serialize, serde::Deserialize)]
+enum LegacySignRequest {
+    SignRequest {
+        method: String,
+        uri: String,
+        response: RpcResultSender<Result<Vec<(String, String)>, String>>,
+    },
+}
+
+#[test]
+fn bodyless_sign_request_preserves_legacy_wire() {
+    let bridge = Bridge::new();
+    let _guard = bridge.rt.enter();
+    let (response, _rx) = RpcResultSender::channel();
+    let legacy = LegacySignRequest::SignRequest {
+        method: "POST".into(),
+        uri: "https://example.org/".into(),
+        response: response.clone(),
+    };
+    let bytes = rmp_encode(&legacy).unwrap();
+    let same_call = RpcCall::SignRequest(SignRequest {
+        method: "POST".into(),
+        uri: "https://example.org/".into(),
+        response,
+        body: None,
+    });
+    assert_eq!(rmp_encode(&same_call).unwrap(), bytes);
+    let current: RpcCall = rmp_serde::from_slice(&bytes).unwrap();
+    let RpcCall::SignRequest(SignRequest { body, .. }) = current else {
+        panic!("wrong variant")
+    };
+    assert_eq!(body, None);
+    let (response, _rx) = RpcResultSender::channel();
+    let current = RpcCall::SignRequest(SignRequest {
+        method: "POST".into(),
+        uri: "https://example.org/".into(),
+        response,
+        body: None,
+    });
+    let bytes = rmp_encode(&current).unwrap();
+    let decoded: LegacySignRequest = rmp_serde::from_slice(&bytes).unwrap();
+    let LegacySignRequest::SignRequest { method, uri, .. } = decoded;
+    assert_eq!(
+        (method.as_str(), uri.as_str()),
+        ("POST", "https://example.org/")
+    );
+    let (response, _rx) = RpcResultSender::channel();
+    let bodyful = RpcCall::SignRequest(SignRequest {
+        method: "POST".into(),
+        uri: "https://example.org/".into(),
+        response,
+        body: Some("{}".into()),
+    });
+    let bytes = rmp_encode(&bodyful).unwrap();
+    // Old engines can reply, but cannot bind the body: mixed releases must not rely on the hash.
+    assert!(rmp_serde::from_slice::<LegacySignRequest>(&bytes).is_ok());
+}
+
 #[test]
 fn sign_request_body_crosses_messagepack_bridge() {
     let mut bridge = Bridge::new();
     let _guard = bridge.rt.enter();
     for body in [None, Some(""), Some("piñata\r\n🦊")] {
         let (response, mut rx) = RpcResultSender::channel();
-        let call = RpcCall::SignRequest {
+        let call = RpcCall::SignRequest(SignRequest {
             method: "POST".into(),
             uri: "https://example.org/Path".into(),
             body: body.map(str::to_owned),
             response,
-        };
+        });
         let bytes = rmp_encode(&call).unwrap();
         let decoded: RpcCall = rmp_serde::from_slice(&bytes).unwrap();
         match decoded {
-            RpcCall::SignRequest {
+            RpcCall::SignRequest(SignRequest {
                 method,
                 uri,
                 body: decoded_body,
                 response,
-            } => {
+            }) => {
                 assert_eq!(method, "POST");
                 assert_eq!(uri, "https://example.org/Path");
                 assert_eq!(decoded_body.as_deref(), body);

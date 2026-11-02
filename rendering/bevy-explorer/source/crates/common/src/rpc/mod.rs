@@ -17,6 +17,37 @@ pub use tokio_util::sync::CancellationToken;
 pub use result_sender::{RpcResultReceiver, RpcResultSender};
 pub use stream_sender::{RpcStreamReceiver, RpcStreamSender};
 
+/// Scene signing request. Bodyless requests retain the original compact wire layout;
+/// bodyful requests use named fields so older engines can ignore the added body safely.
+#[derive(Debug, Clone, Deserialize)]
+pub struct SignRequest {
+    pub method: String,
+    pub uri: String,
+    pub response: RpcResultSender<Result<Vec<(String, String)>, String>>,
+    #[serde(default)]
+    pub body: Option<String>,
+}
+
+impl Serialize for SignRequest {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{SerializeMap, SerializeTuple};
+        if let Some(body) = &self.body {
+            let mut map = serializer.serialize_map(Some(4))?;
+            map.serialize_entry("method", &self.method)?;
+            map.serialize_entry("uri", &self.uri)?;
+            map.serialize_entry("response", &self.response)?;
+            map.serialize_entry("body", body)?;
+            map.end()
+        } else {
+            let mut tuple = serializer.serialize_tuple(3)?;
+            tuple.serialize_element(&self.method)?;
+            tuple.serialize_element(&self.uri)?;
+            tuple.serialize_element(&self.response)?;
+            tuple.end()
+        }
+    }
+}
+
 pub trait IpcEndpoint: Send {
     fn send(&mut self, raw_bytes: Vec<u8>);
 }
@@ -321,12 +352,7 @@ pub enum RpcCall {
         text: String,
         response: RpcResultSender<Result<(), String>>,
     },
-    SignRequest {
-        method: String,
-        uri: String,
-        body: Option<String>,
-        response: RpcResultSender<Result<Vec<(String, String)>, String>>,
-    },
+    SignRequest(SignRequest),
     ReadFile {
         filename: String,
         response: RpcResultSender<Result<ReadFileResponse, String>>,

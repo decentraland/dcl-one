@@ -20,12 +20,12 @@ pub async fn op_signed_fetch_headers(
     state
         .borrow_mut()
         .borrow_mut::<RpcCalls>()
-        .push(RpcCall::SignRequest {
+        .push(RpcCall::SignRequest(common::rpc::SignRequest {
             method: method.unwrap_or_else(|| String::from("get")),
             uri,
             body,
             response: sx,
-        })?;
+        }))?;
 
     rx.await?.map_err(|e| anyhow!(e))
 }

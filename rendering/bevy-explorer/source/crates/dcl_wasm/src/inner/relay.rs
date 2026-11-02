@@ -446,14 +446,15 @@ pub fn relay_pump() -> u32 {
             };
             moved += 1;
             match decode(&bytes) {
-                Ok(ToEngine::Response(response @ SceneResponse::Ok(..))) => {
-                    let SceneResponse::Ok(.., calls) = &response else {
+                Ok(ToEngine::Response(mut response @ SceneResponse::Ok(..))) => {
+                    let SceneResponse::Ok(.., calls) = &mut response else {
                         continue;
                     };
                     if let Some(reason) = tick_limit_broken(calls) {
                         relay.end(reason);
                         break;
                     }
+                    dcl_types::enforce_signing_body_budget(calls);
                     if !relay.forward_tick(response) {
                         break;
                     }

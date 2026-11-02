@@ -1,8 +1,15 @@
 function snapshot(body) {
     const url = body.url;
     const init = { ...body.init };
+    if (init.method === null) init.method = undefined;
+    if (init.body === null) init.body = undefined;
+    if (typeof url !== "string" || (init.method !== undefined && typeof init.method !== "string") ||
+        (init.body !== undefined && typeof init.body !== "string")) {
+        throw new TypeError("signed fetch URL, method and body must be strings");
+    }
     const headers = [];
     const add = (name, value) => {
+        if (typeof name !== "string" || typeof value !== "string") throw new TypeError("signed fetch headers must be strings");
         const lower = name.toLowerCase();
         if (!lower.startsWith("x-identity-") && lower !== "x-authoritative-scope") {
             headers.push([name, value]);
