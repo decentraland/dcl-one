@@ -443,7 +443,7 @@ pub(crate) fn load_scene_javascript(
         let scene_origin = Vec3::new(initial_position.x, 0.0, initial_position.y);
         let crdt_context = crdt_contexts.for_scene_hash(&definition.id);
         let Ok(global_scene) = global_scenes.get(crdt_context) else {
-            // context spawned this frame and not yet flushed â€” retry next frame
+            // context spawned this frame and not yet flushed — retry next frame
             debug!("{root:?} waiting for crdt context");
             continue;
         };
@@ -753,8 +753,8 @@ pub(crate) fn initialize_scene(
         // reaches the target after a scene update; the first two updates are the
         // engine handshake (init + onStart/composite instancing, no scene frame),
         // and the third is the first real scene update that runs main() + one system
-        // pass â€” so SCENE_FIRST_UPDATE_TICK lands on "main ran, one frame". Super
-        // scenes (the editor agent) and startup portables (the default controller â€”
+        // pass — so SCENE_FIRST_UPDATE_TICK lands on "main ran, one frame". Super
+        // scenes (the editor agent) and startup portables (the default controller —
         // parent_scene is None) are exempt: they aren't the scene being edited and must keep
         // ticking. Portables spawned BY a scene still freeze with it.
         let startup_portable = context.is_portable

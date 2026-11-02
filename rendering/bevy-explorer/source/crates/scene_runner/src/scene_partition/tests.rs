@@ -293,16 +293,15 @@ fn overhead_of_publishing_at_a_busy_plaza() {
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
+    // live scenes with two parcels each, so the run partitions them from their parcels as the
+    // client does
     for i in 0..20 {
-        world.spawn((
-            SceneHash(format!("scene-{i}")),
-            Partition(PartitionData {
-                sqr_distance: (i * i) as f32,
-                parcel_distance: i as u16,
-                is_behind: i % 2 == 0,
-            }),
-        ));
+        let scene = scene_with_parcels(&mut world, &[IVec2::new(i, 0), IVec2::new(i, 1)]);
+        world
+            .entity_mut(scene)
+            .insert(SceneHash(format!("scene-{i}")));
     }
+    // avatars spread over the plaza, partitioned from their positions
     for a in 0..50 {
         world.spawn((
             PartitionedDownloads(
@@ -310,11 +309,7 @@ fn overhead_of_publishing_at_a_busy_plaza() {
                     .map(|w| format!("wearable-{}", (a * 7 + w) % 120))
                     .collect(),
             ),
-            Partition(PartitionData {
-                sqr_distance: (a * 3) as f32,
-                parcel_distance: (a / 10) as u16,
-                is_behind: a % 3 == 0,
-            }),
+            GlobalTransform::from_translation(Vec3::new((a * 3) as f32, 0.0, -(a as f32))),
         ));
     }
     // the systems the publisher needs, as one schedule, so the run has no one-off cost
@@ -327,7 +322,7 @@ fn overhead_of_publishing_at_a_busy_plaza() {
         schedule.run(&mut world);
     }
     println!(
-        "publisher: 20 scenes + 50 avatars x 10 wearables: {:?} per frame (partitions + map build + publish)",
+        "publisher: 20 live scenes + 50 avatars x 10 wearables: {:?} per frame (partitions, map build, publish)",
         start.elapsed() / 200
     );
 }
