@@ -347,8 +347,8 @@ def testnet_env():
     read-through, LAND authorization and the node's network id to Sepolia and the .zone peer, so /play
     does not resolve mainnet scenes on this profile.
 
-    The trade-events index covers mainnet marketplaces only, so a trade signed into this stack stays
-    `open` locally after it is cancelled, replaced or executed on chain."""
+    The trade-events index walks Amoy and Sepolia's marketplaces (MARKETPLACE_INDEX_CHAIN_ID_*), so a
+    trade signed into this stack leaves `open` once it is cancelled, replaced or executed on chain."""
     return {
         'ETH_NETWORK': 'sepolia',
         'SYNC_SOURCE': 'https://peer.decentraland.zone/content',
@@ -369,6 +369,11 @@ def testnet_env():
         # cancelSignature the Shop relays.
         'CONTRACT_ADDRESSES_URL': 'https://contracts.decentraland.org/addresses.json',
         'TRANSACTIONS_UPSTREAM_URL': 'https://transactions-api.decentraland.zone',
+        # Cancels and executions on chain close local trades: the trade-events index on the testnets,
+        # through TRADE_RPC_URLS' 80002 and 11155111 entries (it checks each endpoint's eth_chainId).
+        'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'true',
+        'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
+        'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
         'VITE_SHOP_CHAIN_ID': '80002',
     }
 
