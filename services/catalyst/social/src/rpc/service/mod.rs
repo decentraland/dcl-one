@@ -384,7 +384,10 @@ mod tests {
     /// nothing else is: the client resolves procedures by name.
     #[test]
     fn the_registration_matches_the_proto_service() {
-        let proto = include_str!("../proto/decentraland/social_service/social_service_v2.proto");
+        let proto = include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/library/protocol/proto/decentraland/social_service/v2/social_service_v2.proto"
+        ));
         let declared: Vec<&str> = proto
             .lines()
             .filter_map(|l| l.trim().strip_prefix("rpc "))
