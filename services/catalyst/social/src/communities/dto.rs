@@ -131,6 +131,11 @@ pub struct CommunityDetail {
     #[serde(rename = "ownerName", skip_serializing_if = "Option::is_none")]
     #[cfg_attr(feature = "ts", ts(optional))]
     pub owner_name: Option<String>,
+    /// A signed read only (upstream `getCommunity`): the community hosts an
+    /// event that is live now.
+    #[serde(rename = "isHostingLiveEvent", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional))]
+    pub is_hosting_live_event: Option<bool>,
     #[serde(skip)]
     #[cfg_attr(feature = "ts", ts(skip))]
     pub has_thumbnail: bool,
@@ -258,7 +263,7 @@ pub struct CommunityBan {
     pub banned_address: String,
     #[serde(rename = "bannedBy")]
     pub banned_by: String,
-    #[serde(rename = "bannedAt")]
+    #[serde(rename = "bannedAt", with = "iso_ms")]
     pub banned_at: NaiveDateTime,
     pub reason: Option<String>,
 }

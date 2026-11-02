@@ -96,6 +96,8 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         "the closure base is stamped version 1"
     );
     assert!(!has_column(pool, "explore.place_reports", "upload_token_hash").await);
+    assert!(!has_column(pool, "social.notifications", "in_app").await);
+    assert!(!has_column(pool, "social.event_notification_intents", "id").await);
     assert!(
         !has_column(pool, "credits.purchases", "quantity").await,
         "the fixture predates the column"
@@ -225,6 +227,8 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
             .await
             .unwrap_or_else(|e| panic!("{e}"));
     assert!(has_column(pool, "explore.place_reports", "upload_token_hash").await);
+    assert!(has_column(pool, "social.notifications", "in_app").await);
+    assert!(has_column(pool, "social.event_notification_intents", "id").await);
     assert_eq!(done.steps, every_step);
     assert!(done.created.len() > 20, "{}", done.created.len());
     let owner_indexes: Vec<String> = sqlx::query_scalar(

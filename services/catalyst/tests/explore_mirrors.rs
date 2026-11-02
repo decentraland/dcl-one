@@ -2106,12 +2106,25 @@ async fn the_viewers_attendance_rides_in_the_list_and_get_statements() {
         .await
         .unwrap();
     assert!(
-        component
-            .viewer_is_moderator(&OTHER.to_uppercase())
+        catalyst::explore::events::profiles::is_moderator(&pool, &OTHER.to_uppercase())
             .await
             .unwrap()
     );
-    assert!(!component.viewer_is_moderator(USER).await.unwrap());
+    assert!(
+        !catalyst::explore::events::profiles::is_moderator(&pool, USER)
+            .await
+            .unwrap()
+    );
+    sqlx::query("DELETE FROM explore.moderators WHERE address = $1")
+        .bind(OTHER)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !catalyst::explore::events::profiles::is_moderator(&pool, OTHER)
+            .await
+            .unwrap()
+    );
     db.teardown().await;
 }
 
