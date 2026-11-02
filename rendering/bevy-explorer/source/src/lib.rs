@@ -6,6 +6,9 @@ mod autopilot;
 mod commands;
 mod deep_link;
 mod ext;
+mod gpu_memory;
+#[cfg(test)]
+mod gpu_memory_tests;
 mod memory;
 #[cfg(test)]
 mod memory_tests;
@@ -616,7 +619,7 @@ impl DecentralandApp {
         app.insert_resource(decentraland_app_config.app_config);
 
         // Plugins
-        app.add_plugins(memory::MemoryStatusPlugin)
+        app.add_plugins((memory::MemoryStatusPlugin, gpu_memory::GpuMemoryPlugin))
             .add_plugins(SceneRunnerPlugin)
             .add_plugins(AVPlayerPlugin)
             .add_plugins(RestrictedActionsPlugin)

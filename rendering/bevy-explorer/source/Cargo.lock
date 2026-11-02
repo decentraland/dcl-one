@@ -4459,6 +4459,7 @@ version = "0.1.0"
 dependencies = [
  "analytics",
  "anyhow",
+ "ash",
  "assets",
  "async-std",
  "av",
@@ -4537,6 +4538,7 @@ dependencies = [
  "web-sys",
  "web-time",
  "wgpu",
+ "windows 0.58.0",
  "winit",
  "world_ui",
  "zip 2.4.2",

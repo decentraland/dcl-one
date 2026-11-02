@@ -2,9 +2,36 @@
 
 use std::num::NonZeroU64;
 
-use bevy::prelude::Resource;
+use bevy::prelude::{DetectChangesMut, Mut, Resource};
 
 const MIB: u64 = 1 << 20;
+
+/// Native GPU budget for the renderer's selected adapter, independent of engine RAM.
+#[derive(Debug, PartialEq, Eq, Resource)]
+pub enum GpuMemoryBudget {
+    /// Browser WebGPU exposes no driver budget, or this app has no renderer.
+    NotApplicable,
+    /// Native renderer with no usable reading on this backend or device.
+    Unavailable,
+    /// Each pool has its own budget. Spare bytes in one pool cannot fund another.
+    Available(Vec<GpuMemoryPool>),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GpuMemoryPoolKind {
+    DxgiLocal,
+    VulkanDeviceLocal { heap_index: usize },
+    MetalWorkingSet,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct GpuMemoryPool {
+    pub kind: GpuMemoryPoolKind,
+    /// Process usage on DXGI/Vulkan, Metal resource allocations on the selected device.
+    pub used_bytes: u64,
+    /// Driver budget or Metal's recommended working set. Usage can exceed this value.
+    pub budget_bytes: NonZeroU64,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MemoryPressure {
@@ -20,7 +47,8 @@ pub struct MemoryReading {
     /// Web counts live allocations in the shared engine heap, including workers and scene relays.
     /// The scene runtime's own WASM heap is separate. Neither platform measures GPU residency here.
     pub used_bytes: u64,
-    /// Physical RAM subject to the reported cgroup limit on native. On web this is the WASM
+    /// Native physical RAM, capped on Linux by the limit visible at the cgroup mount root.
+    /// Tighter limits in nested process cgroups may be missed. On web this is the WASM
     /// address-space ceiling. Fragmentation and device limits can cause allocations to fail sooner.
     pub capacity_mib: u64,
     /// Capacity after applying the optional client limit.
@@ -60,22 +88,33 @@ impl MemoryReading {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct MemorySample {
+    pub used_bytes: u64,
+    pub capacity_bytes: u64,
+}
+
 #[derive(Default, Resource)]
 pub struct MemoryStatus {
     /// `None` uses the platform's capacity. Changes apply to the current reading.
     pub limit_mib: Option<NonZeroU64>,
-    measurement: Option<(u64, u64)>,
+    measurement: Option<MemorySample>,
 }
 
 impl MemoryStatus {
-    /// Publish (engine usage, platform capacity), both in bytes. A failed sample clears the reading.
-    pub fn record(&mut self, measurement: Option<(u64, u64)>) {
-        self.measurement = measurement;
+    /// A failed sample clears the reading. Identical samples leave Bevy change ticks alone.
+    pub fn record(status: Mut<'_, Self>, measurement: Option<MemorySample>) {
+        status
+            .map_unchanged(|s| &mut s.measurement)
+            .set_if_neq(measurement);
     }
 
     /// Returns `None` until the platform supplies both usage and a usable capacity.
     pub fn reading(&self) -> Option<MemoryReading> {
-        let (used_bytes, capacity_bytes) = self.measurement?;
+        let MemorySample {
+            used_bytes,
+            capacity_bytes,
+        } = self.measurement?;
         let capacity_mib = NonZeroU64::new(capacity_bytes / MIB)?.get();
         Some(MemoryReading {
             used_bytes,

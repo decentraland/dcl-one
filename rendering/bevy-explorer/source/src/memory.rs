@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use common::memory::MemoryStatus;
+use common::memory::{MemorySample, MemoryStatus};
 
 pub(crate) struct MemoryStatusPlugin;
 
@@ -12,7 +12,7 @@ impl Plugin for MemoryStatusPlugin {
 
 #[cfg(not(target_arch = "wasm32"))]
 struct NativeSampler {
-    latest: tokio::sync::watch::Receiver<Option<(u64, u64)>>,
+    latest: Option<tokio::sync::watch::Receiver<Option<MemorySample>>>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -30,22 +30,32 @@ impl Default for NativeSampler {
             });
         if let Err(error) = worker {
             warn!("Could not start the memory sampler: {error}");
+            return Self { latest: None };
         }
-        Self { latest: receiver }
+        Self {
+            latest: Some(receiver),
+        }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn sample_memory(mut sampler: Local<NativeSampler>, mut status: ResMut<MemoryStatus>) {
-    match sampler.latest.has_changed() {
-        Ok(true) => status.record(*sampler.latest.borrow_and_update()),
+fn sample_memory(mut sampler: Local<NativeSampler>, status: ResMut<MemoryStatus>) {
+    let Some(latest) = &mut sampler.latest else {
+        return;
+    };
+    match latest.has_changed() {
+        Ok(true) => MemoryStatus::record(status.into(), *latest.borrow_and_update()),
         Ok(false) => {}
-        Err(_) => status.record(None),
+        Err(_) => {
+            warn!("Memory sampler stopped; clearing the process memory reading");
+            sampler.latest = None;
+            MemoryStatus::record(status.into(), None);
+        }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn process_memory(system: &mut sysinfo::System) -> Option<(u64, u64)> {
+fn process_memory(system: &mut sysinfo::System) -> Option<MemorySample> {
     use sysinfo::{MemoryRefreshKind, Pid, ProcessRefreshKind, ProcessesToUpdate};
 
     system.refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
@@ -64,7 +74,10 @@ fn process_memory(system: &mut sysinfo::System) -> Option<(u64, u64)> {
         ProcessRefreshKind::nothing().without_tasks().with_memory(),
     );
     let used = system.process(pid)?.memory();
-    (refreshed > 0 && used > 0).then_some((used, capacity))
+    (refreshed > 0 && used > 0).then_some(MemorySample {
+        used_bytes: used,
+        capacity_bytes: capacity,
+    })
 }
 
 // Count live engine allocations so frees lower pressure even though WASM pages never shrink.
@@ -73,8 +86,14 @@ fn process_memory(system: &mut sysinfo::System) -> Option<(u64, u64)> {
 static ENGINE_HEAP: cap::Cap<std::alloc::System> = cap::Cap::new(std::alloc::System, usize::MAX);
 
 #[cfg(target_arch = "wasm32")]
-fn sample_memory(mut status: ResMut<MemoryStatus>) {
+fn sample_memory(status: ResMut<MemoryStatus>) {
     // The imported engine memory can grow to 4 GiB (.cargo/config.toml and deploy/web/engine).
     const ENGINE_CAPACITY: u64 = 1 << 32;
-    status.record(Some((ENGINE_HEAP.allocated() as u64, ENGINE_CAPACITY)));
+    MemoryStatus::record(
+        status.into(),
+        Some(MemorySample {
+            used_bytes: ENGINE_HEAP.allocated() as u64,
+            capacity_bytes: ENGINE_CAPACITY,
+        }),
+    );
 }
