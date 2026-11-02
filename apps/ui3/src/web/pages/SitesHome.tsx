@@ -4,6 +4,7 @@ import { asset } from "../../asset";
 import { publicThumbnail } from "../../data/thumbnail";
 import CoverImage from "../../components/CoverImage";
 import "./siteshome.css";
+import styles from "./SitesHome.module.css";
 import { Chevron } from "../../atoms/icons";
 
 type HomeEvent = {
@@ -57,8 +58,13 @@ const RITUALS: HomeRitual[] = [
 function CardImage({ image, width = 640 }: { image?: string | null; width?: 320 | 640 }) {
   return image ? <CoverImage className="sh__cardimg" src={publicThumbnail(image, width)} fallbackSrc={image} alt="" /> : null;
 }
-function PlayCta() {
-  return <div className="sh__cta"><a className="sh__btn sh__btn--primary" href="/play/">Play</a></div>;
+function PlayCta({ showShop = false }: { showShop?: boolean }) {
+  return (
+    <div className={"sh__cta" + (showShop ? ` ${styles.heroActions}` : "")}>
+      <a className="sh__btn sh__btn--primary" href="/play/">Play</a>
+      {showShop ? <a className={`sh__btn ${styles.shopAction}`} href="/shop/overview">Shop</a> : null}
+    </div>
+  );
 }
 
 type SitesHomeProps = {
@@ -84,7 +90,7 @@ export default function SitesHome({
           <div className="sh__heroinner">
             <h1 className="sh__title">Hang Out From Anywhere</h1>
             <p className="sh__sub">Close the Feed. Come Hang Out.</p>
-            <PlayCta />
+            <PlayCta showShop />
           </div>
         </section>
 
