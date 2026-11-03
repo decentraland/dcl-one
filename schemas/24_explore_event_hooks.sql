@@ -16,6 +16,9 @@ CREATE TABLE explore.event_moderation_hooks (
 CREATE INDEX event_moderation_hooks_due_idx
     ON explore.event_moderation_hooks (next_attempt_at,id) WHERE completed_at IS NULL AND attempts < 6;
 
+CREATE INDEX event_moderation_hooks_retention_idx
+    ON explore.event_moderation_hooks (created_at,id);
+
 -- Enabling the optional hook starts at the activation instant, never replays
 -- an unconfigured node's historical moderation queue.
 CREATE TABLE explore.event_moderation_hook_activation (

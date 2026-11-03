@@ -326,17 +326,11 @@ impl ExploreState {
     /// away (jittered), then every interval, doubling the wait after a failed
     /// pass up to an hour.
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs, client: crate::http::Outbound) {
-        if self.settings.operator_writes_enabled
-            && let Some(endpoint) = self
-                .settings
-                .events_slack_webhook
-                .as_ref()
-                .filter(|url| !url.trim().is_empty())
-        {
+        if self.settings.operator_writes_enabled {
             events::hooks::spawn(
                 self.pool.clone(),
                 client.clone(),
-                endpoint.clone(),
+                self.settings.events_slack_webhook.clone(),
                 self.settings.events_base_url.clone(),
                 jobs,
             );

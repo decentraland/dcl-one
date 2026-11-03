@@ -728,6 +728,7 @@ mod tests {
             None,
             &json!({"approved":true,"user":HOST}),
             true,
+            &catalyst_explore::Settings::for_tests(),
         )
         .await
         .unwrap();

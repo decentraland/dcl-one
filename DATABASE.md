@@ -271,7 +271,13 @@ The optional event moderation webhook uses an Explore-owned transactional
 outbox with public labels and moderation reasons only. Delivery is at least
 once, bounded to six attempts with five-second HTTP timeouts, and starts at its
 first activation cutoff. Deployment configuration supplies the secret endpoint;
-operator writes and deployment posture gate outbound delivery.
+operator writes and deployment posture gate outbound delivery. Unconfigured or
+operator-write-disabled authoring captures no webhook intent. The same worker
+performs bounded cleanup even when its endpoint is disabled: at most 1000 rows
+per pass, with a one-second client budget and transaction-local statement/lock
+timeouts. Completed and exhausted rows are retained for 30 days, as is legacy
+history before activation; eligible unfinished retries and the rolling-minute
+edit throttle window are preserved. `(created_at,id)` supports retention order.
 
 Event notification delivery is owned by Social in
 `social.event_notification_intents`. Explore inserts an event transition snapshot
