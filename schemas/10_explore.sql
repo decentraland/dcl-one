@@ -321,6 +321,9 @@ CREATE INDEX event_coords_idx ON explore.event (coordinates_x, coordinates_y);
 -- orders by it (moderation_pending, DESC NULLS LAST) cannot use a btree in
 -- either direction, so the old event_next_start_idx served nothing.
 CREATE INDEX event_approved_live_idx ON explore.event (approved, next_finish_at);
+-- The notification scan bounds candidates by the final series finish before
+-- expanding occurrences. next_finish_at may be stale between mirror refreshes.
+CREATE INDEX event_notifications_live_idx ON explore.event (finish_at, id) WHERE approved;
 -- The sweep's fetched_at < $1 candidates and its ORDER BY fetched_at confirmation set.
 CREATE INDEX event_fetched_at_idx ON explore.event (fetched_at);
 

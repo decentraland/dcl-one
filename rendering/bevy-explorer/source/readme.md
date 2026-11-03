@@ -59,7 +59,7 @@ cargo install wasm-pack
 just wasm     # builds the wasm into deploy/web/engine/pkg, then serves react-web and opens a browser
 ```
 
-`just wasm` is the whole loop: `wasm-pack build` for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), `npm install` in `react-web` and `react-web/bridge-scene`, then `npm run dev`.
+`just wasm` is the whole loop: `just ts-bindings` (the HUD imports the generated types), `wasm-pack build` on the pinned nightly for the engine and for the scene runtime (`crates/dcl_scene_wasm`, into `pkg-scene`), re-bundle the sandbox worker (it inlines the wasm glue, so it must be rebuilt with the wasm), `npm install` in `react-web` and `react-web/bridge-scene`, then `npm run dev`.
 
 Useful URLs once the dev server is up:
 
@@ -148,6 +148,13 @@ The launch parameters shared with the web build — realm, spawn parcel, ui scen
 cargo test --all                      # engine
 npm test --prefix react-web           # HUD, deterministic (vitest, no engine)
 npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, needs a GPU)
+```
+
+CI's Test Suite builds the engine tests with the `ci-test` profile. The scene tests spawn the `dcl_deno_ipc` sidecar from the same profile directory, so build it first:
+
+```bash
+cargo build --package dcl_deno_ipc --profile ci-test --locked
+cargo test --all --profile ci-test --locked -- --test-threads=1
 ```
 
 `react-web/review.md` is the pre-merge checklist for anything under `react-web/`.

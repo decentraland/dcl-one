@@ -2,9 +2,10 @@
 //! notifications.decentraland.org (`GET /notifications`, `PUT
 //! /notifications/read`, the subscription, email confirmation and opt-out
 //! routes), the bearer-gated broadcast, the `email` outbox worker
-//! (`delivery`), the `friend_first_wear` producer (`first_wear`) and the
+//! (`delivery`), the `friend_first_wear` producer (`first_wear`), the
 //! `land_transfer_received` producer over the land_authz index
-//! (`land_transfers`), all over the ONE pool and the ONE outbound client.
+//! (`land_transfers`) and the community events' rows (`community`), all
+//! over the ONE pool and the ONE outbound client.
 //! Tables: `social.notifications`, `notification_deliveries`,
 //! `subscriptions`, `unconfirmed_emails`, `subscription_opt_outs`,
 //! `notification_reader_seen`, `worn_history`, `first_wear_baseline`,
@@ -16,9 +17,11 @@
 //! `x-original-path` so the signature still verifies.
 
 pub mod admin;
+pub mod community;
 pub mod delivery;
 pub mod email;
 pub mod errors;
+pub mod events;
 pub mod first_wear;
 pub mod handlers;
 pub mod land_transfers;
@@ -61,6 +64,8 @@ pub struct Settings {
     pub first_wear: FirstWearSettings,
     /// `NOTIFICATION_DELIVERY_INTERVAL_SECS` (default 15; floored to 1).
     pub delivery_interval: Duration,
+    /// Deployment origin used by event notice links (`/whats-on/{id}`).
+    pub events_base_url: String,
 }
 
 impl Default for Settings {
@@ -75,6 +80,7 @@ impl Default for Settings {
             first_wear_enabled: false,
             first_wear: FirstWearSettings::default(),
             delivery_interval: Duration::from_secs(15),
+            events_base_url: "https://decentraland.org".into(),
         }
     }
 }
@@ -140,6 +146,11 @@ impl State {
             },
         );
         land_transfers::spawn(self.store.pool().clone(), jobs);
+        events::spawn(
+            self.store.pool().clone(),
+            self.settings.events_base_url.clone(),
+            jobs,
+        );
         if self.settings.first_wear_enabled {
             first_wear::spawn(self, jobs);
             tracing::info!(

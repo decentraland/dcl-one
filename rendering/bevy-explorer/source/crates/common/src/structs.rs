@@ -883,6 +883,8 @@ pub struct GraphicsSettings {
     pub cel_shading: bool,
     /// draw the dark edge outline around avatars
     pub avatar_outline: bool,
+    /// show a hologram ghost where an avatar is still loading
+    pub avatar_ghosts: bool,
     pub gpu_bytes_per_frame: usize,
     /// share of the screen's device pixels the web canvas renders at
     pub render_scale: f32,
@@ -910,6 +912,7 @@ impl Default for GraphicsSettings {
             ambient_brightness: 50,
             cel_shading: true,
             avatar_outline: true,
+            avatar_ghosts: true,
             gpu_bytes_per_frame: if cfg!(target_arch = "wasm32") {
                 10_000_000
             } else {

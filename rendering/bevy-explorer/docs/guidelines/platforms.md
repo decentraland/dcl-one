@@ -38,9 +38,11 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   has a second output at `@location(1)` (`TRANSPARENT_FOCUS_OUTPUT`). A fragment shader that
   omits it fails pipeline creation on web and is silent on native.
 - **16-bit textures lose precision** through the web sampler. Expect banding if you rely on it.
-- **Build.** Run `make web` from repository-root `apps/bevy-explorer` to build the wasm
-  package, sandbox worker and HUD into `dist/web`. This builds artifacts; serving them is
-  a separate step (see [Running](running.md#web)). Build the wasm on
+- **Build.** `just wasm` in `source` builds the wasm package and the sandbox worker bundle and
+  starts the page dev server and the bridge. If a stale dev server is already on the port it
+  gets reused; kill it first. The distributable is `make web` from repository-root
+  `apps/bevy-explorer`, which builds the wasm package, sandbox worker and HUD into `dist/web`
+  without serving them (see [Running](running.md#web)). Build the wasm on
   Linux (CI does): built on Windows, `file!()` keeps backslashes and the fork's
   `embedded_asset!` panics at start (`Failed to find src_prefix "src"`).
 - **Exit work runs before `Last`.** On `AppExit`, `close_rooms_on_app_exit` blocks in `Last`
@@ -56,10 +58,13 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
 
 ## Native
 
-- Follow the [native build steps](running.md#native) for CEF setup, HUD bundling and the
-  sidecar and client builds. Cargo alone does not bundle the HUD or stage the runtime
-  libraries; use the desktop workflow's packaging steps before launching its executable
-  with client arguments (`--realm <url> --position x,y`).
+- Build and run with `just native-debug` or `just native-release`, with the client's own
+  arguments after them (`--realm <url> --position x,y`). Both bundle the HUD when it is stale.
+  A bare `cargo run` gives a login screen with no HUD because the bundle isn't built. Both
+  binaries build: `cargo build --package dcl_deno_ipc` then `cargo build`. `just setup-cef`
+  fetches the CEF framework once; only macOS falls back to it at runtime, so the `just` loop is
+  macOS-first (see [Running](running.md#native) for Linux and Windows). Packaging follows the
+  [native build steps](running.md#native).
 - **CEF `localStorage` is ephemeral.** Anything the native HUD must remember goes through
   `lib/prefs`, which the engine persists to disk. No native popups from the HUD: CEF's popup
   windows aren't composited into the texture.
@@ -76,6 +81,41 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   changes confined to the packaging folder `apps/bevy-explorer` narrow the selection
   (`tooling/bevy-ci.py` at the dcl-one root). The legs run in parallel and the run takes around
   40 minutes end to end.
+
+## Memory budgets
+
+`MemoryStatus` samples engine-process RSS in native rendering and headless clients, and live
+shared engine-heap allocations on Web, at most four times a second. `GpuMemoryBudget`
+independently samples the renderer's selected native adapter or device
+at most once a second. Each pool carries used bytes and a positive budget. Usage can exceed the budget.
+
+| Renderer | GPU reading |
+|---|---|
+| Windows DX12 | Current process usage and the OS budget for the local segment on the renderer's node. [DXGI fields](https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_4/ns-dxgi1_4-dxgi_query_video_memory_info) |
+| Windows or Linux Vulkan | Estimated process usage for each device-local heap with a usable driver budget. Each heap has its own limit. Requires `VK_EXT_memory_budget`. [Vulkan memory budgets](https://docs.vulkan.org/refpages/latest/refpages/source/VkPhysicalDeviceMemoryBudgetPropertiesEXT.html) |
+| macOS Metal | Allocated resource bytes and the device's recommended working set, including on unified-memory devices. If the renderer holds the device lock, the previous reading stays visible and sampling retries the next frame. [Metal working set](https://developer.apple.com/documentation/metal/mtldevice/recommendedmaxworkingsetsize) |
+| Browser WebGPU or renderless headless | `NotApplicable`. WebGPU exposes no driver memory budget. [WebGPU adapter interface](https://www.w3.org/TR/webgpu/#gpuadapter) |
+| Native query unsupported, failed or pending | `Unavailable`. A consumer has no current reading for this adapter. |
+
+### Using the budgets in future asset loaders
+
+Estimate the **additional peak bytes** of the operation in each domain, including concurrent
+uploads and any old allocation still in use during replacement. Backing allocations determine
+which budget applies. A scene, avatar or glTF can contain several of the following.
+
+| Asset | RAM cost | GPU cost and possible response |
+|---|---|---|
+| Textures and video frames | Decode and upload staging, plus any retained pixels | Count blocks in the uploaded format at each mip, including layers or 3D depth and samples. A smaller texture or shorter buffered video queue can reduce the peak. |
+| Meshes | CPU vertices, indices, colliders and staging | Charge growth of backing vertex/index buffers. Meshes sharing a slab reuse its allocation. A lower LOD can avoid growing it. |
+| Audio and scene data | Decoded PCM, scene state and CPU caches | Consult RAM for CPU-only assets. A texture visualizing audio has its own GPU cost. |
+| Render targets, shadow maps and imposters | Any separately retained CPU copy | Count each color, depth, multisample and resolve allocation once. A smaller target, shadow map or sample count lowers the GPU cost. |
+
+Track shared allocations by backing identity through release. Views, handles and multiple users
+of the same resource do not add another copy. Compare an estimate with its eligible native pool;
+separate Vulkan heaps cannot lend each other space. On unified memory, RAM and GPU readings can
+cover the same pages, so adding them would double-count. When the driver reading is absent, Web
+can still track estimates against an explicit quality-profile allowance and handle allocation
+failure by reducing quality. That allowance should remain distinguishable from measured headroom.
 
 ## GPU timestamps
 

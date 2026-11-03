@@ -84,3 +84,36 @@ async fn an_empty_or_oversized_idempotency_key_is_refused_before_storing() {
     }
     assert!(stored(&rig, community).await.is_empty());
 }
+
+/// Upstream's `CreateCommunityPostSchema`: 1 to 1000 characters, the first
+/// not whitespace, no other field.
+#[tokio::test]
+async fn post_content_follows_the_upstream_schema() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let owner = wallet();
+    let community = rig.community(&owner, false).await;
+
+    let longest = "a".repeat(1000);
+    let (status, v) = publish(&rig, community, &owner, None, &longest).await;
+    assert_eq!(status, StatusCode::CREATED, "{v}");
+    for content in [
+        "a".repeat(1001),
+        " leading".to_string(),
+        "\nleading".to_string(),
+    ] {
+        let (status, v) = publish(&rig, community, &owner, None, &content).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{content:?}: {v}");
+    }
+    let (status, v) = hit(
+        &rig.app,
+        Case::new("post", format!("/v1/communities/{community}/posts"))
+            .signed(&owner)
+            .await
+            .json(&json!({ "content": "hi", "extra": 1 })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{v}");
+    assert_eq!(stored(&rig, community).await.len(), 1);
+}

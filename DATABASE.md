@@ -254,6 +254,68 @@ these are estimates, not measured throughput.
 
 ## Queries, ingest and derived state
 
+Event notification delivery is owned by Social in
+`social.event_notification_intents`. Explore inserts an event transition snapshot
+through qualified SQL in the same transaction as the event change; Social owns
+recipient progress and completion. This shared-database edge has no reverse Rust
+dependency or internal HTTP transport. No event foreign key is used: committed
+host notices must survive removal of a mirrored catalogue row.
+
+The lifecycle scanner considers live occurrences in a rolling one-hour catch-up
+window with a local audience, including on first deployment. Separate scan
+budgets prevent reminder work from starving starts. Stable occurrence keys and a unique queue index
+deduplicate repeated scans, including late approvals and equal due times. A
+recipient page commits its cursor with notification and email-outbox inserts.
+Completed queue rows have 30-day retention, exceeding the catch-up window;
+bounded cleanup retains unfinished work. Stale reminders and ended occurrences
+are suppressed before delivery. Cleanup has a bounded opportunity before dispatch,
+including when there is a backlog. Claims rotate queue order durably before page
+work; transaction-local database timeouts bound slow queries and lock waits.
+Recipient branches are bounded before merging the page. Notification timestamps
+use the delivery clock so incremental polling sees catch-up deliveries; source
+timing remains in metadata. The worker uses a five-second dispatch budget rather than a
+fixed number of audience pages. Independent three-second scan budgets and
+two-second scan statement timeouts allow more time for catalogue discovery than
+for recipient pages. Scan timeouts and budget exhaustion emit error-level
+diagnostics without activating job backoff; other scan failures reach job error
+reporting after dispatch. Cleanup failures and budget exhaustion emit error-level
+diagnostics without stopping delivery. Committed stale or
+obsolete suppression logs the intent and reason, including expiry after lock
+contention. Community opt-out UUIDs are canonicalized on write and lookup;
+event and community delivery recognize existing non-canonical UUID scopes too.
+Lookup binds optional UUID parameters parsed in Rust, preserving opaque legacy
+scope IDs without relying on guarded casts of SQL parameters.
+Catalogue-scale capacity is not established by
+bounded result sizes alone. See the
+[event notification ADR](docs/adr/2026-11-01-event-notification-delivery.md).
+
+Event RSVP state in `explore.event_attendance_local` is authoritative for that
+wallet: cancellation markers override mirrored attendee previews in reads,
+personal filters and attendee listings, and survive mirror refreshes. Counts
+apply a signed local delta to the mirrored aggregate, deduplicating wallets
+known in the mirrored preview. The preview is incomplete: an additional local
+going wallet may already be included in the upstream aggregate. Without an
+authoritative upstream membership list, the combined total remains an estimate;
+it does not guarantee exact deduplication outside the known preview. Local-only
+events do not have this ambiguity.
+The read projection materializes the normalized preview once per event row and
+excludes SQL-null preview entries. Local membership probes retain the
+`event_attendance_local` primary-key lookup; cancellation and going deltas share
+that preview instead of expanding its JSON separately for every local RSVP.
+
+Event authoring distinguishes generated posters from explicit images and clears
+inside the existing event document. Generated images may follow location
+changes; an explicit clear must survive later edits. Missing profile or place
+lookups must not erase stored facts on an unrelated edit. Location-derived facts
+must be refreshed or cleared when their source location changes. This metadata
+does not establish owner identity or grant permissions. Existing nonempty posters
+without authoring provenance remain explicit: their source cannot be inferred
+reliably from the URL alone. There is no historical provenance backfill.
+The internal `_image_source` key can travel with raw document copies. Public API
+and export paths must use an explicit field projection instead of publishing the
+stored document unfiltered. `EventRecord` omits this key, and notification
+snapshots use their own allowlist.
+
 For Shop: keep explicit asset/chain/order identities, separate accounting
 facts from rebuildable projections, bound reconciliation, use exact currency
 units, reserve atomically with external work outside the transaction. The
