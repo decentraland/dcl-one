@@ -443,12 +443,31 @@ async fn healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound() {
     let (_broker, url) = Broker::start();
     let left = replica(&database.pool);
     let right = replica(&database.pool);
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let started = std::time::Instant::now();
     let me = addr("burst-recipient");
     let mut local = left.ctx.pubsub().subscribe_updates::<BlockUpdate>(&me);
     let mut remote = right.ctx.pubsub().subscribe_updates::<BlockUpdate>(&me);
     let jobs = Jobs::new();
     let one = Arc::new(BrokerBus::new(Some(url.clone()), "social-burst-one"));
     let two = Arc::new(BrokerBus::new(Some(url), "social-burst-two"));
+    let origin_frames = Arc::new(AtomicUsize::new(0));
+    let remote_frames = Arc::new(AtomicUsize::new(0));
+    let taps: Vec<_> = [
+        (one.clone(), origin_frames.clone()),
+        (two.clone(), remote_frames.clone()),
+    ]
+    .into_iter()
+    .map(|(bus, count)| {
+        bus.subscribe(
+            crate::comms::protocol::bus::SOCIAL_EVENTS_SUBJECT,
+            None,
+            Arc::new(move |_, _| {
+                count.fetch_add(1, Ordering::Relaxed);
+            }),
+        )
+    })
+    .collect();
     left.start_fanout(&jobs, one.clone());
     right.start_fanout(&jobs, two.clone());
     one.connect();
@@ -460,6 +479,7 @@ async fn healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound() {
     })
     .await
     .unwrap();
+    let ready_after = started.elapsed();
     for n in 0..1000 {
         left.ctx
             .pubsub()
@@ -473,13 +493,27 @@ async fn healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound() {
             )
             .await;
     }
-    tokio::time::timeout(Duration::from_secs(10), async {
+    let submitted_after = started.elapsed();
+    let delivered = tokio::time::timeout(Duration::from_secs(10), async {
         while remote.len() < 1000 {
             tokio::task::yield_now().await;
         }
     })
-    .await
-    .expect("healthy burst must not disappear before the source subscription bound");
+    .await;
+    eprintln!(
+        "targeted broker burst: ready={ready_after:?} submitted={submitted_after:?} elapsed={:?} origin_frames={} remote_frames={} local_queue={} remote_queue={} ready={}/{}",
+        started.elapsed(),
+        origin_frames.load(Ordering::Relaxed),
+        remote_frames.load(Ordering::Relaxed),
+        local.len(),
+        remote.len(),
+        one.is_ready(),
+        two.is_ready()
+    );
+    assert!(
+        delivered.is_ok(),
+        "healthy burst delivery timed out; see stage counts above (harness deadline, no protocol latency promise)"
+    );
     assert_eq!(local.len(), 1000);
     for n in 0..1000 {
         let address = format!("0x{n:040x}");
@@ -495,6 +529,7 @@ async fn healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound() {
         0,
         "publisher loopback must not duplicate delivery"
     );
+    drop(taps);
     jobs.shutdown(Duration::from_secs(2)).await;
     drop((left, right));
     database.close().await;
