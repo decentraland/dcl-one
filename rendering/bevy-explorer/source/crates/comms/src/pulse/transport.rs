@@ -3,9 +3,10 @@
 //! The driver knows nothing about protobuf, identity, the decoder, or the parcel grid. Its whole
 //! contract is: connect to `host:port`, then move bytes between two channels — outbound
 //! [`PulseFrame`]s (with a reliability tag the driver maps to ENet channel flags / WebTransport
-//! stream-vs-datagram) and inbound raw `ServerMessage` bytes — and report [`PulseStatus`]. Because
-//! the seam is bytes, everything above it (handshake, decode, state, glue) is shared and written
-//! once, regardless of whether the driver is the native ENet thread or the wasm WebTransport task.
+//! stream-vs-datagram, and a [`FrameKind`] it reads only to collapse queued inputs) and inbound raw
+//! `ServerMessage` bytes — and report [`PulseStatus`]. Because the seam is bytes, everything above
+//! it (handshake, decode, state, glue) is shared and written once, regardless of whether the driver
+//! is the native ENet thread or the wasm WebTransport task.
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -29,7 +30,8 @@ pub enum PulseReliability {
 /// and pacing (teleports, emotes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameKind {
-    /// A `PlayerStateInput`. A newer one supersedes an older one still waiting in the queue.
+    /// A `PlayerStateInput`. A newer one supersedes the input queued right before it; an input
+    /// with another frame between them is kept.
     Input,
     /// A `TeleportRequest`.
     Teleport,

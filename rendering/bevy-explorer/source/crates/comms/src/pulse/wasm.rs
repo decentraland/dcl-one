@@ -42,6 +42,11 @@ use super::transport::{
 /// teardown that only flips the flag (rather than closing the outbound channel) is still noticed.
 const STOP_POLL_MS: u32 = 200;
 
+/// How long the session may take to come up: the 10 s native allows the ENet connect, from
+/// unity-explorer `ENetTransportOptions.ConnectTimeoutMs`
+/// (`Explorer/Assets/DCL/Multiplayer/Connections/Pulse/ENet/ENetTransportOptions.cs`).
+const CONNECT_TIMEOUT_MS: u32 = 10_000;
+
 pub(super) fn spawn(
     config: PulseTransportConfig,
     channels: PulseDriverChannels,
@@ -74,9 +79,20 @@ async fn run(config: PulseTransportConfig, channels: PulseDriverChannels, stop: 
     };
 
     // `ready` resolves once the QUIC session + CONNECT handshake complete; a rejection here is
-    // never-established → Failed (retryable), the same class as native's DNS/connect failures.
-    if let Err(err) = JsFuture::from(transport.ready()).await {
-        return fail(&status, format!("webtransport connect failed: {err:?}"));
+    // never-established → Failed (retryable), the same class as native's DNS/connect failures. So
+    // is a handshake still pending after `CONNECT_TIMEOUT_MS`: the session is closed, and nothing
+    // reports a disconnect for it, since no watcher is running yet.
+    let ready = std::pin::pin!(JsFuture::from(transport.ready()));
+    let timeout = std::pin::pin!(TimeoutFuture::new(CONNECT_TIMEOUT_MS));
+    match select(ready, timeout).await {
+        Either::Left((Ok(_), _)) => {}
+        Either::Left((Err(err), _)) => {
+            return fail(&status, format!("webtransport connect failed: {err:?}"))
+        }
+        Either::Right(_) => {
+            transport.close();
+            return fail(&status, "webtransport connect timed out".to_owned());
+        }
     }
     let _ = status.try_send(PulseStatus::Connected);
 

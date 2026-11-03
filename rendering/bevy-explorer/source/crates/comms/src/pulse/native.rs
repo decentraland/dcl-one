@@ -6,22 +6,25 @@
 //! outbound [`PulseFrame`] channel and UDP-socket readability — plus a coarse maintenance tick so
 //! ENet's own timers (pings, reliable retransmits) keep ticking when otherwise idle. After any
 //! wake it drains outbound onto the peer and services the host. The host's socket is a Tokio
-//! [`UdpSocket`] driven non-blocking via `try_recv_from` / `try_send_to`.
+//! [`UdpSocket`] driven non-blocking via `try_recv_from` / `try_send_to`. The thread never waits
+//! on the protocol layer: what a full inbound queue cannot take is held in a [`Backlog`].
 //!
 //! The host is a (locally patched) [`rusty_enet`] — a pure-Rust port of ENet retargeted to the
 //! nxrighthere/SoftwareGuy ENet-CSharp "modified protocol" fork the server runs (the patch is the
 //! three header-flag constants in the fork's `src/c/protocol.rs`). No compressor and no checksum,
 //! matching the server's host exactly.
 
+use std::collections::VecDeque;
 use std::io::{self, ErrorKind};
-use std::net::{Ipv4Addr, SocketAddr, ToSocketAddrs};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rusty_enet as enet;
 use tokio::net::UdpSocket;
+use tokio::sync::mpsc::{self, error::TrySendError};
 
 use super::transport::{
     collapse_inputs, PulseDisconnect, PulseDriverChannels, PulseFrame, PulseReliability,
@@ -36,6 +39,15 @@ const CHANNEL_RELIABLE: u8 = 0;
 /// How long to block with no inbound/outbound activity before servicing the host anyway, so ENet's
 /// pings and reliable retransmits keep ticking on an otherwise-idle connection.
 const MAINTENANCE_INTERVAL: Duration = Duration::from_millis(100);
+
+/// unity-explorer `ENetTransportOptions.ConnectTimeoutMs` (10000), for DNS and for the ENet
+/// connect: `ResolveIPv4Async` and `ConnectAsync` in `ENetTransport.cs`, both in
+/// `Explorer/Assets/DCL/Multiplayer/Connections/Pulse/ENet/`.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Reliable messages held while the protocol layer's queue is full. Past it the connection fails
+/// (retryably) rather than grow without end behind an engine that has stopped reading.
+const MAX_HELD_RELIABLE: usize = 65_536;
 
 pub(super) fn spawn(
     config: PulseTransportConfig,
@@ -84,20 +96,6 @@ impl enet::Socket for PulseSocket {
 fn run(config: PulseTransportConfig, mut channels: PulseDriverChannels, stop: &AtomicBool) {
     let _ = channels.status.try_send(PulseStatus::Connecting);
 
-    // Resolve the server address (DNS). A failure here is never-established → Failed (retryable).
-    let address = match (config.host.as_str(), config.port).to_socket_addrs() {
-        Ok(mut addrs) => match addrs.next() {
-            Some(address) => address,
-            None => return fail(&mut channels, format!("no address for {}", config.host)),
-        },
-        Err(err) => {
-            return fail(
-                &mut channels,
-                format!("resolve {} failed: {err}", config.host),
-            )
-        }
-    };
-
     // One OS thread, one current-thread runtime — keeps ENet single-threaded while letting us block
     // on socket/channel readiness instead of spinning.
     let runtime = match tokio::runtime::Builder::new_current_thread()
@@ -107,12 +105,140 @@ fn run(config: PulseTransportConfig, mut channels: PulseDriverChannels, stop: &A
         Ok(runtime) => runtime,
         Err(err) => return fail(&mut channels, format!("tokio runtime build failed: {err}")),
     };
-    runtime.block_on(drive(&mut channels, address, stop));
+    runtime.block_on(drive(&mut channels, &config, stop));
+    // A lookup still running on the runtime's blocking pool cannot be cancelled, and dropping the
+    // runtime would wait for it while `PulseDriverHandle::drop` waits on this thread: leave it
+    // behind.
+    runtime.shutdown_background();
 }
 
-async fn drive(channels: &mut PulseDriverChannels, address: SocketAddr, stop: &AtomicBool) {
+/// Resolve the server address (DNS). `None` ends the driver: either the failure was reported, as
+/// never-established → Failed (retryable), or the protocol layer dropped the link meanwhile, and
+/// nobody is left to tell.
+async fn resolve(
+    channels: &mut PulseDriverChannels,
+    config: &PulseTransportConfig,
+) -> Option<SocketAddr> {
+    let mut lookup = std::pin::pin!(tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        tokio::net::lookup_host((config.host.as_str(), config.port)),
+    ));
+    // The lookup is a blocking call that cannot be cancelled, so the link's drop is raced against
+    // it: the driver can leave at once, and not when the resolver gives up.
+    let outcome = loop {
+        tokio::select! {
+            outcome = &mut lookup => break outcome,
+            frame = channels.outbound.recv() => match frame {
+                // Nothing can be sent before the connection is up: `queue_frame` would drop it.
+                Some(_) => {}
+                None => return None,
+            },
+        }
+    };
+
+    let message = match outcome {
+        Ok(Ok(addrs)) => match pick_address(addrs) {
+            Some(address) => return Some(address),
+            None => format!("no address for {}", config.host),
+        },
+        Ok(Err(err)) => format!("resolve {} failed: {err}", config.host),
+        Err(_) => format!("resolve {} timed out", config.host),
+    };
+    fail(channels, message);
+    None
+}
+
+/// The first IPv4 address, else the first IPv6 one. unity-explorer takes the first IPv4 address
+/// and fails without one (`ENetTransport.ResolveIPv4Async`), and the servers bind `0.0.0.0` by
+/// default, so IPv6 is only a fallback.
+fn pick_address(addrs: impl IntoIterator<Item = SocketAddr>) -> Option<SocketAddr> {
+    let mut first_ipv6 = None;
+    for address in addrs {
+        if address.is_ipv4() {
+            return Some(address);
+        }
+        first_ipv6.get_or_insert(address);
+    }
+    first_ipv6
+}
+
+/// Reliable messages the protocol layer's queue had no room for, in arrival order. Waiting for
+/// room is not an option: the thread would service nothing meanwhile, and the server drops a peer
+/// that stops acknowledging within seconds.
+struct Backlog {
+    held: VecDeque<Vec<u8>>,
+    cap: usize,
+}
+
+/// The backlog is at its cap.
+#[derive(Debug, PartialEq)]
+struct BacklogFull;
+
+impl Backlog {
+    fn with_cap(cap: usize) -> Self {
+        Self {
+            held: VecDeque::new(),
+            cap,
+        }
+    }
+
+    /// Hand `bytes` over, or, when the queue is full, hold it (reliable) or drop it (unreliable).
+    /// A reliable message never overtakes one already held.
+    fn deliver(
+        &mut self,
+        tx: &mpsc::Sender<Vec<u8>>,
+        bytes: Vec<u8>,
+        reliable: bool,
+    ) -> Result<(), BacklogFull> {
+        if !reliable {
+            // Superseded by the next one anyway.
+            let _ = tx.try_send(bytes);
+            return Ok(());
+        }
+        let bytes = if self.held.is_empty() {
+            match tx.try_send(bytes) {
+                Err(TrySendError::Full(bytes)) => bytes,
+                // Handed over, or the link is gone and the driver is about to stop.
+                _ => return Ok(()),
+            }
+        } else {
+            bytes
+        };
+        if self.held.len() >= self.cap {
+            return Err(BacklogFull);
+        }
+        self.held.push_back(bytes);
+        Ok(())
+    }
+
+    /// Hand over what is held, in order, while there is room.
+    fn flush(&mut self, tx: &mpsc::Sender<Vec<u8>>) {
+        while let Some(bytes) = self.held.pop_front() {
+            if let Err(TrySendError::Full(bytes)) = tx.try_send(bytes) {
+                self.held.push_front(bytes);
+                break;
+            }
+        }
+    }
+}
+
+async fn drive(
+    channels: &mut PulseDriverChannels,
+    config: &PulseTransportConfig,
+    stop: &AtomicBool,
+) {
+    let Some(address) = resolve(channels, config).await else {
+        return;
+    };
+
+    // An IPv4 socket cannot send to an IPv6 address, so the socket follows the address.
+    let local: IpAddr = if address.is_ipv6() {
+        Ipv6Addr::UNSPECIFIED.into()
+    } else {
+        Ipv4Addr::UNSPECIFIED.into()
+    };
     // Ephemeral local UDP socket; ENet drives it non-blocking via `PulseSocket`.
-    let socket = match UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).await {
+    let socket = match UdpSocket::bind((local, 0)).await {
         Ok(socket) => PulseSocket(socket),
         Err(err) => return fail(channels, format!("udp bind failed: {err}")),
     };
@@ -134,8 +260,19 @@ async fn drive(channels: &mut PulseDriverChannels, address: SocketAddr, stop: &A
         Ok(peer) => peer.id(),
         Err(err) => return fail(channels, format!("enet connect failed: {err}")),
     };
+    let connecting_since = Instant::now();
+    let mut connected = false;
+    let mut backlog = Backlog::with_cap(MAX_HELD_RELIABLE);
 
     while !stop.load(Ordering::Relaxed) {
+        // Whatever the protocol layer has made room for since the last pass.
+        backlog.flush(&channels.inbound);
+        // ENet would give up on its own only after up to 30 s. The loop wakes at least every
+        // `MAINTENANCE_INTERVAL`, so this is checked about as often.
+        if !connected && connecting_since.elapsed() >= CONNECT_TIMEOUT {
+            return fail(channels, "connect timed out".to_owned());
+        }
+
         // Block until there's work: an outbound frame to send, an inbound datagram to read, or the
         // maintenance deadline so ENet's timers keep ticking.
         let outbound = tokio::select! {
@@ -165,6 +302,7 @@ async fn drive(channels: &mut PulseDriverChannels, address: SocketAddr, stop: &A
         loop {
             match host.service() {
                 Ok(Some(enet::Event::Connect { .. })) => {
+                    connected = true;
                     let _ = channels.status.try_send(PulseStatus::Connected);
                 }
                 Ok(Some(enet::Event::Disconnect { data, .. })) => {
@@ -178,15 +316,16 @@ async fn drive(channels: &mut PulseDriverChannels, address: SocketAddr, stop: &A
                     // Every packet is surfaced, on or off a Pulse realm: the protocol layer's
                     // decoder must see each `PlayerLeft` to keep its subject table an honest mirror
                     // of the server's view of us, and it gates what reaches the engine itself
-                    // (nothing routes without a live routing entity). So a reliable packet waits
-                    // for room rather than being dropped while the main thread stalls; ENet's
-                    // peer timeout is seconds, well past an ordinary frame hitch or scene load.
-                    // Unreliable ones are superseded anyway.
+                    // (nothing routes without a live routing entity). So a reliable packet is held
+                    // for room rather than dropped while the main thread stalls, and this thread
+                    // goes on servicing ENet meanwhile. Unreliable ones are superseded anyway.
                     let bytes = packet.data().to_vec();
-                    if channel_id == CHANNEL_RELIABLE {
-                        let _ = channels.inbound.send(bytes).await;
-                    } else {
-                        let _ = channels.inbound.try_send(bytes);
+                    let reliable = channel_id == CHANNEL_RELIABLE;
+                    if backlog.deliver(&channels.inbound, bytes, reliable).is_err() {
+                        return fail(
+                            channels,
+                            format!("inbound backlog over {MAX_HELD_RELIABLE} messages"),
+                        );
                     }
                 }
                 // This host keeps receive_policy=None; preserve exhaustive handling of vendor events.
@@ -280,3 +419,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod driver_tests;
