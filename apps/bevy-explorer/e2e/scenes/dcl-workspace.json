@@ -1,0 +1,55 @@
+{
+  "folders": [
+    {
+      "path": "animations"
+    },
+    {
+      "path": "avatar-shape"
+    },
+    {
+      "path": "core"
+    },
+    {
+      "path": "gltf"
+    },
+    {
+      "path": "gltf-legacy-assets"
+    },
+    {
+      "path": "gltf-legacy-assets-2"
+    },
+    {
+      "path": "gltf-materials"
+    },
+    {
+      "path": "gltf-meshes"
+    },
+    {
+      "path": "gltf-transforms"
+    },
+    {
+      "path": "gltf-uvs"
+    },
+    {
+      "path": "lights"
+    },
+    {
+      "path": "materials"
+    },
+    {
+      "path": "swap_material"
+    },
+    {
+      "path": "text-shape"
+    },
+    {
+      "path": "triggers-raycasts"
+    },
+    {
+      "path": "tweens"
+    },
+    {
+      "path": "ui"
+    }
+  ]
+}

@@ -1,0 +1,47 @@
+{
+  "ecs7": true,
+  "runtimeVersion": "7",
+  "display": {
+    "title": "gltf-meshes",
+    "description": "Visual regression scene gltf-meshes (from explorer-automation 955b338)"
+  },
+  "owner": "",
+  "contact": {
+    "name": "explorer-automation",
+    "email": ""
+  },
+  "main": "bin/index.js",
+  "tags": [],
+  "scene": {
+    "parcels": [
+      "84,0",
+      "85,0"
+    ],
+    "base": "84,0"
+  },
+  "skyboxConfig": {
+    "fixedTime": 43200
+  },
+  "spawnPoints": [
+    {
+      "name": "default",
+      "default": true,
+      "position": {
+        "x": [
+          8
+        ],
+        "y": [
+          0
+        ],
+        "z": [
+          8
+        ]
+      },
+      "cameraTarget": {
+        "x": 8,
+        "y": 1,
+        "z": 8
+      }
+    }
+  ]
+}

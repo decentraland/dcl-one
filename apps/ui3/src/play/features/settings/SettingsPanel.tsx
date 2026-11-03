@@ -9,15 +9,7 @@ import { MainMenuShell } from '../menu/MainMenuShell'
 import type { Setting } from '../../engine/protocol'
 import type { BindingsState, ProfileState, SettingsState } from '../session/useEngineSession'
 import { KeyBindingsTab } from './KeyBindingsTab'
-import {
-  LANGUAGES,
-  clearAutoTranslate,
-  nativeName,
-  setAutoTranslateDefault,
-  setTranslationLanguage,
-  systemLanguage,
-  useTranslationPrefs
-} from '../chat/translation'
+import { clearAutoTranslate, setAutoTranslateDefault, useTranslationPrefs } from '../chat/translation'
 import styles from './SettingsPanel.module.css'
 
 // Appended after the engine-derived categories: bindings are (action, keys[]) rows from the
@@ -102,29 +94,12 @@ const SettingField = memo(
   (prev, next) => prev.s.name === next.s.name && prev.s.value === next.s.value && prev.onSet === next.onSet
 )
 
-/** Chat translation, kept by the HUD rather than the engine. */
+/** Chat translation, kept by the HUD rather than the engine. The language is the engine's
+ *  Language setting, in the same tab. */
 function TranslationFields(): React.JSX.Element {
   const prefs = useTranslationPrefs()
-  const system = systemLanguage()
-  // each in its own name, so a player finds theirs without reading English
-  const options = useMemo(
-    () => LANGUAGES.map((l) => ({ value: l.code, label: nativeName(l.code) })).sort((a, b) => a.label.localeCompare(b.label)),
-    []
-  )
   return (
     <>
-      <div className={styles.field}>
-        <div className={styles.fieldHead}>
-          <span className={styles.label}>Translation Language</span>
-        </div>
-        <Select
-          variant="light"
-          value={prefs.languageChosen ? prefs.language : ''}
-          options={[{ value: '', label: `System (${nativeName(system)})` }, ...options]}
-          onChange={(v) => setTranslationLanguage(v === '' ? null : v)}
-          aria-label="Translation Language"
-        />
-      </div>
       <div className={styles.field}>
         <div className={styles.fieldHead}>
           <span className={styles.label}>Auto-Translate New Conversations</span>
@@ -167,7 +142,6 @@ export function SettingsPanel({
     }
     items.forEach((s) => settings.set(s.name, s.default))
     if (activeTab === CHAT_TAB) {
-      setTranslationLanguage(null)
       setAutoTranslateDefault(false)
       clearAutoTranslate()
     }

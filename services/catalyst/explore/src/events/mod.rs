@@ -20,8 +20,7 @@ pub mod sitemap;
 pub mod v1;
 pub mod writes;
 
-use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::collections::HashMap;
 
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::Serialize;
@@ -29,7 +28,6 @@ use serde_json::Value;
 use sqlx::PgPool;
 
 use crate::sanitize::{sanitize_asset_url, sanitize_event_description, validate_event_url};
-use crate::shared::cache::{TtlCache, cache_get, cache_put};
 use crate::shared::errors::ApiError;
 
 #[derive(Debug, Clone, Serialize)]
@@ -175,11 +173,8 @@ pub struct NextEvent {
 pub struct EventsComponent {
     pool: PgPool,
     rewrite_domain: Option<String>,
-    moderators: TtlCache<HashSet<String>>,
+    events_asset_base_url: String,
 }
-
-/// Read-side moderator visibility only; writes keep their own gate.
-const MODERATOR_SET_TTL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Default)]
 pub struct EventListFilters {
@@ -263,29 +258,16 @@ struct EventRow {
 impl EventsComponent {
     /// `rewrite_domain`: the deployment's own domain, swapped into mirrored
     /// `events-assets-*.decentraland.org` poster URLs (`None` keeps them).
-    pub fn new(pool: PgPool, rewrite_domain: Option<String>) -> Self {
+    pub fn new(
+        pool: PgPool,
+        rewrite_domain: Option<String>,
+        events_asset_base_url: String,
+    ) -> Self {
         Self {
             pool,
             rewrite_domain,
-            moderators: Default::default(),
+            events_asset_base_url,
         }
-    }
-
-    pub async fn viewer_is_moderator(&self, address: &str) -> Result<bool, ApiError> {
-        let address = address.to_ascii_lowercase();
-        if let Some(set) = cache_get(&self.moderators, "all") {
-            return Ok(set.contains(&address));
-        }
-        let rows: Vec<(String,)> = sqlx::query_as("SELECT address FROM explore.moderators")
-            .fetch_all(&self.pool)
-            .await?;
-        let set: HashSet<String> = rows
-            .into_iter()
-            .map(|(a,)| a.to_ascii_lowercase())
-            .collect();
-        let hit = set.contains(&address);
-        cache_put(&self.moderators, "all".to_string(), set, MODERATOR_SET_TTL);
-        Ok(hit)
     }
 
     fn destination_clause(ids: &[String], binds: &mut Vec<EventBind>) -> String {
@@ -475,7 +457,14 @@ impl EventsComponent {
         let user = f.user.as_deref();
         let records = rows
             .into_iter()
-            .map(|r| event_row_to_record(r, user, self.rewrite_domain.as_deref()))
+            .map(|r| {
+                event_row_to_record(
+                    r,
+                    user,
+                    self.rewrite_domain.as_deref(),
+                    &self.events_asset_base_url,
+                )
+            })
             .collect();
         Ok((records, total))
     }
@@ -497,7 +486,14 @@ impl EventsComponent {
         .bind(event_id)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|r| event_row_to_record(r, None, self.rewrite_domain.as_deref())))
+        Ok(row.map(|r| {
+            event_row_to_record(
+                r,
+                None,
+                self.rewrite_domain.as_deref(),
+                &self.events_asset_base_url,
+            )
+        }))
     }
 
     /// `get` plus the viewer's attendance (local RSVP or upstream attendee) in one statement.
@@ -518,10 +514,12 @@ impl EventsComponent {
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(|r| {
-            let attending = r.viewer_attending.unwrap_or(false);
-            let mut rec = event_row_to_record(r, Some(viewer), self.rewrite_domain.as_deref());
-            rec.attending = attending;
-            rec
+            event_row_to_record(
+                r,
+                Some(viewer),
+                self.rewrite_domain.as_deref(),
+                &self.events_asset_base_url,
+            )
         }))
     }
 
@@ -534,10 +532,12 @@ impl EventsComponent {
         Ok(rows
             .into_iter()
             .map(|r| {
-                let mut rec =
-                    event_row_to_record(r, Some(&user_lc), self.rewrite_domain.as_deref());
-                rec.attending = true;
-                rec
+                event_row_to_record(
+                    r,
+                    Some(&user_lc),
+                    self.rewrite_domain.as_deref(),
+                    &self.events_asset_base_url,
+                )
             })
             .collect())
     }
@@ -557,7 +557,14 @@ impl EventsComponent {
         .await?;
         Ok(rows
             .into_iter()
-            .map(|r| event_row_to_record(r, None, self.rewrite_domain.as_deref()))
+            .map(|r| {
+                event_row_to_record(
+                    r,
+                    None,
+                    self.rewrite_domain.as_deref(),
+                    &self.events_asset_base_url,
+                )
+            })
             .collect())
     }
 
@@ -681,26 +688,43 @@ impl AskedKeys {
     }
 }
 
+// Keep malformed/missing previews safe in every read. The macro also permits
+// composing the static column list without allocating a query at each call.
+macro_rules! latest_attendees_array_sql {
+    () => {
+        "CASE WHEN jsonb_typeof(raw->'latest_attendees')='array' THEN raw->'latest_attendees' ELSE '[]' END"
+    };
+}
+const LATEST_ATTENDEES_ARRAY_SQL: &str = latest_attendees_array_sql!();
+
 /// Column list shared by every event read query.
-/// `local_attendees` is the signed delta over a mirrored count: new going
-/// signers add one; cancellation of a known preview signer subtracts one.
-/// Preview equality is case-insensitive, and local previews are bounded.
-const EVENT_COLUMNS: &str = "id, name, start_at, finish_at, duration_ms, recurrent, highlighted, trending, \
+/// The signed delta deduplicates only known preview members. An upstream count
+/// can include wallets absent from its incomplete preview, so the merged count
+/// is an estimate. Cancellation overrides membership and subtracts known members.
+/// Materializing the preview once avoids expanding it for every local signer.
+const EVENT_COLUMNS: &str = concat!(
+    "id, name, start_at, finish_at, duration_ms, recurrent, highlighted, trending, \
      approved, community_id, user_creator, coordinates_x, coordinates_y, \
      description, raw, \
-     (SELECT COALESCE(sum(CASE \
-         WHEN la.action='going' AND NOT EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(event.raw->'latest_attendees')='array' THEN event.raw->'latest_attendees' ELSE '[]' END) ua(address) WHERE lower(ua.address)=la.signer) THEN 1 \
-         WHEN la.action='cancel' AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(event.raw->'latest_attendees')='array' THEN event.raw->'latest_attendees' ELSE '[]' END) ua(address) WHERE lower(ua.address)=la.signer) THEN -1 \
-         ELSE 0 END),0)::bigint FROM explore.event_attendance_local la WHERE la.event_id=event.id) AS local_attendees, \
+     (WITH upstream AS MATERIALIZED (SELECT ARRAY(SELECT lower(ua.address) FROM jsonb_array_elements_text(",
+    latest_attendees_array_sql!(),
+    ") ua(address) WHERE ua.address IS NOT NULL) AS addresses) \
+      SELECT COALESCE(sum(CASE \
+         WHEN la.action='going' AND NOT (la.signer=ANY(upstream.addresses)) THEN 1 \
+         WHEN la.action='cancel' AND la.signer=ANY(upstream.addresses) THEN -1 \
+         ELSE 0 END),0)::bigint FROM explore.event_attendance_local la CROSS JOIN upstream WHERE la.event_id=event.id) AS local_attendees, \
      ARRAY(SELECT la.signer FROM explore.event_attendance_local la WHERE la.event_id=event.id AND la.action='going' ORDER BY la.signed_at DESC,la.signer LIMIT 10) AS local_latest_attendees, \
-     ARRAY(SELECT lower(ua.address) FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(event.raw->'latest_attendees')='array' THEN event.raw->'latest_attendees' ELSE '[]' END) ua(address) \
-           WHERE EXISTS (SELECT 1 FROM explore.event_attendance_local la WHERE la.event_id=event.id AND la.signer=lower(ua.address) AND la.action='cancel')) AS cancelled_attendees";
+     ARRAY(SELECT lower(ua.address) FROM jsonb_array_elements_text(",
+    latest_attendees_array_sql!(),
+    ") ua(address) \
+           WHERE ua.address IS NOT NULL AND EXISTS (SELECT 1 FROM explore.event_attendance_local la WHERE la.event_id=event.id AND la.signer=lower(ua.address) AND la.action='cancel')) AS cancelled_attendees"
+);
 
 /// Explicit local state, including cancellation, overrides a mirrored preview.
 fn attendance_sql(user: &str) -> String {
     format!(
         "COALESCE((SELECT la.action='going' FROM explore.event_attendance_local la WHERE la.event_id=event.id AND la.signer={user}), \
-        EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(event.raw->'latest_attendees')='array' THEN event.raw->'latest_attendees' ELSE '[]' END) ua(address) WHERE lower(ua.address)={user}))"
+        EXISTS (SELECT 1 FROM jsonb_array_elements_text({LATEST_ATTENDEES_ARRAY_SQL}) ua(address) WHERE ua.address IS NOT NULL AND lower(ua.address)={user}))"
     )
 }
 
@@ -780,7 +804,7 @@ fn attending_sql() -> String {
     let attending = attendance_sql("$1");
     let columns = list_event_columns(false);
     format!(
-        "SELECT {columns} FROM explore.event \
+        "SELECT {columns}, true AS viewer_attending FROM explore.event \
          WHERE {EFF_NEXT_FINISH_SQL} > now() \
            AND COALESCE((raw->>'rejected')::boolean, false) IS FALSE \
            AND (raw->>'deleted_by_user') IS DISTINCT FROM 'true' \
@@ -912,8 +936,9 @@ fn rewrite_asset_url(url: &str, domain: Option<&str>) -> String {
 
 fn event_row_to_record(
     r: EventRow,
-    attending_user: Option<&str>,
+    verified_viewer: Option<&str>,
     rewrite_domain: Option<&str>,
+    events_asset_base_url: &str,
 ) -> EventRecord {
     let raw = &r.raw;
     let start_at = r.start_at.map(|n| n.and_utc());
@@ -924,11 +949,19 @@ fn event_row_to_record(
         .get("image")
         .and_then(|v| v.as_str())
         .and_then(|s| sanitize_asset_url(s).ok())
-        .map(|s| rewrite_asset_url(&s, rewrite_domain));
+        .map(|s| {
+            rewrite_asset_url(
+                &posters::absolute_default_image(&s, events_asset_base_url),
+                rewrite_domain,
+            )
+        });
     let image_vertical = raw.get("image_vertical").cloned().and_then(|v| match v {
-        Value::String(s) => sanitize_asset_url(&s)
-            .ok()
-            .map(|safe| Value::String(rewrite_asset_url(&safe, rewrite_domain))),
+        Value::String(s) => sanitize_asset_url(&s).ok().map(|safe| {
+            Value::String(rewrite_asset_url(
+                &posters::absolute_default_image(&safe, events_asset_base_url),
+                rewrite_domain,
+            ))
+        }),
         other => Some(other),
     });
     let server = raw_str(raw, "server");
@@ -937,7 +970,7 @@ fn event_row_to_record(
         .and_then(|v| v.as_str())
         .and_then(|s| validate_event_url(s).ok());
     let user = raw_str(raw, "user").or_else(|| r.user_creator.clone());
-    let owner_view = matches!((attending_user,user.as_deref()),(Some(viewer),Some(owner)) if viewer.eq_ignore_ascii_case(owner));
+    let owner_view = matches!((verified_viewer,user.as_deref()),(Some(viewer),Some(owner)) if viewer.eq_ignore_ascii_case(owner));
     let scene_name = raw_str(raw, "scene_name");
     let estate_name = raw_str(raw, "estate_name").or_else(|| scene_name.clone());
     let world = raw.get("world").and_then(|v| v.as_bool()).unwrap_or(false);
@@ -968,7 +1001,7 @@ fn event_row_to_record(
         (Some(ns), Some(d)) => now >= ns && now < ns + chrono::Duration::milliseconds(d),
         _ => raw.get("live").and_then(|v| v.as_bool()).unwrap_or(false),
     };
-    let attending = match attending_user {
+    let attending = match verified_viewer {
         Some(u) => r.viewer_attending.unwrap_or_else(|| {
             raw.get("latest_attendees")
                 .and_then(|v| v.as_array())
@@ -1060,7 +1093,7 @@ fn event_row_to_record(
             + r.local_attendees)
             .max(0),
         latest_attendees: {
-            let mut seen: HashSet<String> = r
+            let mut seen: std::collections::HashSet<String> = r
                 .cancelled_attendees
                 .into_iter()
                 .map(|address| address.to_ascii_lowercase())
@@ -1138,12 +1171,23 @@ mod tests {
         let participants = std::sync::Arc::new(Participants(Default::default()));
         live.set_participants(participants.clone());
         let mut events = vec![
-            event_row_to_record(row_with(json!({"x":10,"y":20}), None, None), None, None),
-            event_row_to_record(row_with(json!({"x":10,"y":20}), None, None), None, None),
+            event_row_to_record(
+                row_with(json!({"x":10,"y":20}), None, None),
+                None,
+                None,
+                "https://events.decentraland.org",
+            ),
+            event_row_to_record(
+                row_with(json!({"x":10,"y":20}), None, None),
+                None,
+                None,
+                "https://events.decentraland.org",
+            ),
             event_row_to_record(
                 row_with(json!({"world":true,"server":"MyWorld.DCL.eth"}), None, None),
                 None,
                 None,
+                "https://events.decentraland.org",
             ),
         ];
         super::handlers::fill_connected(&mut events, &live).await;
@@ -1224,6 +1268,7 @@ mod tests {
             row_with(raw.clone(), None, None),
             None,
             Some("interconnected.online"),
+            "https://events.decentraland.org",
         );
         assert_eq!(
             rec.image.as_deref(),
@@ -1235,7 +1280,12 @@ mod tests {
                 "https://events-assets-099ac00.interconnected.online/poster/v.webp".into()
             ))
         );
-        let rec = event_row_to_record(row_with(raw, None, None), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, None, None),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(
             rec.image.as_deref(),
             Some("https://events-assets-099ac00.decentraland.org/poster/d2dfb36b6a012314.jpg")
@@ -1250,10 +1300,16 @@ mod tests {
             row_with(json!({ "featured_item": urn }), None, None),
             None,
             None,
+            "https://events.decentraland.org",
         );
         assert_eq!(rec.featured_item.as_deref(), Some(urn));
         for absent in [json!({}), json!({ "featured_item": null })] {
-            let rec = event_row_to_record(row_with(absent, None, None), None, None);
+            let rec = event_row_to_record(
+                row_with(absent, None, None),
+                None,
+                None,
+                "https://events.decentraland.org",
+            );
             assert_eq!(rec.featured_item, None);
         }
     }
@@ -1527,6 +1583,7 @@ mod tests {
             ),
             None,
             None,
+            "https://events.decentraland.org",
         );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
@@ -1540,7 +1597,12 @@ mod tests {
 
         let started = now - chrono::Duration::minutes(30);
         let raw = json!({ "recurrent_dates": [started.to_rfc3339()] });
-        let rec = event_row_to_record(row_with(raw, Some(started), Some(7_200_000)), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, Some(started), Some(7_200_000)),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
             Some(started.timestamp())
@@ -1552,7 +1614,12 @@ mod tests {
             "next_finish_at": (past + chrono::Duration::hours(2)).to_rfc3339(),
             "recurrent_dates": [past.to_rfc3339()],
         });
-        let rec = event_row_to_record(row_with(raw, Some(past), Some(7_200_000)), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, Some(past), Some(7_200_000)),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
             Some(past.timestamp())
@@ -1565,7 +1632,12 @@ mod tests {
             "next_finish_at": (running + chrono::Duration::hours(2)).to_rfc3339(),
             "recurrent_dates": [future.to_rfc3339()],
         });
-        let rec = event_row_to_record(row_with(raw, Some(past), Some(7_200_000)), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, Some(past), Some(7_200_000)),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(
             rec.next_start_at.map(|d| d.timestamp()),
             Some(running.timestamp()),
@@ -1642,7 +1714,7 @@ mod tests {
             };
             let mut binds = Vec::new();
             let sql = build_list_sql(&filters, false, &mut binds);
-            assert!(sql.contains("LIMIT 100"));
+            assert!(sql.contains("LIMIT 100)"));
             assert!(
                 matches!(binds.get(binds.len()-2),Some(EventBind::Int64(value)) if *value==limit)
             );
@@ -1655,7 +1727,7 @@ mod tests {
         row.description = Some(
             "Join <link=\"file:///etc/passwd\">here</link> or <link=\"https://decentraland.org\">our site</link>".into(),
         );
-        let rec = event_row_to_record(row, None, None);
+        let rec = event_row_to_record(row, None, None, "https://events.decentraland.org");
         assert_eq!(
             rec.description.as_deref(),
             Some("Join here or <link=\"https://decentraland.org\">our site</link>")
@@ -1664,7 +1736,12 @@ mod tests {
         let raw = json!({
             "description": format!("<a href=\"smb://attacker/share\">x</a> <link=\"http://{metadata_ip}/\">y</link>")
         });
-        let rec = event_row_to_record(row_with(raw, None, None), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, None, None),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(rec.description.as_deref(), Some("x y"));
 
         let raw = json!({
@@ -1672,7 +1749,12 @@ mod tests {
             "image": "http://127.0.0.1/poster.png",
             "image_vertical": "javascript:alert(1)",
         });
-        let rec = event_row_to_record(row_with(raw, None, None), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, None, None),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!((rec.url, rec.image, rec.image_vertical), (None, None, None));
 
         let raw = json!({
@@ -1680,7 +1762,12 @@ mod tests {
             "image": "https://decentraland.org/poster.png",
             "image_vertical": "/poster/bafabc123",
         });
-        let rec = event_row_to_record(row_with(raw, None, None), None, None);
+        let rec = event_row_to_record(
+            row_with(raw, None, None),
+            None,
+            None,
+            "https://events.decentraland.org",
+        );
         assert_eq!(rec.url.as_deref(), Some("https://decentraland.org/events"));
         assert_eq!(
             rec.image.as_deref(),

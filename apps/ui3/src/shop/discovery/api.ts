@@ -10,6 +10,7 @@ import type { SuggestionReason } from "@catalyst-api/market/SuggestionReason";
 import { shopClient, type ShopClient } from "../api/shop";
 import { shopFlags } from "./flags";
 import { readFreshness, type IndexFreshness } from "./freshness";
+import { catalogCategoryParams } from "./lib/categories";
 import { toCatalogItem, type CatalogItem, type ListingAcquisition, type ListingSource, type RawCollectionItem } from "./lib/catalogItem";
 
 export type Opts = { client?: ShopClient; signal?: AbortSignal };
@@ -364,7 +365,7 @@ export async function fetchCatalogItems(
   if (contractAddresses) q.contractAddress = contractAddresses.length ? contractAddresses : [ZERO_ADDRESS];
   else if (contractAddress) q.contractAddress = contractAddress;
   if (rarities?.length) q.rarity = rarities;
-  if (wearableCategories?.length) q.wearableCategory = wearableCategories;
+  Object.assign(q, catalogCategoryParams(wearableCategories));
   if (wearableGenders?.length) q.wearableGender = wearableGenders;
   if (search) q.search = search;
   if (sortBy) q.sortBy = sortBy;

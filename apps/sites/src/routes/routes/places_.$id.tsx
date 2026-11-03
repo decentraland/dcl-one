@@ -14,7 +14,7 @@ import { loadPlace } from "@/data/lib/catalyst/places/index.server";
 import { loadPlaceViewer, savePlaceFavorite, savePlaceLike } from "@/data/lib/catalyst/places/interactions";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { pageLoaderWith } from "@/core/lib/telemetry/page-loader";
-import WorldScenes from "@/features/explorer/world-scenes/WorldScenes";
+import WorldScenes from "@/features/explorer/WorldScenes";
 import { sceneTravelHref } from "@/data/lib/catalyst/places/world-scenes";
 import { track } from "@/core/lib/telemetry/track";
 

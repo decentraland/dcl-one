@@ -1,0 +1,145 @@
+# Recipes
+
+How to add the things that get added most often. Each one names the template to copy; copy it
+whole rather than assembling from pieces.
+
+## A new SDK component
+
+Register it in `update_world` with `add_crdt_lww_component::<PbFoo, Foo>` (or
+`add_crdt_go_component` for grow-only sets). The registration adds the `UpdateWorld` system
+that converts each delta into your component via `TryFrom<PbFoo>`; you don't add a system to
+the scene loop by hand. Systems that react to the component go in `SceneSets::PostLoop`. The
+proto type comes from `dcl_component`; never redeclare it.
+
+## A new engine-to-system-scene stream
+
+Template: the proximity stream, `GetProximityStream` in
+`crates/scene_runner/src/update_scene/pointer_results.rs` and
+`react-web/bridge-scene/src/domains/proximity.ts`, added whole in #764. Not the chat stream,
+which drags in player, wallet and marker filtering you don't want. Smallest plumbing-only
+reference: `getBlockUpdateStream` (#844). The file set:
+
+1. `crates/system_api_types/src/lib.rs`: the payload struct, `#[serde(rename_all =
+   "camelCase")]`, `#[derive(ts_rs::TS)] #[ts(export)]`, `#[ts(type = "number")]` on 64-bit
+   fields. It must be a **new, distinct struct**: the receiver is stored in scene state keyed
+   by Rust type, so two streams sharing a payload type fight over one slot.
+2. `crates/system_bridge/src/lib.rs`: the `SystemApi::GetFooStream(RpcStreamSender<Foo>)`
+   variant.
+3. The producing system: `EventReader<SystemApi>` collects senders, retains the open ones,
+   early-outs when empty, diffs against previous state, and sends fire-and-forget.
+   `pipe_connectivity_events_to_scene` in `crates/social/src/lib.rs` is the cleanest example.
+4. `crates/dcl_js/src/system_api.rs`: `op_get_foo_stream` and `op_read_foo_stream`.
+5. `crates/dcl_deno/src/js/op_wrappers/system_api.rs`: the two native op wrappers, added to
+   the super-user ops list.
+6. `crates/dcl_wasm/src/inner/op_wrappers/system_api.rs`: the two web wrappers. No list to
+   edit; the sandbox worker scans every `op_*` export. Only a wasm build compiles these.
+7. `crates/dcl_js/src/modules/SystemApi.js`: `getFooStream` as an async generator over the
+   two ops.
+8. `react-web/bridge-scene/src/bevy-api.ts`: the method on `BevyApiInterface`, importing the
+   generated type; a relay domain under `bridge-scene/src/domains/`; a message kind in
+   `react-web/src/engine/protocol.ts`; a case in `useEngineSession.ts`; the mock bridge.
+
+Run `just ts-bindings` before touching the TypeScript: the generated types under
+`react-web/src/engine/generated/` are gitignored, and CI regenerates them before every TS
+build, so a Rust struct change that breaks the page fails `tsc` there.
+
+## The ts-rs boundary
+
+`crates/system_api_types` holds the plain serde structs that cross to the HUD and the system
+scene; `scripts/gen-ts-bindings.sh` is the single source of truth for generating their TS.
+Rules that follow from the transport:
+
+- `skip_serializing_if` is unsafe on these types. Natively they cross the scene-process IPC
+  as positional msgpack, so a skipped field shortens the array and decode fails.
+- 64-bit integers get `#[ts(type = "number")]`; `Option` becomes `| null`.
+- `serde_repr` enums get no ts derive (the wire is numeric, ts-rs would emit a string union);
+  use a field-level `ts(type = "number")` instead.
+
+## A new engine parameter
+
+The shared clap `LaunchOptions` in `crates/system_api_types/src/launch_options.rs` is the one
+definition: native flags are the kebab-case web names, with no aliases. The web-param table in
+`web_params.rs` is derived from the clap metadata and exported to the page with the ts
+bindings, so a new option appears in both places from one edit. On web the page reads it with
+`webParam(name)` and the engine receives it through `engine_run(options)`, which rejects
+unknown fields. Whether a param is trusted is the front end's concern (`lib/launchGate.ts`),
+not the engine's. A **web-only** switch is not a `LaunchOptions` field at all: it is a page
+param handed to a wasm export, like `?guest=`.
+
+## A new console command
+
+`app.add_console_command::<FooCommand, _>(foo_system)` with a `bevy_console::Command` struct.
+`add_preview_console_command` registers it only in preview mode; outside preview it is absent
+from `/help` and rejected. Console commands land in `ConsoleSet::Commands`, just before
+`SceneSets::Init`, so their effects are visible to the scene loop in the same frame.
+
+## Per-avatar data on a shared material
+
+Wearables and masks come from `crates/avatar/src/material_cache.rs`, shared across avatars so
+they batch. A per-avatar value is never a material property; it goes in the entity's `MeshTag`
+(a `u32`, read in WGSL with `mesh_functions::get_tag(instance_index)`). `scene_material` owns
+the layout: the top byte is flags (`SCENE_MATERIAL_*_MESH_TAG`); the rest is free for values.
+
+- **Budget the bits to the effect.** Work out the step the bits give against what the eye can
+  see in one frame, and write the arithmetic in the PR. A value that moves centimetres per
+  frame does not need millimetre steps.
+- **No flag bit beside a value field.** For a range, 0 means none and `1..=255` spans the
+  range. Encode both ends of the range, so a "hidden" value sits past the mesh rather than at
+  a boundary where a strict comparison in the shader leaves a sliver.
+- **Modes live in the unique material, not the tag.** A material that is already one per
+  entity carries its own switches; the shared tag carries only the value.
+- Rust owns encode and decode, in `scene_material`, with a round-trip test that mirrors the
+  WGSL decode: monotonic across the range and within half a step.
+- After writing a tag, call `set_changed` on the `Mesh3d`: bevy 0.16 ignores
+  `Changed<MeshTag>` ([oddities](oddities.md#rendering)).
+
+## A constant shared between Rust and WGSL
+
+A WGSL literal with a comment "keep in sync with" a Rust constant is rejected in review. Push
+the constant as a shader def from the material's `specialize` and read it as `#{NAME}`:
+
+```rust
+// scene_material: the one definition, for every pipeline whose shader imports the function
+pub fn foo_shader_defs() -> [ShaderDefVal; 2] {
+    [
+        ShaderDefVal::UInt("FOO_MESH_TAG_MASK".to_owned(), SCENE_MATERIAL_FOO_MESH_TAG_MASK),
+        ShaderDefVal::Int("FOO_MILLIMETRES".to_owned(), SCENE_MATERIAL_FOO_MILLIMETRES),
+    ]
+}
+// in each Material's specialize whose shader calls the function:
+fragment.shader_defs.extend(foo_shader_defs());
+```
+
+```wgsl
+// defs are integers: metres travel as millimetres
+#ifdef FOO_MESH_TAG_MASK
+fn foo(mesh_tag: u32) -> f32 {
+    return f32(mesh_tag & #{FOO_MESH_TAG_MASK}) * f32(#{FOO_MILLIMETRES}) * 0.001;
+}
+#endif
+```
+
+The `#ifdef` matters: naga_oil preprocesses the whole imported file, so a shader that imports
+an unrelated function from the same file, from a material that does not push the defs, fails
+without it. Every `Material` whose shader calls the function needs a `specialize` that pushes
+the defs; a material extension's defs do not reach a separate material.
+
+## A pipeline-compile test for a shader
+
+Every shader change gets a test that compiles every pipeline variant off-screen, `#[ignore]`d
+because CI has no GPU. `crates/perf_output/tests/gpu_frame_time.rs` shows the headless app
+setup of step 1; no test in the repo polls the pipeline cache yet:
+
+1. A `DefaultPlugins` app with `WinitPlugin`, `LogPlugin` and `PipelinedRenderingPlugin`
+   disabled and no primary window.
+2. A camera rendering to an `Image`, with `DepthPrepass` and `NormalPrepass`, and a shadowing
+   `DirectionalLight`, so the prepass and shadow variants compile too.
+3. One entity per material and tag variant the change touches.
+4. Update until the `RenderApp`'s `PipelineCache` has nothing pending, then assert that no
+   pipeline is in an error state.
+
+The crate needs `assets` and `naga_oil` as dev-dependencies, the latter only to enable its
+`override_any` feature for the crate. Run with
+`cargo test -p <crate> <test> -- --ignored --nocapture`. The native pass compiles the same
+variants as web, but the web-only rules on the [platforms](platforms.md#web) page still need
+the web build once.

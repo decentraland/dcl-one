@@ -51,13 +51,15 @@ export default function Collection() {
 
   const min = priceMin && !Number.isNaN(Number(priceMin)) ? Number(priceMin) : undefined;
   const max = priceMax && !Number.isNaN(Number(priceMax)) ? Number(priceMax) : undefined;
+  // Nothing not for sale has a price: the range applies to the other statuses only.
+  const priced = status !== "not_for_sale";
   const filters = {
     contractAddress,
     category,
     rarities: rarities.length ? rarities : undefined,
     wearableCategories: subCategory ? SUBCAT_MAP[subCategory] : undefined,
-    minPriceCredits: min,
-    maxPriceCredits: max,
+    minPriceCredits: priced ? min : undefined,
+    maxPriceCredits: priced ? max : undefined,
     isWearableSmart: smart || undefined,
     isOnSale: status === "all" ? undefined : status === "on_sale",
     sortBy: (SORTS.find((s) => s.key === sort) ?? SORTS[0]!).server,
@@ -76,7 +78,7 @@ export default function Collection() {
   const toggleRarity = (r: string) => setFilters({ rarities: rarities.includes(r) ? rarities.filter((x) => x !== r) : [...rarities, r] });
   const clearFilters = () => setFilters(filterDefaults);
   const chips: FilterChip[] = [];
-  if (min != null || max != null) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
+  if (priced && (min != null || max != null)) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
   for (const r of RARITIES) if (rarities.includes(r)) chips.push({ key: `rarity-${r}`, label: rarityLabel(r), onRemove: () => toggleRarity(r) });
   if (smart) chips.push({ key: "smart", label: t("filter.smart"), onRemove: () => setFilters({ smart: false }) });
   if (status !== "all") chips.push({ key: "status", label: status === "on_sale" ? t("filter.onSale") : t("filter.notForSale"), onRemove: () => setFilters({ status: "all" }) });
@@ -119,6 +121,7 @@ export default function Collection() {
             onStatus={(s) => setFilters({ status: s })}
             smart={smart}
             onSmart={(v) => setFilters({ smart: v })}
+            hidePrice={!priced}
             hideNames
           />
         }

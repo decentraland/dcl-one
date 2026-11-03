@@ -10,7 +10,7 @@ use tokio::sync::{broadcast::error::TryRecvError, Mutex};
 
 use crate::{
     AllocatorContext, CommunicatedWithRenderer, CrdtSendsThisTick, CrdtStoreNextCheck,
-    FilteredCrdtStore, KillFlag, RendererStore,
+    EngineTickDt, FilteredCrdtStore, KillFlag, RendererStore,
 };
 use dcl_types::{
     crdt::{append_component, delete_entity, put_component},
@@ -397,7 +397,9 @@ pub async fn op_crdt_recv_from_renderer(op_state: Rc<RefCell<impl State>>) -> Ve
     let writers = op_state.take::<CrdtComponentInterfaces>();
 
     let mut results = match response {
-        Some(RendererResponse::Ok(updates, census)) => {
+        Some(RendererResponse::Ok(updates, census, dt)) => {
+            let stashed = op_state.try_take::<EngineTickDt>().map_or(0.0, |dt| dt.0);
+            op_state.put(EngineTickDt(stashed + dt));
             // Lead with any buffered entity instantiations so the scene adopts the new entities
             // before applying this tick's component updates.
             let mut results = std::mem::take(&mut injected);

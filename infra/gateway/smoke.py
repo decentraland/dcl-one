@@ -143,7 +143,9 @@ def client(args):
         hit(path, "sites")
     for path in ["/about", "/content/contents/blob", "/lambdas/profiles", "/api/status",
                  "/places/api/status", "/places/api/status.data", "/places/place?position=1,2",
+                 "/places/place/?position=1,2", "/places/world/?name=sample.dcl.eth",
                  "/places/world?name=sample.dcl.eth", "/events/api/status",
+                 "/events/assets/event-default.webp",
                  "/profile-images/alice", "/worlds-content-server/status", "/shop-api/v1/catalog"]:
         hit(path, "apis")
     for alias in table["aliases"]:
@@ -152,6 +154,8 @@ def client(args):
     hit("/place/1,2", "sites", vhost="places.example.test", target="/places/place/1,2")
     hit("/world/sample.dcl.eth", "sites", vhost="places.example.test", target="/places/world/sample.dcl.eth")
     hit("/place?position=1,2", "apis", vhost="places.example.test", target="/places/place?position=1,2")
+    hit("/place/?position=1,2", "apis", vhost="places.example.test", target="/places/place/?position=1,2")
+    hit("/world/?name=sample.dcl.eth", "apis", vhost="places.example.test", target="/places/world/?name=sample.dcl.eth")
     print("All root aliases and Sites/API route boundaries passed.", flush=True)
 
     for path in ["/metrics", "/metrics/", "/metrics/x.data", "/metrics.data",

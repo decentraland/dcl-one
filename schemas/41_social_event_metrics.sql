@@ -1,10 +1,8 @@
 -- Recoverable native ended-occurrence facts. No FK to the mutable event
 -- catalogue: event removal must not erase an already applied contribution.
-CREATE TABLE social.event_ended_cursor (
+CREATE TABLE social.event_ended_activation (
     singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
-    due_at timestamp without time zone NOT NULL,
-    event_id text NOT NULL DEFAULT '',
-    occurrence_start timestamp without time zone NOT NULL DEFAULT '0001-01-01'
+    activated_at timestamp without time zone NOT NULL
 );
 
 CREATE TABLE social.event_ended_occurrences (

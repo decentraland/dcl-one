@@ -350,6 +350,14 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     ],
     namesForExtraSlots: []
   }
+  // The randomize bar's looks, as equipped catalog urns.
+  const mockUndo: string[][] = []
+  const mockRedo: string[][] = []
+  const mockLook = (): string[] => mockWearables.filter((w) => w.equipped).map((w) => w.urn)
+  const wearMock = (urns: string[]): void => {
+    const set = new Set(urns)
+    for (const w of mockWearables) w.equipped = set.has(w.urn)
+  }
   // Message ids as the engine makes them: the sender and a timestamp.
   let mockClock = 46000
   const messageId = (sender: string): string => `${sender.toLowerCase()}:${(mockClock += 0.001).toFixed(3)}`
@@ -755,6 +763,31 @@ export function startMockBridge(opts: Partial<MockOptions> = {}): () => void {
     }
     if (msg.kind === 'getOutfits') {
       reply({ kind: 'outfits', metadata: mockOutfits })
+      return
+    }
+    // One random catalog item per category; no conflicts or odds in mock mode.
+    if (msg.kind === 'randomizeOutfit' || msg.kind === 'undoOutfit' || msg.kind === 'redoOutfit') {
+      const [from, to] = msg.kind === 'redoOutfit' ? [mockRedo, mockUndo] : [mockUndo, mockRedo]
+      if (msg.kind === 'randomizeOutfit') {
+        const byCategory = new Map<string, Wearable[]>()
+        for (const w of mockWearables) byCategory.set(w.category, [...(byCategory.get(w.category) ?? []), w])
+        mockUndo.push(mockLook())
+        mockRedo.length = 0
+        wearMock([...byCategory.values()].map((ws) => ws[Math.floor(Math.random() * ws.length)].urn))
+      } else {
+        const target = from.pop()
+        if (target == null) return
+        to.push(mockLook())
+        wearMock(target)
+      }
+      reply({ kind: 'wearables', equipped: equippedNow(), bodyShape: BASE_MALE, colors: mockColors })
+      reply({ kind: 'outfitHistory', canUndo: mockUndo.length > 0, canRedo: mockRedo.length > 0, rolling: false })
+      return
+    }
+    if (msg.kind === 'resetOutfitHistory') {
+      mockUndo.length = 0
+      mockRedo.length = 0
+      reply({ kind: 'outfitHistory', canUndo: false, canRedo: false, rolling: false })
       return
     }
     if (msg.kind === 'saveOutfit') {
