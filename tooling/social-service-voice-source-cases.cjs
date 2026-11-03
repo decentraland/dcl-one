@@ -55,6 +55,9 @@ async function components(scenario, starting = false) {
     getCommunityMemberRoles: async () => ({ [caller]: scenario === 'forbidden' ? 'none' : 'owner', [target]: 'member' }),
     getBannedMemberAddresses: async () => [], getCommunityPlaces: async () => []
   }
+  if (scenario === 'database-failure') {
+    for (const method of Object.keys(communitiesDb)) communitiesDb[method] = async () => { throw Error('pool timed out while waiting for an open connection') }
+  }
   const commsGatekeeper = {
     getCommunityVoiceChatStatus: scenario === 'runtime-failure' ? failure : async () => ({ isActive: scenario === 'conflict' || !starting }),
     createCommunityVoiceChatRoom: async () => ({ connectionUrl: communityUrl }),
@@ -62,6 +65,12 @@ async function components(scenario, starting = false) {
     requestToSpeakInCommunityVoiceChat: act, endCommunityVoiceChatRoom: act, muteSpeakerInCommunityVoiceChat: act,
     promoteSpeakerInCommunityVoiceChat: act, demoteSpeakerInCommunityVoiceChat: act,
     kickUserFromCommunityVoiceChat: act, rejectSpeakRequestInCommunityVoiceChat: act
+  }
+  if (scenario === 'noncanonical-community' || scenario === 'invalid-target') {
+    const privileged = await load('adapters/comms-gatekeeper.ts').createCommsGatekeeperComponent({ logs,
+      config: { requireString: async () => 'https://gatekeeper.example' },
+      fetcher: { fetch: async () => { throw Error('identifier guard must run before fetch') } } })
+    Object.assign(commsGatekeeper, privileged)
   }
   const communityVoice = await load('logic/community-voice/community-voice.ts').createCommunityVoiceComponent({
     logs, communitiesDb, commsGatekeeper, pubsub: { publishInChannel: async () => {} }, analytics: { fireEvent() {} },
@@ -78,8 +87,11 @@ async function main() {
     await capture(config, 'success', base, await components('success', config[0].startsWith('start-')))
     await capture(config, 'empty-community', { ...base, communityId: ' ' }, await components('success', config[0].startsWith('start-')))
     await capture(config, 'runtime-failure', base, await components('runtime-failure', config[0].startsWith('start-')))
+    await capture(config, 'database-failure', base, await components('database-failure', config[0].startsWith('start-')))
+    await capture(config, 'noncanonical-community', { ...base, communityId: community.replaceAll('-', '') }, await components('noncanonical-community', config[0].startsWith('start-')))
     if (['promote-', 'demote-', 'kick-', 'reject-speak-', 'mute-'].some(prefix => config[0].startsWith(prefix))) {
       await capture(config, 'empty-target', { ...base, userAddress: ' ' }, await components('success', config[0].startsWith('start-')))
+      await capture(config, 'invalid-target', { ...base, userAddress: 'invalid' }, await components('invalid-target', config[0].startsWith('start-')))
     }
     if (['promote-', 'demote-', 'kick-', 'reject-speak-'].some(prefix => config[0].startsWith(prefix))) {
       await capture(config, 'forbidden', base, await components('forbidden'))
@@ -103,6 +115,7 @@ async function main() {
     await capture(config, 'success', { callee: { address: target }, callId: call }, { voice: { [method]: async () => success } }, method === 'acceptPrivateVoiceChat' ? target : caller)
     const error = method === 'startPrivateVoiceChat' ? new voiceErrors.VoiceChatNotAllowedError() : method === 'getIncomingPrivateVoiceChat' ? new voiceErrors.IncomingVoiceChatNotFoundError(caller) : new voiceErrors.VoiceChatNotFoundError(call)
     await capture(config, 'refused', { callee: { address: caller }, callId: call }, { voice: { [method]: async () => { throw error } } })
+    await capture(config, 'database-failure', { callee: { address: target }, callId: call }, { voice: { [method]: async () => { throw Error('pool timed out while waiting for an open connection') } } })
   }
   const registry = load('controllers/handlers/uws/stream-registry.ts')
   const profile = { avatars: [{ userId: target, name: 'Stream Person', hasClaimedName: true, avatar: { snapshots: { face256: 'https://profiles.example/face.png' } } }] }
@@ -146,7 +159,7 @@ async function main() {
     }
   }
   fs.writeFileSync(output, JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision, yarn_lock_sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream, 'yarn.lock'))).digest('hex') },
-    runtime: { node: process.version, protocol_package: req('@dcl/protocol/package.json').version }, scope: 'Executed real upstream RPC handlers and stream parsers with deterministic injected component states. Not deployed PostgreSQL, Redis or LiveKit equivalence.', caller, target, community, call, cases }, null, 2) + '\n')
+    runtime: { node: process.version, protocol_package: req('@dcl/protocol/package.json').version }, scope: 'Executed real upstream RPC handlers, community voice/moderation components, stream parsers and missing-profile subscription lifecycle with deterministic injected dependencies; private RPC domain outcomes are injected. Not deployed PostgreSQL, Redis or LiveKit equivalence.', caller, target, community, call, cases }, null, 2) + '\n')
   process.stdout.write(`Captured ${cases.length} upstream voice/stream cases\n`)
 }
 main().catch(error => { console.error(error); process.exitCode = 1 })
