@@ -41,6 +41,7 @@ class DevCiTest(unittest.TestCase):
     def test_build_and_dev_stack_inputs_run_macos(self):
         for path in ('services/catalyst/Cargo.lock', 'services/catalyst/social/Cargo.toml',
                      'services/catalyst/comms/build.rs', 'services/catalyst/.cargo/config.toml',
+                     'services/catalyst/rust-toolchain.toml', 'library/vendor/rusty_enet/rust-toolchain',
                      'library/vendor/rusty_enet/src/lib.rs', '.cargo/config.toml', 'flake.lock', 'Makefile',
                      'infra/dev/shell-hook.sh', 'tooling/dev.py',
                      'tooling/dev-test.sh', 'tooling/dev-ci.py', 'tooling/enet-provenance.py',
@@ -63,6 +64,11 @@ class DevCiTest(unittest.TestCase):
         # Push and dispatch skip the plan, and a failed plan leaves no output: both must keep macOS.
         workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
         self.assertIn("needs.changes.outputs.macos != 'false'", workflow)
+
+    def test_main_runs_are_not_cancelled_by_the_next_push(self):
+        # PRs test source on Linux only; finished main runs are its macOS check.
+        workflow = (dev.ROOT / '.github/workflows/development.yml').read_text()
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
 
     def test_unclassified_or_unfiltered_triggers_run_macos(self):
         with patch.object(self.ci, 'workflow_paths', return_value=['apps/ui3/**', 'services/new/**']):
