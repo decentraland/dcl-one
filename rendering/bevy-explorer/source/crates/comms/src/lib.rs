@@ -1,4 +1,5 @@
 pub mod archipelago;
+mod automation;
 pub mod broadcast_position;
 pub mod chat_reaction;
 pub mod global_crdt;
@@ -105,6 +106,7 @@ impl Plugin for CommsPlugin {
             chat_reaction::ChatReactionPlugin,
             UserProfilePlugin,
             PreviewPlugin,
+            automation::CommsAutomationPlugin,
         ));
 
         #[cfg(feature = "livekit")]

@@ -33,6 +33,7 @@ uuid.workspace = true
 tokio-util.workspace = true
 dashmap.workspace = true
 parking_lot.workspace = true
+metrics.workspace = true
 hex.workspace = true
 libc.workspace = true
 urlencoding.workspace = true
@@ -69,5 +70,5 @@ tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 alloy = { version = "2", default-features = false, features = ["std", "signer-local"] }
 tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
-rustls = { version = "0.23.46", features = ["ring"] }
+rustls = { workspace = true, features = ["ring"] }
 openmls_basic_credential = "0.6.0"

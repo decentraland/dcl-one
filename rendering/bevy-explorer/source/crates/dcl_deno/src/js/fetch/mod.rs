@@ -545,7 +545,7 @@ impl reqwest::dns::Resolve for PublicOnlyResolver {
 /// checked is the address that is dialled. `allow_private` (preview) widens this to the
 /// local network but never to link-local / metadata.
 fn scene_client_builder(allow_private: bool) -> reqwest::ClientBuilder {
-    reqwest::Client::builder()
+    platform::http_client_builder()
         .connect_timeout(Duration::from_secs(5))
         .use_native_tls()
         .user_agent("DCLExplorer/0.1")

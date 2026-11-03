@@ -24,7 +24,7 @@ generation alone.
 A new SDK component is one `proto/decentraland/sdk/components/<snake_case>.proto` with
 `option (common.ecs_component_id) = <id>;` (unique; `make check-component-id ID=<id>`), a root
 message `PB<PascalCase>` named after the file, and an `import public` line in
-`public/sdk-components.proto`. Ids in use: 1017–1106, 1200–1222, 1500, 1501 and 1503.
+`public/sdk-components.proto`. Ids in use: 1017–1106, 1200–1222, 1500, 1501 and 1503–1505.
 
 ## Consuming the npm package
 

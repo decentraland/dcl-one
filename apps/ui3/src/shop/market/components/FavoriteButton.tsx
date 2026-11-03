@@ -68,7 +68,6 @@ export default function FavoriteButton({
         aria-label={saved ? pdpText("itemDetail.unfavorite", { name }) : pdpText("itemDetail.favorite", { name })}
         disabled={busy || syncing}
         onClick={() => void toggle()}
-        data-testid={placement === "title" ? "fav-button" : "fav-button-preview"}
       >
         <Icon name={saved ? "heart-solid" : "heart"} size={18} />
         {count !== undefined ? (

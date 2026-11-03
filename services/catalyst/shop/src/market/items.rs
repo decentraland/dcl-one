@@ -503,8 +503,18 @@ pub fn build_items_query(
     if f.is_sold_out {
         wheres.push("items.available = 0".to_string());
     }
-    if f.is_on_sale == Some(true) {
-        wheres.push(format!("(((ut.id IS NOT NULL AND {}) OR items.search_is_store_minter = true) AND items.available > 0)", v3_minter_expr()));
+    // `isOnSale=false` is the complement of `isOnSale=true` (marketplace-server's
+    // items query), not a no-op: COALESCE keeps an item whose predicate is NULL.
+    if let Some(on_sale) = f.is_on_sale {
+        let predicate = format!(
+            "(((ut.id IS NOT NULL AND {}) OR items.search_is_store_minter = true) AND items.available > 0)",
+            v3_minter_expr()
+        );
+        wheres.push(if on_sale {
+            predicate
+        } else {
+            format!("NOT COALESCE({predicate}, false)")
+        });
     }
     if let Some(term) = f.search.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
         for word in term.split_whitespace().take(8) {
@@ -669,7 +679,7 @@ pub fn build_items_query(
         // predicate reads it: the approved default page is then one
         // index-only scan of `items_approved_created_idx` (METRICS.md,
         // "Stage 5: market half", Q9).
-        let reads_trade = f.is_on_sale == Some(true)
+        let reads_trade = f.is_on_sale.is_some()
             || f.min_price.is_some()
             || f.max_price.is_some()
             || catalog

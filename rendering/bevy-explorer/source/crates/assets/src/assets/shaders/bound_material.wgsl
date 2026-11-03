@@ -13,7 +13,7 @@
 #import bevy_core_pipeline::tonemapping::approximate_inverse_tone_mapping
 
 #import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
-#import "embedded://shaders/bound_material_effect.wgsl"::{apply_outline, discard_dither}
+#import "embedded://shaders/bound_material_effect.wgsl"::{apply_outline, discard_dither, reveal_discard}
 #import "embedded://shaders/toon.wgsl"::toon_lighting
 #import "embedded://shaders/shadow_softening.wgsl"::soften_directional_shadow
 #import "embedded://shaders/scene_bounds.wgsl"::{scene_bounds, scene_outside_amount, SCENE_DITHER_CAPSULE}
@@ -53,6 +53,10 @@ fn fragment(
 
     // Lookup the tag for the given mesh
     let mesh_tag = mesh_functions::get_tag(in.instance_index);
+
+    if reveal_discard(mesh_tag, in.world_position.y, in.instance_index) {
+        discard;
+    }
 
 #ifdef INVERTED_SCALE
     let is_front_m = !is_front;

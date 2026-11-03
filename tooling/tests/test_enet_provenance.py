@@ -132,7 +132,14 @@ class OnlineProvenanceTests(unittest.TestCase):
                     workflow.replace("      - name: Verify the exact public ENet source pin", "      - if: false\n        name: Verify the exact public ENet source pin"),
                     workflow.replace("        run: nix develop --command python3 tooling/enet-provenance.py",
                                      "        continue-on-error: true\n        run: nix develop --command python3 tooling/enet-provenance.py"),
-                    workflow.replace("nix develop --command python3 tooling/enet-provenance.py", "echo skipped")]:
+                    workflow.replace("nix develop --command python3 tooling/enet-provenance.py", "echo skipped"),
+                    workflow.replace("  rust:\n", "  native:\n"),
+                    workflow.replace("'[\"ubuntu-26.04\"]'", "'[]'"),
+                    workflow.replace('"ubuntu-26.04", "macos-26"', '"macos-26"'),
+                    workflow.replace(" || '[\"ubuntu-26.04\"]') }}", "\n          || '[\"macos-26\"]') }}"),
+                    workflow.replace("    if: ${{ !cancelled() }}\n", ""),
+                    workflow.replace("    if: ${{ !cancelled() }}\n", "    if: ${{ success() }}\n"),
+                    workflow.replace("    if: ${{ !cancelled() }}\n", "    if: ${{ !cancelled() }}\n    continue-on-error: true\n")]:
             with self.subTest(bad=bad[:80]), self.assertRaisesRegex(ValueError, "online provenance"):
                 self.guard.validate_workflow(bad)
 

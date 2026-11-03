@@ -27,6 +27,7 @@ use super::write_support::{
     load_client_standing, load_client_standing_pair, map_db, parse_community_id, refusal_response,
 };
 use super::{SharedState, queries, signed_path};
+use crate::notifications::community::{Audience, now_ms};
 
 macro_rules! try_resp {
     ($e:expr) => {
@@ -309,9 +310,12 @@ pub async fn get_bans(
     Path(id_str): Path<String>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
-    let (mut rows, total, pagination, _) =
+    let (mut rows, total, pagination, signer) =
         bans_listing(&state, &headers, &original, &id_str, "v1", &pairs).await?;
+    // upstream `mapMembersWithProfiles`: the profile fields and the
+    // viewer's `friendshipStatus`
     enrich_with_profiles(&state.profiles, &mut rows, "memberAddress").await;
+    enrich_with_friendship_status(&state, Some(&signer), &mut rows).await;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -533,7 +537,7 @@ pub async fn add_member(
         Ok(s) => s,
         Err(r) => return r,
     };
-    let gate: Option<(bool, bool, bool)> = try_resp!(map_db(
+    let gate: Option<(bool, bool, bool, bool)> = try_resp!(map_db(
         sqlx::query_as(
             "WITH c AS (SELECT active, private FROM social.communities WHERE id = $1), \
                   b AS (SELECT COALESCE(bool_or(active), FALSE) AS banned FROM social.community_bans \
@@ -541,15 +545,15 @@ pub async fn add_member(
                   ins AS (INSERT INTO social.community_members (community_id, member_address, role) \
                           SELECT $1, $2, 'member' FROM c, b \
                           WHERE c.active AND NOT c.private AND NOT b.banned \
-                          ON CONFLICT (community_id, member_address) DO NOTHING) \
-             SELECT c.active, c.private, b.banned FROM c, b",
+                          ON CONFLICT (community_id, member_address) DO NOTHING RETURNING 1) \
+             SELECT c.active, c.private, b.banned, EXISTS (SELECT 1 FROM ins) FROM c, b",
         )
         .bind(uuid)
         .bind(&signer)
         .fetch_optional(&state.pool)
         .await
     ));
-    let Some((active, private, banned)) = gate else {
+    let Some((active, private, banned, joined)) = gate else {
         return err_json(
             StatusCode::NOT_FOUND,
             format!("Community not found: {uuid}"),
@@ -567,10 +571,14 @@ pub async fn add_member(
         );
     }
     if banned {
-        return err_json(
-            StatusCode::FORBIDDEN,
-            "The member is banned from this community",
-        );
+        return CommError::not_authorized(format!(
+            "The user {signer} is banned from community {uuid}"
+        ))
+        .into_response();
+    }
+    if joined {
+        // upstream `joinCommunity`: a new member is ONLINE to the members
+        state.member_status_changed(uuid, &signer, true).await;
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -639,9 +647,22 @@ pub async fn remove_member(
     if removed {
         tracing::info!(community_id = %uuid, member = %target, "community member left");
         state.member_removed_from_worlds(uuid, &target);
+        // upstream `leaveCommunity` / `kickMember`: OFFLINE to the members
+        // and the wallet that left
+        state.member_status_changed(uuid, &target, false).await;
         if target != signer {
             state
                 .evict_from_private_community_voice(uuid, &target)
+                .await;
+            // upstream `kickMember`: MEMBER_REMOVED to the kicked wallet
+            state
+                .notify_community_event(
+                    "community_member_removed",
+                    format!("{uuid}-{target}-{}", now_ms()),
+                    uuid,
+                    json!({}),
+                    Audience::One(&target),
+                )
                 .await;
         }
     }
@@ -653,8 +674,8 @@ pub struct RoleBody {
     pub role: String,
 }
 
-/// Owner only (AssignRoles), never on oneself, never to owner; the one
-/// stored spelling of a moderator is written.
+/// Owner only (AssignRoles), never on oneself; the one stored spelling of
+/// a moderator is written. `owner` is the ownership transfer.
 pub async fn update_member_role(
     State(state): State<SharedState>,
     headers: HeaderMap,
@@ -685,18 +706,13 @@ pub async fn update_member_role(
     let Some(new_role) = CommunityRole::parse(&parsed.role) else {
         return err_json(StatusCode::BAD_REQUEST, "invalid role");
     };
+    if new_role == CommunityRole::Owner {
+        return transfer_ownership(&state, uuid, &signer, &target).await;
+    }
     if signer == target {
         return err_json(
             StatusCode::UNAUTHORIZED,
             format!("The user {signer} cannot update their own role in community {uuid}"),
-        );
-    }
-    if new_role == CommunityRole::Owner {
-        return err_json(
-            StatusCode::UNAUTHORIZED,
-            format!(
-                "The user {signer} doesn't have permission to assign roles in community {uuid}"
-            ),
         );
     }
     let (updater, target_standing) =
@@ -722,6 +738,94 @@ pub async fn update_member_role(
     if upd.rows_affected() == 0 {
         return err_json(StatusCode::NOT_FOUND, "member not found in community");
     }
+    StatusCode::NO_CONTENT.into_response()
+}
+
+/// Upstream `transferOwnership` (`logic/community/members.ts`, `roles.ts`
+/// `validatePermissionToTransferOwnership` at `b6b2cef`): `role: "owner"`
+/// hands the community from its owner to a member holding a NAME; the old
+/// owner stays as a moderator and the new one is notified.
+async fn transfer_ownership(
+    state: &SharedState,
+    uuid: CommunityId,
+    signer: &Address,
+    target: &Address,
+) -> Response {
+    if !try_resp!(map_db(
+        queries::community_exists(&state.pool, uuid, false).await
+    )) {
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
+    }
+    let (owner, target_standing) =
+        try_resp!(load_client_standing_pair(state, uuid, signer, target).await);
+    if owner.tier() != CommunityStanding::Owner {
+        return CommError::not_authorized(format!(
+            "The user {signer} doesn't have permission to transfer ownership in community {uuid}"
+        ))
+        .into_response();
+    }
+    if !target_standing.tier().is_member() {
+        return CommError::not_authorized(format!(
+            "The target user {target} is not a member of community {uuid}"
+        ))
+        .into_response();
+    }
+    if let Some(false) = state.profiles.has_owned_name(target.as_str()).await {
+        return CommError::bad_request(format!("The user {target} doesn't have any names"))
+            .into_response();
+    }
+    let mut tx = try_resp!(map_db(state.pool.begin().await));
+    let old_owner: Address = try_resp!(map_db(
+        sqlx::query_scalar("SELECT owner_address FROM social.communities WHERE id = $1 FOR UPDATE")
+            .bind(uuid)
+            .fetch_one(&mut *tx)
+            .await
+    ));
+    if &old_owner != signer {
+        // a concurrent transfer moved it after the standing read
+        return CommError::not_authorized(format!(
+            "The user {signer} doesn't have permission to transfer ownership in community {uuid}"
+        ))
+        .into_response();
+    }
+    try_resp!(map_db(
+        sqlx::query("UPDATE social.communities SET owner_address = $2, updated_at = timezone('UTC', now()) WHERE id = $1")
+            .bind(uuid)
+            .bind(target)
+            .execute(&mut *tx)
+            .await
+    ));
+    // the old owner's row first: one owner row per community
+    // (`community_members_owner_uidx`)
+    for (member, role) in [(signer, "moderator"), (target, "owner")] {
+        let updated = try_resp!(map_db(
+            sqlx::query("UPDATE social.community_members SET role = $3 WHERE community_id = $1 AND member_address = $2")
+                .bind(uuid)
+                .bind(member)
+                .bind(role)
+                .execute(&mut *tx)
+                .await
+        ))
+        .rows_affected();
+        if updated == 0 {
+            // the target left after the standing read; dropping `tx` rolls
+            // the owner change back
+            return CommError::not_authorized(format!(
+                "The target user {target} is not a member of community {uuid}"
+            ))
+            .into_response();
+        }
+    }
+    try_resp!(map_db(tx.commit().await));
+    state
+        .notify_community_event(
+            "community_ownership_transferred",
+            format!("{uuid}-{signer}-{target}-{}", now_ms()),
+            uuid,
+            json!({ "oldOwnerAddress": signer.as_str() }),
+            Audience::One(target),
+        )
+        .await;
     StatusCode::NO_CONTENT.into_response()
 }
 
@@ -795,8 +899,22 @@ pub async fn ban_member(
     state
         .evict_from_private_community_voice(uuid, &target)
         .await;
+    // upstream `banMember`: OFFLINE to the members and the banned wallet,
+    // a member or not
+    state.member_status_changed(uuid, &target, false).await;
     if removed {
         state.member_removed_from_worlds(uuid, &target);
+        // upstream `banMember`: only a member is told, under a key stable
+        // per banned wallet so a repeat ban is the same notification
+        state
+            .notify_community_event(
+                "community_member_banned",
+                format!("{uuid}-{target}"),
+                uuid,
+                json!({}),
+                Audience::One(&target),
+            )
+            .await;
     }
     StatusCode::NO_CONTENT.into_response()
 }

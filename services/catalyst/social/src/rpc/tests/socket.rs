@@ -62,6 +62,7 @@ async fn a_malformed_first_frame_closes_unauthorized() {
         ("x-identity-metadata", serde_json::Value::Null),
         ("x-identity-auth-chain-1", serde_json::json!(["{}", 1])),
         ("X-Identity-Foo", serde_json::json!(1)),
+        ("X-IDENTITY-METADATA", serde_json::json!({})),
     ] {
         let frame = valid_frame_with(key, value).await;
         assert_eq!(
@@ -70,6 +71,36 @@ async fn a_malformed_first_frame_closes_unauthorized() {
             "{key}"
         );
     }
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// `verify()` reads only the exact lowercase keys (`@dcl/crypto-middleware`
+/// 6.3.0 `dist/verify.js:72`, `:321-322`): a re-cased duplicate next to the
+/// lowercase header passes, and a timestamp sent only as
+/// `X-Identity-Timestamp` is absent, so the socket closes 3003.
+#[tokio::test]
+async fn a_re_cased_identity_header_is_never_read_on_the_socket() {
+    let server = spawn_server(None, 5).await;
+    for (key, value) in [
+        ("X-Identity-Timestamp", serde_json::json!([])),
+        ("X-Identity-Timestamp", serde_json::json!("0")),
+    ] {
+        let frame = valid_frame_with(key, value.clone()).await;
+        let answer = first_answer(&server, &frame).await;
+        assert!(is_server_ready(&answer), "{key} {value}: {answer:?}");
+    }
+    let (_, frame) = frame("/", chrono::Utc::now().timestamp_millis()).await;
+    let mut frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
+    let ts = frame
+        .as_object_mut()
+        .unwrap()
+        .remove("x-identity-timestamp")
+        .unwrap();
+    frame["X-Identity-Timestamp"] = ts;
+    assert_eq!(
+        close_code(&first_answer(&server, &frame.to_string()).await),
+        Some(3003)
+    );
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }
 
@@ -109,7 +140,11 @@ async fn an_unreachable_contract_validator_closes_unauthorized() {
             ))
         }
     }
-    let server = spawn_server_with(None, 5, Some(Arc::new(Unreachable))).await;
+    let settings = Settings {
+        auth_window_secs: 5,
+        ..Settings::default()
+    };
+    let server = spawn_server_with(None, settings, Some(Arc::new(Unreachable))).await;
     let ts = chrono::Utc::now().timestamp_millis().to_string();
     let link = |kind: &str, payload: &str, signature: &str| {
         serde_json::json!({ "type": kind, "payload": payload, "signature": signature }).to_string()
@@ -208,4 +243,251 @@ async fn closing_an_authenticated_socket_releases_its_connection() {
         "the closed socket still counts"
     );
     server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// Opens a socket and authenticates it as a wallet made for the call.
+async fn authenticated(server: &Server) -> WsStream {
+    let mut socket = connect(server, "/social-rpc").await;
+    let ts = chrono::Utc::now().timestamp_millis();
+    let payload = crate::shared::signed_fetch::build_payload_v6("get", "/", &ts.to_string(), "{}");
+    let (_, frame) = frame_signed(
+        &PrivateKeySigner::random(),
+        &PrivateKeySigner::random(),
+        FAR_EXPIRATION,
+        ts,
+        &payload,
+        "{}",
+    )
+    .await;
+    socket.send(WsMessage::Text(frame.into())).await.unwrap();
+    assert!(is_server_ready(&next_message(&mut socket).await));
+    socket
+}
+
+/// Upstream's `ws-pool-component.spec.ts` "registering multiple connections":
+/// each socket counts, and closing one frees only its own slot.
+#[tokio::test]
+async fn each_socket_counts_and_closing_one_frees_its_slot() {
+    let server = spawn_server(None, 5).await;
+    let mut first = authenticated(&server).await;
+    let _second = authenticated(&server).await;
+    assert!(
+        crate::shared::test_wait::until(async || server.state.ctx.live_connections() == 2).await,
+        "two sockets, two slots"
+    );
+    first.close(None).await.unwrap();
+    assert!(
+        crate::shared::test_wait::until(async || server.state.ctx.live_connections() == 1).await,
+        "closing one frees one"
+    );
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// Upstream's pool cap (`src/logic/ws-pool/component.ts:26-29`,
+/// `src/controllers/handlers/uws/ws-handler.ts:367`): with the pool full a new
+/// socket closes 1013 "Unable to acquire connection", and a freed slot is
+/// taken again.
+#[tokio::test]
+async fn a_full_pool_closes_a_new_socket_until_a_slot_frees() {
+    let settings = Settings {
+        auth_window_secs: 5,
+        ws_max_concurrent_connections: Some(1),
+        ..Settings::default()
+    };
+    let server = spawn_server_with(None, settings, None).await;
+    let mut first = authenticated(&server).await;
+    assert!(
+        crate::shared::test_wait::until(async || server.state.ctx.live_connections() == 1).await
+    );
+    let mut refused = connect(&server, "/social-rpc").await;
+    match next_message(&mut refused).await {
+        WsMessage::Close(Some(frame)) => {
+            assert_eq!(u16::from(frame.code), 1013);
+            assert_eq!(frame.reason.as_str(), "Unable to acquire connection");
+        }
+        other => panic!("expected a close, got {other:?}"),
+    }
+    first.close(None).await.unwrap();
+    assert!(
+        crate::shared::test_wait::until(async || server.state.ctx.live_connections() == 0).await
+    );
+    let _again = authenticated(&server).await;
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// A verification that waits for the test: the contract wallet's link is
+/// accepted only once `release` is notified.
+#[derive(Default)]
+struct Gate {
+    asked: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl crate::auth::eip1654::Eip1654Validator for Gate {
+    async fn validate_signature(
+        &self,
+        _contract: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+    ) -> Result<bool, crate::auth::AuthError> {
+        self.asked.notify_one();
+        self.release.notified().await;
+        Ok(true)
+    }
+}
+
+/// A server whose handshakes wait on the returned [`Gate`].
+async fn gated_server(auth_window_secs: i64) -> (Server, Arc<Gate>) {
+    let gate = Arc::new(Gate::default());
+    let settings = Settings {
+        auth_window_secs,
+        ..Settings::default()
+    };
+    (
+        spawn_server_with(None, settings, Some(gate.clone())).await,
+        gate,
+    )
+}
+
+/// A frame of `who`'s as a contract wallet: its ephemeral link is the
+/// validator's to accept, then the entity link verifies as usual.
+async fn contract_wallet_frame(who: &PrivateKeySigner) -> String {
+    let (_, frame) = crate::rpc::handshake::test_support::frame_for(
+        who,
+        "/",
+        chrono::Utc::now().timestamp_millis(),
+    )
+    .await;
+    let mut frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
+    let mut link: serde_json::Value =
+        serde_json::from_str(frame["x-identity-auth-chain-1"].as_str().unwrap()).unwrap();
+    link["type"] = "ECDSA_EIP_1654_EPHEMERAL".into();
+    frame["x-identity-auth-chain-1"] = link.to_string().into();
+    frame.to_string()
+}
+
+/// Upstream's "reject messages during authentication"
+/// (`ws-handler.ts:374-384`): a frame sent while the chain is verified is
+/// answered with the in-progress error and dropped; the verdict follows.
+#[tokio::test]
+async fn a_frame_during_authentication_is_answered_and_dropped() {
+    let (server, gate) = gated_server(5).await;
+    let mut socket = connect(&server, "/social-rpc").await;
+    let frame = contract_wallet_frame(&PrivateKeySigner::random()).await;
+    socket.send(WsMessage::Text(frame.into())).await.unwrap();
+    gate.asked.notified().await;
+    for extra in [
+        WsMessage::Text("hello".into()),
+        WsMessage::Binary(vec![1, 2, 3].into()),
+    ] {
+        socket.send(extra).await.unwrap();
+        assert_eq!(
+            next_message(&mut socket).await,
+            WsMessage::Text(
+                r#"{"error":"Authentication already in progress, please try again later"}"#.into()
+            )
+        );
+    }
+    gate.release.notify_one();
+    assert!(is_server_ready(&next_message(&mut socket).await));
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// Upstream's "abort user attachment" (`ws-handler.ts:124-133`): a socket
+/// that closes while its chain is verified is never attached, and its place
+/// in the pool is freed.
+#[tokio::test]
+async fn a_socket_closed_during_verification_is_never_attached() {
+    let (server, gate) = gated_server(5).await;
+    let me = PrivateKeySigner::random();
+    let address = format!("{:#x}", me.address());
+    let mut socket = connect(&server, "/social-rpc").await;
+    socket
+        .send(WsMessage::Text(contract_wallet_frame(&me).await.into()))
+        .await
+        .unwrap();
+    gate.asked.notified().await;
+    socket.close(None).await.unwrap();
+    assert!(
+        crate::shared::test_wait::until(async || server.state.ctx.live_connections() == 0).await,
+        "the closed socket still counts"
+    );
+    gate.release.notify_one();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(server.state.ctx.admission().sockets_of(&address), 0);
+    assert!(server.state.ctx.presence_snapshot().is_empty());
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// Upstream's auth timer runs until the verdict (`ws-handler.ts:117-120`,
+/// `:331-338`): a verification still running when the window ends closes
+/// the socket 3004 "Authorization timeout".
+#[tokio::test]
+async fn the_auth_window_runs_through_verification() {
+    let (server, gate) = gated_server(1).await;
+    let mut socket = connect(&server, "/social-rpc").await;
+    let frame = contract_wallet_frame(&PrivateKeySigner::random()).await;
+    socket.send(WsMessage::Text(frame.into())).await.unwrap();
+    gate.asked.notified().await;
+    match next_message(&mut socket).await {
+        WsMessage::Close(Some(frame)) => {
+            assert_eq!(u16::from(frame.code), 3004);
+            assert_eq!(frame.reason.as_str(), "Authorization timeout");
+        }
+        other => panic!("expected a close, got {other:?}"),
+    }
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// Upstream `ws-handler.ts:323`: a socket counts from the moment it opens,
+/// before any frame, so with the pool full an unauthenticated socket keeps
+/// the next one out.
+#[tokio::test]
+async fn a_socket_counts_from_the_moment_it_opens() {
+    let settings = Settings {
+        auth_window_secs: 5,
+        ws_max_concurrent_connections: Some(1),
+        ..Settings::default()
+    };
+    let server = spawn_server_with(None, settings, None).await;
+    let mut silent = connect(&server, "/social-rpc").await;
+    assert!(
+        crate::shared::test_wait::until(async || server.state.ctx.live_connections() == 1).await,
+        "an open socket counts before its handshake"
+    );
+    let mut refused = connect(&server, "/social-rpc/v1/stream").await;
+    assert_eq!(close_code(&next_message(&mut refused).await), Some(1013));
+    silent.close(None).await.unwrap();
+    assert!(
+        crate::shared::test_wait::until(async || server.state.ctx.live_connections() == 0).await
+    );
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+/// Upstream's `ws-pool` stop (`src/logic/ws-pool/component.ts:77-90`): at
+/// shutdown every socket, of either protocol and authenticated or not, ends
+/// with 1001 "Server shutting down".
+#[tokio::test]
+async fn shutdown_ends_every_socket_with_1001() {
+    let server = spawn_server(None, 5).await;
+    let mut sockets = vec![
+        authenticated(&server).await,
+        connect(&server, "/social-rpc").await,
+        connect(&server, "/social-rpc/v1/stream").await,
+    ];
+    assert!(
+        crate::shared::test_wait::until(async || server.state.ctx.live_connections() == 3).await
+    );
+    server.jobs.shutdown(Duration::from_secs(5)).await;
+    for socket in &mut sockets {
+        match next_message(socket).await {
+            WsMessage::Close(Some(frame)) => {
+                assert_eq!(u16::from(frame.code), 1001);
+                assert_eq!(frame.reason.as_str(), "Server shutting down");
+            }
+            other => panic!("expected a close, got {other:?}"),
+        }
+    }
+    assert_eq!(server.state.ctx.live_connections(), 0);
 }

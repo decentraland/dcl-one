@@ -29,9 +29,9 @@ use crate::{Address, CommunityId};
 use super::db::{PendingPrivateCall, PrivateVoiceChatRow, StartOutcome};
 
 use super::{
-    CommunityVoiceChatBody, community_voice_credentials_for, destroy_community_voice_chat,
-    end_private_voice_chat_by, get_private_voice_chat_room_credentials, kick_from_community_room,
-    merge_metadata, patch, require_livekit, set_speaker,
+    CommunityVoiceChatBody, community_status, community_voice_credentials_for,
+    destroy_community_voice_chat, end_private_call, get_private_voice_chat_room_credentials,
+    kick_from_community_room, merge_metadata, patch, require_livekit, set_speaker,
 };
 use crate::gatekeeper::CommsState;
 use crate::gatekeeper::errors::ApiError;
@@ -42,6 +42,10 @@ pub enum VoiceUnavailable {
     NotConfigured,
     #[error("voice runtime failed: {0}")]
     Failed(String),
+    /// The live room, or the participant an action targets, is not there
+    /// (what the old gatekeeper answered 404 for).
+    #[error("community voice chat or participant not found")]
+    NotFound,
     #[error(transparent)]
     Persistence(#[from] sqlx::Error),
 }
@@ -99,22 +103,35 @@ pub trait VoiceRooms: Send + Sync {
         caller: &str,
     ) -> Result<HashMap<String, String>, VoiceUnavailable>;
 
-    /// Tears the private room down on `address`'s behalf.
+    /// Ends the accepted call `call_id` (or else the latest one `address` is
+    /// in) on `address`'s behalf, `address` being one of its participants:
+    /// the row, then the room. `None` when there is no such accepted call.
     async fn end_private_voice_chat(
         &self,
-        call_id: Uuid,
+        call_id: Option<Uuid>,
         address: &str,
-    ) -> Result<(), VoiceUnavailable>;
+    ) -> Result<Option<PrivateVoiceChatRow>, VoiceUnavailable>;
 
     /// A grant for `voice-chat-community-<community_id>`; `role` is the stored
-    /// community role text, `Create` opens the room, `Join` enters it.
+    /// community role text, `Create` opens the room, `Join` enters it;
+    /// `profile` (`name`, `has_claimed_name`, `profile_picture_url`) reaches
+    /// the participant's room metadata.
     async fn community_voice_credentials(
         &self,
         community_id: Uuid,
         address: &str,
         role: &str,
         action: CommunityVoiceAction,
+        profile: Option<serde_json::Value>,
     ) -> Result<String, VoiceUnavailable>;
+
+    /// Whether the community's room is live: a moderator connected, or
+    /// still within its connection window (the gatekeeper's
+    /// `GET /community-voice-chat/{id}/status` `active`).
+    async fn community_voice_chat_active(
+        &self,
+        community_id: Uuid,
+    ) -> Result<bool, VoiceUnavailable>;
 
     async fn end_community_voice_chat(
         &self,
@@ -191,9 +208,9 @@ impl VoiceRooms for NoVoiceRuntime {
 
     async fn end_private_voice_chat(
         &self,
-        _call_id: Uuid,
+        _call_id: Option<Uuid>,
         _address: &str,
-    ) -> Result<(), VoiceUnavailable> {
+    ) -> Result<Option<PrivateVoiceChatRow>, VoiceUnavailable> {
         Err(VoiceUnavailable::NotConfigured)
     }
 
@@ -203,7 +220,15 @@ impl VoiceRooms for NoVoiceRuntime {
         _address: &str,
         _role: &str,
         _action: CommunityVoiceAction,
+        _profile: Option<serde_json::Value>,
     ) -> Result<String, VoiceUnavailable> {
+        Err(VoiceUnavailable::NotConfigured)
+    }
+
+    async fn community_voice_chat_active(
+        &self,
+        _community_id: Uuid,
+    ) -> Result<bool, VoiceUnavailable> {
         Err(VoiceUnavailable::NotConfigured)
     }
 
@@ -264,6 +289,29 @@ fn unavailable(e: ApiError) -> VoiceUnavailable {
         VoiceUnavailable::NotConfigured
     } else {
         VoiceUnavailable::Failed(e.to_string())
+    }
+}
+
+/// The participant-targeted room actions (speak requests, speaker changes,
+/// kick, mute) act on a participant of the live room; a room or participant
+/// LiveKit does not hold is [`VoiceUnavailable::NotFound`], the old
+/// gatekeeper's 404, rather than an update LiveKit ignores.
+async fn require_participant(
+    state: &CommsState,
+    community_id: Uuid,
+    address_raw: &str,
+) -> Result<(), VoiceUnavailable> {
+    let room = crate::rooms::community_voice_chat_room_name(&CommunityId::from_uuid(community_id));
+    match state
+        .room_service()
+        .get_participant(&room, &address_raw.to_lowercase())
+        .await
+    {
+        Ok(Some(_)) => Ok(()),
+        Ok(None) => Err(VoiceUnavailable::NotFound),
+        Err(e) => Err(VoiceUnavailable::Failed(format!(
+            "livekit get participant: {e}"
+        ))),
     }
 }
 
@@ -329,16 +377,14 @@ impl VoiceRooms for CommsState {
 
     async fn end_private_voice_chat(
         &self,
-        call_id: Uuid,
+        call_id: Option<Uuid>,
         address_raw: &str,
-    ) -> Result<(), VoiceUnavailable> {
+    ) -> Result<Option<PrivateVoiceChatRow>, VoiceUnavailable> {
         let who = address(address_raw)?;
-        match end_private_voice_chat_by(self, &call_id.to_string(), &who).await {
-            Ok(_) => Ok(()),
-            // The RPC deleted the call row before asking; a room already gone is the wanted end state.
-            Err(e) if e.code == 404 => Ok(()),
-            Err(e) => Err(unavailable(e)),
-        }
+        Ok(end_private_call(self, call_id, &who)
+            .await
+            .map_err(unavailable)?
+            .map(|ended| ended.call))
     }
 
     async fn community_voice_credentials(
@@ -347,17 +393,28 @@ impl VoiceRooms for CommsState {
         address_raw: &str,
         role: &str,
         action: CommunityVoiceAction,
+        profile: Option<serde_json::Value>,
     ) -> Result<String, VoiceUnavailable> {
         let body = CommunityVoiceChatBody {
             community_id: community_id.to_string(),
             user_address: address_raw.to_string(),
             user_role: Some(role.to_string()),
             action: Some(action.as_str().to_string()),
-            profile_data: None,
+            profile_data: profile,
         };
         community_voice_credentials_for(self, body)
             .await
             .map_err(unavailable)
+    }
+
+    async fn community_voice_chat_active(
+        &self,
+        community_id: Uuid,
+    ) -> Result<bool, VoiceUnavailable> {
+        let (active, _, _) = community_status(self, CommunityId::from_uuid(community_id))
+            .await
+            .map_err(unavailable)?;
+        Ok(active)
     }
 
     async fn end_community_voice_chat(
@@ -382,6 +439,7 @@ impl VoiceRooms for CommsState {
         raising_hand: bool,
     ) -> Result<(), VoiceUnavailable> {
         require_livekit(self).map_err(unavailable)?;
+        require_participant(self, community_id, address_raw).await?;
         let room =
             crate::rooms::community_voice_chat_room_name(&CommunityId::from_uuid(community_id));
         merge_metadata(
@@ -400,6 +458,7 @@ impl VoiceRooms for CommsState {
         address_raw: &str,
     ) -> Result<(), VoiceUnavailable> {
         require_livekit(self).map_err(unavailable)?;
+        require_participant(self, community_id, address_raw).await?;
         let room =
             crate::rooms::community_voice_chat_room_name(&CommunityId::from_uuid(community_id));
         merge_metadata(
@@ -419,6 +478,7 @@ impl VoiceRooms for CommsState {
         promote: bool,
     ) -> Result<(), VoiceUnavailable> {
         require_livekit(self).map_err(unavailable)?;
+        require_participant(self, community_id, address_raw).await?;
         set_speaker(
             self,
             CommunityId::from_uuid(community_id),
@@ -435,13 +495,17 @@ impl VoiceRooms for CommsState {
         address_raw: &str,
     ) -> Result<(), VoiceUnavailable> {
         require_livekit(self).map_err(unavailable)?;
+        // Probed first, answered last: a presence row LiveKit no longer holds
+        // a participant for is still removed.
+        let present = require_participant(self, community_id, address_raw).await;
         kick_from_community_room(
             self,
             CommunityId::from_uuid(community_id),
             &address_raw.to_lowercase(),
         )
         .await
-        .map_err(unavailable)
+        .map_err(unavailable)?;
+        present
     }
 
     async fn mute_speaker(
@@ -451,6 +515,7 @@ impl VoiceRooms for CommsState {
         muted: bool,
     ) -> Result<(), VoiceUnavailable> {
         require_livekit(self).map_err(unavailable)?;
+        require_participant(self, community_id, address_raw).await?;
         let room =
             crate::rooms::community_voice_chat_room_name(&CommunityId::from_uuid(community_id));
         merge_metadata(

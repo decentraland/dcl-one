@@ -22,6 +22,7 @@ use super::write_support::{
     Refusal, load_client_standing, map_db, parse_community_id, refusal_response, refuse,
 };
 use super::{SharedState, queries, signed_path};
+use crate::notifications::community::Audience;
 
 macro_rules! try_resp {
     ($e:expr) => {
@@ -395,6 +396,22 @@ pub async fn create_request(
             )
             .await
         );
+        // upstream `createCommunityRequest`: the member joined, ONLINE to
+        // the members
+        state
+            .member_status_changed(community_id, &member_address, true)
+            .await;
+        // upstream answers (and notifies about) the accepted request under
+        // the type just asked for
+        notify_request(
+            &state,
+            community_id,
+            *opp_id,
+            &member_address,
+            kind,
+            "accepted",
+        )
+        .await;
         return request_json(*opp_id, community_id, &member_address, kind, "accepted");
     }
 
@@ -410,7 +427,18 @@ pub async fn create_request(
     .execute(&state.pool)
     .await;
     match inserted {
-        Ok(_) => request_json(request_id, community_id, &member_address, kind, "pending"),
+        Ok(_) => {
+            notify_request(
+                &state,
+                community_id,
+                request_id,
+                &member_address,
+                kind,
+                "pending",
+            )
+            .await;
+            request_json(request_id, community_id, &member_address, kind, "pending")
+        }
         Err(e) if is_unique_violation(&e) => {
             // Lost the race against a concurrent request for the same pair:
             // the row that won is the answer.
@@ -589,7 +617,72 @@ pub async fn update_request_status(
         }
     }
     try_resp!(transition_request(&state.pool, uuid, req_uuid, &member_address, status).await);
+    if status == "accepted" {
+        // upstream `updateRequestStatus`: the member joined, ONLINE to the
+        // members
+        state
+            .member_status_changed(uuid, &member_address, true)
+            .await;
+    }
+    notify_request(&state, uuid, req_uuid, &member_address, &kind, status).await;
     StatusCode::NO_CONTENT.into_response()
+}
+
+/// Upstream `notifyStakeholdersAboutRequest` (`logic/community/requests.ts`
+/// at `b6b2cef`): a pending request to join reaches the owner and the
+/// moderators, an accepted one the requester, a pending invite the invitee.
+async fn notify_request(
+    state: &SharedState,
+    community_id: CommunityId,
+    request_id: Uuid,
+    member: &Address,
+    kind: &str,
+    status: &str,
+) {
+    match (kind, status) {
+        ("request_to_join", "pending") => {
+            let member_name = state
+                .profiles
+                .get_profiles(&[member.as_str().to_string()])
+                .await
+                .remove(member.as_str())
+                .map(|p| p.name)
+                .filter(|n| !n.is_empty())
+                .unwrap_or_else(|| "Unknown".to_string());
+            state
+                .notify_community_event(
+                    "community_request_to_join_received",
+                    format!("community-request-to-join-received-{community_id}-{request_id}"),
+                    community_id,
+                    json!({ "memberAddress": member.as_str(), "memberName": member_name }),
+                    Audience::Managers,
+                )
+                .await;
+        }
+        ("request_to_join", "accepted") => {
+            state
+                .notify_community_event(
+                    "community_request_to_join_accepted",
+                    format!("community-request-to-join-accepted-{community_id}-{request_id}"),
+                    community_id,
+                    json!({ "memberAddress": member.as_str() }),
+                    Audience::One(member),
+                )
+                .await;
+        }
+        ("invite", "pending") => {
+            state
+                .notify_community_event(
+                    "community_invite_received",
+                    format!("community-invite-received-{community_id}-{request_id}"),
+                    community_id,
+                    json!({}),
+                    Audience::One(member),
+                )
+                .await;
+        }
+        _ => {}
+    }
 }
 
 /// A request has one terminal decision. Only the transaction that closes a
