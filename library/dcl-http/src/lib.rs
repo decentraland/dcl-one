@@ -32,7 +32,7 @@ pub struct HttpClientCfg {
     /// Whole-request budget; `None` for readers that stream large bodies
     /// (snapshots) and bound them by `read_timeout` and the body cap instead.
     pub total_timeout: Option<Duration>,
-    pub connect_timeout: Duration,
+    pub connect_timeout: Option<Duration>,
     /// Longest pause between two bytes of a response.
     pub read_timeout: Option<Duration>,
     pub pool_idle_timeout: Duration,
@@ -46,7 +46,7 @@ impl Default for HttpClientCfg {
     fn default() -> Self {
         Self {
             total_timeout: Some(Duration::from_secs(30)),
-            connect_timeout: Duration::from_secs(10),
+            connect_timeout: Some(Duration::from_secs(10)),
             read_timeout: None,
             pool_idle_timeout: Duration::from_secs(90),
             pool_max_idle_per_host: 16,
@@ -65,7 +65,7 @@ impl HttpClientCfg {
     pub fn serve(connections_max_idle: usize) -> Self {
         Self {
             total_timeout: None,
-            connect_timeout: Duration::from_secs(8),
+            connect_timeout: Some(Duration::from_secs(8)),
             read_timeout: Some(Duration::from_secs(25)),
             pool_max_idle_per_host: connections_max_idle,
             max_redirects: Some(2),
@@ -79,7 +79,7 @@ impl HttpClientCfg {
     }
 
     pub fn with_connect_timeout(mut self, timeout: Duration) -> Self {
-        self.connect_timeout = timeout;
+        self.connect_timeout = Some(timeout);
         self
     }
 
@@ -106,12 +106,14 @@ impl HttpClientCfg {
         };
         let mut builder = reqwest::Client::builder()
             .user_agent(self.user_agent.as_deref().unwrap_or(USER_AGENT))
-            .connect_timeout(self.connect_timeout)
             .pool_idle_timeout(self.pool_idle_timeout)
             .pool_max_idle_per_host(self.pool_max_idle_per_host)
             .tcp_nodelay(self.tcp_nodelay)
             .dns_resolver(ReservedNamesResolver::default())
             .redirect(redirect);
+        if let Some(connect) = self.connect_timeout {
+            builder = builder.connect_timeout(connect);
+        }
         if let Some(total) = self.total_timeout {
             builder = builder.timeout(total);
         }
@@ -544,9 +546,9 @@ const PIN_CACHE_MAX: usize = 256;
 /// never dialled. Redirects are re-issued by hand through the same guard
 /// (`max_redirects` hops), never followed blindly.
 ///
-/// `allow_private` is for tests against a loopback stub: it skips the guard
-/// and the pinning and sends through the shared client. Never set from
-/// configuration.
+/// Profiles for trusted provider configuration and tests may skip the guard
+/// and pinning. They use the direct client and manual redirect handling so
+/// the selected host policy applies to the entire redirect chain.
 #[derive(Clone)]
 pub struct Outbound {
     cfg: Arc<HttpClientCfg>,
@@ -633,6 +635,24 @@ impl Outbound {
         })
     }
 
+    /// A fixed provider profile using the same pool settings and host policy.
+    /// The adapter supplies its SDK deadline separately. Construct once and
+    /// retain it: this creates an independent HTTP transport pool.
+    pub fn provider_profile(
+        &self,
+        connect_timeout: Option<Duration>,
+        read_timeout: Option<Duration>,
+    ) -> reqwest::Result<Self> {
+        let mut profile = Self::new(HttpClientCfg {
+            total_timeout: None,
+            connect_timeout,
+            read_timeout,
+            ..(*self.cfg).clone()
+        })?;
+        profile.allow_private = self.allow_private;
+        Ok(profile)
+    }
+
     /// Tests only: `host` resolves to `addr` without DNS, so a loopback stub
     /// can stand in for a public name and the pinning path runs for real.
     #[cfg(test)]
@@ -651,7 +671,16 @@ impl Outbound {
             .allowing_private_hosts()
     }
 
-    /// Tests only: send to private hosts through the shared client, unpinned.
+    /// Use only for a provider endpoint supplied by trusted operator
+    /// configuration, including its redirect targets. This profile permits
+    /// private hosts and ordinary DNS, like provider SDKs. Never use it for a
+    /// URL read from an HTTP request or another untrusted document.
+    pub fn allowing_configured_provider_hosts(mut self) -> Self {
+        self.allow_private = true;
+        self
+    }
+
+    /// Tests only: send to private hosts through the direct client, unpinned.
     pub fn allowing_private_hosts(mut self) -> Self {
         self.allow_private = true;
         self
@@ -699,9 +728,6 @@ impl Outbound {
         max_redirects: usize,
         fetch_redirects: bool,
     ) -> Result<reqwest::Response, SendError> {
-        if self.allow_private && max_redirects == self.max_redirects && !fetch_redirects {
-            return Ok(self.shared.execute(req).await?);
-        }
         for hop in 0..=max_redirects {
             let client = if self.allow_private {
                 self.direct.clone()
@@ -1078,7 +1104,7 @@ mod tests {
             cfg.total_timeout, None,
             "snapshot downloads have no whole-request budget"
         );
-        assert_eq!(cfg.connect_timeout, Duration::from_secs(8));
+        assert_eq!(cfg.connect_timeout, Some(Duration::from_secs(8)));
         assert_eq!(cfg.read_timeout, Some(Duration::from_secs(25)));
         assert_eq!(cfg.pool_max_idle_per_host, 25);
         assert_eq!(cfg.max_redirects, Some(2));
@@ -1304,6 +1330,117 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn configured_provider_redirects_permit_private_targets_without_changing_the_shared_guard()
+     {
+        use axum::{Router, routing::get};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let location = format!("http://localhost:{}/answer", address.port());
+        let app = Router::new()
+            .route(
+                "/start",
+                get(move || {
+                    let location = location.clone();
+                    async move { (axum::http::StatusCode::FOUND, [("location", location)]) }
+                }),
+            )
+            .route("/answer", get(|| async { "provider answer" }));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let cfg = HttpClientCfg::default().following_redirects(2);
+        let mut profile = Outbound::new(cfg.clone())
+            .unwrap()
+            .allowing_configured_provider_hosts();
+        // Resolve the public fixture name locally without global DNS or hosts.
+        // Both clients retain their production redirect policies.
+        profile.shared = cfg
+            .builder()
+            .resolve("provider.example", address)
+            .build()
+            .unwrap();
+        profile.direct = HttpClientCfg {
+            max_redirects: None,
+            ..cfg
+        }
+        .builder()
+        .resolve("provider.example", address)
+        .build()
+        .unwrap();
+        let answer = profile
+            .get(format!("http://provider.example:{}/start", address.port()))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        assert_eq!(answer, "provider answer");
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn a_provider_profile_leaves_the_shared_read_deadline_and_guard_intact() {
+        use axum::{Router, routing::get};
+        let (entered, mut entries) = tokio::sync::mpsc::unbounded_channel();
+        let release = Arc::new(tokio::sync::Notify::new());
+        let server_release = release.clone();
+        let app = Router::new().route(
+            "/headers",
+            get(move || {
+                let entered = entered.clone();
+                let release = server_release.clone();
+                async move {
+                    entered.send(()).unwrap();
+                    release.notified().await;
+                    "ok"
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/headers", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let guarded = Outbound::new(HttpClientCfg::serve(7)).unwrap();
+        assert!(matches!(
+            guarded.get(&url).send().await,
+            Err(SendError::Refused(_))
+        ));
+        let profile = guarded
+            .provider_profile(None, None)
+            .unwrap()
+            .allowing_configured_provider_hosts();
+        assert_eq!(profile.cfg.pool_max_idle_per_host, 7);
+        assert!(profile.cfg.connect_timeout.is_none());
+        let provider_url = url.clone();
+        let provider = tokio::spawn(async move { profile.get(provider_url).send().await });
+        let shared = guarded.clone().allowing_private_hosts();
+        let shared_url = url.clone();
+        let reader = tokio::spawn(async move { shared.get(shared_url).send().await });
+        entries.recv().await.unwrap();
+        entries.recv().await.unwrap();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(26)).await;
+        for _ in 0..128 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            reader.is_finished(),
+            "ordinary readers keep their 25s inactivity deadline"
+        );
+        assert!(
+            !provider.is_finished(),
+            "provider timeout policy belongs to its adapter"
+        );
+        tokio::time::resume();
+        assert!(reader.await.unwrap().unwrap_err().is_timeout());
+        release.notify_waiters();
+        assert!(provider.await.unwrap().unwrap().status().is_success());
+        assert!(
+            matches!(guarded.get(&url).send().await, Err(SendError::Refused(_))),
+            "the shared host policy never changes"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn a_request_redirect_limit_keeps_other_requests_defaults() {
         use axum::{Router, routing::get};
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1353,7 +1490,7 @@ mod tests {
         use axum::{Router, extract::Request, response::IntoResponse};
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("DCL_ONE_ROOT"),
-            "/services/catalyst/tests/fixtures/conformance/social/analytics-source-cases.json"
+            "/library/dcl-http/tests/fixtures/social-analytics-source-cases.json"
         )))
         .unwrap();
         for case in fixture["redirects"].as_array().unwrap() {
@@ -1417,7 +1554,7 @@ mod tests {
         use axum::{Router, extract::Request, response::IntoResponse};
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("DCL_ONE_ROOT"),
-            "/services/catalyst/tests/fixtures/conformance/social/analytics-source-cases.json"
+            "/library/dcl-http/tests/fixtures/social-analytics-source-cases.json"
         )))
         .unwrap();
         let expected = &fixture["cross_host"];

@@ -11,7 +11,7 @@ use tokio::sync::mpsc;
 fn source() -> Value {
     serde_json::from_str(include_str!(concat!(
         env!("DCL_ONE_ROOT"),
-        "/services/catalyst/tests/fixtures/conformance/social/analytics-source-cases.json"
+        "/library/dcl-http/tests/fixtures/social-analytics-source-cases.json"
     )))
     .unwrap()
 }
@@ -38,6 +38,30 @@ fn source_required_strings_and_node_timeout_buckets_are_preserved() {
             .unwrap()
             .is_none(),
         "monolith optional mode differs from required standalone source configuration"
+    );
+    assert!(
+        Analytics::new(
+            &http,
+            Settings {
+                api_url: Some(String::new()),
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .is_none(),
+        "posture-injected empty URL alone does not activate a provider"
+    );
+    assert_eq!(
+        Analytics::new(
+            &http,
+            Settings {
+                environment: Some(String::new()),
+                ..Default::default()
+            }
+        )
+        .err()
+        .unwrap(),
+        "Configuration: string ANALYTICS_CONTEXT is required"
     );
     for case in source["configuration"].as_array().unwrap() {
         let mut settings = settings("https://analytics.example/events".into());
@@ -281,4 +305,242 @@ async fn analytics_deadline_spans_the_entire_redirect_chain_until_headers() {
         released,
         "the second redirect hop cannot restart the timeout"
     );
+}
+
+#[tokio::test]
+async fn configured_analytics_header_budget_can_exceed_the_shared_read_deadline() {
+    let (entered, mut entries) = mpsc::unbounded_channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let response_release = release.clone();
+    let app = Router::new().route(
+        "/events",
+        post(move || {
+            let entered = entered.clone();
+            let release = response_release.clone();
+            async move {
+                entered.send(()).unwrap();
+                release.notified().await;
+                "unused body"
+            }
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json"
+    )))
+    .unwrap();
+    let mut config = settings(format!("http://{address}/events"));
+    config.request_timeout_ms = Some(
+        fixture["analytics"]["configured_header_timer_ms"]
+            .as_f64()
+            .unwrap(),
+    );
+    let shared = crate::http::Outbound::new(crate::http::HttpClientCfg::serve(16)).unwrap();
+    let analytics = Analytics::new(&shared, config).unwrap().unwrap();
+    let weak = Arc::downgrade(&analytics.0);
+    analytics.fire_event("SLOW_HEADERS_FIXTURE", json!({}));
+    drop(analytics);
+    entries.recv().await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(26)).await;
+    for _ in 0..64 {
+        tokio::task::yield_now().await;
+    }
+    assert!(
+        weak.upgrade().is_some(),
+        "the configured source 60s timer outlives the shared 25s read deadline"
+    );
+    tokio::time::resume();
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while weak.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        entries.try_recv().is_err(),
+        "no retry after successful headers"
+    );
+    server.abort();
+}
+
+fn provider_boundary_source() -> Value {
+    serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json"
+    )))
+    .unwrap()
+}
+async fn task_turns() {
+    for _ in 0..128 {
+        tokio::task::yield_now().await;
+    }
+}
+
+#[tokio::test]
+async fn native_analytics_headers_budget_precedes_a_larger_configured_timer() {
+    let fixture = provider_boundary_source();
+    let source = &fixture["native_analytics"]["headers"];
+    assert_eq!(source["native_budget_ms"], 300_000);
+    assert_eq!(source["before_deadline"]["completed"], false);
+    assert_eq!(source["completed"], true);
+    let (entered, mut entries) = mpsc::unbounded_channel();
+    let app = Router::new().fallback(move || {
+        let entered = entered.clone();
+        async move {
+            entered.send(()).unwrap();
+            std::future::pending::<String>().await
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut config = settings(url);
+    config.request_timeout_ms = Some(source["sdk_timer_ms"].as_f64().unwrap());
+    let analytics = Analytics::new(
+        &crate::http::Outbound::new(crate::http::HttpClientCfg::serve(16)).unwrap(),
+        config,
+    )
+    .unwrap()
+    .unwrap();
+    let weak = Arc::downgrade(&analytics.0);
+    analytics.fire_event("NATIVE_HEADERS_FIXTURE", json!({}));
+    drop(analytics);
+    entries.recv().await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(299)).await;
+    task_turns().await;
+    assert!(weak.upgrade().is_some());
+    tokio::time::advance(Duration::from_secs(2)).await;
+    task_turns().await;
+    assert!(
+        weak.upgrade().is_none(),
+        "native headers timeout remains below the configured 600s SDK deadline"
+    );
+    tokio::time::resume();
+    assert!(
+        entries.try_recv().is_err(),
+        "a timed out analytics POST is not retried"
+    );
+    server.abort();
+}
+
+#[tokio::test]
+async fn native_analytics_connect_budget_also_covers_a_stalled_tls_handshake() {
+    let fixture = provider_boundary_source();
+    let source = &fixture["native_analytics"]["connect"];
+    assert_eq!(source["native_budget_ms"], 10_000);
+    assert_eq!(source["before_deadline"]["completed"], false);
+    assert_eq!(source["completed"], true);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("https://{}", listener.local_addr().unwrap());
+    let (entered, received) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        entered.send(()).unwrap();
+        std::future::pending::<()>().await;
+        drop(socket);
+    });
+    let mut config = settings(url);
+    config.request_timeout_ms = Some(source["sdk_timer_ms"].as_f64().unwrap());
+    let analytics = Analytics::new(
+        &crate::http::Outbound::new(crate::http::HttpClientCfg::serve(16)).unwrap(),
+        config,
+    )
+    .unwrap()
+    .unwrap();
+    let weak = Arc::downgrade(&analytics.0);
+    analytics.fire_event("NATIVE_CONNECT_FIXTURE", json!({}));
+    drop(analytics);
+    received.await.unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(9)).await;
+    task_turns().await;
+    assert!(weak.upgrade().is_some());
+    tokio::time::advance(Duration::from_secs(2)).await;
+    task_turns().await;
+    assert!(
+        weak.upgrade().is_none(),
+        "the native 10s connection budget precedes SDK timeout"
+    );
+    tokio::time::resume();
+    server.abort();
+}
+
+#[tokio::test]
+async fn native_analytics_headers_budget_restarts_per_redirect_inside_the_sdk_deadline() {
+    let fixture = provider_boundary_source();
+    let source = &fixture["native_analytics"]["redirect-chain"];
+    assert_eq!(source["after_second_hop"]["completed"], false);
+    assert!(
+        source["after_second_hop"]["elapsed_tick_ms"]
+            .as_u64()
+            .unwrap()
+            > 300_000
+    );
+    let (entered, mut entries) = mpsc::unbounded_channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let response_release = release.clone();
+    let app = Router::new().fallback(move |request: Request| {
+        let entered = entered.clone();
+        let release = response_release.clone();
+        async move {
+            let first = request.uri().path() == "/start";
+            entered.send(first).unwrap();
+            release.notified().await;
+            if first {
+                (
+                    axum::http::StatusCode::TEMPORARY_REDIRECT,
+                    [("location", "/end")],
+                )
+                    .into_response()
+            } else {
+                "unused body".into_response()
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}/start", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut config = settings(url);
+    config.request_timeout_ms = Some(source["sdk_timer_ms"].as_f64().unwrap());
+    let analytics = Analytics::new(
+        &crate::http::Outbound::new(crate::http::HttpClientCfg::serve(16)).unwrap(),
+        config,
+    )
+    .unwrap()
+    .unwrap();
+    let weak = Arc::downgrade(&analytics.0);
+    analytics.fire_event("NATIVE_CHAIN_FIXTURE", json!({}));
+    drop(analytics);
+    assert_eq!(entries.recv().await, Some(true));
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(240)).await;
+    task_turns().await;
+    assert!(weak.upgrade().is_some());
+    tokio::time::resume();
+    release.notify_one();
+    assert_eq!(entries.recv().await, Some(false));
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(240)).await;
+    task_turns().await;
+    assert!(
+        weak.upgrade().is_some(),
+        "a redirect hop gets its own native headers timeout"
+    );
+    tokio::time::resume();
+    release.notify_one();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while weak.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    server.abort();
 }

@@ -1,7 +1,7 @@
 //! Referral-only Slack effects at social-service-ea b6b2cef. The installed
 //! source SDK's form fields/retries are retained over the existing Outbound.
-//! Serve's eight-second connect and 25-second read deadlines and host guard
-//! remain explicit differences from the source SDK's unbounded timeout.
+//! Its one lazy transport profile preserves the source SDK's unbounded timeout;
+//! the fixed Slack endpoint still passes through the outbound host guard.
 use crate::http::Outbound;
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -25,6 +25,7 @@ impl std::fmt::Debug for Settings {
 
 pub(super) struct Adapter {
     http: Outbound,
+    transport: std::sync::OnceLock<Result<Outbound, String>>,
     settings: Settings,
     endpoint: String,
     slots: tokio::sync::Semaphore,
@@ -34,6 +35,7 @@ impl Adapter {
     pub fn new(http: Outbound, settings: Settings) -> Self {
         Self {
             http,
+            transport: std::sync::OnceLock::new(),
             settings,
             endpoint: "https://slack.com/api/chat.postMessage".into(),
             slots: tokio::sync::Semaphore::new(100),
@@ -67,14 +69,18 @@ impl Adapter {
         }
     }
     async fn send_with_delays(&self, message: Value, delays: &[Duration]) -> anyhow::Result<()> {
-        let Some(token) = self
-            .settings
-            .token
-            .as_deref()
-            .filter(|token| !token.is_empty())
-        else {
+        let Some(token) = self.settings.token.as_deref() else {
             return Ok(());
         };
+        let http = self
+            .transport
+            .get_or_init(|| {
+                self.http
+                    .provider_profile(None, None)
+                    .map_err(|error| error.to_string())
+            })
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
         let body = form_body(&message);
         for attempt in 0..=delays.len() {
             let permit = self.slots.acquire().await?;
@@ -90,15 +96,17 @@ impl Adapter {
                     break;
                 }
             }
-            let response = self
-                .http
+            let mut request = http
                 .post(&self.endpoint)
                 .max_redirects(0)
-                .header("authorization", format!("Bearer {token}"))
                 .header("content-type", "application/x-www-form-urlencoded")
-                .body(body.clone())
-                .send()
-                .await;
+                .body(body.clone());
+            // An explicitly empty required source token still sends the call;
+            // WebClient omits its Authorization header for the empty string.
+            if !token.is_empty() {
+                request = request.header("authorization", format!("Bearer {token}"));
+            }
+            let response = request.send().await;
             let failure = match response {
                 Err(error) => error.to_string(),
                 Ok(response) if response.status().as_u16() == 429 => {
@@ -490,6 +498,91 @@ mod tests {
             server.abort();
         }
     }
+    #[tokio::test]
+    async fn an_explicit_empty_slack_token_sends_without_authorization_like_the_source() {
+        let source: Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json"))).unwrap();
+        let (endpoint, requests, server) = stub("success").await;
+        let mut adapter = Adapter::new(
+            Outbound::for_tests(),
+            Settings {
+                token: Some(String::new()),
+                ..Default::default()
+            },
+        );
+        adapter.set_test_endpoint(endpoint);
+        adapter
+            .send_with_delays(json!({"channel":"fixture", "text":"hello"}), &[])
+            .await
+            .unwrap();
+        let requests = requests.lock().await;
+        assert_eq!(
+            requests.len() as u64,
+            source["slack"]["empty_token"]["requests"]
+        );
+        assert_eq!(
+            requests[0]["authorization"],
+            source["slack"]["empty_token"]["authorization"]
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn slack_zero_timeout_keeps_a_response_body_pending_past_the_shared_deadline() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json"
+        ))).unwrap();
+        assert_eq!(fixture["slack"]["axios_timeout_ms"], 0);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/chat.postMessage", listener.local_addr().unwrap());
+        let (entered, received) = tokio::sync::oneshot::channel();
+        let (release, released) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buffer = [0; 4096];
+            socket.read(&mut buffer).await.unwrap();
+            socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 11\r\nconnection: close\r\n\r\n{\"ok\":").await.unwrap();
+            entered.send(()).unwrap();
+            released.await.unwrap();
+            socket.write_all(b"true}").await.unwrap();
+        });
+        let shared = Outbound::new(crate::http::HttpClientCfg::serve(16))
+            .unwrap()
+            .allowing_private_hosts();
+        let mut adapter = Adapter::new(
+            shared,
+            Settings {
+                token: Some("fixture-token".into()),
+                ..Default::default()
+            },
+        );
+        adapter.set_test_endpoint(endpoint);
+        let pending = tokio::spawn(async move {
+            adapter
+                .send_with_delays(json!({"channel":"fixture","text":"hello"}), &[])
+                .await
+        });
+        received.await.unwrap();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(26)).await;
+        for _ in 0..64 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !pending.is_finished(),
+            "Slack has no shared 25s response deadline"
+        );
+        tokio::time::resume();
+        release.send(()).unwrap();
+        tokio::time::timeout(Duration::from_secs(2), pending)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        server.await.unwrap();
+    }
+
     #[tokio::test]
     async fn referral_slack_failures_preserve_rejection_milestone_and_retry_side_effects() {
         let Some(pool) = crate::db::scratch::pool(4).await else {

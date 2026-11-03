@@ -175,7 +175,6 @@ pub struct State {
     pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
     analytics: std::sync::OnceLock<crate::analytics::Analytics>,
     compliance: std::sync::OnceLock<Result<compliance::Adapter, String>>,
-    compliance_allow_private: bool,
     /// `POST /v1/friends/{peer}/messages`: 60 sends per signer per minute,
     /// the old service's `RateLimiter::new(60, 60s)`; past it the route
     /// answers 429 before touching the database.
@@ -280,7 +279,6 @@ impl State {
             flags: Arc::new(crate::explore::api::feature_flags::Snapshot::empty()),
             analytics: std::sync::OnceLock::new(),
             compliance: std::sync::OnceLock::new(),
-            compliance_allow_private: http.allows_private_hosts(),
             dm_limiter,
             voice: std::sync::OnceLock::new(),
             worlds: std::sync::OnceLock::new(),

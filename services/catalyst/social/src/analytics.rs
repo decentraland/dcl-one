@@ -27,6 +27,7 @@ pub struct Analytics(Arc<Inner>);
 
 struct Inner {
     http: crate::http::Outbound,
+    transport: std::sync::OnceLock<Result<crate::http::Outbound, String>>,
     context: String,
     url: String,
     token: String,
@@ -38,7 +39,11 @@ impl Analytics {
     /// The monolith permits analytics to be absent; a configured replacement
     /// requires the source's four strings, including explicitly empty values.
     pub fn new(http: &crate::http::Outbound, settings: Settings) -> Result<Option<Self>, String> {
-        if settings.context.is_none() && settings.api_url.is_none() && settings.api_token.is_none()
+        if settings.context.is_none()
+            && settings.api_token.is_none()
+            && settings.environment.is_none()
+            && settings.request_timeout_ms.is_none()
+            && settings.api_url.as_deref().is_none_or(str::is_empty)
         {
             return Ok(None);
         }
@@ -52,6 +57,7 @@ impl Analytics {
         let timeout = request_timeout(settings.request_timeout_ms);
         Ok(Some(Self(Arc::new(Inner {
             http: http.clone(),
+            transport: std::sync::OnceLock::new(),
             context,
             url,
             token,
@@ -75,8 +81,26 @@ impl Analytics {
         tokio::spawn(async move {
             // The source timer covers fetch through response headers, not body
             // consumption. One deadline covers DNS and all redirect hops.
-            let send = inner
-                .http
+            let http = match inner.transport.get_or_init(|| {
+                inner
+                    .http
+                    .provider_profile(
+                        Some(Duration::from_secs(10)),
+                        Some(Duration::from_secs(300)),
+                    )
+                    .map(crate::http::Outbound::allowing_configured_provider_hosts)
+                    .map_err(|error| error.to_string())
+            }) {
+                Ok(http) => http,
+                Err(_) => {
+                    tracing::error!(
+                        event,
+                        "Error sending event to Analytics: client setup failed"
+                    );
+                    return;
+                }
+            };
+            let send = http
                 .post(&inner.url)
                 .header("x-token", &inner.token)
                 .header("Content-Type", "application/json")

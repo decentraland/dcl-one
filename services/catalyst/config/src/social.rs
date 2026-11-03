@@ -765,6 +765,48 @@ fn positive(raw: &str) -> Result<f64, String> {
     }
 }
 
+impl SocialConfig {
+    /// Source providers are configured when ENV or provider settings are
+    /// supplied. The posture's empty analytics URL alone is an inactive
+    /// monolith default; it must not require unrelated provider credentials.
+    pub fn validate_provider_bootstrap(&self) -> Result<(), String> {
+        let active = self.social_environment.is_some()
+            || self.social_analytics_context.is_some()
+            || self.social_analytics_api_token.is_some()
+            || self.social_analytics_request_timeout_ms.is_some()
+            || self
+                .social_analytics_api_url
+                .as_deref()
+                .is_some_and(|value| !value.is_empty())
+            || self.community_compliance_api_key.is_some()
+            || self.community_compliance_organization.is_some()
+            || self.community_compliance_project.is_some()
+            || (!self.community_compliance_model.is_empty()
+                && self.community_compliance_model != "gpt-5-nano")
+            || (!self.community_compliance_base_url.is_empty()
+                && self.community_compliance_base_url != "https://api.openai.com/v1")
+            || self.referral_slack_token.is_some();
+        if !active {
+            return Ok(());
+        }
+        // Source components initialize analytics, AI compliance, then Slack.
+        // requireString distinguishes an explicitly empty string from absence.
+        for (value, name) in [
+            (&self.social_analytics_context, "ANALYTICS_CONTEXT"),
+            (&self.social_analytics_api_url, "ANALYTICS_API_URL"),
+            (&self.social_analytics_api_token, "ANALYTICS_API_TOKEN"),
+            (&self.social_environment, "ENV"),
+            (&self.community_compliance_api_key, "OPEN_AI_API_KEY"),
+            (&self.referral_slack_token, "SLACK_BOT_TOKEN"),
+        ] {
+            if value.is_none() {
+                return Err(format!("Configuration: string {name} is required"));
+            }
+        }
+        Ok(())
+    }
+}
+
 impl std::fmt::Debug for SocialConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SocialConfig").finish_non_exhaustive()
@@ -816,10 +858,102 @@ mod tests {
     }
 
     #[test]
+    fn active_provider_bootstrap_matches_the_source_required_strings_and_order() {
+        let source: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json"
+        ))).unwrap();
+        let required = [
+            "ANALYTICS_CONTEXT",
+            "ANALYTICS_API_URL",
+            "ANALYTICS_API_TOKEN",
+            "ENV",
+            "OPEN_AI_API_KEY",
+            "SLACK_BOT_TOKEN",
+        ];
+        for case in source["active_bootstrap"].as_array().unwrap() {
+            let omitted = case["omitted"].as_str();
+            if omitted == Some("all-missing") {
+                assert!(
+                    social(&[]).unwrap().validate_provider_bootstrap().is_ok(),
+                    "unconfigured monolith has no source-provider startup requirement"
+                );
+                continue;
+            }
+            let settings = social(
+                &required
+                    .iter()
+                    .filter(|key| Some(**key) != omitted)
+                    .map(|key| {
+                        (
+                            *key,
+                            if omitted == Some("all-empty") {
+                                ""
+                            } else {
+                                "fixture"
+                            },
+                        )
+                    })
+                    .collect::<Vec<_>>(),
+            )
+            .unwrap();
+            let result = settings.validate_provider_bootstrap();
+            if case["configured"] == true {
+                result.unwrap();
+            } else {
+                assert_eq!(
+                    result.unwrap_err(),
+                    case["error"].as_str().unwrap(),
+                    "{}",
+                    case["omitted"]
+                );
+            }
+        }
+        assert_eq!(
+            social(&[("ENV", "")])
+                .unwrap()
+                .validate_provider_bootstrap()
+                .unwrap_err(),
+            "Configuration: string ANALYTICS_CONTEXT is required"
+        );
+        assert_eq!(
+            social(&[("OPEN_AI_API_KEY", "")])
+                .unwrap()
+                .validate_provider_bootstrap()
+                .unwrap_err(),
+            "Configuration: string ANALYTICS_CONTEXT is required"
+        );
+        assert_eq!(
+            social(&[("SLACK_BOT_TOKEN", "")])
+                .unwrap()
+                .validate_provider_bootstrap()
+                .unwrap_err(),
+            "Configuration: string ANALYTICS_CONTEXT is required"
+        );
+    }
+
+    #[test]
+    fn posture_empty_analytics_url_keeps_unconfigured_monolith_providers_inactive() {
+        for posture in [
+            crate::posture::Posture::Mirror,
+            crate::posture::Posture::Island,
+            crate::posture::Posture::Journey,
+        ] {
+            let expanded = crate::posture::expand(posture, &|_| None);
+            let pairs = expanded
+                .iter()
+                .map(|(key, value)| (*key, value.as_str()))
+                .collect::<Vec<_>>();
+            let settings = social(&pairs).unwrap();
+            assert_eq!(settings.social_analytics_api_url.as_deref(), Some(""));
+            settings.validate_provider_bootstrap().unwrap();
+        }
+    }
+
+    #[test]
     fn analytics_config_preserves_source_strings_numbers_and_secret_slot() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("DCL_ONE_ROOT"),
-            "/services/catalyst/tests/fixtures/conformance/social/analytics-source-cases.json"
+            "/library/dcl-http/tests/fixtures/social-analytics-source-cases.json"
         )))
         .unwrap();
         let absent = social(&[]).unwrap();
@@ -1013,8 +1147,8 @@ mod tests {
     #[test]
     fn ordinary_transport_settings_match_source_prefix_numbers_and_defaults() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../tests/fixtures/conformance/social/ws-transport-source-cases.json"
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/social/ws-transport-source-cases.json"
         )))
         .unwrap();
         for case in fixture["cases"].as_array().unwrap() {
@@ -1107,8 +1241,8 @@ mod tests {
     #[test]
     fn socket_numeric_settings_match_executed_source_and_native_idle_admission() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../tests/fixtures/conformance/social/ws-numbers-source-cases.json"
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/social/ws-numbers-source-cases.json"
         )))
         .unwrap();
         for case in fixture["auth"].as_array().unwrap() {

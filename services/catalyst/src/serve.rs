@@ -1846,6 +1846,10 @@ fn social_states(
     explore: &explore::SharedState,
     metrics_handle: comms::metrics::PrometheusHandle,
 ) -> anyhow::Result<social::States> {
+    config
+        .social
+        .validate_provider_bootstrap()
+        .map_err(anyhow::Error::msg)?;
     let non_empty = Config::non_empty;
     let public_url = config
         .node

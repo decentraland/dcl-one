@@ -8,9 +8,10 @@
 //! WebSocket), `messaging` (the old gatekeeper's MLS delivery service, on
 //! its own state), `notifications`, `badges`, `media`
 //! (autotranslate) and `profile_images`; domain readers share the default outbound
-//! client, SQL pool and blob store. Configured AI compliance lazily owns an
-//! Outbound with provider-specific timeout/redirect settings and its own HTTP
-//! pools. Optional legacy SQS/SNS transports use the official AWS SDK clients
+//! client, SQL pool and blob store. Configured AI compliance, analytics and
+//! referral Slack each lazily retain one Outbound provider profile with its
+//! own HTTP transport pools; no profile is built per request. Optional legacy
+//! SQS/SNS transports use the official AWS SDK clients
 //! inside the existing job lifecycle (`legacy_events`). The
 //! LiveKit gatekeeper itself is `comms::gatekeeper`; its state is the RPC's
 //! voice runtime and the communities' voice eviction. [`router`] composes

@@ -319,6 +319,11 @@ async fn cache_read_failure_is_generic_but_cache_write_failure_is_ai_unavailable
     let Some(rig) = Rig::new(enabled_settings(&provider.url)).await else {
         return;
     };
+    let recorder = crate::comms::metrics::prometheus_builder()
+        .unwrap()
+        .build_recorder();
+    let handle = recorder.handle();
+    let _guard = metrics::set_default_local_recorder(&recorder);
     let name = format!("write-fail-{}", Uuid::new_v4());
     let input = Content {
         name: Some(&name),
@@ -349,6 +354,7 @@ async fn cache_read_failure_is_generic_but_cache_write_failure_is_ai_unavailable
             .unwrap()
             .contains("injected cache write failure")
     );
+    assert_source_metric_counts(&handle.render(), "cache-write-failure");
     sqlx::query(sqlx::AssertSqlSafe(format!(
         "DROP TRIGGER {function} ON social.community_compliance_cache"
     )))
@@ -385,4 +391,99 @@ async fn cache_read_failure_is_generic_but_cache_write_failure_is_ai_unavailable
         "cache read fails before provider invocation"
     );
     rig.finish();
+}
+
+fn boundary_metrics_source(scenario: &str) -> Value {
+    let source: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/provider-boundary-source-cases.json"
+    )))
+    .unwrap();
+    source["ai_metrics"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|case| case["scenario"] == scenario)
+        .unwrap()
+        .clone()
+}
+fn assert_source_metric_counts(rendered: &str, scenario: &str) {
+    let source = boundary_metrics_source(scenario);
+    let events = source["events"].as_array().unwrap();
+    for result in [
+        "compliant",
+        "non-compliant",
+        "compliant_cached",
+        "non-compliant_cached",
+        "failed",
+    ] {
+        let expected = events
+            .iter()
+            .filter(|event| {
+                event["operation"] == "increment" && event["labels"]["result"] == result
+            })
+            .count();
+        let prefix = format!("ai_compliance_validation_total{{result=\"{result}\"}} ");
+        let actual = rendered
+            .lines()
+            .find_map(|line| line.strip_prefix(&prefix))
+            .map(|value| value.parse::<usize>().unwrap())
+            .unwrap_or(0);
+        assert_eq!(actual, expected, "{scenario}: {result}\n{rendered}");
+    }
+    let expected = events
+        .iter()
+        .filter(|event| event["operation"] == "observe")
+        .count();
+    let actual = rendered
+        .lines()
+        .find_map(|line| line.strip_prefix("ai_compliance_validation_duration_seconds_count "))
+        .map(|value| value.parse::<usize>().unwrap())
+        .unwrap_or(0);
+    assert_eq!(actual, expected, "{scenario}: duration count\n{rendered}");
+}
+
+#[tokio::test]
+async fn compliance_metrics_follow_source_live_cache_failure_and_read_failure_boundaries() {
+    for scenario in [
+        "live-compliant",
+        "live-non-compliant",
+        "cached-compliant",
+        "cached-non-compliant",
+        "provider-invalid",
+        "cache-read-failure",
+    ] {
+        let mut case = goldens()["cases"][0].clone();
+        let result = json!({"isCompliant": !scenario.ends_with("non-compliant"), "issues":{"name":[],"description":[],"image":[]},"confidence":0.9});
+        case["providerResponse"]["output"][0]["content"][0]["text"] =
+            Value::String(if scenario == "provider-invalid" {
+                json!({}).to_string()
+            } else {
+                result.to_string()
+            });
+        let provider = provider(&case, std::time::Duration::ZERO).await;
+        let Some(rig) = Rig::new(enabled_settings(&provider.url)).await else {
+            return;
+        };
+        let name = format!("metrics-{}", Uuid::new_v4());
+        let input = Content {
+            name: Some(&name),
+            description: None,
+            thumbnail: None,
+        };
+        if scenario.starts_with("cached-") {
+            sqlx::query("INSERT INTO social.community_compliance_cache(model,input_hash,result,expires_at) VALUES($1,$2,$3,timezone('UTC',now())+interval '2 hours')").bind(&rig.state.settings.compliance.model).bind(compliance::cache_hash(input).as_slice()).bind(&result).execute(&rig.pool).await.unwrap();
+        }
+        if scenario == "cache-read-failure" {
+            rig.pool.close().await;
+        }
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _guard = metrics::set_default_local_recorder(&recorder);
+        rig.state.validate_content(input).await.ok();
+        assert_source_metric_counts(&handle.render(), scenario);
+        rig.finish();
+    }
 }

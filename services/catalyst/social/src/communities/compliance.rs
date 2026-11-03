@@ -125,24 +125,22 @@ pub(crate) struct Adapter {
     settings: Settings,
 }
 impl Adapter {
-    fn new(mut settings: Settings, allow_private: bool) -> Result<Self, String> {
+    fn new(mut settings: Settings) -> Result<Self, String> {
         if settings.model.is_empty() {
             settings.model = "gpt-5-nano".into();
         }
         if settings.base_url.is_empty() {
             settings.base_url = "https://api.openai.com/v1".into();
         }
-        let mut http = crate::http::Outbound::new(crate::http::HttpClientCfg {
-            total_timeout: Some(Duration::from_secs(600)),
-            connect_timeout: Duration::from_secs(10),
+        let http = crate::http::Outbound::new(crate::http::HttpClientCfg {
+            total_timeout: None,
+            connect_timeout: Some(Duration::from_secs(10)),
             read_timeout: Some(Duration::from_secs(300)),
             max_redirects: Some(20),
             ..Default::default()
         })
-        .map_err(|e| e.to_string())?;
-        if allow_private {
-            http = http.allowing_private_hosts();
-        }
+        .map_err(|e| e.to_string())?
+        .allowing_configured_provider_hosts();
         Ok(Self { http, settings })
     }
     async fn validate(&self, content: Content<'_>) -> Result<ResultValue, String> {
@@ -161,6 +159,7 @@ impl Adapter {
                     reqwest::Method::POST,
                     format!("{}/responses", self.settings.base_url.trim_end_matches('/')),
                 )
+                .following_redirects(20)
                 .header("authorization", bearer.clone())
                 .header("x-stainless-retry-count", attempt.to_string())
                 .header("x-stainless-timeout", "600")
@@ -171,23 +170,30 @@ impl Adapter {
             if let Some(project) = &self.settings.project {
                 request = request.header("openai-project", project);
             }
-            let response = match request.send().await {
-                Ok(response) => response,
-                Err(error) => {
-                    if attempt < 2 {
-                        tokio::time::sleep(retry_delay(attempt, None)).await;
-                        continue;
-                    }
-                    return Err(format!(
-                        "Unexpected error during compliance validation: {}",
-                        if error.is_timeout() {
-                            "Request timed out."
-                        } else {
-                            "Connection error."
+            // The SDK clears its abort timer when fetch returns headers. Body
+            // reads retain the transport inactivity timeout, with no total cap.
+            let response =
+                match tokio::time::timeout(Duration::from_secs(600), request.send()).await {
+                    Ok(Ok(response)) => response,
+                    failure => {
+                        if attempt < 2 {
+                            tokio::time::sleep(retry_delay(attempt, None)).await;
+                            continue;
                         }
-                    ));
-                }
-            };
+                        return Err(format!(
+                            "Unexpected error during compliance validation: {}",
+                            if match failure {
+                                Err(_) => true,
+                                Ok(Err(error)) => error.is_timeout(),
+                                Ok(Ok(_)) => unreachable!(),
+                            } {
+                                "Request timed out."
+                            } else {
+                                "Connection error."
+                            }
+                        ));
+                    }
+                };
             let status = response.status();
             let headers = response.headers().clone();
             if !status.is_success()
@@ -201,11 +207,16 @@ impl Adapter {
                 tokio::time::sleep(retry_delay(attempt, Some(&headers))).await;
                 continue;
             }
-            let bytes = crate::http::read_body_capped(response, 4 << 20)
-                .await
-                .map_err(|error| {
-                    format!("Unexpected error during compliance validation: {error}")
-                })?;
+            let bytes = response.bytes().await.map_err(|_| {
+                // Node fetch terminates a response stream after inactivity or
+                // a broken socket. Parsing happens after SDK transport retries.
+                let message = if status.is_success() {
+                    "terminated".to_owned()
+                } else {
+                    api_error(status, b"terminated")
+                };
+                format!("Unexpected error during compliance validation: {message}")
+            })?;
             if !status.is_success() {
                 return Err(format!(
                     "Unexpected error during compliance validation: {}",
@@ -440,6 +451,7 @@ impl super::State {
         {
             return Ok(());
         }
+        let started = std::time::Instant::now();
         let hash = cache_hash(content);
         let model = if self.settings.compliance.model.is_empty() {
             "gpt-5-nano"
@@ -449,22 +461,35 @@ impl super::State {
         // As upstream, cache read failure is outside the provider's AI-error wrapper.
         let cached:Option<Value>=sqlx::query_scalar("SELECT result FROM social.community_compliance_cache WHERE model=$1 AND input_hash=$2 AND expires_at>timezone('UTC',now())").bind(model).bind(hash.as_slice()).fetch_optional(&self.pool).await.map_err(|error|{tracing::error!(%error,"community compliance cache read failed");CommError::Internal})?;
         let result = if let Some(value) = cached {
-            ResultValue::from_value(value).map_err(unavailable)?
+            let result = ResultValue::from_value(value).map_err(unavailable)?;
+            metrics::counter!("ai_compliance_validation_total", "result" => if result.is_compliant { "compliant_cached" } else { "non-compliant_cached" }).increment(1);
+            metrics::histogram!("ai_compliance_validation_duration_seconds")
+                .record(started.elapsed().as_secs_f64());
+            result
         } else {
-            let adapter = self.compliance.get_or_init(|| {
-                Adapter::new(
-                    self.settings.compliance.clone(),
-                    self.compliance_allow_private,
-                )
-            });
+            let adapter = self
+                .compliance
+                .get_or_init(|| Adapter::new(self.settings.compliance.clone()));
             let adapter = adapter.as_ref().map_err(|error| {
+                metrics::counter!("ai_compliance_validation_total", "result" => "failed")
+                    .increment(1);
                 unavailable(format!(
                     "Unexpected error during compliance validation: {error}"
                 ))
             })?;
-            let result = adapter.validate(content).await.map_err(unavailable)?;
+            let result = adapter.validate(content).await.map_err(|error| {
+                metrics::counter!("ai_compliance_validation_total", "result" => "failed")
+                    .increment(1);
+                unavailable(error)
+            })?;
+            metrics::histogram!("ai_compliance_validation_duration_seconds")
+                .record(started.elapsed().as_secs_f64());
+            metrics::counter!("ai_compliance_validation_total", "result" => if result.is_compliant { "compliant" } else { "non-compliant" }).increment(1);
             sqlx::query("INSERT INTO social.community_compliance_cache(model,input_hash,result,expires_at) VALUES($1,$2,$3,timezone('UTC',now())+interval '2 hours') ON CONFLICT(model,input_hash) DO UPDATE SET result=EXCLUDED.result,expires_at=EXCLUDED.expires_at")
-                .bind(model).bind(hash.as_slice()).bind(serde_json::to_value(&result).unwrap()).execute(&self.pool).await.map_err(|error|unavailable(format!("Unexpected error during compliance validation: {error}")))?;
+                .bind(model).bind(hash.as_slice()).bind(serde_json::to_value(&result).unwrap()).execute(&self.pool).await.map_err(|error| {
+                    metrics::counter!("ai_compliance_validation_total", "result" => "failed").increment(1);
+                    unavailable(format!("Unexpected error during compliance validation: {error}"))
+                })?;
             result
         };
         if result.is_compliant {
@@ -481,3 +506,7 @@ pub fn spawn_job(state: &Arc<super::State>, jobs: &crate::jobs::Jobs) {
     let pool = state.pool.clone();
     jobs.spawn_periodic_leased("community-compliance-cache",crate::jobs::PeriodicCfg::every(Duration::from_secs(3600)),move|_ctx|{let pool=pool.clone();async move{sqlx::query("DELETE FROM social.community_compliance_cache WHERE expires_at<=timezone('UTC',now()) AND (model,input_hash) IN (SELECT model,input_hash FROM social.community_compliance_cache WHERE expires_at<=timezone('UTC',now()) ORDER BY expires_at LIMIT 1000)").execute(&pool).await?;Ok(())}});
 }
+
+#[cfg(test)]
+#[path = "compliance_transport_tests.rs"]
+mod transport_tests;
