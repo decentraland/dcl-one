@@ -4,8 +4,8 @@
     {
       "id": "api_auxiliary:ANY:/*",
       "owner": "auxiliary-http",
-      "status": "known_gap",
-      "result": "Compared framework defaultHandler and allowedMethods with the social-api nested router; the unknown-path body is currently different.",
+      "status": "reviewed",
+      "result": "Compared and corrected current-source CORS, unknown-route fallback and unsupported-method boundaries using executed middleware and real HTTP server captures.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/cors.rs",
@@ -14,12 +14,20 @@
         {
           "path": "services/catalyst/social/src/lib.rs",
           "scope": "Checked middleware coverage and fallback placement for /social-api separately from unrelated root routes."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
+          "test": "social_api_gateway_cors_and_unknown_paths_match_executed_source",
+          "scope": "Replays current-source middleware and real listener captures for preflight/reflection,404/405/501,HEAD and parser-rejected methods."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
+          "test": "social_api_methods_match_the_executed_source_server",
+          "scope": "Replays current-source middleware and real listener captures for preflight/reflection,404/405/501,HEAD and parser-rejected methods."
         }
       ],
-      "gaps": [
-        "Source unknown path returns 404 with plain body Not found; the local nested router does not yet provide that fallback."
-      ],
-      "remaining_verification": "Implement and replay executable framework goldens for current CORS, unknown routes and unsupported HTTP methods; preserve unrelated domain routes."
+      "gaps": [],
+      "remaining_verification": "Verify deployed edge routing and body-limit/error boundaries; the broader body-size contract remains an explicit shared gap."
     },
     {
       "id": "api_auxiliary:GET:/health/live",
@@ -81,8 +89,8 @@
     {
       "id": "api_auxiliary:OPTIONS:/*",
       "owner": "auxiliary-http",
-      "status": "known_gap",
-      "result": "Compared current pinned framework CORS middleware against the local dated-capture implementation; requested-header reflection, method ordering, origin-less preflight and unknown-path handling differ.",
+      "status": "reviewed",
+      "result": "Compared and corrected current-source CORS, unknown-route fallback and unsupported-method boundaries using executed middleware and real HTTP server captures.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/cors.rs",
@@ -91,13 +99,20 @@
         {
           "path": "services/catalyst/social/src/lib.rs",
           "scope": "Checked middleware coverage and fallback placement for /social-api separately from unrelated root routes."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
+          "test": "social_api_gateway_cors_and_unknown_paths_match_executed_source",
+          "scope": "Replays current-source middleware and real listener captures for preflight/reflection,404/405/501,HEAD and parser-rejected methods."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
+          "test": "social_api_methods_match_the_executed_source_server",
+          "scope": "Replays current-source middleware and real listener captures for preflight/reflection,404/405/501,HEAD and parser-rejected methods."
         }
       ],
-      "gaps": [
-        "Current source reflects Access-Control-Request-Headers; local implementation emits a fixed wildcard.",
-        "Source preflight applies to unknown paths and emits Access-Control-Allow-Origin even without Origin; local route layers do not."
-      ],
-      "remaining_verification": "Implement and replay executable framework goldens for current CORS, unknown routes and unsupported HTTP methods; preserve unrelated domain routes."
+      "gaps": [],
+      "remaining_verification": "Verify deployed edge routing and body-limit/error boundaries; the broader body-size contract remains an explicit shared gap."
     },
     {
       "id": "api_http:DELETE:/v1/blocks/:address",
@@ -313,39 +328,99 @@
     },
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/participants/:address",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/speak-requests/:address",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/speakers/:address",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:DELETE:/v1/friends/:address",
@@ -402,12 +477,27 @@
     },
     {
       "id": "api_http:DELETE:/v1/private-voice-chats/:callId",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:GET:/v1/blocking-status",
@@ -452,10 +542,13 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/ranking.rs",
+          "scope": "Source scoring formula, lifetime counters, daily local score job, local event/photo/stream receipts and legacy event writers are implemented; existing upstream counter baseline is not imported."
         }
       ],
       "gaps": [
-        "community-ranking-writer",
         "community-voice-liveness"
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
@@ -634,12 +727,29 @@
     },
     {
       "id": "api_http:GET:/v1/community-voice-chats/active",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
+      "gaps": [
+        "Configured comms liveness cutoffs and the source message-only500 active-room error need to be applied to the community SQL reader."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:GET:/v1/members/:address/communities",
@@ -795,12 +905,27 @@
     },
     {
       "id": "api_http:GET:/v1/private-voice-chats/incoming",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:GET:/v1/referral-progress",
@@ -925,10 +1050,13 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/ranking.rs",
+          "scope": "Source scoring formula, lifetime counters, daily local score job, local event/photo/stream receipts and legacy event writers are implemented; existing upstream counter baseline is not imported."
         }
       ],
       "gaps": [
-        "community-ranking-writer",
         "community-voice-liveness"
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
@@ -1257,12 +1385,27 @@
     },
     {
       "id": "api_http:PATCH:/v1/community-voice-chats/:communityId/speakers/:address",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:PATCH:/v1/friendship-requests/:address",
@@ -1300,12 +1443,27 @@
     },
     {
       "id": "api_http:PATCH:/v1/private-voice-chats/:callId",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:PATCH:/v1/referral-progress",
@@ -1601,30 +1759,75 @@
     },
     {
       "id": "api_http:POST:/v1/community-voice-chats",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:POST:/v1/community-voice-chats/:communityId/participants",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:POST:/v1/community-voice-chats/:communityId/speak-requests",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:POST:/v1/friendship-requests",
@@ -1709,12 +1912,27 @@
     },
     {
       "id": "api_http:POST:/v1/private-voice-chats",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:POST:/v1/referral-email",
@@ -1813,129 +2031,251 @@
     },
     {
       "id": "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_private_call_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated.",
+          "test": "a_community_room_runs_through_the_http_routes"
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "json_stream:SUBSCRIBE:block_updates",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "json_stream:SUBSCRIBE:community_member_connectivity_updates",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "json_stream:SUBSCRIBE:community_voice_chat_updates",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "json_stream:SUBSCRIBE:friend_connectivity_updates",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "json_stream:SUBSCRIBE:friendship_updates",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "json_stream:SUBSCRIBE:private_voice_chat_updates",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_stream:RPC:subscribeToBlockUpdates",
-      "owner": "realtime",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_stream:RPC:subscribeToCommunityMemberConnectivityUpdates",
-      "owner": "realtime",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
-      "owner": "realtime",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_stream:RPC:subscribeToFriendConnectivityUpdates",
-      "owner": "realtime",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior.",
+        "A legitimate profile above the existing guarded16KiB frame cap is rejected locally; the source checks socket buffered bytes before send instead."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Resolve historical profile single-lookup/cache identity behavior with the shared registry reader."
     },
     {
       "id": "rpc_stream:RPC:subscribeToFriendshipUpdates",
-      "owner": "realtime",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Resolve historical profile single-lookup/cache identity behavior with the shared registry reader."
     },
     {
       "id": "rpc_stream:RPC:subscribeToPrivateVoiceChatUpdates",
-      "owner": "realtime",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "realtime-voice-and-streams",
+      "status": "known_gap",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
+          "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        }
+      ],
+      "gaps": [
+        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
+      ],
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:acceptPrivateVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Verify raw/noncanonical private call-ID branches beyond the recorded cases."
     },
     {
       "id": "rpc_unary:RPC:blockUser",
@@ -1980,30 +2320,60 @@
     },
     {
       "id": "rpc_unary:RPC:demoteSpeakerInCommunityVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 10 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:endCommunityVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:endPrivateVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Verify raw/noncanonical private call-ID branches beyond the recorded cases."
     },
     {
       "id": "rpc_unary:RPC:getBlockedUsers",
@@ -2112,12 +2482,22 @@
     },
     {
       "id": "rpc_unary:RPC:getIncomingPrivateVoiceChatRequest",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 0 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:getMutualFriends",
@@ -2248,84 +2628,174 @@
     },
     {
       "id": "rpc_unary:RPC:joinCommunityVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:kickPlayerFromCommunityVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 9 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:muteSpeakerFromCommunityVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 8 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:promoteSpeakerInCommunityVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 9 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:rejectPrivateVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Verify raw/noncanonical private call-ID branches beyond the recorded cases."
     },
     {
       "id": "rpc_unary:RPC:rejectSpeakRequestInCommunityVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 9 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:requestToSpeakInCommunityVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 7 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:startCommunityVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:startPrivateVoiceChat",
-      "owner": "voice",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "evidence": [
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
+          "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
+          "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:unblockUser",
@@ -2503,21 +2973,43 @@
     },
     {
       "id": "websocket:UPGRADE:/",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Separate source millisecond authentication deadline and signature expiry,300s idle default with0disabled and Ping/Pong activity tracking. Both socket protocol checks passed; fresh shared/config unit execution and fullsuite pending.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "both_socket_protocols_separate_auth_deadline_from_signature_age",
+          "scope": "Actual local socket regression for independent handshake deadline/signature age and automatic Ping/Pong idle handling."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "both_socket_protocols_probe_idle_connections_with_ping",
+          "scope": "Actual local socket regression for independent handshake deadline/signature age and automatic Ping/Pong idle handling."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Native uWS timer-wheel scheduling and every numeric configuration edge have not been exhaustively compared."
     },
     {
       "id": "websocket:UPGRADE:/v1/stream",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "realtime-voice-and-streams",
+      "status": "reviewed",
+      "result": "Separate source millisecond authentication deadline and signature expiry,300s idle default with0disabled and Ping/Pong activity tracking. Both socket protocol checks passed; fresh shared/config unit execution and fullsuite pending.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "both_socket_protocols_separate_auth_deadline_from_signature_age",
+          "scope": "Actual local socket regression for independent handshake deadline/signature age and automatic Ping/Pong idle handling."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "both_socket_protocols_probe_idle_connections_with_ping",
+          "scope": "Actual local socket regression for independent handshake deadline/signature age and automatic Ping/Pong idle handling."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Native uWS timer-wheel scheduling and every numeric configuration edge have not been exhaustively compared."
     }
   ],
   "baseline": {
@@ -4520,13 +5012,13 @@
       "operations": [
         "rpc_unary:RPC:upsertFriendship"
       ],
-      "status": "unverified",
-      "description": "Local friendship notification persistence reaches the existing local inbox/outbox. Existing external SNS consumers and migration/cutover delivery have not been inventoried or demonstrated by these tests."
+      "status": "known_gap",
+      "description": "Optional SNS publishing exists for referral events. Friendship and community notification producers still require source-compatible SNS wiring; writing a local inbox does not preserve existing external subscribers. Deployed subscriptions, duplicate delivery and cutover remain unverified."
     },
     {
       "id": "cross-replica-social-events",
-      "status": "known_gap",
-      "description": "Social mutation events are process-local; delivery to consumers connected to another serve replica is not equivalent to upstream shared Redis pubsub.",
+      "status": "unverified",
+      "description": "Mutation fanout now uses the existing core NATS link; two real broker connections, scoped delivery and large public snapshots pass locally. Deployed replica/consumer behavior and burst/outage equivalence remain unverified; the256-entry outbound queue can drop before source per-subscription limits.",
       "operations": [
         "json_stream:SUBSCRIBE:block_updates",
         "json_stream:SUBSCRIBE:community_member_connectivity_updates",
@@ -4544,8 +5036,8 @@
     },
     {
       "id": "community-started-audience-lifetime",
-      "status": "known_gap",
-      "description": "Community STARTED audience metadata is process-local rather than shared with the upstream 24-hour refreshed lifetime; restart and replica behavior remain different.",
+      "status": "unverified",
+      "description": "Audience scope/generation/24-hour refreshed expiry now persist in shared SQL. Restart, expiry, generation-CAS and retained immutable event snapshots pass local tests. Existing room state, external media continuity and deployed cutover remain unverified.",
       "operations": [
         "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
         "rpc_unary:RPC:demoteSpeakerInCommunityVoiceChat",
@@ -4562,7 +5054,7 @@
     {
       "id": "referral-lifecycle",
       "status": "known_gap",
-      "description": "Referral registration is present, but source login-event finalization, rewards, artwork and legacy queue ingress have not yet been implemented and verified as a complete lifecycle.",
+      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork and email now have source-paired/local regressions and optional real SQS/SNS SDK transport. Source-specific database error envelopes and Slack alert side effects remain gaps; stateful cutover is unverified.",
       "operations": [
         "api_http:GET:/v1/referral-progress",
         "api_http:PATCH:/v1/referral-progress",
@@ -4573,7 +5065,7 @@
     {
       "id": "community-ranking-and-configured-moderation",
       "status": "known_gap",
-      "description": "Dynamic moderator variants now use the source-compatible shared DAPPS document and have focused authorization/fetch regressions. Lifetime ranking producers and enabled AI compliance remain under implementation; affected HTTP rows retain their own gaps.",
+      "description": "Dynamic moderators and ranking producers are implemented with focused source/local regressions. Enabled AI compliance remains under implementation. Existing lifetime counter baselines and watermarks are not imported, so historical ranking equality remains unverified.",
       "operations": [
         "api_http:DELETE:/v1/communities/:id",
         "api_http:GET:/v1/communities",
@@ -4608,6 +5100,85 @@
       ],
       "status": "unverified",
       "description": "Configured official SQS/SNS transports preserve legacy raw events and attributes locally; deployed queue policies,topic subscriptions and real credential access have not been exercised. The additive upgrade preserves populated candidate IDs in synthetic tests; import of existing upstream progress/login-days/reward/email state and live cutover remain outstanding. Ranking event dispatch and other SNS producer wiring are subsequent packages."
+    },
+    {
+      "id": "api-body-size-boundary",
+      "status": "known_gap",
+      "operations": [
+        "api_http:DELETE:/v1/blocks/:address",
+        "api_http:DELETE:/v1/communities/:id",
+        "api_http:DELETE:/v1/communities/:id/members/:memberAddress",
+        "api_http:DELETE:/v1/communities/:id/members/:memberAddress/bans",
+        "api_http:DELETE:/v1/communities/:id/places/:placeId",
+        "api_http:DELETE:/v1/communities/:id/posts/:postId",
+        "api_http:DELETE:/v1/communities/:id/posts/:postId/like",
+        "api_http:DELETE:/v1/community-voice-chats/:communityId",
+        "api_http:DELETE:/v1/community-voice-chats/:communityId/participants/:address",
+        "api_http:DELETE:/v1/community-voice-chats/:communityId/speak-requests/:address",
+        "api_http:DELETE:/v1/community-voice-chats/:communityId/speakers/:address",
+        "api_http:DELETE:/v1/friends/:address",
+        "api_http:DELETE:/v1/mutes",
+        "api_http:DELETE:/v1/private-voice-chats/:callId",
+        "api_http:GET:/v1/blocking-status",
+        "api_http:GET:/v1/communities",
+        "api_http:GET:/v1/communities/:address/managed",
+        "api_http:GET:/v1/communities/:id",
+        "api_http:GET:/v1/communities/:id/bans",
+        "api_http:GET:/v1/communities/:id/members",
+        "api_http:GET:/v1/communities/:id/places",
+        "api_http:GET:/v1/communities/:id/posts",
+        "api_http:GET:/v1/communities/:id/requests",
+        "api_http:GET:/v1/community-voice-chats/active",
+        "api_http:GET:/v1/members/:address/communities",
+        "api_http:GET:/v1/members/:address/invites",
+        "api_http:GET:/v1/members/:address/requests",
+        "api_http:GET:/v1/moderation/communities",
+        "api_http:GET:/v1/mutes",
+        "api_http:GET:/v1/private-messages-settings",
+        "api_http:GET:/v1/private-voice-chats/incoming",
+        "api_http:GET:/v1/referral-progress",
+        "api_http:GET:/v1/social-settings",
+        "api_http:GET:/v1/users/:address/friendship-status",
+        "api_http:GET:/v2/blocks",
+        "api_http:GET:/v2/communities",
+        "api_http:GET:/v2/communities/:id",
+        "api_http:GET:/v2/communities/:id/bans",
+        "api_http:GET:/v2/communities/:id/members",
+        "api_http:GET:/v2/communities/:id/posts",
+        "api_http:GET:/v2/communities/:id/requests",
+        "api_http:GET:/v2/friends",
+        "api_http:GET:/v2/friendship-requests",
+        "api_http:GET:/v2/members/:address/requests",
+        "api_http:GET:/v2/users/:address/mutual-friends",
+        "api_http:PATCH:/v1/communities/:id",
+        "api_http:PATCH:/v1/communities/:id/members/:address",
+        "api_http:PATCH:/v1/communities/:id/requests/:requestId",
+        "api_http:PATCH:/v1/community-voice-chats/:communityId/speakers/:address",
+        "api_http:PATCH:/v1/friendship-requests/:address",
+        "api_http:PATCH:/v1/private-voice-chats/:callId",
+        "api_http:PATCH:/v1/referral-progress",
+        "api_http:PATCH:/v1/social-settings",
+        "api_http:POST:/v1/blocks",
+        "api_http:POST:/v1/communities",
+        "api_http:POST:/v1/communities/:id/members",
+        "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
+        "api_http:POST:/v1/communities/:id/places",
+        "api_http:POST:/v1/communities/:id/posts",
+        "api_http:POST:/v1/communities/:id/posts/:postId/like",
+        "api_http:POST:/v1/communities/:id/requests",
+        "api_http:POST:/v1/community-voice-chats",
+        "api_http:POST:/v1/community-voice-chats/:communityId/participants",
+        "api_http:POST:/v1/community-voice-chats/:communityId/speak-requests",
+        "api_http:POST:/v1/friendship-requests",
+        "api_http:POST:/v1/members/:address/communities",
+        "api_http:POST:/v1/mutes",
+        "api_http:POST:/v1/private-voice-chats",
+        "api_http:POST:/v1/referral-email",
+        "api_http:POST:/v1/referral-progress",
+        "api_http:PUT:/v1/communities/:id",
+        "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address"
+      ],
+      "description": "The pinned HTTP server applies HTTP_MAX_REQUEST_BODY_BYTES and rejects oversized declared bodies with413 before authentication; the current gateway still uses handler-level hardcoded limits. Declared/chunked body overflow, configured limits, response/CORS and connection-close behavior need a full boundary comparison and fix."
     }
   ]
 }
