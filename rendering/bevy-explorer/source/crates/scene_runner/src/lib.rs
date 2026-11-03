@@ -771,6 +771,16 @@ impl ContainingScene<'_, '_> {
             .unwrap_or_default()
     }
 
+    // the parcel at the entity's position, even if they are out of world (arriving: the player
+    // is placed in the destination and kept out of world until it is ready), plus any global
+    // scenes
+    pub fn get_oow(&self, ent: Entity) -> HashSet<Entity> {
+        self.transforms
+            .get(ent)
+            .map(|(gt, _)| self.get_position(gt.translation()))
+            .unwrap_or_default()
+    }
+
     // get all scenes within radius of the given entity, plus any global scenes
     pub fn get_area(&self, ent: Entity, radius: f32) -> HashSet<Entity> {
         let Some(focus) = self.transforms.get(ent).ok().and_then(|(gt, oow)| {

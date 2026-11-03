@@ -8,7 +8,7 @@ use bevy::{
 };
 use common::{
     partition::{LoadPriority, PartitionData, Tier},
-    structs::{PrimaryCamera, PrimaryUser},
+    structs::{OutOfWorld, PrimaryCamera, PrimaryUser},
 };
 use dcl_types::SceneId;
 use ipfs::{IpfsIo, IpfsResource, Ticket};
@@ -369,6 +369,35 @@ fn the_players_scene_is_active_before_it_has_a_context() {
     assert_eq!(
         world.resource::<IpfsResource>().scene_priority("home"),
         Some(LoadPriority::TOP)
+    );
+}
+
+#[test]
+fn the_arriving_players_scene_is_active_while_they_are_out_of_world() {
+    let mut world = world_with_player(Some(Vec3::X));
+    insert_ipfs(&mut world, 1);
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    // a teleport: the player is placed at the destination and kept out of world until its
+    // scene is ready; the destination has just spawned
+    let player = world
+        .query_filtered::<Entity, With<PrimaryUser>>()
+        .single(&world)
+        .unwrap();
+    world.entity_mut(player).insert(OutOfWorld);
+    let destination = world.spawn(SceneHash("destination".to_owned())).id();
+    player_stands_on(&mut world, "destination", destination);
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+
+    world.run_system_once(publish_download_priorities).unwrap();
+
+    assert_eq!(
+        world
+            .resource::<IpfsResource>()
+            .scene_priority("destination"),
+        Some(LoadPriority::TOP),
+        "the scene the player is arriving in loads first"
     );
 }
 

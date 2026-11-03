@@ -358,6 +358,32 @@ async fn a_publish_updates_registered_keys_only() {
     assert_eq!(*log.lock().unwrap(), vec!["ahead", "unknown", "no-hash"]);
 }
 
+#[tokio::test]
+async fn a_request_after_a_departed_queue_drained_ranks_with_the_unregistered_ones() {
+    let gate = PriorityGate::new(1);
+    gate.register("s", key(1, false, 100.0));
+    let holder = gate.try_acquire().unwrap();
+    let old = gate.ticket(scene("s"));
+    gate.unregister("s");
+    // the old request is granted and holds the slot; its queue is drained but not yet dropped
+    drop(holder);
+    assert_eq!(gate.waiting(), 0);
+
+    // a new request under the same, unregistered, hash: it is not a departed scene's
+    let log = Log::default();
+    let tasks = [
+        reader(&gate, "s-new", gate.ticket(scene("s")), &log),
+        reader(&gate, "no-hash", gate.ticket(None), &log),
+    ];
+    settle(&gate, 2).await;
+    drop(old);
+    for task in tasks {
+        task.await.unwrap();
+    }
+
+    assert_eq!(*log.lock().unwrap(), vec!["s-new", "no-hash"]);
+}
+
 #[test]
 fn a_shared_hash_stays_registered_until_its_last_holder_releases_it() {
     let gate = PriorityGate::new(1);

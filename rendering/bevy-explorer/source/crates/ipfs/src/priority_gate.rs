@@ -284,14 +284,16 @@ impl GateState {
         match scene {
             None => self.no_scene.push_back(ticket),
             Some(hash) => {
-                self.scenes
-                    .entry(hash)
-                    .or_insert_with(|| SceneQueue {
-                        tickets: VecDeque::new(),
-                        departed: false,
-                    })
-                    .tickets
-                    .push_back(ticket);
+                let queue = self.scenes.entry(hash).or_insert_with(|| SceneQueue {
+                    tickets: VecDeque::new(),
+                    departed: false,
+                });
+                // a drained queue not dropped yet: its departed mark was for the requests that
+                // waited when the hash was released, not for this one
+                if queue.tickets.is_empty() {
+                    queue.departed = false;
+                }
+                queue.tickets.push_back(ticket);
             }
         }
     }

@@ -143,13 +143,14 @@ pub fn update_scene_partitions(
 }
 
 /// This frame's download priority of every registered hash, written into the ipfs request
-/// slots in place: the player's scenes first, even before they have a context; then the
+/// slots in place: the player's scenes first, even before they have a context and while the
+/// player is still out of world arriving in one; then the
 /// avatars' bodies and wearables, nearest avatar first, a shared wearable at the best of its
 /// avatars; then the other scenes by partition, a scene with no partition yet last among them.
 /// Which hashes are registered is the hooks' business (`register_scene_hash`,
 /// `register_partitioned_downloads`). Runs only on a frame in which a download waits for a
-/// slot: the keys are read at a grant, so the steady state costs nothing, and the first frame
-/// with a waiter publishes before the next slot is granted.
+/// slot: the keys are read at a grant, so the steady state costs nothing, and a grant reads
+/// keys at most a frame old.
 pub fn publish_download_priorities(
     scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
     partitioned: Query<(&Partition, &PartitionedDownloads)>,
@@ -162,7 +163,7 @@ pub fn publish_download_priorities(
     }
     let active = player
         .single()
-        .map(|player| containing_scene.get(player))
+        .map(|player| containing_scene.get_oow(player))
         .unwrap_or_default();
     let scene_keys = scenes.iter().map(|(entity, hash, partition)| {
         let key = if active.contains(&entity) {
