@@ -1608,7 +1608,7 @@
       "id": "api_http:POST:/v1/communities",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -1627,10 +1627,30 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/compliance_parity.rs",
+          "test": "provider_requests_and_cache_hashes_match_executed_sdk_source",
+          "scope": "Provider payload and cache key comparisons against 20 source cases using the actual installed SDK and mocked fetch."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/compliance_parity.rs",
+          "test": "provider_classification_retries_environment_and_cached_rejection_match_source",
+          "scope": "Local provider HTTP stubs and SQL replay success/failure, retries, feature/environment branches and cached rejection."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/compliance_parity.rs",
+          "test": "valid_slow_provider_outlives_the_shared_readers_twenty_five_second_budget",
+          "scope": "A valid 26-second local provider response is accepted without changing other domain clients."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/compliance_parity.rs",
+          "test": "enabled_compliance_rejects_before_community_or_thumbnail_writes_and_skips_unchanged_text",
+          "scope": "Real handler rejects noncompliance before writes and avoids validation for source-equivalent unchanged text."
         }
       ],
       "gaps": [
-        "community-ai-compliance-enabled"
+        "Provider transport bounds differ: the candidate caps response bodies at 4 MiB and applies 600s as a total request timeout, while the pinned Node SDK applies its abort timer until headers and uses runtime-specific body inactivity handling. Missing API credentials fail lazily rather than at the source component bootstrap; these startup/provider boundaries remain differences."
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
@@ -2077,7 +2097,7 @@
       "id": "api_http:PUT:/v1/communities/:id",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -2096,10 +2116,30 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/compliance_parity.rs",
+          "test": "provider_requests_and_cache_hashes_match_executed_sdk_source",
+          "scope": "Provider payload and cache key comparisons against 20 source cases using the actual installed SDK and mocked fetch."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/compliance_parity.rs",
+          "test": "provider_classification_retries_environment_and_cached_rejection_match_source",
+          "scope": "Local provider HTTP stubs and SQL replay success/failure, retries, feature/environment branches and cached rejection."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/compliance_parity.rs",
+          "test": "valid_slow_provider_outlives_the_shared_readers_twenty_five_second_budget",
+          "scope": "A valid 26-second local provider response is accepted without changing other domain clients."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/compliance_parity.rs",
+          "test": "enabled_compliance_rejects_before_community_or_thumbnail_writes_and_skips_unchanged_text",
+          "scope": "Real handler rejects noncompliance before writes and avoids validation for source-equivalent unchanged text."
         }
       ],
       "gaps": [
-        "community-ai-compliance-enabled"
+        "Provider transport bounds differ: the candidate caps response bodies at 4 MiB and applies 600s as a total request timeout, while the pinned Node SDK applies its abort timer until headers and uses runtime-specific body inactivity handling. Missing API credentials fail lazily rather than at the source component bootstrap; these startup/provider boundaries remain differences."
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
@@ -5458,7 +5498,7 @@
     {
       "id": "community-ranking-and-configured-moderation",
       "status": "known_gap",
-      "description": "Dynamic moderators and ranking producers are implemented with focused source/local regressions. Enabled AI compliance remains under implementation. Existing lifetime counter baselines and watermarks are not imported, so historical ranking equality remains unverified.",
+      "description": "Dynamic moderators, ranking producers and configured AI compliance are implemented with focused source/local regressions. AI provider timeout/body bounds and missing-credential bootstrap behavior still differ. Existing lifetime counter baselines and watermarks are not imported, so historical ranking equality remains unverified.",
       "operations": [
         "api_http:DELETE:/v1/communities/:id",
         "api_http:GET:/v1/communities",
