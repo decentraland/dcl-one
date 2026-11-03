@@ -159,7 +159,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 174,
+          "line": 175,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -557,8 +557,16 @@
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
+          "line": 342,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_message_size_bytes",
@@ -577,16 +585,34 @@
         8192,
         16384
       ],
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
+          "line": 186,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_queue_vs_backpressure_ratio",
       "type": "gauge",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
+          "line": 175,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "subscribers_local_count",

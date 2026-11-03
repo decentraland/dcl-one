@@ -1811,7 +1811,7 @@
     {
       "id": "api_http:POST:/v1/communities/:id/posts",
       "owner": "community-http",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
       "evidence": [
         {
@@ -1833,7 +1833,9 @@
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Source inserts a post, then awaits the strict single author profile, then emits POST_ADDED. Candidate currently notifies before batch profile enrichment, so missing/aliased authors can change the HTTP result and emitted side effects. Source-executed order regression and fix are in progress."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -5804,7 +5806,7 @@
         "rpc_unary:RPC:upsertSocialSettings",
         "websocket:UPGRADE:/"
       ],
-      "description": "Pinned src/utils/UWebSocketTransport.ts bounds ordinary pending RPC frames with an adaptive queue (default 128), exposes WS_TRANSPORT queue/retry settings, closes on queue overflow and retries native DROPPED results with backoff/drain handling. The current shared target ordinary outbound channel is unbounded; guarded connectivity has a separate byte budget. Matching individual responses and guarded large-profile tests does not establish this ordinary transport contract. Executed-source transport scenarios and a scoped implementation comparison remain required."
+      "description": "The existing Social opt-in writer now bounds ordinary pending frames with the source adaptive count, retry/backoff/drain policy and accepted-once semantics. Fifteen supported-policy source traces replay; two additional cases document candidate startup rejection for maxBackpressure0 and computed nonfinite queue capacity where the source can admit unbounded buffering. WS_MAX_BACKPRESSURE still uses a strict unsigned parser rather than native numeric-prefix/fraction/wrap conversion. Application writer admission/flush is measured separately from native uWS kernel behavior; deployed performance equivalence is unverified."
     },
     {
       "id": "community-voice-status-failure-degradation",
@@ -5829,6 +5831,47 @@
         "api_http:POST:/v1/referral-progress"
       ],
       "description": "Source configuration uses numeric-prefix/floating parsing for referral maximum-IP and minimum-day settings. Candidate strict integer settings reject fractional values at startup; source accepts them and may produce request-time PostgreSQL comparison errors or fractional day thresholds. Executed-source edge cases and matching conversion are in progress."
+    },
+    {
+      "id": "rpc-text-frame-forwarding",
+      "status": "known_gap",
+      "operations": [
+        "rpc_stream:RPC:subscribeToBlockUpdates",
+        "rpc_stream:RPC:subscribeToCommunityMemberConnectivityUpdates",
+        "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
+        "rpc_stream:RPC:subscribeToFriendConnectivityUpdates",
+        "rpc_stream:RPC:subscribeToFriendshipUpdates",
+        "rpc_stream:RPC:subscribeToPrivateVoiceChatUpdates",
+        "rpc_unary:RPC:acceptPrivateVoiceChat",
+        "rpc_unary:RPC:blockUser",
+        "rpc_unary:RPC:demoteSpeakerInCommunityVoiceChat",
+        "rpc_unary:RPC:endCommunityVoiceChat",
+        "rpc_unary:RPC:endPrivateVoiceChat",
+        "rpc_unary:RPC:getBlockedUsers",
+        "rpc_unary:RPC:getBlockingStatus",
+        "rpc_unary:RPC:getFriends",
+        "rpc_unary:RPC:getFriendshipStatus",
+        "rpc_unary:RPC:getIncomingPrivateVoiceChatRequest",
+        "rpc_unary:RPC:getMutualFriends",
+        "rpc_unary:RPC:getPendingFriendshipRequests",
+        "rpc_unary:RPC:getPrivateMessagesSettings",
+        "rpc_unary:RPC:getSentFriendshipRequests",
+        "rpc_unary:RPC:getSocialSettings",
+        "rpc_unary:RPC:joinCommunityVoiceChat",
+        "rpc_unary:RPC:kickPlayerFromCommunityVoiceChat",
+        "rpc_unary:RPC:muteSpeakerFromCommunityVoiceChat",
+        "rpc_unary:RPC:promoteSpeakerInCommunityVoiceChat",
+        "rpc_unary:RPC:rejectPrivateVoiceChat",
+        "rpc_unary:RPC:rejectSpeakRequestInCommunityVoiceChat",
+        "rpc_unary:RPC:requestToSpeakInCommunityVoiceChat",
+        "rpc_unary:RPC:startCommunityVoiceChat",
+        "rpc_unary:RPC:startPrivateVoiceChat",
+        "rpc_unary:RPC:unblockUser",
+        "rpc_unary:RPC:upsertFriendship",
+        "rpc_unary:RPC:upsertSocialSettings",
+        "websocket:UPGRADE:/"
+      ],
+      "description": "Pinned authenticated RPC ws-handler forwards the received bytes for both text and binary WebSocket frames. The shared candidate reader currently discards text after authentication. A Social-only source-executed forwarding capture and actual text dRPC CreatePort regression/fix are in progress; other shared consumers retain their defaults."
     }
   ]
 }
