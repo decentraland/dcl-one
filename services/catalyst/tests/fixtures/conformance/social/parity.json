@@ -181,6 +181,21 @@
           "path": "services/catalyst/explore/src/api/tests.rs",
           "test": "dapps_flags_refresh_preserves_the_audience_and_last_good_document",
           "scope": "Bounded fake HTTP provider, Referer audience, valid snapshot persistence, last-good state after malformed/failing response and process reload."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
+          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
+          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
+          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
         }
       ],
       "gaps": [],
@@ -209,6 +224,21 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
+          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
+          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
+          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
         }
       ],
       "gaps": [],
@@ -641,6 +671,11 @@
           "path": "services/catalyst/social/src/communities/tests/owner_parity.rs",
           "test": "detail_and_create_use_strict_owner_profiles_without_changing_the_actor",
           "scope": "Eight actual registry/owners/community/HTTP source results across regular/alias/missing/invalid profiles; complete local JSON and failed-create row-count checks."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/profiles.rs",
+          "test": "registry_requested_key_case_matches_executed_source_adapter",
+          "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
         }
       ],
       "gaps": [],
@@ -1437,6 +1472,21 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
+          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
+          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
+          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
         }
       ],
       "gaps": [],
@@ -1469,6 +1519,21 @@
         {
           "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
+          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
+          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
+          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
         }
       ],
       "gaps": [],
@@ -1717,6 +1782,11 @@
           "path": "services/catalyst/social/src/communities/tests/owner_parity.rs",
           "test": "detail_and_create_use_strict_owner_profiles_without_changing_the_actor",
           "scope": "Eight actual registry/owners/community/HTTP source results across regular/alias/missing/invalid profiles; complete local JSON and failed-create row-count checks."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/profiles.rs",
+          "test": "registry_requested_key_case_matches_executed_source_adapter",
+          "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
         }
       ],
       "gaps": [
@@ -1775,6 +1845,21 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
+          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
+          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
+          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
         }
       ],
       "gaps": [],
@@ -1811,8 +1896,8 @@
     {
       "id": "api_http:POST:/v1/communities/:id/posts",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "status": "reviewed",
+      "result": "Source-reviewed post insertion, strict single author resolution and background notification order. Regular/alias authors retain source DTO fields; missing/invalid author profiles return message-only 500 after persistence and emit no event.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -1831,12 +1916,30 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
+          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
+          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
+          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "create_post_resolves_strict_author_after_insert_and_before_broadcast",
+          "scope": "Four actual source handler/component/registry cases: regular, historical alias, missing and invalid profile. Candidate status/DTO, persisted row and absence of events on failure are compared."
         }
       ],
-      "gaps": [
-        "Source inserts a post, then awaits the strict single author profile, then emits POST_ADDED. Candidate currently notifies before batch profile enrichment, so missing/aliased authors can change the HTTP result and emitted side effects. Source-executed order regression and fix are in progress."
-      ],
-      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
+      "gaps": [],
+      "remaining_verification": "Four actual upstream post/registry/handler cases replay through the candidate with persisted-row and absent-event assertions on lookup failure. Deployed SNS delivery, provider timing and concurrent membership mutation remain unverified."
     },
     {
       "id": "api_http:POST:/v1/communities/:id/posts/:postId/like",
@@ -1893,6 +1996,21 @@
         {
           "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
+          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
+          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
+          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
         }
       ],
       "gaps": [],
@@ -1922,6 +2040,21 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
+          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
+          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
+          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
         }
       ],
       "gaps": [],
@@ -2241,6 +2374,21 @@
           "path": "services/catalyst/social/src/communities/tests/compliance_parity.rs",
           "test": "enabled_compliance_rejects_before_community_or_thumbnail_writes_and_skips_unchanged_text",
           "scope": "Real handler rejects noncompliance before writes and avoids validation for source-equivalent unchanged text."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
+          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
+          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
+          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
         }
       ],
       "gaps": [
@@ -2522,6 +2670,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2562,6 +2715,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2602,6 +2760,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2657,6 +2820,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2697,6 +2865,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2737,6 +2910,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2766,6 +2944,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2815,6 +2998,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/profiles.rs",
+          "test": "registry_requested_key_case_matches_executed_source_adapter",
+          "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
         }
       ],
       "gaps": [],
@@ -2839,6 +3032,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2863,6 +3061,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2892,6 +3095,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2931,6 +3139,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/profiles.rs",
+          "test": "registry_requested_key_case_matches_executed_source_adapter",
+          "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
         }
       ],
       "gaps": [],
@@ -2955,6 +3173,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -2994,6 +3217,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/profiles.rs",
+          "test": "registry_requested_key_case_matches_executed_source_adapter",
+          "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
         }
       ],
       "gaps": [],
@@ -3023,6 +3256,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3047,6 +3285,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3086,6 +3329,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/profiles.rs",
+          "test": "registry_requested_key_case_matches_executed_source_adapter",
+          "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
         }
       ],
       "gaps": [],
@@ -3120,6 +3373,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/profiles.rs",
+          "test": "registry_requested_key_case_matches_executed_source_adapter",
+          "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
         }
       ],
       "gaps": [],
@@ -3149,6 +3412,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3183,6 +3451,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/profiles.rs",
+          "test": "registry_requested_key_case_matches_executed_source_adapter",
+          "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
         }
       ],
       "gaps": [],
@@ -3212,6 +3490,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3236,6 +3519,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3260,6 +3548,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3284,6 +3577,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3308,6 +3606,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3337,6 +3640,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3361,6 +3669,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3385,6 +3698,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3409,6 +3727,26 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "all_twelve_raw_community_event_shapes_match_source_creators",
+          "scope": "All twelve actual upstream creator DTOs are captured, including keys, raw metadata and distinct voice creation/event clocks; component shapes do not establish live delivery."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "broadcaster_recipient_pages_and_official_sns_commands_match_source",
+          "scope": "Eighteen actual broadcaster cases replay candidate membership SQL and the official SDK against a loopback stub: direct, managers, members, online, opt-out independence and failure isolation. Pages/messages are 100; PublishBatch chunks are ten. Concurrent membership changes and production routing/retry timing are unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
+          "test": "real_mutations_publish_all_twelve_source_community_subtypes",
+          "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
         }
       ],
       "gaps": [],
@@ -3433,6 +3771,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3482,6 +3825,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/profiles.rs",
+          "test": "registry_requested_key_case_matches_executed_source_adapter",
+          "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
         }
       ],
       "gaps": [],
@@ -3526,6 +3879,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3555,6 +3913,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -3711,6 +4074,11 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
           "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
+          "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
         }
       ],
       "gaps": [],
@@ -5761,7 +6129,7 @@
         "api_http:PATCH:/v1/friendship-requests/:address"
       ],
       "status": "unverified",
-      "description": "Configured friendship SNS producers now preserve source event fields, action key, retry timing and failure isolation through the existing official SDK publisher; local source/stub regressions pass. Existing external topic subscriptions, downstream consumers and deployed migration/cutover delivery remain unverified; community producer wiring is tracked separately."
+      "description": "Configured friendship and all twelve community SNS producers preserve source raw fields, keys and recipient policies through the existing official SDK publisher. Source/local stub tests cover 100-recipient pages/messages, ten-message requests, failure isolation, opt-out independence and HTTP background versus voice-awaited execution. Existing deployed topic subscriptions, downstream consumers, retry timing and migration/cutover delivery remain unverified."
     },
     {
       "id": "cross-replica-social-events",
@@ -5847,7 +6215,7 @@
         "api_http:POST:/v1/referral-email"
       ],
       "status": "unverified",
-      "description": "Configured official SQS/SNS transports preserve legacy raw events and attributes locally; deployed queue policies,topic subscriptions and real credential access have not been exercised. The additive upgrade preserves populated candidate IDs in synthetic tests; import of existing upstream progress/login-days/reward/email state and live cutover remain outstanding. Ranking event dispatch and friendship SNS producers now execute through the configured shared transport; community SNS producers and deployed cutover evidence remain outstanding."
+      "description": "Configured official SQS/SNS transports preserve legacy raw events and attributes locally; ranking dispatch, friendship and community publication are wired. Deployed queue policies, topic subscriptions and credential access have not been exercised. Populated candidate additive upgrades pass synthetic tests; existing upstream progress/login-days/reward/email import and live cutover remain outstanding."
     },
     {
       "id": "api-body-size-boundary",
@@ -5930,7 +6298,7 @@
     },
     {
       "id": "shared-social-profile-cache",
-      "status": "known_gap",
+      "status": "unverified",
       "operations": [
         "rpc_unary:RPC:blockUser",
         "rpc_unary:RPC:getBlockedUsers",
@@ -5942,7 +6310,7 @@
         "api_http:GET:/v1/communities/:id",
         "api_http:POST:/v1/communities"
       ],
-      "description": "RPC and community adapters now share source 600-second SQL cache facts over the existing pool; independent-reader key/TTL/content-update/order/rawColor/error/upgrade/cleanup tests and 29 source steps pass. Strict single owner callsites are wired and 8 source handler cases pass. Exact mixed-case requested cache keys and case-sensitive source deduplication remain under correction. Existing Redis cache values and remaining TTL have not been imported or drained for cutover."
+      "description": "RPC and community adapters share source 600-second SQL cache facts over the existing pool. Twenty-nine historical lookup steps, eight strict owner handler cases and eight mixed-case adapter steps pass source/local replay. Requested keys and Set deduplication preserve exact case; physical content-pointer lookup remains normalized. The mixed-case registry response is injected, so deployed registry case/order behavior is unverified. Existing Redis values and remaining TTL have not been imported or drained for cutover."
     },
     {
       "id": "community-dependency-error-boundaries",
@@ -6019,9 +6387,15 @@
       "description": "Source configuration uses numeric-prefix/floating parsing for referral maximum-IP and minimum-day settings. Candidate strict integer settings reject fractional values at startup; source accepts them and may produce request-time PostgreSQL comparison errors or fractional day thresholds. Executed-source edge cases and matching conversion are in progress."
     },
     {
-      "id": "rpc-idle-during-stalled-write",
+      "id": "social-websocket-signature-paths",
       "status": "known_gap",
       "operations": [
+        "json_stream:SUBSCRIBE:block_updates",
+        "json_stream:SUBSCRIBE:community_member_connectivity_updates",
+        "json_stream:SUBSCRIBE:community_voice_chat_updates",
+        "json_stream:SUBSCRIBE:friend_connectivity_updates",
+        "json_stream:SUBSCRIBE:friendship_updates",
+        "json_stream:SUBSCRIBE:private_voice_chat_updates",
         "rpc_stream:RPC:subscribeToBlockUpdates",
         "rpc_stream:RPC:subscribeToCommunityMemberConnectivityUpdates",
         "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
@@ -6055,9 +6429,10 @@
         "rpc_unary:RPC:unblockUser",
         "rpc_unary:RPC:upsertFriendship",
         "rpc_unary:RPC:upsertSocialSettings",
-        "websocket:UPGRADE:/"
+        "websocket:UPGRADE:/",
+        "websocket:UPGRADE:/v1/stream"
       ],
-      "description": "The opt-in writer currently polls IdleTimer from its physical send loop. A single accepted response stalled in sink.send with no subsequent queued head can postpone idle retirement, whereas native uWS idle expiry is independent. A passive reader-side observer over the existing timer is under implementation; native timer-wheel scheduling and deployed kernel behavior remain unverified."
+      "description": "Pinned Social verifies RPC signatures for / and JSON stream signatures for /v1/stream. Candidate Social currently also accepts mounted aliases and x-original-path variants. Exact source authentication-path captures and Social-only alignment are under implementation. The existing /play consumer signs its connect URL path, so its local mounted configuration also needs the source signing path while preserving its connection URL; standalone source-root connections already match."
     }
   ]
 }
