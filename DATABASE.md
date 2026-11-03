@@ -660,3 +660,11 @@ caller. Voice and profile enrichment operate on surviving summaries. Results
 follow the saved raw request order, and total/page metadata still describe all
 pending requests; visibility filtering can leave a page empty. These statements
 use the same pool without a transaction or a repeated read of request rows.
+
+Signed V1 member and ban rows retain `lastFriendshipAction` and `actingUser`
+from the existing latest-action query, including SQL null when no action exists.
+Their numeric status uses those same facts; this adds no SQL statement, table,
+index or pool. Anonymous members omit the aliases and relationship read, and V2
+returns only the numeric status. The pinned source's complete response bodies
+are compared for accepted, sent/received requests, absent friendship and empty
+history, with V2 and anonymous controls; no performance change was measured.

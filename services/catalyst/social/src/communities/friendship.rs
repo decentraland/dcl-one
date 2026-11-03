@@ -75,6 +75,31 @@ pub async fn try_friendship_statuses(
     viewer: &Address,
     addresses: &[String],
 ) -> sqlx::Result<HashMap<String, i32>> {
+    Ok(try_friendship_actions(pool, viewer, addresses)
+        .await?
+        .into_iter()
+        .map(|(address, action)| (address, action.status(viewer)))
+        .collect())
+}
+
+pub(crate) struct FriendshipAction {
+    pub action: String,
+    pub acting_user: String,
+}
+
+impl FriendshipAction {
+    pub fn status(&self, viewer: &Address) -> i32 {
+        friendship_request_status(&self.action, &self.acting_user, viewer.as_str())
+    }
+}
+
+/// Preserve the SQL action/actor aliases for signed V1 members and bans.
+/// V2 uses the same facts only to calculate its numeric status.
+pub(crate) async fn try_friendship_actions(
+    pool: &PgPool,
+    viewer: &Address,
+    addresses: &[String],
+) -> sqlx::Result<HashMap<String, FriendshipAction>> {
     let mut out = HashMap::new();
     let rows: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT DISTINCT ON (f.id) \
@@ -95,7 +120,10 @@ pub async fn try_friendship_statuses(
     for (other_user, action, acting_user) in rows {
         out.insert(
             other_user.to_lowercase(),
-            friendship_request_status(&action, &acting_user, viewer.as_str()),
+            FriendshipAction {
+                action,
+                acting_user,
+            },
         );
     }
     Ok(out)

@@ -19,7 +19,7 @@ use crate::identity::can_act_on_member;
 use crate::{Address, CommunityId, CommunityPermission, CommunityRole, CommunityStanding};
 
 use super::dto::{CommunityMember, CommunityMemberV2Wire, CommunityMemberWire};
-use super::friendship::{friendship_status, try_friendship_statuses};
+use super::friendship::{friendship_status, try_friendship_actions, try_friendship_statuses};
 use super::http::{
     CommError, Paginated, get_first, get_pagination_params, handler_error as err_json,
 };
@@ -89,7 +89,10 @@ async fn to_member_wire_rows(
     members: Vec<CommunityMember>,
 ) -> sqlx::Result<Vec<CommunityMemberWire>> {
     let addresses: Vec<String> = members.iter().map(|m| m.member_address.clone()).collect();
-    let statuses = member_friendship_statuses(state, signer, &members).await?;
+    let actions = match signer {
+        Some(viewer) => try_friendship_actions(&state.pool, viewer, &addresses).await?,
+        None => HashMap::new(),
+    };
     let profiles = state.profiles.try_get_profiles(&addresses).await?;
     Ok(members
         .into_iter()
@@ -98,10 +101,14 @@ async fn to_member_wire_rows(
             let info = profiles.get(&addr)?;
             Some(CommunityMemberWire {
                 name_color: info.name_color.clone(),
-                friendship_status: statuses
+                friendship_status: actions
                     .get(&addr)
-                    .copied()
+                    .zip(signer)
+                    .map(|(action, viewer)| action.status(viewer))
                     .unwrap_or(friendship_status::NONE),
+                last_friendship_action: signer
+                    .map(|_| actions.get(&addr).map(|a| a.action.clone())),
+                acting_user: signer.map(|_| actions.get(&addr).map(|a| a.acting_user.clone())),
                 base: m,
                 name: info.name.clone(),
                 profile_picture_url: info.profile_picture_url.clone(),
@@ -129,14 +136,14 @@ async fn to_member_v2_wire_rows(
         .collect())
 }
 
-/// `friendshipStatus` on JSON rows keyed by `memberAddress` (the v2 requests
-/// and bans listings).
+/// Bans use numeric status in both versions; V1 also retains the SQL aliases.
 pub(crate) async fn enrich_with_friendship_status(
     state: &SharedState,
     signer: Option<&Address>,
     rows: &mut [serde_json::Value],
+    include_action: bool,
 ) -> sqlx::Result<()> {
-    let statuses = match signer {
+    let actions = match signer {
         Some(user) => {
             let addresses: Vec<String> = rows
                 .iter()
@@ -146,7 +153,7 @@ pub(crate) async fn enrich_with_friendship_status(
                         .map(|s| s.to_lowercase())
                 })
                 .collect();
-            try_friendship_statuses(&state.pool, user, &addresses).await?
+            try_friendship_actions(&state.pool, user, &addresses).await?
         }
         None => HashMap::new(),
     };
@@ -159,10 +166,21 @@ pub(crate) async fn enrich_with_friendship_status(
             .and_then(|v| v.as_str())
             .map(|s| s.to_lowercase())
             .unwrap_or_default();
-        let status = statuses
+        let status = actions
             .get(&addr)
-            .copied()
+            .zip(signer)
+            .map(|(action, viewer)| action.status(viewer))
             .unwrap_or(friendship_status::NONE);
+        if include_action && signer.is_some() {
+            obj.insert(
+                "lastFriendshipAction".into(),
+                json!(actions.get(&addr).map(|a| &a.action)),
+            );
+            obj.insert(
+                "actingUser".into(),
+                json!(actions.get(&addr).map(|a| &a.acting_user)),
+            );
+        }
         obj.insert(
             "friendshipStatus".to_string(),
             serde_json::Value::Number(status.into()),
@@ -323,7 +341,7 @@ pub async fn get_bans(
         bans_listing(&state, &headers, &original, &id_str, "v1", &pairs).await?;
     // upstream `mapMembersWithProfiles`: the profile fields and the
     // viewer's `friendshipStatus`
-    enrich_with_friendship_status(&state, Some(&signer), &mut rows)
+    enrich_with_friendship_status(&state, Some(&signer), &mut rows, true)
         .await
         .map_err(super::http::database_error)?;
     enrich_with_profiles(&state.profiles, &mut rows, "memberAddress")
@@ -343,7 +361,7 @@ pub async fn get_bans_v2(
 ) -> Result<Json<serde_json::Value>, CommError> {
     let (mut rows, total, pagination, signer) =
         bans_listing(&state, &headers, &original, &id_str, "v2", &pairs).await?;
-    enrich_with_friendship_status(&state, Some(&signer), &mut rows)
+    enrich_with_friendship_status(&state, Some(&signer), &mut rows, false)
         .await
         .map_err(super::http::database_error)?;
     Ok(Json(

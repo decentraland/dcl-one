@@ -198,6 +198,15 @@ pub struct CommunityMemberWire {
     pub name_color: Option<NameColor>,
     #[serde(rename = "friendshipStatus")]
     pub friendship_status: i32,
+    #[serde(
+        rename = "lastFriendshipAction",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[cfg_attr(feature = "ts", ts(optional, type = "string | null"))]
+    pub last_friendship_action: Option<Option<String>>,
+    #[serde(rename = "actingUser", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts", ts(optional, type = "string | null"))]
+    pub acting_user: Option<Option<String>>,
 }
 
 /// The v2 row: address only, the client resolves profiles itself.
@@ -432,6 +441,8 @@ mod tests {
             has_claimed_name: true,
             name_color: Some(nc),
             friendship_status: 3,
+            last_friendship_action: None,
+            acting_user: None,
         })
         .unwrap();
         assert_eq!(legacy, wire);
@@ -444,6 +455,8 @@ mod tests {
             has_claimed_name: false,
             name_color: None,
             friendship_status: 7,
+            last_friendship_action: None,
+            acting_user: None,
         })
         .unwrap();
         assert_eq!(legacy, wire);
