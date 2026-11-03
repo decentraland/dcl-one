@@ -49,21 +49,22 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   the camera or not). The avatar crate (`update_render_avatar`) puts the entity hashes of the
   body, the wearables and the default wearables there as their pointers resolve, and only when
   the list changes, so a wearable's definition, model and textures queue in the avatar tier at
-  the avatar's partition, and a wearable several avatars share at the best of theirs. Every avatar comes after the
-  player's scenes and before any other scene; among avatars the key decides, nearer ring first,
-  in front before behind within a ring, then distance. Scene content stays per scene (the
-  download-slot entry below); avatars are the exception, and unity-explorer partitions them
-  per entity too.
+  the avatar's partition, and a wearable several avatars share at the best of theirs. Every
+  avatar comes after the player's scenes and before any other scene; among avatars the key
+  decides, nearer ring first, in front before behind within a ring, then distance. Scene content
+  stays per scene (the download-slot entry below); avatars are the exception, and unity-explorer
+  partitions them per entity too.
 - **A tier, then raw distance and parcel distance, no buckets.** The admission key is
   `LoadPriority (tier, parcel_distance, is_behind, sqr_distance)`, lower first. The tier is the
   band a download belongs to: the player's scenes, then avatars, then the other scenes, then
-  requests whose hash no scene root or avatar holds, then scenes that have left. Within a band the
-  partition decides; parcel distance comes before facing only so that "in front before behind"
-  can still decide between scenes at the same parcel ring, since raw squared distance alone never
-  ties. The tick key uses raw squared distance. unity-explorer's bucket thresholds and its
-  tick-rate table are not ported.
+  requests whose hash no scene root or avatar holds, then scenes that have left. Within the avatar
+  and scene bands the partition decides, and in the others the oldest request goes first; parcel
+  distance comes before facing only so that "in front before behind" can still decide between
+  scenes at the same parcel ring, since raw squared distance alone never ties. The tick key uses
+  raw squared distance. unity-explorer's bucket thresholds and its tick-rate table are not
+  ported.
 - **The nearest point of the parcel rectangle, not its corner.** The distance is 0 when the
-  camera is over a scene, and it is the measure `parcels_in_range` already uses.
+  player stands within a scene's parcels, and it is the measure `parcels_in_range` already uses.
 - **Distance from the player, facing from the rendering camera.** Distance is measured from
   the player, as the tick key always was. Facing comes from the `PrimaryCamera` that has a
   `Camera`; in third person that is a few metres behind the player, and often inside a
@@ -98,26 +99,30 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   goes only with its last holder. A scene's hash is registered at spawn, at the bottom of the
   scene tier, and the player's scene is raised to the top by the first publish with a download
   waiting, before it has a context, so nothing has to rank above the registered hashes by
-  default: a request whose hash nobody holds (another avatar's emote, a backpack thumbnail)
+  default: a request whose hash nobody holds (an avatar's emote, a backpack thumbnail)
   ranks with the requests that carry no hash at all (NFT images, URL-form fonts and profile
   pictures, the imposter archives behind `async_request`), in the `Other` tier after every
-  registered scene and avatar, oldest first. A hash released while requests of its wait, because
-  its scene despawned or its avatar dropped it, is in the `Departed` tier, last, for as long as
-  those requests wait; the mark lives with the queue, so a later request for the hash is
-  unregistered again, in `Other`.
+  registered scene and avatar, oldest first. A hash released by its last holder while requests
+  under it wait, because its scene despawned or its avatar dropped it, is in the `Departed` tier,
+  last, for as long as those requests wait; the mark lives with the queue, so a request for the
+  hash that arrives meanwhile ranks last too, and one that arrives after the queue has drained
+  is unregistered again, in `Other`.
 - **Keys cross the crate boundary as data, written in place.** Which hashes have a key is the
   hooks' business (above); their values are `publish_download_priorities`'s, which on every
   frame in which a download waits for a slot writes this frame's key of every registered hash
   into `IpfsIo` (`update_download_priorities`), because `ipfs` cannot depend on `scene_runner`:
-  the player's scenes at `LoadPriority::TOP`, the other scenes at their partition in the `Scene`
-  tier (`SCENE_PENDING`, the tier's bottom, until a scene has one), and each avatar's wearable
+  the player's scenes at `LoadPriority::TOP` (found through `ContainingScene::get_oow`, so a
+  scene without a context yet counts, and so does the destination while the player is still
+  out of world arriving in it), the other scenes at their partition in the `Scene` tier
+  (`SCENE_PENDING`, the tier's bottom, until a scene has one), and each avatar's wearable
   hashes at the avatar's partition in the `Avatar` tier, the best of them for a shared one (the
-  first write of a hash in a publish replaces its key, later writes take the best). The gate
-  owns the keys and ranks its queues by them at each grant; publishing allocates nothing and
-  touches no request, and an idle frame publishes nothing, since the keys are only read at a
-  grant: while idle only values can go stale, never which hashes are held. The keys are the one
-  per-scene (and per-avatar) fact this change keeps outside the entity, an index that follows
-  the components' lifecycle, not state systems branch on.
+  first write of a hash in a publish replaces its key, later writes take the best, and a hash
+  nobody registered is ignored). The gate owns the keys and ranks its queues by them at each
+  grant; publishing builds no map, clones no string and touches no request, and an idle frame
+  publishes nothing, since the keys are only read at a grant: while idle only values can go
+  stale, never which hashes are held. The keys are the one per-scene (and per-avatar) fact this
+  change keeps outside the entity, an index that follows the components' lifecycle, not state
+  systems branch on.
 - **Constants, not settings, and no sampling tolerance.** `BEHIND_SCENE_TICK_PENALTY` and the
   key's shape are code constants, as unity-explorer's are asset values; partitions are recomputed
   every frame from the camera as it is.
@@ -160,9 +165,9 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   per scene and per wearable, the old map freed, and departure inferred from a hash going
   missing between two publishes, with a `published` flag per queue. The hooks keep which hashes
   are held exact at every moment, on frames the publish skips too, cleanup comes with the
-  components' lifecycle, and the publish writes values in place without allocating.
+  components' lifecycle, and the publish writes values in place, with no map and no string clone.
 - **An unregistered hash at the top.** It was needed only while the player's scene had no key
-  until it had a context, and it let every new scene's entity definition and `main.crdt`, other
+  until it had a context, and it let every new scene's entity definition and `main.crdt`,
   avatars' emotes and backpack thumbnails tie with the player's scene. Registering `SceneHash`
   at spawn and keying the player's scene before its context removes the need.
 - **Per-entity partition of scene content within 48 m, and an admission stage in front of each
@@ -222,7 +227,8 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
 - A scene behind the camera ticks as before while frame time is spare, and is the first to tick
   less often when it is not; the player's scenes never yield.
 - NFT images, profile pictures, Fontsource font families and imposter archives name no scene,
-  so they download after every live scene's and avatar's files, however near the NFT frame is. A
+  and an avatar's emote or a backpack thumbnail names a hash no live entity holds, so they
+  download after every live scene's and avatar's files, however near the NFT frame is. A
   texture or font a scene gives as a URL goes through its content-file path and takes its key;
   JavaScript `fetch` takes no request slot at all.
 - On the headless server nothing is behind, so no scene's tick key is penalised; its scenes
@@ -234,7 +240,7 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   scene's key instead of the flat rank after the live scenes.
 - Emotes load under their own entity hashes like wearables; filing them under the avatar's
   partition is the same mechanism (list them in the avatar's `PartitionedDownloads`), not done
-  here; until then another avatar's emote ranks in `Other`.
+  here; until then an avatar's emote ranks in `Other`.
 - Loading waves (W1) sort the newly required scenes by their partition and take the first N;
   until then spawn order is hash-map order.
 - `scene_timing` (`scene_runner::load_timing`) logs, per scene, the time from spawn to its fifth
