@@ -388,6 +388,68 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
     }
 
+    async fn body_of(resp: Response) -> Bytes {
+        axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_range_past_the_start_sniffs_from_the_range_start() {
+        let mut blob = vec![b'x'; 4096];
+        blob[1000..1008].copy_from_slice(&[0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
+        let blob = Bytes::from(blob);
+        let node = TestNode::without_db("content-range-offset").await;
+        node.store(TEST_CID, blob.clone()).await;
+
+        let resp = get(&node, Method::GET, Some(""), Some("bytes=1000-1999"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(header(&resp, "content-type").unwrap(), "image/png");
+        assert_eq!(header(&resp, "content-length").unwrap(), "1000");
+        assert_eq!(
+            header(&resp, "content-range").unwrap(),
+            "bytes 1000-1999/4096"
+        );
+        assert_eq!(body_of(resp).await, blob.slice(1000..2000));
+    }
+
+    #[tokio::test]
+    async fn head_with_a_range_sends_the_window_length_and_no_body() {
+        let node = TestNode::without_db("content-range-head").await;
+        node.store(TEST_CID, Bytes::from_static(b"0123456789"))
+            .await;
+
+        let resp = get(&node, Method::HEAD, None, Some("bytes=2-5"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::PARTIAL_CONTENT);
+        assert_eq!(header(&resp, "content-length").unwrap(), "4");
+        assert_eq!(header(&resp, "content-range").unwrap(), "bytes 2-5/10");
+        assert!(body_of(resp).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn an_empty_file_rejects_a_range_and_ignores_a_malformed_one() {
+        let node = TestNode::without_db("content-range-empty").await;
+        node.store(TEST_CID, Bytes::new()).await;
+
+        let resp = get(&node, Method::GET, None, Some("bytes=0-"))
+            .await
+            .unwrap();
+        assert_eq!(resp.status(), StatusCode::RANGE_NOT_SATISFIABLE);
+        assert_eq!(header(&resp, "content-range").unwrap(), "bytes */0");
+
+        for malformed in ["bytes=abc", "bytes=0-1,2-3"] {
+            let resp = get(&node, Method::GET, None, Some(malformed))
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::OK, "{malformed}");
+            assert!(body_of(resp).await.is_empty());
+        }
+    }
+
     #[tokio::test]
     async fn etag_match_short_circuits_to_304() {
         let node = TestNode::without_db("content-etag").await;
