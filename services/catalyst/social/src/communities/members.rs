@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use crate::rpc::http::Kind;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
@@ -20,7 +21,9 @@ use crate::{Address, CommunityId, CommunityPermission, CommunityRole, CommunityS
 
 use super::dto::{CommunityMember, CommunityMemberV2Wire, CommunityMemberWire};
 use super::friendship::{friendship_status, friendship_statuses};
-use super::http::{CommError, Paginated, err_json, get_first, get_pagination_params};
+use super::http::{
+    CommError, Paginated, get_first, get_pagination_params, handler_error as err_json,
+};
 use super::profiles::enrich_with_profiles;
 use super::standing::{CommunityBanAuthority, CommunityUnbanAuthority, load_standing};
 use super::write_support::{
@@ -204,7 +207,7 @@ pub async fn get_members(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
     let id = CommunityId::parse(&id_str)
-        .map_err(|_| CommError::not_found(format!("Community not found: {id_str}")))?;
+        .map_err(|_| CommError::bad_request(super::http::INVALID_IDENTIFIER))?;
     let signer = state
         .optional_signer(
             &headers,
@@ -235,7 +238,7 @@ pub async fn get_members_v2(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
     let id = CommunityId::parse(&id_str)
-        .map_err(|_| CommError::not_found(format!("Community not found: {id_str}")))?;
+        .map_err(|_| CommError::bad_request(super::http::INVALID_IDENTIFIER))?;
     let signer = state
         .optional_signer(
             &headers,
@@ -274,8 +277,6 @@ async fn bans_listing(
     ),
     CommError,
 > {
-    let id = CommunityId::parse(id_str)
-        .map_err(|_| CommError::not_found(format!("Community not found: {id_str}")))?;
     let signer = state
         .require_signer(
             headers,
@@ -283,6 +284,9 @@ async fn bans_listing(
             &signed_path(original, format!("/{version}/communities/{id_str}/bans")),
         )
         .await?;
+    let id = CommunityId::parse(id_str)
+        .map_err(|_| CommError::bad_request(super::http::INVALID_IDENTIFIER))?;
+
     if !queries::community_exists(&state.pool, id, false).await? {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
@@ -408,8 +412,12 @@ pub async fn get_managed_communities(
     if !state.admin_bearer(&headers) {
         return Err(bearer_refusal(&headers));
     }
-    let member = Address::parse(&address).map_err(|_| CommError::bad_request("invalid address"))?;
     let pagination = get_pagination_params(&pairs);
+    let Ok(member) = Address::parse(&address) else {
+        return Ok(Json(
+            json!({ "data": Paginated::<serde_json::Value>::new(Vec::new(), 0, &pagination) }),
+        ));
+    };
     let (rows, total) = queries::member_communities(
         &state.pool,
         &member,
@@ -446,6 +454,22 @@ pub async fn member_communities_by_ids(
     }
     if !state.admin_bearer(&headers) {
         return bearer_refusal(&headers).into_response();
+    }
+    if let Err(error) = crate::rpc::http::body(
+        &body,
+        &[(
+            "communityIds",
+            Kind::Strings {
+                min: 1,
+                max: 50,
+                element_max: usize::MAX,
+                uuid: true,
+            },
+        )],
+        &["communityIds"],
+        0,
+    ) {
+        return error.into_response();
     }
     if body.is_empty() {
         return err_json(StatusCode::BAD_REQUEST, "communityIds is required");
@@ -484,7 +508,11 @@ pub async fn member_communities_by_ids(
         }
     }
     let Ok(member) = Address::parse(&address) else {
-        return err_json(StatusCode::BAD_REQUEST, "invalid address");
+        return (
+            StatusCode::OK,
+            Json(json!({ "data": { "communities": [] } })),
+        )
+            .into_response();
     };
     let memberships = match queries::member_communities_by_ids(&state.pool, &ids, &member).await {
         Ok(v) => v,
@@ -525,7 +553,6 @@ pub async fn add_member(
     original: OriginalUri,
     Path(id): Path<String>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
         &state,
         &headers,
@@ -537,6 +564,14 @@ pub async fn add_member(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    let mut tx = try_resp!(map_db(state.pool.begin().await));
+    try_resp!(map_db(
+        sqlx::query("SELECT id FROM social.communities WHERE id = $1 FOR UPDATE")
+            .bind(uuid)
+            .execute(&mut *tx)
+            .await
+    ));
     let gate: Option<(bool, bool, bool, bool)> = try_resp!(map_db(
         sqlx::query_as(
             "WITH c AS (SELECT active, private FROM social.communities WHERE id = $1), \
@@ -545,22 +580,25 @@ pub async fn add_member(
                   ins AS (INSERT INTO social.community_members (community_id, member_address, role) \
                           SELECT $1, $2, 'member' FROM c, b \
                           WHERE c.active AND NOT c.private AND NOT b.banned \
-                          ON CONFLICT (community_id, member_address) DO NOTHING RETURNING 1) \
+                          ON CONFLICT (community_id, member_address) DO NOTHING RETURNING community_id), \
+                  requests AS (DELETE FROM social.community_requests \
+                               WHERE community_id = $1 AND member_address = $2 \
+                                 AND EXISTS (SELECT 1 FROM ins)) \
              SELECT c.active, c.private, b.banned, EXISTS (SELECT 1 FROM ins) FROM c, b",
         )
         .bind(uuid)
         .bind(&signer)
-        .fetch_optional(&state.pool)
+        .fetch_optional(&mut *tx)
         .await
     ));
-    let Some((active, private, banned, joined)) = gate else {
+    let Some((active, private, banned, inserted)) = gate else {
         return err_json(
             StatusCode::NOT_FOUND,
             format!("Community not found: {uuid}"),
         );
     };
     if !active {
-        return err_json(StatusCode::BAD_REQUEST, "Community is not active");
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
     }
     if private {
         return err_json(
@@ -576,8 +614,9 @@ pub async fn add_member(
         ))
         .into_response();
     }
-    if joined {
-        // upstream `joinCommunity`: a new member is ONLINE to the members
+    try_resp!(map_db(tx.commit().await));
+    if inserted {
+        // The new membership is visible before the shared fan-out reads its audience.
         state.member_status_changed(uuid, &signer, true).await;
     }
     StatusCode::NO_CONTENT.into_response()
@@ -591,7 +630,6 @@ pub async fn remove_member(
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
         &state,
         &headers,
@@ -603,9 +641,21 @@ pub async fn remove_member(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    if !try_resp!(map_db(
+        queries::community_exists(&state.pool, uuid, false).await
+    )) {
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
+    }
     let target = match parse_address(&address) {
         Ok(a) => a,
-        Err(r) => return r,
+        Err(_) => {
+            return CommError::bad_request(format!(
+                "Invalid address to remove {}",
+                address.to_lowercase()
+            ))
+            .into_response();
+        }
     };
     if target == signer {
         let standing = try_resp!(load_client_standing(&state, uuid, &signer).await);
@@ -635,15 +685,20 @@ pub async fn remove_member(
     }
     let removed = try_resp!(map_db(
         sqlx::query(
-            "DELETE FROM social.community_members WHERE community_id = $1 AND member_address = $2"
+            "WITH removed AS (DELETE FROM social.community_members \
+                              WHERE community_id = $1 AND member_address = $2 RETURNING community_id), \
+                  likes AS (DELETE FROM social.community_post_likes l \
+                            USING social.community_posts p \
+                            WHERE l.post_id = p.id AND p.community_id = $1 AND l.user_address = $2 \
+                              AND EXISTS (SELECT 1 FROM removed)) \
+             SELECT community_id FROM removed"
         )
         .bind(uuid)
         .bind(&target)
-        .execute(&state.pool)
+        .fetch_all(&state.pool)
         .await
     ))
-    .rows_affected()
-        > 0;
+    .len() > 0;
     if removed {
         tracing::info!(community_id = %uuid, member = %target, "community member left");
         state.member_removed_from_worlds(uuid, &target);
@@ -683,7 +738,6 @@ pub async fn update_member_role(
     Path((id, address)): Path<(String, String)>,
     body: Bytes,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
         &state,
         &headers,
@@ -695,9 +749,25 @@ pub async fn update_member_role(
         Ok(s) => s,
         Err(r) => return r,
     };
+    if let Err(error) = crate::rpc::http::body(
+        &body,
+        &[("role", Kind::OneOf(&["owner", "moderator", "member"]))],
+        &["role"],
+        0,
+    ) {
+        return error.into_response();
+    }
+    let uuid = try_resp!(parse_community_id(&id));
+    if !try_resp!(map_db(
+        queries::community_exists(&state.pool, uuid, false).await
+    )) {
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
+    }
     let target = match parse_address(&address) {
         Ok(a) => a,
-        Err(r) => return r,
+        Err(_) => {
+            return CommError::bad_request("Invalid address provided".to_string()).into_response();
+        }
     };
     let parsed: RoleBody = match serde_json::from_slice(&body) {
         Ok(b) => b,
@@ -770,7 +840,10 @@ async fn transfer_ownership(
         ))
         .into_response();
     }
-    if let Some(false) = state.profiles.has_owned_name(target.as_str()).await {
+    if !match state.has_owned_name(target).await {
+        Ok(owns) => owns,
+        Err(error) => return error.into_response(),
+    } {
         return CommError::bad_request(format!("The user {target} doesn't have any names"))
             .into_response();
     }
@@ -835,7 +908,6 @@ pub async fn ban_member(
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
         &state,
         &headers,
@@ -850,9 +922,17 @@ pub async fn ban_member(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    if !try_resp!(map_db(
+        queries::community_exists(&state.pool, uuid, false).await
+    )) {
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
+    }
     let target = match parse_address(&address) {
         Ok(a) => a,
-        Err(r) => return r,
+        Err(_) => {
+            return CommError::bad_request("Invalid member address".to_string()).into_response();
+        }
     };
     if let Err(refusal) = CommunityBanAuthority::resolve(&state.pool, &signer, uuid, &target).await
     {
@@ -863,6 +943,12 @@ pub async fn ban_member(
         });
     }
     let mut tx = try_resp!(map_db(state.pool.begin().await));
+    try_resp!(map_db(
+        sqlx::query("SELECT id FROM social.communities WHERE id = $1 FOR UPDATE")
+            .bind(uuid)
+            .execute(&mut *tx)
+            .await
+    ));
     let removed = try_resp!(map_db(
         sqlx::query(
             "DELETE FROM social.community_members WHERE community_id = $1 AND member_address = $2"
@@ -874,20 +960,33 @@ pub async fn ban_member(
     ))
     .rows_affected()
         > 0;
-    try_resp!(map_db(
-        sqlx::query("DELETE FROM social.community_requests WHERE community_id = $1 AND member_address = $2 AND status = 'pending'")
+    if removed {
+        try_resp!(map_db(
+            sqlx::query(
+                "DELETE FROM social.community_post_likes l USING social.community_posts p \
+                         WHERE l.post_id = p.id AND p.community_id = $1 AND l.user_address = $2"
+            )
             .bind(uuid)
             .bind(&target)
             .execute(&mut *tx)
             .await
+        ));
+    }
+    try_resp!(map_db(
+        sqlx::query(
+            "DELETE FROM social.community_requests WHERE community_id = $1 AND member_address = $2"
+        )
+        .bind(uuid)
+        .bind(&target)
+        .execute(&mut *tx)
+        .await
     ));
     try_resp!(map_db(
         sqlx::query(
             "INSERT INTO social.community_bans (community_id, banned_address, banned_by, active, banned_at) \
              VALUES ($1, $2, $3, TRUE, timezone('UTC', now())) \
              ON CONFLICT (community_id, banned_address) DO UPDATE \
-               SET active = TRUE, banned_by = EXCLUDED.banned_by, banned_at = timezone('UTC', now()), \
-                   unbanned_by = NULL, unbanned_at = NULL",
+               SET active = TRUE, unbanned_by = NULL, unbanned_at = NULL",
         )
         .bind(uuid)
         .bind(&target)
@@ -925,7 +1024,6 @@ pub async fn unban_member(
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
         &state,
         &headers,
@@ -940,9 +1038,17 @@ pub async fn unban_member(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    if !try_resp!(map_db(
+        queries::community_exists(&state.pool, uuid, false).await
+    )) {
+        return CommError::not_found(format!("Community not found: {uuid}")).into_response();
+    }
     let target = match parse_address(&address) {
         Ok(a) => a,
-        Err(r) => return r,
+        Err(_) => {
+            return CommError::bad_request("Invalid member address".to_string()).into_response();
+        }
     };
     if let Err(refusal) =
         CommunityUnbanAuthority::resolve(&state.pool, &signer, uuid, &target).await

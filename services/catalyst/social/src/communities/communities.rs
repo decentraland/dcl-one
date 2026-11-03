@@ -7,6 +7,7 @@
 
 use std::collections::HashMap;
 
+use crate::rpc::http::Kind;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
@@ -20,14 +21,14 @@ use crate::{Address, CommunityId, CommunityPermission};
 use super::dto::{CommunityDetail, CommunityListItem};
 use super::friendship::community_friends;
 use super::http::{
-    CommError, EnvelopeData, Paginated, Pagination, err_json, get_all, get_bool, get_first,
-    get_pagination_params,
+    CommError, EnvelopeData, Paginated, Pagination, get_all, get_bool, get_first,
+    get_pagination_params, handler_error as err_json,
 };
 use super::profiles::ProfileInfo;
 use super::thumbnail::{detect_image_mime_type, store_thumbnail, validate_thumbnail};
 use super::write_support::{
-    ClientCommunityWriteAuthority, Refusal, boundary, load_client_standing, map_db,
-    parse_community_id, parse_multipart, refuse,
+    ClientCommunityWriteAuthority, Refusal, load_client_standing, map_db, parse_community_id,
+    parse_form,
 };
 use super::{SharedState, queries, signed_path, validate};
 use crate::notifications::community::{Audience, CommunityEvent, notify};
@@ -52,7 +53,7 @@ fn plan_minimal_search(
     let Some(s) = search else {
         return Err(MinimalError::TooShort);
     };
-    if s.chars().count() < MIN_SEARCH_LENGTH_FOR_MINIMAL_RESPONSE {
+    if s.encode_utf16().count() < MIN_SEARCH_LENGTH_FOR_MINIMAL_RESPONSE {
         return Err(MinimalError::TooShort);
     }
     Ok((s, requested_limit.min(MAX_LIMIT_FOR_MINIMAL_RESPONSE)))
@@ -73,8 +74,7 @@ fn plan_membership_filters(
 ) -> Result<Vec<String>, MembershipFilterError> {
     let requested: Vec<String> = raw_roles
         .into_iter()
-        .map(|r| r.trim().to_string())
-        .filter(|r| !r.is_empty())
+        .filter(|r| !r.trim().is_empty())
         .collect();
     let roles: Vec<String> = requested
         .iter()
@@ -144,12 +144,7 @@ fn enrich_list_v1(
 ) {
     for item in items.iter_mut() {
         set_thumbnail_list(cdn_url, item);
-        item.owner_name = Some(
-            owner_names
-                .get(&item.owner_address.to_lowercase())
-                .cloned()
-                .unwrap_or_default(),
-        );
+        item.owner_name = owner_names.get(&item.owner_address.to_lowercase()).cloned();
     }
 }
 
@@ -311,7 +306,10 @@ pub async fn get_communities(
     enrich_with_friends(&state, by_community, &mut results).await;
 
     Ok(Json(EnvelopeData {
-        data: Paginated::new(results, total, &pagination),
+        data: Paginated {
+            page: pagination.offset / pagination.limit + 1,
+            ..Paginated::new(results, total, &pagination)
+        },
     })
     .into_response())
 }
@@ -336,7 +334,10 @@ async fn minimal_search(
         offset: pagination.offset,
     };
     Ok(Json(EnvelopeData {
-        data: Paginated::new(results, total, &capped),
+        data: Paginated {
+            page: capped.offset / capped.limit + 1,
+            ..Paginated::new(results, total, &capped)
+        },
     })
     .into_response())
 }
@@ -365,6 +366,12 @@ pub async fn get_community(
         .profiles
         .get_owner_names(&[detail.owner_address.to_lowercase()])
         .await;
+    if !owner_names.contains_key(&detail.owner_address.to_lowercase()) {
+        return Err(CommError::not_found(format!(
+            "Community owner not found: {id} - {}",
+            detail.owner_address
+        )));
+    }
     if signer.is_some() {
         detail.is_hosting_live_event = Some(is_hosting_live_event(&state, id).await);
     }
@@ -429,7 +436,10 @@ pub async fn get_communities_v2(
         }
     }
     Ok(Json(EnvelopeData {
-        data: Paginated::new(results, total, &pagination),
+        data: Paginated {
+            page: pagination.offset / pagination.limit + 1,
+            ..Paginated::new(results, total, &pagination)
+        },
     })
     .into_response())
 }
@@ -486,9 +496,8 @@ fn parse_enum_field(value: String, allowed: [&str; 2], field: &str) -> Result<St
     if allowed.contains(&trimmed.as_str()) {
         return Ok(trimmed);
     }
-    Err(refuse(
-        StatusCode::BAD_REQUEST,
-        format!(
+    Err(Box::new(
+        CommError::bad_request(format!(
             "Invalid {}: {}. Valid values are {}",
             field,
             if trimmed.is_empty() {
@@ -497,7 +506,8 @@ fn parse_enum_field(value: String, allowed: [&str; 2], field: &str) -> Result<St
                 trimmed.as_str()
             },
             allowed.join(", ")
-        ),
+        ))
+        .into_response(),
     ))
 }
 
@@ -534,7 +544,7 @@ pub async fn create_community(
     State(state): State<SharedState>,
     headers: HeaderMap,
     original: OriginalUri,
-    body: Bytes,
+    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Response {
     let signer = match signer_or_refusal(
         &state,
@@ -547,27 +557,20 @@ pub async fn create_community(
         Ok(s) => s,
         Err(r) => return r,
     };
-    let Some(b) = boundary(&headers) else {
-        return err_json(StatusCode::BAD_REQUEST, "expected multipart/form-data");
+    let body = match body {
+        Ok(body) => body,
+        Err(error) => {
+            return CommError::bad_request(if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                "Request body too large"
+            } else {
+                "Invalid multipart/form-data body"
+            })
+            .into_response();
+        }
     };
-    let fields = try_resp!(parse_multipart(b, body).await);
+    let fields = try_resp!(parse_form(&headers, body).await);
     let name = fields.name.unwrap_or_default();
     let description = fields.description.unwrap_or_default();
-    let privacy = match fields.privacy {
-        Some(p) => try_resp!(parse_privacy(p)),
-        None => "public".to_string(),
-    };
-    let visibility = match fields.visibility {
-        Some(v) => try_resp!(parse_visibility(v)),
-        None => "all".to_string(),
-    };
-    let place_ids = fields.place_ids.unwrap_or_default();
-    let thumbnail = fields.thumbnail;
-    if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = validate_thumbnail(bytes)
-    {
-        return err_json(StatusCode::BAD_REQUEST, e.message());
-    }
     if let Err(e) = validate::validate_name(&name) {
         return err_json(StatusCode::BAD_REQUEST, e);
     }
@@ -577,7 +580,25 @@ pub async fn create_community(
     if let Err(e) = validate::validate_description(&description) {
         return err_json(StatusCode::BAD_REQUEST, e);
     }
-    if let Some(false) = state.profiles.has_owned_name(signer.as_str()).await {
+    let thumbnail = fields.thumbnail;
+    if let Some(bytes) = thumbnail.as_deref()
+        && let Err(e) = validate_thumbnail(bytes)
+    {
+        return err_json(StatusCode::BAD_REQUEST, e.message());
+    }
+    let privacy = match fields.privacy {
+        Some(p) => try_resp!(parse_privacy(p)),
+        None => "public".to_string(),
+    };
+    let visibility = match fields.visibility {
+        Some(v) => try_resp!(parse_visibility(v)),
+        None => "all".to_string(),
+    };
+    let place_ids = fields.place_ids.unwrap_or_default();
+    if !match state.has_owned_name(&signer).await {
+        Ok(owns) => owns,
+        Err(error) => return error.into_response(),
+    } {
         return err_json(
             StatusCode::UNAUTHORIZED,
             format!("The user {signer} doesn't have any names"),
@@ -587,6 +608,18 @@ pub async fn create_community(
         return e.into_response();
     }
 
+    let owner_name = match state
+        .profiles
+        .get_owner_names(&[signer.as_str().to_string()])
+        .await
+        .remove(signer.as_str())
+    {
+        Some(name) => name,
+        None => {
+            return CommError::not_found(format!("Community owner not found: N/A - {signer}"))
+                .into_response();
+        }
+    };
     let private = privacy == "private";
     let unlisted = visibility == "unlisted";
     let id = CommunityId::new();
@@ -648,16 +681,15 @@ pub async fn create_community(
         "privacy": if private { "private" } else { "public" },
         "visibility": if unlisted { "unlisted" } else { "all" },
         "active": true,
-        "role": "owner",
-        "membersCount": 1,
+        "ownerName": owner_name,
         "isHostingLiveEvent": false,
     });
     if thumbnail.is_some()
         && let Some(m) = data.as_object_mut()
     {
         m.insert(
-            "thumbnailUrl".to_string(),
-            serde_json::Value::String(state.thumbnail_url(id)),
+            "thumbnails".to_string(),
+            json!({ "raw": state.thumbnail_url(id) }),
         );
     }
     (
@@ -672,9 +704,8 @@ pub async fn update_community(
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
-    body: Bytes,
+    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
         &state,
         &headers,
@@ -686,20 +717,28 @@ pub async fn update_community(
         Ok(s) => s,
         Err(r) => return r,
     };
-    try_resp!(
-        ClientCommunityWriteAuthority::resolve_requiring_capability(
-            &state,
-            uuid,
-            &signer,
-            CommunityPermission::EditInfo,
-            "edit the community"
-        )
-        .await
-    );
-    let Some(b) = boundary(&headers) else {
-        return err_json(StatusCode::BAD_REQUEST, "expected multipart/form-data");
+    let body = match body {
+        Ok(body) => body,
+        Err(error) => {
+            return CommError::bad_request(if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
+                "Request body too large"
+            } else {
+                "Invalid multipart/form-data body"
+            })
+            .into_response();
+        }
     };
-    let fields = try_resp!(parse_multipart(b, body).await);
+    let fields = try_resp!(parse_form(&headers, body).await);
+    if fields.name.is_none()
+        && fields.description.is_none()
+        && fields.privacy.is_none()
+        && fields.visibility.is_none()
+        && fields.place_ids.is_none()
+        && fields.thumbnail.is_none()
+    {
+        return CommError::bad_request("At least one field must be provided for update")
+            .into_response();
+    }
     let name = fields.name;
     let description = fields.description;
     if let Err(e) = validate::validate_name_opt(name.as_deref()) {
@@ -713,6 +752,12 @@ pub async fn update_community(
     if let Err(e) = validate::validate_description_opt(description.as_deref()) {
         return err_json(StatusCode::BAD_REQUEST, e);
     }
+    let thumbnail = fields.thumbnail;
+    if let Some(bytes) = thumbnail.as_deref()
+        && let Err(e) = validate_thumbnail(bytes)
+    {
+        return err_json(StatusCode::BAD_REQUEST, e.message());
+    }
     let privacy: Option<bool> = match fields.privacy {
         Some(p) => Some(try_resp!(parse_privacy(p)) == "private"),
         None => None,
@@ -721,6 +766,17 @@ pub async fn update_community(
         Some(v) => Some(try_resp!(parse_visibility(v)) == "unlisted"),
         None => None,
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    try_resp!(
+        ClientCommunityWriteAuthority::resolve_requiring_capability(
+            &state,
+            uuid,
+            &signer,
+            CommunityPermission::EditInfo,
+            "edit the community"
+        )
+        .await
+    );
     // EditName and EditSettings are owner-only in the capability matrix: a
     // name, privacy or visibility that differs from the stored one needs the
     // matching cell (upstream `updateCommunity`, `communities.ts` at `fb3dcb8`).
@@ -793,12 +849,6 @@ pub async fn update_community(
             .await
         );
     }
-    let thumbnail = fields.thumbnail;
-    if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = validate_thumbnail(bytes)
-    {
-        return err_json(StatusCode::BAD_REQUEST, e.message());
-    }
     let becomes_public = privacy == Some(false) && current.is_some_and(|c| c.1);
     let mut tx = try_resp!(map_db(state.pool.begin().await));
     try_resp!(map_db(
@@ -848,8 +898,7 @@ pub async fn update_community(
         try_resp!(map_db(
             sqlx::query(
                 "WITH accepted AS ( \
-                   UPDATE social.community_requests r \
-                      SET status = 'accepted', updated_at = timezone('UTC', now()) \
+                   DELETE FROM social.community_requests r \
                     WHERE r.community_id = $1 AND r.type = 'request_to_join' AND r.status = 'pending' \
                       AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
                                       WHERE b.community_id = r.community_id \
@@ -874,7 +923,7 @@ pub async fn update_community(
             "failed to store thumbnail",
         );
     }
-    let data = match queries::get_by_id(&state.pool, uuid, Some(&signer)).await {
+    let detail = match queries::get_by_id(&state.pool, uuid, Some(&signer)).await {
         Ok(Some(mut obj)) => {
             if obj.has_thumbnail {
                 obj.thumbnail_url = Some(state.thumbnail_url(uuid));
@@ -898,12 +947,20 @@ pub async fn update_community(
                     "communityId": uuid.as_uuid(),
                     "oldName": old_name,
                     "newName": new_name,
-                    "thumbnailUrl": stored_thumbnail_or_na(&state, data.has_thumbnail, uuid),
+                    "thumbnailUrl": stored_thumbnail_or_na(&state, detail.has_thumbnail, uuid),
                 }),
             },
             Audience::Members,
         )
         .await;
+    }
+    let mut data = json!({
+        "id": detail.id, "name": detail.name, "description": detail.description,
+        "ownerAddress": detail.owner_address, "privacy": detail.privacy,
+        "visibility": detail.visibility, "active": detail.active,
+    });
+    if thumbnail.is_some() {
+        data["thumbnails"] = json!({ "raw": state.thumbnail_url(uuid) });
     }
     (
         StatusCode::OK,
@@ -939,7 +996,6 @@ pub async fn update_community_partially(
     Path(id): Path<String>,
     body: Bytes,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
         &state,
         &headers,
@@ -951,6 +1007,15 @@ pub async fn update_community_partially(
         Ok(s) => s,
         Err(r) => return r,
     };
+    if let Err(error) = crate::rpc::http::body(
+        &body,
+        &[("editorsChoice", Kind::Bool)],
+        &["editorsChoice"],
+        0,
+    ) {
+        return error.into_response();
+    }
+    let uuid = try_resp!(parse_community_id(&id));
     let parsed: PatchBody = match serde_json::from_slice(&body) {
         Ok(b) => b,
         Err(e) => return err_json(StatusCode::BAD_REQUEST, format!("invalid body: {e}")),
@@ -990,7 +1055,6 @@ pub async fn delete_community(
     original: OriginalUri,
     Path(id): Path<String>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match signer_or_refusal(
         &state,
         &headers,
@@ -1002,6 +1066,7 @@ pub async fn delete_community(
         Ok(s) => s,
         Err(r) => return r,
     };
+    let uuid = try_resp!(parse_community_id(&id));
     // upstream `deleteCommunity`: a missing community is a 404 first; the
     // owner or a global moderator may delete it
     if !try_resp!(active_community_exists(&state, uuid).await) {
@@ -1079,7 +1144,7 @@ mod tests {
             active: true,
             members_count: 5,
             is_live: false,
-            voice_chat_status: VoiceChatStatus::idle(),
+            voice_chat_status: Some(VoiceChatStatus::idle()),
             visibility: Some("all".to_string()),
             role: Some("member".to_string()),
             is_banned: None,
@@ -1104,7 +1169,6 @@ mod tests {
             "description",
             "ownerAddress",
             "ownerName",
-            "thumbnailUrl",
             "privacy",
             "visibility",
             "role",
@@ -1116,10 +1180,7 @@ mod tests {
         }
         assert!(!m.contains_key("_hasThumbnail"));
         assert_eq!(m["ownerName"], "OwnerName");
-        assert_eq!(
-            m["thumbnailUrl"],
-            "https://cdn.example/social/communities/11111111-1111-1111-1111-111111111111/raw-thumbnail.png"
-        );
+        assert!(!m.contains_key("thumbnailUrl"));
         assert!(m["friends"].is_array());
     }
 
@@ -1134,10 +1195,7 @@ mod tests {
             !m.contains_key("ownerName"),
             "v2 shaping must not resolve/add ownerName"
         );
-        assert_eq!(
-            m["thumbnailUrl"],
-            "https://cdn.example/social/communities/11111111-1111-1111-1111-111111111111/raw-thumbnail.png"
-        );
+        assert!(!m.contains_key("thumbnailUrl"));
 
         let mut items = vec![sample_item(false)];
         enrich_list_v1("https://cdn.example", &mut items, &HashMap::new());
@@ -1146,7 +1204,7 @@ mod tests {
             v.get("thumbnailUrl").is_none(),
             "a community without a thumbnail has no thumbnailUrl, as production"
         );
-        assert_eq!(v["ownerName"], "");
+        assert!(v.get("ownerName").is_none());
     }
 
     #[test]

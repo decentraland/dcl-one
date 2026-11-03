@@ -3,6 +3,7 @@
 //! deletes anything, a moderator only their own, likes by anyone not banned
 //! (members only when private).
 
+use crate::rpc::http::Kind;
 use axum::Json;
 use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
@@ -15,7 +16,7 @@ use uuid::Uuid;
 use crate::identity::can_delete_post;
 use crate::{Address, CommunityId, CommunityPermission, CommunityStanding};
 
-use super::http::{CommError, err_json, get_pagination_params};
+use super::http::{CommError, get_pagination_params, handler_error as err_json};
 use super::profiles::enrich_posts_with_authors;
 use super::standing::load_standing;
 use super::write_support::{
@@ -73,9 +74,14 @@ async fn posts_page(
             &signed_path(original, format!("/{version}/communities/{id_str}/posts")),
         )
         .await;
-    if !queries::community_exists(&state.pool, id, signer.is_none()).await? {
+    if !queries::community_exists(&state.pool, id, false).await? {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
+        )));
+    }
+    if signer.is_none() && queries::is_private(&state.pool, id).await? {
+        return Err(CommError::not_authorized(format!(
+            "undefined is not a member of private community {id}. You need to be a member to get posts in this community."
         )));
     }
     require_membership_of_a_private_community(state, id, signer.as_ref(), |addr| {
@@ -132,18 +138,15 @@ fn parse_post_id(raw: &str) -> Result<Uuid, Response> {
 
 /// The post's content, trimmed. A new post follows upstream's schema and
 /// refuses leading whitespace; an edit (a local route) keeps trimming it.
-fn parse_content(body: &[u8], new_post: bool) -> Result<String, Response> {
+fn parse_content(body: &[u8], _new_post: bool) -> Result<String, Response> {
     let parsed: PostBody = serde_json::from_slice(body)
         .map_err(|e| err_json(StatusCode::BAD_REQUEST, format!("invalid body: {e}")))?;
-    let content = parsed.content.trim().to_string();
+    let content = parsed
+        .content
+        .trim_matches(crate::rpc::http::js_whitespace)
+        .to_string();
     if content.is_empty() {
         return Err(err_json(StatusCode::BAD_REQUEST, "content is required"));
-    }
-    if new_post && parsed.content.starts_with(char::is_whitespace) {
-        return Err(err_json(
-            StatusCode::BAD_REQUEST,
-            "content must not start with whitespace",
-        ));
     }
     if parsed.content.chars().count() > POST_CONTENT_MAX {
         return Err(err_json(
@@ -188,7 +191,6 @@ pub async fn create_post(
     Path(id): Path<String>,
     body: Bytes,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
     let signer = match state
         .require_signer(
             &headers,
@@ -200,6 +202,22 @@ pub async fn create_post(
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
+    if let Err(error) = crate::rpc::http::body(
+        &body,
+        &[(
+            "content",
+            Kind::TextRange {
+                min: 1,
+                max: 1000,
+                non_whitespace: true,
+            },
+        )],
+        &["content"],
+        0,
+    ) {
+        return error.into_response();
+    }
+    let uuid = try_resp!(parse_community_id(&id));
     try_resp!(
         ClientCommunityWriteAuthority::resolve_requiring_capability(
             &state,
@@ -271,6 +289,9 @@ pub async fn create_post(
         "content": content,
         "createdAt": crate::shared::as_of::wire(created_at.and_utc()),
     });
+    let mut rows = vec![data];
+    enrich_posts_with_authors(&state.profiles, &mut rows, "authorAddress").await;
+    let data = rows.remove(0);
     (StatusCode::CREATED, Json(json!({ "data": data }))).into_response()
 }
 
@@ -283,11 +304,6 @@ pub async fn edit_post(
     Path((id, post_id)): Path<(String, String)>,
     body: Bytes,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
-    let post_uuid = match parse_post_id(&post_id) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
     let signer = match state
         .require_signer(
             &headers,
@@ -299,6 +315,12 @@ pub async fn edit_post(
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    let post_uuid = match parse_post_id(&post_id) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
     let content = match parse_content(&body, false) {
         Ok(content) => content,
         Err(r) => return r,
@@ -351,7 +373,8 @@ pub async fn edit_post(
         .await
     ));
     let Some(author) = author else {
-        return err_json(StatusCode::NOT_FOUND, "Post not found");
+        return CommError::not_found(format!("Community post not found: {post_id}"))
+            .into_response();
     };
     if !author.eq_ignore_ascii_case(signer.as_str()) {
         return err_json(
@@ -370,7 +393,8 @@ pub async fn edit_post(
         .await
     ));
     if updated.rows_affected() == 0 {
-        return err_json(StatusCode::NOT_FOUND, "Post not found");
+        return CommError::not_found(format!("Community post not found: {post_id}"))
+            .into_response();
     }
     try_resp!(map_db(tx.commit().await));
     StatusCode::NO_CONTENT.into_response()
@@ -382,11 +406,6 @@ pub async fn delete_post(
     original: OriginalUri,
     Path((id, post_id)): Path<(String, String)>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
-    let post_uuid = match parse_post_id(&post_id) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
     let signer = match state
         .require_signer(
             &headers,
@@ -398,17 +417,22 @@ pub async fn delete_post(
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
-    let author: Option<String> = try_resp!(map_db(
-        sqlx::query_scalar(
-            "SELECT author_address FROM social.community_posts WHERE id = $1 AND community_id = $2"
+    let post_uuid = match parse_post_id(&post_id) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
+    let author: Option<(CommunityId, String)> = try_resp!(map_db(
+        sqlx::query_as(
+            "SELECT community_id, author_address FROM social.community_posts WHERE id = $1"
         )
         .bind(post_uuid)
-        .bind(uuid)
         .fetch_optional(&state.pool)
         .await
     ));
-    let Some(author) = author else {
-        return err_json(StatusCode::NOT_FOUND, "Post not found");
+    let Some((uuid, author)) = author else {
+        return CommError::not_found(format!("Community post not found: {post_id}"))
+            .into_response();
     };
     let standing = try_resp!(load_client_standing(&state, uuid, &signer).await);
     let is_author = author.eq_ignore_ascii_case(signer.as_str());
@@ -434,11 +458,6 @@ pub async fn like_post(
     original: OriginalUri,
     Path((id, post_id)): Path<(String, String)>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
-    let post_uuid = match parse_post_id(&post_id) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
     let signer = match state
         .require_signer(
             &headers,
@@ -453,6 +472,12 @@ pub async fn like_post(
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    let post_uuid = match parse_post_id(&post_id) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
     try_resp!(validate_like_unlike_access(&state, uuid, &signer).await);
     let exists: Option<bool> = try_resp!(map_db(
         sqlx::query_scalar(
@@ -464,7 +489,8 @@ pub async fn like_post(
         .await
     ));
     if exists.is_none() {
-        return err_json(StatusCode::NOT_FOUND, "Post not found");
+        return CommError::not_found(format!("Community post not found: {post_id}"))
+            .into_response();
     }
     try_resp!(map_db(
         sqlx::query(
@@ -485,11 +511,6 @@ pub async fn unlike_post(
     original: OriginalUri,
     Path((id, post_id)): Path<(String, String)>,
 ) -> Response {
-    let uuid = try_resp!(parse_community_id(&id));
-    let post_uuid = match parse_post_id(&post_id) {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
     let signer = match state
         .require_signer(
             &headers,
@@ -504,7 +525,21 @@ pub async fn unlike_post(
         Ok(s) => s,
         Err(e) => return e.into_response(),
     };
+    let uuid = try_resp!(parse_community_id(&id));
+    let post_uuid = match parse_post_id(&post_id) {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+
     try_resp!(validate_like_unlike_access(&state, uuid, &signer).await);
+    let exists: bool = try_resp!(map_db(
+        sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM social.community_posts WHERE id = $1 AND community_id = $2)")
+            .bind(post_uuid).bind(uuid).fetch_one(&state.pool).await
+    ));
+    if !exists {
+        return CommError::not_found(format!("Community post not found: {post_id}"))
+            .into_response();
+    }
     try_resp!(map_db(
         sqlx::query(
             "DELETE FROM social.community_post_likes WHERE post_id = $1 AND user_address = $2"

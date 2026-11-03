@@ -1,8 +1,7 @@
 //! Profile enrichment for member, request, ban and friend rows: name,
 //! picture, claimed-name flag and name colour read from the active profile
 //! entity in `content.deployments`. The picture is the face the lambdas'
-//! snapshots name ([`FaceUrls`]), not `contents/<face256>`: sync and the
-//! read-through never copy a profile's snapshot files. The old service reached the content
+//! snapshots name, preserving the stored `face256` value. The old service reached the content
 //! database through a second pool (`CONTENT_PG_CONNECTION_STRING`); it is
 //! the same database here, so this is a read over the ONE pool with a
 //! five-minute memo per address. A failed read serves placeholders, never an
@@ -197,15 +196,13 @@ impl FaceUrls {
 #[derive(Clone)]
 pub struct ProfilesCache {
     pool: PgPool,
-    faces: FaceUrls,
     cache: Arc<TtlCache<Option<ProfileInfo>>>,
 }
 
 impl ProfilesCache {
-    pub fn new(pool: PgPool, faces: FaceUrls) -> Self {
+    pub fn new(pool: PgPool, _faces: FaceUrls) -> Self {
         Self {
             pool,
-            faces,
             cache: Arc::new(TtlCache::default()),
         }
     }
@@ -241,8 +238,8 @@ impl ProfilesCache {
             _,
             (String, String, Option<String>, Option<String>, Option<bool>, Option<serde_json::Value>),
         >(
-            "SELECT lower(d.entity_pointers[1]) AS addr, d.entity_id, \
-                    COALESCE(d.entity_metadata::jsonb #>> '{v,avatars,0,name}', \
+            "SELECT lower(d.entity_metadata::jsonb #>> '{v,avatars,0,userId}') AS addr, d.entity_id, \
+                    COALESCE(NULLIF(d.entity_metadata::jsonb #>> '{v,avatars,0,name}', ''), \
                              d.entity_metadata::jsonb #>> '{v,avatars,0,unclaimedName}') AS name, \
                     d.entity_metadata::jsonb #>> '{v,avatars,0,avatar,snapshots,face256}' AS face256, \
                     (d.entity_metadata::jsonb #>> '{v,avatars,0,hasClaimedName}')::bool AS has_claimed, \
@@ -250,7 +247,8 @@ impl ProfilesCache {
              FROM content.deployments d \
              WHERE d.entity_type = 'profile' \
                AND d.deleter_deployment IS NULL \
-               AND d.entity_pointers && $1::text[]",
+               AND d.entity_pointers && $1::text[] \
+               AND d.entity_metadata::jsonb #>> '{v,avatars,0,userId}' IS NOT NULL",
         )
         .bind(&misses)
         .fetch_all(&self.pool)
@@ -259,12 +257,12 @@ impl ProfilesCache {
         let mut resolved: HashMap<String, ProfileInfo> = HashMap::new();
         match rows {
             Ok(rows) => {
-                for (addr, entity_id, name, face256, has_claimed, color) in rows {
+                for (addr, _entity_id, name, face256, has_claimed, color) in rows {
                     let name = match name {
                         Some(n) if !n.is_empty() => n,
                         _ => continue,
                     };
-                    let Some(picture) = self.faces.picture(&entity_id, face256.as_deref()) else {
+                    let Some(picture) = face256.filter(|picture| !picture.is_empty()) else {
                         continue;
                     };
                     let name_color = color.as_ref().and_then(NameColor::from_profile);
@@ -299,27 +297,6 @@ impl ProfilesCache {
             .into_iter()
             .map(|(addr, info)| (addr, info.name))
             .collect()
-    }
-
-    /// Whether the wallet's active profile claims a name. `None` when the
-    /// answer could not be read (the caller then does not refuse on it, as
-    /// the old service did not).
-    pub async fn has_owned_name(&self, address: &str) -> Option<bool> {
-        let addr = address.to_lowercase();
-        let row: Option<(bool,)> = sqlx::query_as(
-            "SELECT COALESCE((d.entity_metadata::jsonb #>> '{v,avatars,0,hasClaimedName}')::bool, false) \
-             FROM content.deployments d \
-             WHERE d.entity_type = 'profile' \
-               AND d.deleter_deployment IS NULL \
-               AND d.entity_pointers && ARRAY[$1]::text[] \
-             LIMIT 1",
-        )
-        .bind(&addr)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten();
-        Some(row.map(|(c,)| c).unwrap_or(false))
     }
 }
 

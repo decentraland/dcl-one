@@ -47,28 +47,42 @@ fn limit_or_max(requested: Option<i64>, max: i64) -> i64 {
     }
 }
 
-/// `limit` (1..=100, else 100), `offset` (>= 0, else `page * limit`, else 0),
-/// the offset capped at 100,000. A negative offset such as the explorer's
-/// `offset=-100` reads as 0.
+/// JavaScript `parseInt(value, 10)`, saturated after parsing the decimal
+/// prefix. Only comparisons with the small pagination limits need the value.
+fn decimal_prefix(raw: &str) -> Option<i64> {
+    let raw = raw.trim_start();
+    let (negative, digits) = match raw.as_bytes().first() {
+        Some(b'-') => (true, &raw[1..]),
+        Some(b'+') => (false, &raw[1..]),
+        _ => (false, raw),
+    };
+    let mut count = 0;
+    let mut number = 0_i64;
+    for digit in digits.bytes().take_while(u8::is_ascii_digit) {
+        number = number
+            .saturating_mul(10)
+            .saturating_add(i64::from(digit - b'0'));
+        count += 1;
+    }
+    (count > 0).then(|| if negative { -number } else { number })
+}
+
+/// The pinned http-commons parser: decimal prefixes, a positive limit up to
+/// 100 and a nonnegative offset capped at 100,000. `page` is not an input.
 pub fn get_pagination_params(pairs: &[(String, String)]) -> Pagination {
     let mut limit_raw: Option<&str> = None;
     let mut offset_raw: Option<&str> = None;
-    let mut page_raw: Option<&str> = None;
     for (k, v) in pairs {
         match k.as_str() {
             "limit" if limit_raw.is_none() => limit_raw = Some(v),
             "offset" if offset_raw.is_none() => offset_raw = Some(v),
-            "page" if page_raw.is_none() => page_raw = Some(v),
             _ => {}
         }
     }
-    let limit = limit_or_max(limit_raw.and_then(|s| s.parse().ok()), MAX_LIMIT);
-    let offset = match offset_raw.and_then(|s| s.parse::<i64>().ok()) {
+    let limit = limit_or_max(limit_raw.and_then(decimal_prefix), MAX_LIMIT);
+    let offset = match offset_raw.and_then(decimal_prefix) {
         Some(n) if n >= 0 => n,
-        _ => match page_raw.and_then(|s| s.parse::<i64>().ok()) {
-            Some(p) if p >= 0 => p.saturating_mul(limit),
-            _ => 0,
-        },
+        _ => 0,
     };
     Pagination {
         limit,
@@ -112,7 +126,11 @@ impl<T> Paginated<T> {
     /// The 1-based `page` the social service publishes; the first page is 1.
     pub fn new(results: Vec<T>, total: i64, pagination: &Pagination) -> Self {
         let (limit, offset) = (pagination.limit, pagination.offset);
-        let page = if limit > 0 { offset / limit } else { 0 } + 1;
+        let page = if limit > 0 {
+            (offset + limit - 1) / limit
+        } else {
+            0
+        } + 1;
         let pages = if limit > 0 {
             (total + limit - 1) / limit
         } else {
@@ -137,6 +155,19 @@ pub fn error_body(error: impl Into<String>, message: impl Into<String>) -> serde
 pub fn err_json(status: StatusCode, message: impl Into<String>) -> Response {
     let message = message.into();
     (status, Json(error_body(message.clone(), message))).into_response()
+}
+
+/// Error envelope of the upstream community HTTP handlers. Federation keeps
+/// its existing one-message envelope through `err_json`.
+pub(crate) fn handler_error(status: StatusCode, message: impl Into<String>) -> Response {
+    let message = message.into();
+    let error = match status {
+        StatusCode::BAD_REQUEST => "Bad request",
+        StatusCode::UNAUTHORIZED => "Not Authorized",
+        StatusCode::NOT_FOUND => "Not Found",
+        _ => return (status, Json(json!({ "message": message }))).into_response(),
+    };
+    (status, Json(error_body(error, message))).into_response()
 }
 
 #[derive(Debug)]
@@ -379,10 +410,10 @@ mod tests {
         );
         assert_eq!(
             get_pagination_params(&pairs(&[("page", "999999999"), ("limit", "100")])).offset,
-            MAX_OFFSET
+            0
         );
         let p = get_pagination_params(&pairs(&[("limit", "24"), ("page", "2")]));
-        assert_eq!((p.limit, p.offset), (24, 48));
+        assert_eq!((p.limit, p.offset), (24, 0));
         let p = get_pagination_params(&pairs(&[("offset", "-100"), ("limit", "100")]));
         assert_eq!(
             (p.limit, p.offset),

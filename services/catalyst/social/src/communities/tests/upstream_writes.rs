@@ -229,22 +229,22 @@ async fn going_public_accepts_the_pending_requests_to_join_of_unbanned_wallets()
                 "SELECT status FROM social.community_requests WHERE id = $1",
             )
             .bind(id)
-            .fetch_one(&pool)
+            .fetch_optional(&pool)
             .await
             .unwrap()
         }
     };
-    assert_eq!(status_of(asked).await, "accepted");
+    assert_eq!(status_of(asked).await, None);
     assert_eq!(rig.role_of(c, &asker).await.as_deref(), Some("member"));
     assert_eq!(
-        status_of(refused).await,
-        "pending",
+        status_of(refused).await.as_deref(),
+        Some("pending"),
         "a ban keeps it pending"
     );
     assert_eq!(rig.role_of(c, &banned).await, None);
     assert_eq!(
-        status_of(invite).await,
-        "pending",
+        status_of(invite).await.as_deref(),
+        Some("pending"),
         "invites are not requests to join"
     );
     assert_eq!(rig.role_of(c, &invited).await, None);
@@ -254,7 +254,7 @@ async fn going_public_accepts_the_pending_requests_to_join_of_unbanned_wallets()
     let pending = rig.request(c, &late, "request_to_join").await;
     let (status, _) = put(&rig, c, &owner, &[("privacy", b"public")]).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(status_of(pending).await, "pending");
+    assert_eq!(status_of(pending).await.as_deref(), Some("pending"));
     rig.finish();
 }
 
@@ -932,7 +932,7 @@ async fn a_started_room_carries_the_places_and_the_thumbnail() {
     let ctx = crate::rpc::context::Context::new(
         Default::default(),
         crate::rpc::db::Db::new(rig.pool.clone()),
-        crate::rpc::profiles::Profiles::new(None, Default::default()),
+        crate::rpc::profiles::Profiles::new(None),
         voice,
     );
     ctx.set_communities(rig.state.clone());

@@ -147,8 +147,8 @@ impl Seed<'_> {
         color: Option<&Value>,
     ) {
         let mut avatar = json!({
-            "name": name, "hasClaimedName": claimed,
-            "avatar": { "snapshots": { "face256": "bafkface" } }
+            "userId": address, "name": name, "hasClaimedName": claimed,
+            "avatar": { "snapshots": { "face256": picture } }
         });
         if let Some(color) = color {
             avatar["nameColor"] = color.clone();
@@ -326,7 +326,7 @@ fn fields(prefix: &str, kind: &str, names: &[&str]) -> Vec<String> {
 /// records as social-api extensions ("social-api recorded extensions"), each
 /// with the consumer that reads it.
 fn pinned() -> BTreeMap<&'static str, Vec<String>> {
-    let page = fields("data.", "extra", &["isLive"]);
+    let page = fields("data.", "value", &["voiceChatStatus"]);
     let posts = fields("data.posts[].", "extra", &["isLikedByUser"]);
     BTreeMap::from([
         ("community-by-id", page.clone()),
@@ -336,10 +336,7 @@ fn pinned() -> BTreeMap<&'static str, Vec<String>> {
         ("community-v2-members", Vec::new()),
         ("community-posts", posts.clone()),
         ("community-posts-v2", posts),
-        (
-            "community-places",
-            fields("data.results[].", "extra", &["addedAt", "addedBy"]),
-        ),
+        ("community-places", Vec::new()),
         ("member-communities", Vec::new()),
     ])
 }

@@ -183,12 +183,29 @@ fn path_uuid(raw: &str, name: &str) -> Result<(), CommError> {
 }
 
 /// One body property's schema (the AJV schemas of `handlers/http/schemas.ts`).
-enum Kind {
+pub(crate) enum Kind {
     Address,
     Uuid,
     OneOf(&'static [&'static str]),
-    Text { max: usize },
+    Text {
+        max: usize,
+    },
+    TextRange {
+        min: usize,
+        max: usize,
+        non_whitespace: bool,
+    },
+    Strings {
+        min: usize,
+        max: usize,
+        element_max: usize,
+        uuid: bool,
+    },
     Bool,
+}
+
+pub(crate) fn js_whitespace(character: char) -> bool {
+    character != '\u{0085}' && (character.is_whitespace() || character == '\u{FEFF}')
 }
 
 /// Upstream `UUID_PATTERN` (`src/utils/uuid.ts`).
@@ -221,12 +238,50 @@ fn schema_refusal(message: String, error: Option<Value>) -> CommError {
     CommError::Body(StatusCode::BAD_REQUEST, body)
 }
 
+/// AJV visits object properties in JavaScript order. Keep that order when
+/// selecting the first unknown field even though Value uses a sorted map.
+fn input_keys(bytes: &[u8]) -> Vec<String> {
+    struct Keys;
+    impl<'de> serde::de::Visitor<'de> for Keys {
+        type Value = Vec<String>;
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("an object")
+        }
+        fn visit_map<A: serde::de::MapAccess<'de>>(
+            self,
+            mut map: A,
+        ) -> Result<Self::Value, A::Error> {
+            let mut keys = Vec::new();
+            while let Some(key) = map.next_key::<String>()? {
+                map.next_value::<serde::de::IgnoredAny>()?;
+                if !keys.contains(&key) {
+                    keys.push(key);
+                }
+            }
+            let index = |key: &str| {
+                key.parse::<u32>()
+                    .ok()
+                    .filter(|n| *n < u32::MAX && n.to_string() == key)
+            };
+            keys.sort_by(|left, right| match (index(left), index(right)) {
+                (Some(a), Some(b)) => a.cmp(&b),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                _ => std::cmp::Ordering::Equal,
+            });
+            Ok(keys)
+        }
+    }
+    serde::Deserializer::deserialize_map(&mut serde_json::Deserializer::from_slice(bytes), Keys)
+        .unwrap_or_default()
+}
+
 /// A JSON object body checked against upstream's schema as AJV checks it
 /// (one error, the first in AJV's order: the type, `minProperties`,
 /// `required`, `additionalProperties` in the body's order, then each
 /// property in the schema's order: its type, then its pattern, enum or
 /// length). The refusal is the schema validator's 400.
-fn body(
+pub(crate) fn body(
     bytes: &[u8],
     properties: &[(&str, Kind)],
     required: &[&str],
@@ -272,8 +327,8 @@ fn body(
             format!("must have required property '{name}'"),
         ));
     }
-    if let Some(name) = object
-        .keys()
+    if let Some(name) = input_keys(bytes)
+        .iter()
         .find(|name| !properties.iter().any(|(p, _)| p == name))
     {
         return Err(invalid(
@@ -296,6 +351,62 @@ fn body(
                 format!("must be {expected}"),
             )
         };
+        if let Kind::Strings {
+            min,
+            max,
+            element_max,
+            uuid,
+        } = kind
+        {
+            let Value::Array(items) = value else {
+                return Err(wrong_type("array"));
+            };
+            for (keyword, limit, fails, message) in [
+                (
+                    "maxItems",
+                    *max,
+                    items.len() > *max,
+                    format!("must NOT have more than {max} items"),
+                ),
+                (
+                    "minItems",
+                    *min,
+                    items.len() < *min,
+                    format!("must NOT have fewer than {min} items"),
+                ),
+            ] {
+                if fails {
+                    return Err(invalid(field, keyword, json!({ "limit": limit }), message));
+                }
+            }
+            for (index, item) in items.iter().enumerate() {
+                let violation = match item.as_str() {
+                    None => Some((
+                        "type",
+                        json!({ "type": "string" }),
+                        "must be string".to_string(),
+                    )),
+                    Some(text) if text.chars().count() > *element_max => Some((
+                        "maxLength",
+                        json!({ "limit": element_max }),
+                        format!("must NOT have more than {element_max} characters"),
+                    )),
+                    Some(text) if *uuid && !is_uuid(text) => Some((
+                        "pattern",
+                        json!({ "pattern": UUID_PATTERN }),
+                        format!("must match pattern \"{UUID_PATTERN}\""),
+                    )),
+                    _ => None,
+                };
+                if let Some((keyword, params, message)) = violation {
+                    let mut error = ajv_error(field, keyword, params, message);
+                    error["instancePath"] = json!(format!("/{name}/{index}"));
+                    error["schemaPath"] = json!(format!("#/properties/{name}/items/{keyword}"));
+                    return Err(schema_refusal("Invalid JSON body".into(), Some(error)));
+                }
+            }
+            continue;
+        }
         let text = match (kind, value) {
             (Kind::Bool, Value::Bool(_)) => continue,
             (Kind::Bool, _) => return Err(wrong_type("boolean")),
@@ -332,13 +443,38 @@ fn body(
                     format!("must NOT have more than {max} characters"),
                 ));
             }
+            Kind::TextRange {
+                min,
+                max,
+                non_whitespace,
+            } => {
+                if text.chars().count() > *max {
+                    return Err(invalid(
+                        field,
+                        "maxLength",
+                        json!({ "limit": max }),
+                        format!("must NOT have more than {max} characters"),
+                    ));
+                }
+                if text.chars().count() < *min {
+                    return Err(invalid(
+                        field,
+                        "minLength",
+                        json!({ "limit": min }),
+                        format!("must NOT have fewer than {min} characters"),
+                    ));
+                }
+                if *non_whitespace && text.starts_with(js_whitespace) {
+                    return Err(pattern("^\\S"));
+                }
+            }
             _ => {}
         }
     }
     Ok(object)
 }
 
-fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
+pub(crate) fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
     object.get(name).and_then(Value::as_str)
 }
 

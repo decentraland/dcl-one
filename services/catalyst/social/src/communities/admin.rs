@@ -163,6 +163,6 @@ pub async fn get_moderation_communities(
     let (rows, total) =
         queries::moderation_all(&state.pool, search.as_deref(), &pagination).await?;
     Ok(Json(
-        json!({ "data": Paginated::new(rows, total, &pagination) }),
+        json!({ "data": Paginated { page: pagination.offset / pagination.limit + 1, ..Paginated::new(rows, total, &pagination) } }),
     ))
 }

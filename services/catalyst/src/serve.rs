@@ -934,6 +934,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
+    social.communities.set_chain_index(market.index.clone());
     // A permission, access-setting or block edit reaches the running rooms
     // at once: the host's sockets and comms' LiveKit participants.
     if let Some(host) = &stage5.scene_host {

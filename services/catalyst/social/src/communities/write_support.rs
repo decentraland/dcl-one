@@ -53,6 +53,67 @@ pub fn boundary(headers: &HeaderMap) -> Option<String> {
     multer::parse_boundary(ct).ok()
 }
 
+/// The upstream native FormData parser also accepts URL-encoded forms.
+/// Multipart file fields and text fields occupy separate maps: only a file
+/// named `thumbnail` supplies image bytes.
+pub async fn parse_form(headers: &HeaderMap, body: Bytes) -> Result<MultipartFields, Refusal> {
+    if body.len() > 1024 * 1024
+        || headers
+            .get(header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+            .is_some_and(|length| length > 1024 * 1024)
+    {
+        return Err(Box::new(
+            super::http::CommError::bad_request("Request body too large").into_response(),
+        ));
+    }
+    if headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|ct| {
+            ct.split(';').next().is_some_and(|mime| {
+                mime.trim()
+                    .eq_ignore_ascii_case("application/x-www-form-urlencoded")
+            })
+        })
+    {
+        let mut out = MultipartFields {
+            name: None,
+            description: None,
+            privacy: None,
+            visibility: None,
+            place_ids: None,
+            thumbnail: None,
+        };
+        for (name, value) in url::form_urlencoded::parse(&body) {
+            match name.as_ref() {
+                "name" => out.name = Some(value.into_owned()),
+                "description" => out.description = Some(value.into_owned()),
+                "privacy" => out.privacy = Some(value.into_owned()),
+                "visibility" => out.visibility = Some(value.into_owned()),
+                "placeIds" if !value.is_empty() => {
+                    out.place_ids = Some(serde_json::from_str(&value).map_err(|_| {
+                        refuse(
+                            StatusCode::BAD_REQUEST,
+                            "placeIds must be a valid JSON array",
+                        )
+                    })?)
+                }
+                "placeIds" => out.place_ids = None,
+                _ => {}
+            }
+        }
+        return Ok(out);
+    }
+    let boundary = boundary(headers).ok_or_else(|| {
+        Box::new(
+            super::http::CommError::bad_request("Invalid multipart/form-data body").into_response(),
+        )
+    })?;
+    parse_multipart(boundary, body).await
+}
+
 /// The fields are handed on as sent (no case folding): `Private` is refused
 /// by the enum parse, not quietly accepted.
 pub async fn parse_multipart(boundary: String, body: Bytes) -> Result<MultipartFields, Refusal> {
@@ -70,22 +131,23 @@ pub async fn parse_multipart(boundary: String, body: Bytes) -> Result<MultipartF
         let field = match mp.next_field().await {
             Ok(Some(f)) => f,
             Ok(None) => break,
-            Err(e) => {
-                return Err(refuse(
-                    StatusCode::BAD_REQUEST,
-                    format!("invalid multipart: {e}"),
+            Err(_) => {
+                return Err(Box::new(
+                    super::http::CommError::bad_request("Invalid multipart/form-data body")
+                        .into_response(),
                 ));
             }
         };
         let fname = field.name().unwrap_or("").to_string();
+        let file = field.file_name().is_some();
+        if (fname == "thumbnail") != file {
+            let _ = field.bytes().await;
+            continue;
+        }
         match fname.as_str() {
             "thumbnail" => {
                 let data = field.bytes().await.unwrap_or_default();
-                out.thumbnail = if data.is_empty() {
-                    None
-                } else {
-                    Some(data.to_vec())
-                };
+                out.thumbnail = Some(data.to_vec());
             }
             "name" => out.name = Some(field.text().await.unwrap_or_default()),
             "description" => out.description = Some(field.text().await.unwrap_or_default()),
@@ -93,7 +155,9 @@ pub async fn parse_multipart(boundary: String, body: Bytes) -> Result<MultipartF
             "visibility" => out.visibility = Some(field.text().await.unwrap_or_default()),
             "placeIds" => {
                 let raw = field.text().await.unwrap_or_default();
-                if !raw.is_empty() {
+                if raw.is_empty() {
+                    out.place_ids = None;
+                } else {
                     out.place_ids =
                         Some(serde_json::from_str::<Vec<String>>(&raw).map_err(|_| {
                             refuse(
@@ -215,18 +279,18 @@ impl ClientCommunityWriteAuthority {
         capability: CommunityPermission,
         action: &str,
     ) -> Result<Self, Refusal> {
-        if is_banned(state, community_id, signer).await? {
-            return Err(refuse(
-                StatusCode::FORBIDDEN,
-                "Forbidden: banned from this community",
+        if !map_db(super::queries::community_exists(&state.pool, community_id, false).await)? {
+            return Err(Box::new(
+                super::http::CommError::not_found(format!("Community not found: {community_id}"))
+                    .into_response(),
             ));
         }
         let standing = load_client_standing(state, community_id, signer).await?;
         if !standing.has(capability) {
-            return Err(refuse(
+            return Err(Box::new(super::http::handler_error(
                 StatusCode::UNAUTHORIZED,
                 format!("The user {} doesn't have permission to {}", signer, action),
-            ));
+            )));
         }
         Ok(Self(()))
     }
@@ -291,9 +355,10 @@ mod tests {
             fields.place_ids,
             Some(vec!["a".to_string(), "b".to_string()])
         );
-        assert!(
-            fields.thumbnail.is_none(),
-            "an empty thumbnail part is no thumbnail"
+        assert_eq!(
+            fields.thumbnail,
+            Some(Vec::new()),
+            "an empty file is validated as an undersized thumbnail"
         );
         // upstream `fields-validator.ts`: anything but a JSON array of
         // strings is refused; an empty field is no change, `[]` clears

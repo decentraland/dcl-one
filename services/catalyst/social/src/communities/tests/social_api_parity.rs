@@ -512,7 +512,7 @@ fn keys(row: &Value) -> Vec<&str> {
     keys
 }
 
-const BARE: [&str; 3] = ["addedAt", "addedBy", "id"];
+const BARE: [&str; 1] = ["id"];
 
 #[tokio::test]
 async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
@@ -532,10 +532,7 @@ async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
             .is_some_and(|p| !p.is_empty()),
         "{seeded}"
     );
-    assert!(
-        seeded["addedBy"].is_string() && seeded["addedAt"].is_string(),
-        "{seeded}"
-    );
+    assert!(seeded.get("addedBy").is_none() && seeded.get("addedAt").is_none());
     assert!(
         seeded.get("communityId").is_none() && seeded.get("kind").is_none(),
         "{seeded}"
@@ -546,7 +543,6 @@ async fn a_community_place_is_its_destination_when_the_id_names_one_exactly() {
         .unwrap()
         .keys()
         .map(String::as_str)
-        .chain(["addedAt", "addedBy"])
         .collect();
     expected.sort();
     assert_eq!(keys(seeded), expected);

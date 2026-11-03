@@ -53,6 +53,8 @@ mod requests;
 pub(crate) mod voice;
 mod write_support;
 
+pub(crate) use places::{destinations_of, positions_and_worlds};
+
 #[cfg(test)]
 mod tests;
 
@@ -143,7 +145,7 @@ impl Settings {
             cdn_url: "http://cdn.test".to_string(),
             faces: profiles::FaceUrls::new(None, "http://127.0.0.1:9/profile-images/", false),
             archipelago_stats_url: None,
-            places_ownership_check: false,
+            places_ownership_check: true,
             mirror_interval: std::time::Duration::from_secs(3600),
         }
     }
@@ -169,6 +171,9 @@ pub struct State {
     /// The social RPC's fan-out, attached in `serve`: membership changes and
     /// deletions reach the open community-member connectivity streams.
     pub updates: std::sync::OnceLock<crate::rpc::pubsub::PubSub>,
+    /// The process's shared chain reader, attached by `serve`. Profile claims
+    /// are user-authored and cannot establish NAME ownership.
+    pub chain_index: std::sync::OnceLock<Arc<crate::chain_index::ChainIndex>>,
     /// The communities mirror's upstream, set when its job is attached: the
     /// listing then answers that mirror's copy ([`copies`]).
     pub mirror_source: std::sync::OnceLock<String>,
@@ -251,6 +256,7 @@ impl State {
             voice: std::sync::OnceLock::new(),
             worlds: std::sync::OnceLock::new(),
             updates: std::sync::OnceLock::new(),
+            chain_index: std::sync::OnceLock::new(),
             mirror_source: std::sync::OnceLock::new(),
             pass_markers: copies::Markers::new(copies::MARKER_TTL),
             sources: copies::Sources::bounded(copies::MARKER_TTL, copies::SOURCES_CAP),
@@ -307,6 +313,21 @@ impl State {
     /// Attaches the comms module's voice-room kick (once).
     pub fn set_voice_eviction(&self, voice: Arc<dyn VoiceEviction>) {
         let _ = self.voice.set(voice);
+    }
+
+    pub fn set_chain_index(&self, index: Arc<crate::chain_index::ChainIndex>) {
+        let _ = self.chain_index.set(index);
+    }
+
+    pub(crate) async fn has_owned_name(&self, wallet: &Address) -> Result<bool, CommError> {
+        let index = self.chain_index.get().ok_or(CommError::Internal)?;
+        crate::chain_index::graph::owned_names(index, wallet.as_str())
+            .await
+            .map(|names| !names.is_empty())
+            .map_err(|error| {
+                tracing::error!(%error, %wallet, "NAME ownership lookup failed");
+                CommError::Internal
+            })
     }
 
     /// Attaches the worlds module's re-admission (once).
@@ -680,7 +701,7 @@ pub fn router(state: SharedState) -> Router {
             state.clone(),
             copies::gate,
         ))
-        .layer(DefaultBodyLimit::max(512 * 1024))
+        .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(axum::middleware::from_fn(cors::social_api_cors))
         .with_state(state)
 }

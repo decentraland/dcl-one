@@ -299,6 +299,19 @@ pub async fn envelopes(State(state): State<SharedState>, request: Request, next:
     let Some(route) = FedRoute::of(request.method(), request.uri().path()) else {
         return next.run(request).await;
     };
+    // Form writes cannot contain a JSON federation envelope. Hand their
+    // bounded body directly to the native FormData-compatible handler.
+    if request
+        .headers()
+        .get(axum::http::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|value| {
+            value.starts_with("multipart/form-data")
+                || value.starts_with("application/x-www-form-urlencoded")
+        })
+    {
+        return next.run(request).await;
+    }
     let (parts, body) = request.into_parts();
     let bytes = match axum::body::to_bytes(body, BODY_LIMIT).await {
         Ok(b) => b,
@@ -557,7 +570,10 @@ async fn create(ctx: &Ctx<'_>) -> Response {
             return bad(e);
         }
     }
-    if let Some(false) = ctx.state.profiles.has_owned_name(signer.as_str()).await {
+    if !match ctx.state.has_owned_name(&signer).await {
+        Ok(owns) => owns,
+        Err(error) => return error.into_response(),
+    } {
         return err_json(
             StatusCode::UNAUTHORIZED,
             format!("The user {signer} doesn't have any names"),
@@ -1801,7 +1817,20 @@ mod tests {
         sign(w, domains::communities(), message, at)
     }
 
-    async fn claimed_name(pool: &PgPool, w: &PrivateKeySigner) {
+    async fn claimed_name(pool: &PgPool, state: &CommunitiesState, w: &PrivateKeySigner) {
+        state.set_chain_index(std::sync::Arc::new(crate::chain_index::ChainIndex::new(
+            crate::http::Outbound::for_tests(),
+            crate::chain_index::IndexSettings::for_tests(),
+        )));
+        state.chain_index.get().unwrap().graph.names.insert(
+            address(w),
+            std::sync::Arc::new(vec![crate::chain_index::graph::OwnedName {
+                name: "Named".to_string(),
+                contract_address: "0x0000000000000000000000000000000000000001".to_string(),
+                token_id: "1".to_string(),
+                price: None,
+            }]),
+        );
         let metadata = json!({ "v": { "avatars": [{ "name": "fed", "hasClaimedName": true, "avatar": { "snapshots": { "face256": "bafkface" } } }] } });
         sqlx::query(
             "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
@@ -1858,7 +1887,7 @@ mod tests {
         state.set_voice_eviction(recorded.clone());
         let app = Router::new().merge(super::super::router(state.clone()));
         let (owner, member) = (PrivateKeySigner::random(), PrivateKeySigner::random());
-        claimed_name(&pool, &owner).await;
+        claimed_name(&pool, &state, &owner).await;
         for private in [true, false] {
             let name = format!("voice {}", &Uuid::new_v4().simple().to_string()[..8]);
             let (status, body) = send(
@@ -1941,7 +1970,7 @@ mod tests {
             PrivateKeySigner::random(),
             PrivateKeySigner::random(),
         );
-        claimed_name(&pool, &owner).await;
+        claimed_name(&pool, &state, &owner).await;
         let create = async || {
             let name = format!("exits {}", &Uuid::new_v4().simple().to_string()[..8]);
             let create = CommunityCreate {
@@ -2131,6 +2160,7 @@ mod tests {
             std::sync::Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
         let settings = super::super::Settings {
             admin_token: Some(ADMIN.into()),
+            places_ownership_check: false,
             ..super::super::Settings::for_tests()
         };
         let state = std::sync::Arc::new(CommunitiesState::new(
@@ -2149,7 +2179,7 @@ mod tests {
             PrivateKeySigner::random(),
             PrivateKeySigner::random(),
         );
-        claimed_name(&pool, &owner).await;
+        claimed_name(&pool, &state, &owner).await;
         let (_, before) = call(
             &app,
             "GET",

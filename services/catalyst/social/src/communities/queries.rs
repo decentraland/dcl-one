@@ -69,7 +69,7 @@ where
 }
 
 fn default_visibility_clause(
-    member_expr: &str,
+    _member_expr: &str,
     has_user: bool,
     only_member_of: bool,
     only_with_active_voice_chat: bool,
@@ -79,16 +79,17 @@ fn default_visibility_clause(
     } else if only_member_of {
         None
     } else if only_with_active_voice_chat {
-        Some(format!(
-            "({member_expr} OR (NOT c.unlisted AND NOT c.private))"
-        ))
+        // Upstream applies the active-room visibility check after pagination.
+        None
     } else {
         Some("NOT c.unlisted".to_string())
     }
 }
 
 fn escape_like(s: &str) -> String {
-    s.replace('%', "\\%").replace('_', "\\_")
+    s.replace('\\', "\\\\")
+        .replace('%', "\\%")
+        .replace('_', "\\_")
 }
 
 pub async fn community_exists(
@@ -218,7 +219,7 @@ pub async fn get_by_id(
         active,
         members_count,
         is_live: false,
-        voice_chat_status: VoiceChatStatus::idle(),
+        voice_chat_status: None,
         visibility: None,
         role: None,
         is_banned: None,
@@ -232,13 +233,15 @@ pub async fn get_by_id(
         detail.role = Some(member_role.unwrap_or_else(|| "none".to_string()));
         detail.is_banned = Some(banned.unwrap_or(false));
     }
-    if let Some((participants, moderators)) = participants.zip(moderators) {
+    if (!private || detail.role.as_deref().is_some_and(|r| r != "none"))
+        && let Some((participants, moderators)) = participants.zip(moderators)
+    {
         detail.is_live = true;
-        detail.voice_chat_status = VoiceChatStatus {
+        detail.voice_chat_status = Some(VoiceChatStatus {
             is_active: true,
             participant_count: participants as i64,
             moderator_count: moderators as i64,
-        };
+        });
     }
     Ok(Some(detail))
 }
@@ -412,8 +415,11 @@ pub async fn list(
     .await?;
 
     let signed = viewer.is_some();
-    let results = rows
+    let results: Vec<_> = rows
         .into_iter()
+        .filter(|row| {
+            !only_with_active_voice_chat || !signed || row.9 != "none" || (!row.4 && !row.6)
+        })
         .map(
             |(
                 id,
@@ -454,7 +460,7 @@ pub async fn list(
                     active,
                     members_count,
                     is_live,
-                    voice_chat_status,
+                    voice_chat_status: (signed || is_live).then_some(voice_chat_status),
                     visibility: signed
                         .then(|| if unlisted { "unlisted" } else { "all" }.to_string()),
                     role: signed.then_some(role),
@@ -467,6 +473,11 @@ pub async fn list(
             },
         )
         .collect();
+    let total = if only_with_active_voice_chat {
+        results.len() as i64
+    } else {
+        total
+    };
     Ok((results, total))
 }
 
@@ -933,11 +944,13 @@ type AggregatedRequestRow = (
     bool,
     i64,
     bool,
+    String,
+    i32,
+    i32,
 );
 
 /// The wallet's own pending requests/invites with the community summary the
-/// client renders them with; `_hasThumbnail` is a private marker the handler
-/// replaces with `thumbnailUrl`. As upstream (`aggregateRequestsWithCommunities`),
+/// client renders them with. As upstream (`aggregateRequestsWithCommunities`),
 /// the page is cut from every pending request and then drops the ones whose
 /// community is inactive or bans the wallet; the total counts them all.
 pub async fn list_requests_by_member(
@@ -953,13 +966,15 @@ pub async fn list_requests_by_member(
     let limit_idx = if kind.is_some() { 3 } else { 2 };
     let offset_idx = limit_idx + 1;
     let select_sql = format!(
-        "SELECT r.id, r.community_id, r.member_address, r.status, r.type, \
+        "WITH {VOICE_CTE} SELECT r.id, r.community_id, r.member_address, r.status, r.type, \
                 c.name, c.description, c.owner_address, c.private, c.active, \
                 (SELECT COUNT(*) FROM social.community_members m WHERE m.community_id = c.id) AS members_count, \
-                EXISTS (SELECT 1 FROM social.community_thumbnails t WHERE t.community_id = c.id) AS has_thumbnail \
+                c.unlisted, COALESCE(m.role, 'none'), COALESCE(v.participants, 0), COALESCE(v.moderators, 0) \
          FROM (SELECT * FROM social.community_requests WHERE {where_sql} \
                ORDER BY created_at DESC LIMIT ${limit_idx} OFFSET ${offset_idx}) r \
          JOIN social.communities c ON c.id = r.community_id \
+         LEFT JOIN social.community_members m ON m.community_id = c.id AND m.member_address = $1 \
+         LEFT JOIN voice v ON v.community_id = c.id \
          WHERE c.active AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
                WHERE b.community_id = c.id AND b.banned_address = $1 AND b.active) \
          ORDER BY r.created_at DESC"
@@ -990,7 +1005,7 @@ pub async fn list_requests_by_member(
                 private,
                 active,
                 members_count,
-                has_thumbnail,
+                unlisted, role, participants, moderators,
             )| {
                 serde_json::json!({
                     "id": id,
@@ -1004,9 +1019,12 @@ pub async fn list_requests_by_member(
                     "privacy": if private { "private" } else { "public" },
                     "active": active,
                     "membersCount": members_count,
-                    "role": "none",
+                    "role": role,
+                    "visibility": if unlisted { "unlisted" } else { "all" },
+                    "voiceChatStatus": if !private || role != "none" {
+                        serde_json::json!({ "isActive": participants > 0, "participantCount": participants, "moderatorCount": moderators })
+                    } else { serde_json::json!({ "isActive": false, "participantCount": 0, "moderatorCount": 0 }) },
                     "friends": serde_json::Value::Array(vec![]),
-                    "_hasThumbnail": has_thumbnail,
                 })
             },
         )
@@ -1335,12 +1353,8 @@ mod tests {
     }
 
     #[test]
-    fn active_voice_chat_keeps_member_or_public_listed_filter() {
-        let clause = default_visibility_clause(MEMBER_EXPR, true, false, true).unwrap();
-        assert_eq!(
-            clause,
-            format!("({MEMBER_EXPR} OR (NOT c.unlisted AND NOT c.private))")
-        );
+    fn active_voice_chat_filters_visibility_after_the_page() {
+        assert!(default_visibility_clause(MEMBER_EXPR, true, false, true).is_none());
     }
 
     #[test]
