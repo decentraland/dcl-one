@@ -5324,7 +5324,7 @@
       "id": "uws_http:GET:/metrics",
       "owner": "inventory-auxiliary",
       "status": "known_gap",
-      "result": "GET uses source WKC_METRICS_PUBLIC_PATH, empty/default path fallback and optional case-sensitive Bearer gate. Literal-space token parsing accepts the source extra-token case and rejects lowercase/double-space variants before rendering. The route has no CORS and reads a44-family filtered view of the existing process recorder; no new listener/recorder.",
+      "result": "GET uses source WKC_METRICS_PUBLIC_PATH, empty/default path fallback and optional case-sensitive Bearer gate. Literal-space token parsing accepts the source extra-token case and rejects lowercase/double-space variants before rendering. The route has no CORS and reads a44-family filtered view of the existing process recorder; no new listener/recorder. The emitted message-size distribution now exports the source histogram TYPE, finite buckets, labels, cumulative counts and sum, paired with84 actual source-component observations and the real candidate exporter.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
@@ -5343,11 +5343,21 @@
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/metrics-inventory.json",
           "scope": "Per-family source name,type,labels,buckets and candidate literal sites; static presence is not runtime acceptance."
+        },
+        {
+          "path": "services/catalyst/comms/src/metrics.rs",
+          "test": "social_message_histogram_matches_source_wire_buckets_counts_and_sums",
+          "scope": "Eighty-four actual installed source metric-component observations, independently regenerated exactly, compare parsed TYPE, labels, all finite/+Inf buckets, count and sum with the existing real exporter. Root14 metrics tests pass. This checks the distribution representation, not socket event counts or every declared family."
+        },
+        {
+          "path": "services/catalyst/shared/src/rpc/ws.rs",
+          "scope": "Production path review distinguishes ordinary sends from guarded RPC frames. Source native send-result/drain callbacks and candidate physical flush/byte-budget-release events have different measurement boundaries; neither existing literal sites nor this code review proves event-count parity."
         }
       ],
       "gaps": [
         "WKC_METRICS_RESET_AT_NIGHT=true does not reset the social view; the shared global recorder is preserved.",
-        "The committed44-family inventory records literal names/type/labels and missing-site review candidates; entire production files are scanned, so inline-test sites are possible. Runtime event mapping,buckets,initialization and Node/V8 defaults remain outside that static evidence."
+        "The committed44-family inventory records literal names/type/labels and missing-site review candidates; entire production files are scanned, so inline-test sites are possible. Runtime event mapping,buckets,initialization and Node/V8 defaults remain outside that static evidence.",
+        "Source registration and event coverage still differ: the source component registers44 families and initializes16 unlabelled zero series; the candidate filter alone does not register those values. Dynamic-name review identifies three emitters beyond the14 literal names, not17 passing families;27 declared names have no identified production emitter in that review. Guarded RPC sends bypass ordinary send/size measurements, and byte-budget releases are not native drain callbacks. Runtime-specific Node/V8 collectors remain separate."
       ],
       "remaining_verification": "Provider-specific default collectors, night reset semantics, actual disconnected scrape, runtime label/event interpretation and arbitrary wildcard/custom-path collisions remain unverified. Global sample values across processes are not compared."
     },

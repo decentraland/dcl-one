@@ -587,6 +587,15 @@
       ],
       "candidate": [
         {
+          "path": "services/catalyst/comms/src/metrics.rs",
+          "line": 89,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
           "line": 196,
           "kind": "histogram",
