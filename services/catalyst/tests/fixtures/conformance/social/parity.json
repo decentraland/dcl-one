@@ -349,7 +349,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -378,7 +378,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -407,7 +407,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -436,7 +436,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -499,7 +499,7 @@
       "id": "api_http:DELETE:/v1/private-voice-chats/:callId",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 9 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -518,7 +518,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -953,7 +953,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1440,7 +1440,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1489,7 +1489,7 @@
       "id": "api_http:PATCH:/v1/private-voice-chats/:callId",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 10 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 20 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -1508,7 +1508,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1829,7 +1829,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1858,7 +1858,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1887,7 +1887,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -2002,7 +2002,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -2126,7 +2126,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
-          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+          "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
