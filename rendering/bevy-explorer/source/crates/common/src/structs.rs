@@ -911,7 +911,7 @@ impl Default for GraphicsSettings {
             shadow_caster_count: 3,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
-            fog: FogSetting::Atmospheric,
+            fog: FogSetting::On,
             bloom: BloomSetting::Low,
             dof: DofSetting::High,
             ssao: SsaoSetting::Off,
@@ -1074,8 +1074,8 @@ pub struct FullscreenResSetting(pub UVec2);
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FogSetting {
     Off,
-    Basic,
-    Atmospheric,
+    #[serde(alias = "Basic", alias = "Atmospheric")]
+    On,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
