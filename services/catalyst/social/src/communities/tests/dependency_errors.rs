@@ -112,7 +112,7 @@ async fn every_community_http_database_failure_uses_the_source_message_boundary(
             }
             ("post", "/v1/communities/:id/posts") => call.json(&json!({"content":"Fixture post"})),
             ("post", "/v1/communities/:id/requests") => {
-                call.json(&json!({"type":"request_to_join"}))
+                call.json(&json!({"type":"request_to_join","targetedAddress":actor.address.as_str()}))
             }
             ("patch", "/v1/communities/:id/requests/:requestId") => {
                 call.json(&json!({"intention":"accept"}))
