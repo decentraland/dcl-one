@@ -713,8 +713,23 @@
         10,
         30
       ],
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 466,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 485,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ai_compliance_validation_total",
@@ -723,8 +738,54 @@
         "result"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 465,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 474,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 481,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 487,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/communities/compliance.rs",
+          "line": 490,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     }
   ]
 }
