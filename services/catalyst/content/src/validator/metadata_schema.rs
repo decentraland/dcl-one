@@ -1,12 +1,14 @@
 //! The metadata of each entity type against the `@dcl/schemas` 27 schema
 //! the reference validator applies after ADR-45: required fields, JSON
 //! types, enums, numeric ranges, patterns, array bounds and the
-//! standard/base/third-party item variants. Not carried: the linked-wearable
-//! `mappings` and the spring bones shape (checked by [`super::spring_bones`]).
+//! standard/base/third-party item variants and the linked-wearable
+//! `mappings`. Not carried: the spring bones shape (checked by
+//! [`super::spring_bones`]).
 //! The first failure answers, as a path and an ajv-style reason after the
 //! reference's sentence.
 
-use std::collections::HashMap;
+use std::cmp::Ordering;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Value};
 
@@ -725,7 +727,8 @@ fn is_base_item(m: &Obj, registries: &[&str]) -> bool {
 /// `isThirdParty`: a valid merkle proof whose hashing keys are all present.
 fn is_third_party(m: &Obj) -> bool {
     let shape = required(m, "merkleProof", ROOT, merkle_proof)
-        .and_then(|_| required(m, "content", ROOT, content_map));
+        .and_then(|_| required(m, "content", ROOT, content_map))
+        .and_then(|_| optional(m, "mappings", ROOT, mappings));
     shape.is_ok()
         && m["merkleProof"]["hashingKeys"]
             .as_array()
@@ -733,6 +736,180 @@ fn is_third_party(m: &Obj) -> bool {
                 keys.iter()
                     .all(|k| k.as_str().is_some_and(|k| m.contains_key(k)))
             })
+}
+
+// Linked-wearable mappings.
+
+const CONTRACT_NETWORKS: &[&str] = &[
+    "mainnet",
+    "base_mainnet",
+    "base_sepolia",
+    "monad_mainnet",
+    "monad_testnet",
+    "ape_mainnet",
+    "ape_caldera",
+    "matic",
+    "sepolia",
+    "amoy",
+];
+const MAPPING_TYPES: &[&str] = &["single", "any", "multiple", "range"];
+
+fn is_token_id(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn token_id(v: &Value, p: &str) -> Check {
+    pattern(v, p, is_token_id)
+}
+
+/// A decimal token id ordered by value, as the reference's `BigInt`.
+#[derive(Clone, Copy)]
+struct TokenId<'a>(&'a str);
+
+impl PartialEq for TokenId<'_> {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for TokenId<'_> {}
+
+impl Ord for TokenId<'_> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let a = self.0.trim_start_matches('0');
+        let b = other.0.trim_start_matches('0');
+        a.len().cmp(&b.len()).then_with(|| a.cmp(b))
+    }
+}
+
+impl PartialOrd for TokenId<'_> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// `Mappings`: networks to contracts to lists of `Mapping`, no two of one
+/// contract overlapping.
+fn mappings(v: &Value, p: &str) -> Check {
+    let invalid = || {
+        Err(format!(
+            "{p} must pass \"_isMappingsValid\" keyword validation"
+        ))
+    };
+    // Nullable, but the reference's overlap check throws on `null`.
+    if v.is_null() {
+        return invalid();
+    }
+    let m = obj(v, p)?;
+    min_properties(m, p)?;
+    no_extra_keys(m, CONTRACT_NETWORKS, p)?;
+    for (network, contracts) in m {
+        let p = child(p, network);
+        let contracts = obj(contracts, &p)?;
+        min_properties(contracts, &p)?;
+        if let Some(k) = contracts.keys().find(|k| !is_eth_address(k)) {
+            return Err(format!("{p} must NOT have additional property '{k}'"));
+        }
+        for (contract, list) in contracts {
+            let p = child(&p, contract);
+            each(array(list, &p)?, &p, mapping)?;
+        }
+    }
+    if m.values().any(|contracts| {
+        let mut by_contract: HashMap<String, Vec<&Obj>> = HashMap::new();
+        for (contract, list) in contracts.as_object().into_iter().flatten() {
+            by_contract
+                .entry(contract.to_lowercase())
+                .or_default()
+                .extend(
+                    list.as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(Value::as_object),
+                );
+        }
+        by_contract.values().any(|list| mappings_overlap(list))
+    }) {
+        return invalid();
+    }
+    Ok(())
+}
+
+fn min_properties(m: &Obj, p: &str) -> Check {
+    if m.is_empty() {
+        return Err(format!("{p} must NOT have fewer than 1 properties"));
+    }
+    Ok(())
+}
+
+fn mapping(v: &Value, p: &str) -> Check {
+    let m = obj(v, p)?;
+    required(m, "type", p, |v, p| one_of(v, MAPPING_TYPES, p))?;
+    match m["type"].as_str().unwrap_or_default() {
+        "single" => {
+            required(m, "id", p, token_id)?;
+            no_extra_keys(m, &["type", "id"], p)
+        }
+        "any" => no_extra_keys(m, &["type"], p),
+        "range" => {
+            required(m, "from", p, token_id)?;
+            required(m, "to", p, token_id)?;
+            no_extra_keys(m, &["type", "from", "to"], p)?;
+            let (from, to) = (m["from"].as_str(), m["to"].as_str());
+            if TokenId(from.unwrap_or_default()) > TokenId(to.unwrap_or_default()) {
+                return Err(format!(
+                    "{p} must pass \"_fromLessThanOrEqualTo\" keyword validation"
+                ));
+            }
+            Ok(())
+        }
+        _ => {
+            required(m, "ids", p, |v, p| {
+                let ids = array(v, p)?;
+                each(ids, p, token_id)?;
+                min_items(ids, 1, p)?;
+                unique(ids, p)
+            })?;
+            no_extra_keys(m, &["type", "ids"], p)
+        }
+    }
+}
+
+/// The reference's `createMappingsHelper` refusal: `any` overlaps
+/// everything, ids match as strings and fall in ranges by value.
+fn mappings_overlap(list: &[&Obj]) -> bool {
+    let mut ids: Vec<TokenId> = Vec::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut ranges: Vec<(TokenId, TokenId)> = Vec::new();
+    for m in list {
+        let str_of = |key: &str| m.get(key).and_then(Value::as_str).unwrap_or_default();
+        match str_of("type") {
+            "any" if list.len() > 1 => return true,
+            "single" => ids.push(TokenId(str_of("id"))),
+            "multiple" => ids.extend(
+                m.get("ids")
+                    .and_then(Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(Value::as_str)
+                    .map(TokenId),
+            ),
+            "range" => ranges.push((TokenId(str_of("from")), TokenId(str_of("to")))),
+            _ => {}
+        }
+    }
+    if ids.iter().any(|id| !seen.insert(id.0)) {
+        return true;
+    }
+    ids.sort_unstable();
+    ranges.sort_unstable();
+    let mut furthest: Option<TokenId> = None;
+    ranges.iter().any(|&(from, to)| {
+        let overlaps_previous = furthest.is_some_and(|end| from <= end);
+        furthest = furthest.max(Some(to));
+        let first_at_or_after = ids.partition_point(|id| *id < from);
+        overlaps_previous || ids.get(first_at_or_after).is_some_and(|id| *id <= to)
+    })
 }
 
 /// `@dcl/schemas` 27.4 also counts the scene emotes as base emotes.
@@ -826,6 +1003,7 @@ fn emote(v: &Value) -> Check {
         req(m, key, ROOT)?;
     }
     item_properties(m)?;
+    optional(m, "mappings", ROOT, mappings)?;
     let Some(data) = m.get("emoteDataADR74") else {
         return Err("emote should have \"emoteDataADR74\" and match its schema".to_string());
     };
@@ -1273,6 +1451,117 @@ mod tests {
             EntityType::Emote,
             e,
             "metadata must have required property 'image'",
+        );
+    }
+
+    /// Each case agrees with `Emote.validate` of `@dcl/schemas` 27.2.0; `@`
+    /// is a contract address.
+    #[test]
+    fn linked_wearable_mappings_follow_the_reference() {
+        const CONTRACT: &str = "0xcccc000000000000000000000000000000000003";
+        let cases = [
+            (r#"{"bad": 1}"#, false),
+            (r#"{}"#, false),
+            (r#"{"mainnet": {}}"#, false),
+            (r#"{"mainnet": {"0xnotanaddress": []}}"#, false),
+            (
+                r#"{"mainnet": {"@": [{"type": "single", "id": "1"}, {"type": "range", "from": "2", "to": "10"}, {"type": "multiple", "ids": ["11", "12"]}]}}"#,
+                true,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "single", "id": "5"}, {"type": "range", "from": "2", "to": "10"}]}}"#,
+                false,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "any"}, {"type": "single", "id": "1"}]}}"#,
+                false,
+            ),
+            (r#"{"amoy": {"@": [{"type": "any"}]}}"#, true),
+            (
+                r#"{"mainnet": {"@": [{"type": "range", "from": "10", "to": "9"}]}}"#,
+                false,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "range", "from": "1", "to": "5"}, {"type": "range", "from": "5", "to": "9"}]}}"#,
+                false,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "range", "from": "1", "to": "4"}, {"type": "range", "from": "5", "to": "9"}]}}"#,
+                true,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "range", "from": "1", "to": "100"}, {"type": "range", "from": "5", "to": "9"}]}}"#,
+                false,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "single", "id": "01"}, {"type": "single", "id": "1"}]}}"#,
+                true,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "single", "id": "01"}, {"type": "range", "from": "1", "to": "1"}]}}"#,
+                false,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "multiple", "ids": ["7", "8"]}, {"type": "single", "id": "8"}]}}"#,
+                false,
+            ),
+            (
+                r#"{"mainnet": {"0xCCCC000000000000000000000000000000000003": [{"type": "single", "id": "1"}], "@": [{"type": "single", "id": "1"}]}}"#,
+                false,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "single", "id": "1"}]}, "matic": {"@": [{"type": "single", "id": "1"}]}}"#,
+                true,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "multiple", "ids": ["1", "1"]}]}}"#,
+                false,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "single", "id": "1", "extra": 1}]}}"#,
+                false,
+            ),
+            (r#"{"mainnet": {"@": [{"type": "bogus"}]}}"#, false),
+            (
+                r#"{"mainnet": {"@": [{"type": "single", "id": "x1"}]}}"#,
+                false,
+            ),
+            (
+                r#"{"mainnet": {"@": [{"type": "range", "from": "99999999999999999999", "to": "100000000000000000000"}]}}"#,
+                true,
+            ),
+            (r#"null"#, false),
+        ];
+        for (mappings, valid) in cases {
+            let mappings: Value = serde_json::from_str(&mappings.replace('@', CONTRACT)).unwrap();
+            let mut e = emote();
+            e["mappings"] = mappings.clone();
+            assert_eq!(errors(EntityType::Emote, e).is_empty(), valid, "{mappings}");
+        }
+        let mut e = emote();
+        e["mappings"] = json!({"bad": 1});
+        assert_invalid(
+            EntityType::Emote,
+            e,
+            "metadata.mappings must NOT have additional property 'bad'",
+        );
+        let linked = json!({"amoy": {CONTRACT: [{"type": "any"}]}});
+        let mut w = third_party(wearable());
+        w["mappings"] = linked.clone();
+        assert_valid(EntityType::Wearable, w.clone());
+        w["mappings"] =
+            json!({"amoy": {CONTRACT: [{"type": "any"}, {"type": "single", "id": "1"}]}});
+        assert_invalid(
+            EntityType::Wearable,
+            w,
+            "either standard XOR thirdparty properties conditions must be met",
+        );
+        let mut w = wearable();
+        w["mappings"] = linked;
+        assert_invalid(
+            EntityType::Wearable,
+            w,
+            "either standard XOR thirdparty properties conditions must be met",
         );
     }
 
