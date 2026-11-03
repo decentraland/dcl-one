@@ -293,7 +293,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
           "test": "community_analytics_payloads_and_no_ops_match_executed_source",
-          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Write-failure boundaries are paired separately by the nine source PostgreSQL trigger cases."
         }
       ],
       "gaps": [],
@@ -1977,7 +1977,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
           "test": "community_analytics_payloads_and_no_ops_match_executed_source",
-          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Write-failure boundaries are paired separately by the nine source PostgreSQL trigger cases."
         }
       ],
       "gaps": [],
@@ -2330,7 +2330,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
           "test": "community_analytics_payloads_and_no_ops_match_executed_source",
-          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Write-failure boundaries are paired separately by the nine source PostgreSQL trigger cases."
         }
       ],
       "gaps": [],
@@ -2339,8 +2339,8 @@
     {
       "id": "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; nine real-source PostgreSQL trigger scenarios pair the separate BAN/update commit phases and late-failure effects.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -2388,12 +2388,15 @@
         {
           "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
           "test": "community_analytics_payloads_and_no_ops_match_executed_source",
-          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Write-failure boundaries are paired separately by the nine source PostgreSQL trigger cases."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/write_failures.rs",
+          "test": "ban_and_privacy_write_failures_preserve_source_committed_stages",
+          "scope": "Nine actual source HTTP/domain/SQL trigger scenarios independently regenerated exactly. Candidate real PostgreSQL triggers compare status/body, surviving membership/likes/ban/requests/places and analytics. Source authentication and external providers are injected; no production crash/concurrency proof."
         }
       ],
-      "gaps": [
-        "Functional difference remains; see community-client-write-failure-phases."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -2586,7 +2589,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
           "test": "community_analytics_payloads_and_no_ops_match_executed_source",
-          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Write-failure boundaries are paired separately by the nine source PostgreSQL trigger cases."
         }
       ],
       "gaps": [],
@@ -2839,8 +2842,8 @@
     {
       "id": "api_http:POST:/v1/private-voice-chats",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Six actual Social/companion PostgreSQL lifecycle cases and two media-writer sequences now pair retained media with new pending calls. Ordered normalized-wallet locks and explicit READ COMMITTED preserve one pending intent across roles without deleting historical media.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -2873,12 +2876,30 @@
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/private-lifecycle-source-cases.json",
-          "scope": "Six actual source Social/companion PostgreSQL presence cases; confirms source allowance/denial and retained media rows. Candidate correction is pending, not a passing parity proof."
+          "scope": "Six actual source Social/companion PostgreSQL presence cases and two media-writer sequences, independently regenerated exactly. Candidate regressions retain pending/media identities and suppress credential-time room deletion; source media transport is not instantiated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_bugs.rs",
+          "test": "new_pending_calls_match_source_while_historical_media_is_retained",
+          "scope": "Real candidate PostgreSQL lifecycle replay of all six source status/expiry cases; no live media provider."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_bugs.rs",
+          "test": "issuing_media_credentials_preserves_pending_and_prior_media_until_join",
+          "scope": "Real local Comms credentials and provider stub preserve pending plus two media histories, then verify explicit end and actual participant-join cleanup by call identity."
+        },
+        {
+          "path": "services/catalyst/comms/src/gatekeeper/voice/db.rs",
+          "test": "pending_starts_use_fresh_snapshots_with_repeatable_read_role_defaults",
+          "scope": "Two actual PostgreSQL writers wait behind an advisory-lock barrier with a REPEATABLE READ role default. Exactly one normalized-wallet pending wins across caller/callee roles and case; historical media remains."
+        },
+        {
+          "path": "services/catalyst/tests/schema_upgrade_from_closure_base.rs",
+          "test": "private_voice_release_retains_rows_then_real_migrate_adds_indexes_and_replays_nothing",
+          "scope": "Owned populated version-2 database release and canonical migration preserve call/participant rows, create both valid address indexes and replay no additive steps. No production DDL or rollback rehearsal."
         }
       ],
-      "gaps": [
-        "Functional difference remains; see private-call-stale-media-coexistence."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -2997,7 +3018,7 @@
       "id": "api_http:PUT:/v1/communities/:id",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; nine real-source PostgreSQL trigger scenarios pair the separate BAN/update commit phases and late-failure effects.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -3065,12 +3086,16 @@
         {
           "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
           "test": "community_analytics_payloads_and_no_ops_match_executed_source",
-          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Write-failure boundaries are paired separately by the nine source PostgreSQL trigger cases."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/write_failures.rs",
+          "test": "ban_and_privacy_write_failures_preserve_source_committed_stages",
+          "scope": "Nine actual source HTTP/domain/SQL trigger scenarios independently regenerated exactly. Candidate real PostgreSQL triggers compare status/body, surviving membership/likes/ban/requests/places and analytics. Source authentication and external providers are injected; no production crash/concurrency proof."
         }
       ],
       "gaps": [
-        "Provider transport bounds differ: the candidate caps response bodies at 4 MiB and applies 600s as a total request timeout, while the pinned Node SDK applies its abort timer until headers and uses runtime-specific body inactivity handling. Missing API credentials fail lazily rather than at the source component bootstrap; these startup/provider boundaries remain differences.",
-        "Functional difference remains; see community-client-write-failure-phases."
+        "Provider transport bounds differ: the candidate caps response bodies at 4 MiB and applies 600s as a total request timeout, while the pinned Node SDK applies its abort timer until headers and uses runtime-specific body inactivity handling. Missing API credentials fail lazily rather than at the source component bootstrap; these startup/provider boundaries remain differences."
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
@@ -4872,8 +4897,8 @@
     {
       "id": "rpc_unary:RPC:startPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Six actual Social/companion PostgreSQL lifecycle cases and two media-writer sequences now pair retained media with new pending calls. Ordered normalized-wallet locks and explicit READ COMMITTED preserve one pending intent across roles without deleting historical media.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -4911,12 +4936,30 @@
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/private-lifecycle-source-cases.json",
-          "scope": "Six actual source Social/companion PostgreSQL presence cases; confirms source allowance/denial and retained media rows. Candidate correction is pending, not a passing parity proof."
+          "scope": "Six actual source Social/companion PostgreSQL presence cases and two media-writer sequences, independently regenerated exactly. Candidate regressions retain pending/media identities and suppress credential-time room deletion; source media transport is not instantiated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_bugs.rs",
+          "test": "new_pending_calls_match_source_while_historical_media_is_retained",
+          "scope": "Real candidate PostgreSQL lifecycle replay of all six source status/expiry cases; no live media provider."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_bugs.rs",
+          "test": "issuing_media_credentials_preserves_pending_and_prior_media_until_join",
+          "scope": "Real local Comms credentials and provider stub preserve pending plus two media histories, then verify explicit end and actual participant-join cleanup by call identity."
+        },
+        {
+          "path": "services/catalyst/comms/src/gatekeeper/voice/db.rs",
+          "test": "pending_starts_use_fresh_snapshots_with_repeatable_read_role_defaults",
+          "scope": "Two actual PostgreSQL writers wait behind an advisory-lock barrier with a REPEATABLE READ role default. Exactly one normalized-wallet pending wins across caller/callee roles and case; historical media remains."
+        },
+        {
+          "path": "services/catalyst/tests/schema_upgrade_from_closure_base.rs",
+          "test": "private_voice_release_retains_rows_then_real_migrate_adds_indexes_and_replays_nothing",
+          "scope": "Owned populated version-2 database release and canonical migration preserve call/participant rows, create both valid address indexes and replay no additive steps. No production DDL or rollback rehearsal."
         }
       ],
-      "gaps": [
-        "Functional difference remains; see private-call-stale-media-coexistence."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -7733,7 +7776,7 @@
         "api_http:POST:/v1/communities/:id/requests",
         "api_http:PATCH:/v1/communities/:id/requests/:requestId"
       ],
-      "description": "All 16 source analytics event kinds are connected at the 17 voice/community producer sites through the shared concrete adapter. Source captures cover 29 voice scenarios and 19 community scenarios; candidate regressions pair all 29 voice and 17 normal/no-op community scenarios, with partial-write failures tracked separately. Source SDK configuration, response cancellation, cross-host redirects and whole-chain deadlines are independently recaptured. Known unaccepted transport differences remain: shared connect8s/read25s, host guarding and optional monolith startup when all analytics strings are absent. Deployed routing/provider behavior and transient-event cutover remain unverified."
+      "description": "All 16 source analytics event kinds are connected at the 17 voice/community producer sites through the shared concrete adapter. Source captures cover 29 voice scenarios and 19 community scenarios; candidate regressions pair all 29 voice and 17 normal/no-op community scenarios, with nine separately paired PostgreSQL trigger cases for partial-write boundaries. Source SDK configuration, response cancellation, cross-host redirects and whole-chain deadlines are independently recaptured. Known unaccepted transport differences remain: shared connect8s/read25s, host guarding and optional monolith startup when all analytics strings are absent. Deployed routing/provider behavior and transient-event cutover remain unverified."
     },
     {
       "id": "private-call-pending-expiry-start-order",
@@ -7742,7 +7785,7 @@
         "rpc_unary:RPC:startPrivateVoiceChat",
         "api_http:POST:/v1/private-voice-chats"
       ],
-      "description": "Pending calls now keep both parties busy until the expiry sweep deletes them; starting a call never reclaims expired pending rows or emits their EXPIRED event. All 29 voice analytics/source scenarios are now paired, including the expired-start case. Voice package 51 tests and comms voice-database six tests pass. Production sweep timing and existing-state cutover remain unverified."
+      "description": "Pending calls now keep both parties busy until the expiry sweep deletes them; starting a call never reclaims expired pending rows or emits their EXPIRED event. All 29 voice analytics/source scenarios are now paired, including the expired-start case. Voice package 55 tests and comms voice-database seven tests pass. Production sweep timing and existing-state cutover remain unverified."
     },
     {
       "id": "private-call-disconnect-accepted-media",
@@ -7751,7 +7794,7 @@
         "websocket:UPGRADE:/",
         "websocket:UPGRADE:/v1/stream"
       ],
-      "description": "Social disconnect now finishes only pending calls. An accepted row, its two participants and media room remain until explicit media end; the owned-PostgreSQL regression and source domain captures match. Package voice 51 tests pass. Live clients and media-room cutover remain unverified."
+      "description": "Social disconnect now finishes only pending calls. An accepted row, its two participants and media room remain until explicit media end; the owned-PostgreSQL regression and source domain captures match. Package voice 55 tests pass. Live clients and media-room cutover remain unverified."
     },
     {
       "id": "community-registry-read-failure-propagation",
@@ -7768,21 +7811,21 @@
     },
     {
       "id": "private-call-stale-media-coexistence",
-      "status": "known_gap",
+      "status": "unverified",
       "operations": [
         "rpc_unary:RPC:startPrivateVoiceChat",
         "api_http:POST:/v1/private-voice-chats"
       ],
-      "description": "Actual Social and companion PostgreSQL components permit a new pending call when existing accepted media presence is initial-expired, interrupted-expired or disconnected, retaining both media rows until their sweep. Candidate preflight agrees but reservation and caller/callee UNIQUE constraints still reject coexistence. Six source captures and a local RED reproduction exist. A data-preserving reviewed schema release, explicit transaction isolation and concurrency proof are under implementation; no production DDL has run."
+      "description": "Actual Social/companion PostgreSQL components and the candidate now permit a new pending call when retained media presence is initial-expired, interrupted-expired or disconnected. Six lifecycle cases and two media-writer sequences are independently recaptured exactly. Candidate credentials retain older pending/media rows; actual join and explicit end own cleanup by call identity. Explicit READ COMMITTED and ordered normalized-wallet locks preserve one pending across roles under a REPEATABLE READ role default. The explicit schema-version-3 release procedure preserves data and gates older binaries; package voice55, Comms private15, database7 and owned schema-upgrade5 tests pass. Aggregate validation, production migration, live media and cutover remain separate evidence requirements."
     },
     {
       "id": "community-client-write-failure-phases",
-      "status": "known_gap",
+      "status": "unverified",
       "operations": [
         "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
         "api_http:PUT:/v1/communities/:id"
       ],
-      "description": "Source BAN commits member removal and unlikes, emits analytics, then writes ban and removes requests; candidate currently rolls those writes back together. Source update also commits community changes before separate place changes and atomic bulk acceptance; candidate combines those phases. Late failures can therefore leave different data and events. Source fault captures and same-pool, client-only boundary corrections are under implementation. Federation and source-atomic join transactions must retain their contracts."
+      "description": "Client BAN and update now preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede separate places and atomic bulk acceptance. Nine actual-source PostgreSQL trigger captures independently match exactly; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified."
     },
     {
       "id": "community-voice-raw-cache-aliases",
