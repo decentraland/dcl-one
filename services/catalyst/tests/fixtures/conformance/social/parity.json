@@ -447,6 +447,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout_membership.rs",
+          "test": "community_voice_membership_pages_match_executed_source_failure_boundaries",
+          "scope": "Six actual-source update-handler/generator captures with 513 eligible subscribers replay against owned PostgreSQL; a test-local view raises on the second membership statement. Covers whole-audience failure and healthy recipient/Protobuf payload groups. No deployed broker/cutover equivalence is inferred."
         }
       ],
       "gaps": [
@@ -2413,6 +2418,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout_membership.rs",
+          "test": "community_voice_membership_pages_match_executed_source_failure_boundaries",
+          "scope": "Six actual-source update-handler/generator captures with 513 eligible subscribers replay against owned PostgreSQL; a test-local view raises on the second membership statement. Covers whole-audience failure and healthy recipient/Protobuf payload groups. No deployed broker/cutover equivalence is inferred."
         }
       ],
       "gaps": [
@@ -2623,7 +2633,8 @@
         }
       ],
       "gaps": [
-        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect.",
+        "Unaccepted private-call lifecycle difference; see private-call-pending-expiry-start-order."
       ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
@@ -2974,6 +2985,11 @@
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
           "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
           "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout_membership.rs",
+          "test": "community_voice_membership_pages_match_executed_source_failure_boundaries",
+          "scope": "Six actual-source update-handler/generator captures with 513 eligible subscribers replay against owned PostgreSQL; a test-local view raises on the second membership statement. Covers whole-audience failure and healthy recipient/Protobuf payload groups. No deployed broker/cutover equivalence is inferred."
         }
       ],
       "gaps": [],
@@ -3274,6 +3290,11 @@
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
           "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
           "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout_membership.rs",
+          "test": "community_voice_membership_pages_match_executed_source_failure_boundaries",
+          "scope": "Six actual-source update-handler/generator captures with 513 eligible subscribers replay against owned PostgreSQL; a test-local view raises on the second membership statement. Covers whole-audience failure and healthy recipient/Protobuf payload groups. No deployed broker/cutover equivalence is inferred."
         }
       ],
       "gaps": [],
@@ -3652,6 +3673,11 @@
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
           "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
           "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout_membership.rs",
+          "test": "community_voice_membership_pages_match_executed_source_failure_boundaries",
+          "scope": "Six actual-source update-handler/generator captures with 513 eligible subscribers replay against owned PostgreSQL; a test-local view raises on the second membership statement. Covers whole-audience failure and healthy recipient/Protobuf payload groups. No deployed broker/cutover equivalence is inferred."
         }
       ],
       "gaps": [
@@ -4533,6 +4559,11 @@
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
           "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
           "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout_membership.rs",
+          "test": "community_voice_membership_pages_match_executed_source_failure_boundaries",
+          "scope": "Six actual-source update-handler/generator captures with 513 eligible subscribers replay against owned PostgreSQL; a test-local view raises on the second membership statement. Covers whole-audience failure and healthy recipient/Protobuf payload groups. No deployed broker/cutover equivalence is inferred."
         }
       ],
       "gaps": [
@@ -4577,7 +4608,8 @@
         }
       ],
       "gaps": [
-        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect.",
+        "Unaccepted private-call lifecycle difference; see private-call-pending-expiry-start-order."
       ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
@@ -4883,7 +4915,7 @@
     {
       "id": "websocket:UPGRADE:/",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Source numeric conversions are now replayed: 13 auth settings, 16 native idle inputs and 100 actual signed-timestamp decisions. Independent f64 signature window and Node timer buckets preserve prefix/fraction/overflow behavior; native ushort conversion preserves idle admission. Package config 51, handshake 21 and socket 18 tests pass; root all-targets passes.",
       "evidence": [
         {
@@ -4921,13 +4953,15 @@
           "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Unaccepted private-call lifecycle difference; see private-call-disconnect-accepted-media."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Native uWS timer-wheel scheduling and every numeric configuration edge have not been exhaustively compared."
     },
     {
       "id": "websocket:UPGRADE:/v1/stream",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Source numeric conversions are now replayed: 13 auth settings, 16 native idle inputs and 100 actual signed-timestamp decisions. Independent f64 signature window and Node timer buckets preserve prefix/fraction/overflow behavior; native ushort conversion preserves idle admission. Package config 51, handshake 21 and socket 18 tests pass; root all-targets passes.",
       "evidence": [
         {
@@ -4955,7 +4989,9 @@
           "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Unaccepted private-call lifecycle difference; see private-call-disconnect-accepted-media."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Native uWS timer-wheel scheduling and every numeric configuration edge have not been exhaustively compared."
     }
   ],
@@ -7323,7 +7359,7 @@
     },
     {
       "id": "community-fanout-whole-membership-failure",
-      "status": "known_gap",
+      "status": "unverified",
       "operations": [
         "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
         "json_stream:SUBSCRIBE:community_voice_chat_updates",
@@ -7332,7 +7368,7 @@
         "api_http:POST:/v1/community-voice-chats",
         "api_http:DELETE:/v1/community-voice-chats/:communityId"
       ],
-      "description": "Fresh review FRESH-CODE-001: candidate delivers each 256-address page before later membership reads finish. Pinned logic/updates.ts379-426 gathers the entire audience first: any late-page failure aborts Members delivery or clears every isMember annotation for All STARTED. Candidate can partially deliver or preserve true annotations from earlier pages. An executed-source/owned-SQL second-page failure regression and focused fix are under implementation; public ENDED is independent of membership reads."
+      "description": "Pinned logic/updates.ts gathers every membership page before delivery. Candidate now snapshots eligible subscribers, completes all bounded 256-address probes before emitting, aborts all member-scoped delivery on any failed page and clears all isMember annotations on a failed public STARTED; public ENDED skips membership reads. Six independently recaptured actual-source cases and the owned-SQL second-page failure regression pass, including 513 eligible recipients and zero partial emissions. All seven fanout tests pass, including actual NATS. Final independent review and deployed failure behavior remain unverified."
     },
     {
       "id": "configured-social-analytics-effects",
@@ -7361,6 +7397,24 @@
         "api_http:PATCH:/v1/communities/:id/requests/:requestId"
       ],
       "description": "Pinned Social uses 16 analytics event kinds across 17 voice/community call sites. Installed @dcl/analytics-component posts event/body-with-env/context to ANALYTICS_API_URL with x-token, configured/default header timeout, immediate response cancellation and fire-and-forget failure isolation. Candidate Social currently emits none of these events. Adapter reuse of the existing Outbound and exact producer metadata/order are under implementation; deployed analytics configuration/routing and provider timing remain unverified."
+    },
+    {
+      "id": "private-call-pending-expiry-start-order",
+      "status": "known_gap",
+      "operations": [
+        "rpc_unary:RPC:startPrivateVoiceChat",
+        "api_http:POST:/v1/private-voice-chats"
+      ],
+      "description": "Pinned voice-db.ts busy checks and createPrivateVoiceChat consider every pending row regardless of age; expiry is a separate sweep. Candidate private_voice_preflight filters expired rows and create_pending_private_call reclaims them while starting, emitting EXPIRED before a new request. This can accept a start that the source rejects until its sweep. The difference has no recorded acceptance; an executed-source regression and focused correction are pending."
+    },
+    {
+      "id": "private-call-disconnect-accepted-media",
+      "status": "known_gap",
+      "operations": [
+        "websocket:UPGRADE:/",
+        "websocket:UPGRADE:/v1/stream"
+      ],
+      "description": "Pinned logic/voice/voice.ts endIncomingOrOutgoingPrivateVoiceChatForUser looks only in the pending-call relation; accepted calls have already left it. Candidate end_private_voice_chat_on_disconnect first terminates an accepted media call. Closing a Social socket can therefore end an ongoing media call that the source leaves running. The difference has no recorded acceptance; actual pending/accepted disconnect captures and a focused correction are pending."
     }
   ]
 }
