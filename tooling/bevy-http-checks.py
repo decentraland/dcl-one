@@ -15,6 +15,8 @@ REQUIRED = {
         "dropping_shared_readers_withdraws_only_the_last_claim_of_each_owner",
         "last_shared_reader_cancels_a_queued_attempt_and_a_retry_timer",
         "concurrent_writes_to_one_cache_key_publish_complete_files",
+        "cache_writer_skips_a_stale_staging_file",
+        "failed_cache_publish_removes_its_staging_file",
         "engine_request_keeps_its_slot_until_the_body_finishes",
         "readiness_poll_respects_retry_after_and_remaining_deadline",
     },

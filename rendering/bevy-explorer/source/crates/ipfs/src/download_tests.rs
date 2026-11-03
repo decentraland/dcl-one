@@ -315,10 +315,9 @@ async fn a_stale_upgrade_cannot_revive_a_download_after_its_last_reader_left() {
     }).await.expect("replacement did not get its own attempt");
 }
 
-#[tokio::test]
-async fn concurrent_writes_to_one_cache_key_publish_complete_files() {
+fn cache_fixture(label: &str) -> (Arc<IpfsIo>, PathBuf) {
     let dir = std::env::temp_dir().join(format!(
-        "ipfs-staging-{}-{}",
+        "ipfs-{label}-{}-{}",
         std::process::id(),
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -328,6 +327,36 @@ async fn concurrent_writes_to_one_cache_key_publish_complete_files() {
     std::fs::create_dir(&dir).unwrap();
     let mut io = ipfs();
     Arc::get_mut(&mut io).unwrap().default_fs_path = Some(dir.clone());
+    (io, dir)
+}
+
+#[tokio::test]
+async fn cache_writer_skips_a_stale_staging_file() {
+    let (io, dir) = cache_fixture("stale-staging");
+    let stale = dir.join(format!("asset.part-{}-0", std::process::id()));
+    std::fs::write(&stale, b"other writer").unwrap();
+    io.cache_bytes("asset", b"verified").await.unwrap();
+    assert_eq!(std::fs::read(dir.join("asset")).unwrap(), b"verified");
+    assert_eq!(std::fs::read(&stale).unwrap(), b"other writer");
+    std::fs::remove_file(dir.join("asset")).unwrap();
+    std::fs::remove_file(stale).unwrap();
+    std::fs::remove_dir(dir).unwrap();
+}
+
+#[tokio::test]
+async fn failed_cache_publish_removes_its_staging_file() {
+    let (io, dir) = cache_fixture("failed-publish");
+    let destination = dir.join("blocked");
+    std::fs::create_dir(&destination).unwrap();
+    assert!(io.cache_bytes("blocked", b"bytes").await.is_err());
+    std::fs::remove_dir(destination).unwrap();
+    // Reject a left-over staging file even when rename failed.
+    std::fs::remove_dir(dir).unwrap();
+}
+
+#[tokio::test]
+async fn concurrent_writes_to_one_cache_key_publish_complete_files() {
+    let (io, dir) = cache_fixture("concurrent-staging");
     let first = vec![1; 65536];
     let second = vec![2; 65536];
     let (a, b) = tokio::join!(

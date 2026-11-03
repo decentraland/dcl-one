@@ -296,7 +296,11 @@ fn init_asset_cmd(
                         };
                         match fetched {
                             Ok(bytes) => {
-                                let _ = io.cache_bytes(hash, &bytes).await; // no-op on web
+                                if io.cache_path().is_some()
+                                    && ipfs::content_hash::matches_content_hash(hash, &bytes)
+                                {
+                                    let _ = io.cache_bytes(hash, &bytes).await;
+                                }
                                 if let Err(e) =
                                     platform::write_scene_file(&scene_hash, &rel, &bytes, &target)
                                         .await

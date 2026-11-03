@@ -1,6 +1,6 @@
 use super::*;
 use priority_gate::{DownloadAttempts, DownloadReaders, GateClosed, Registration};
-use std::sync::{atomic::AtomicU64, Mutex};
+use std::sync::Mutex;
 use tokio::sync::oneshot;
 
 pub(super) struct SharedDownload {
@@ -364,20 +364,26 @@ impl IpfsIo {
         let Some(root) = self.cache_path() else {
             return Ok(());
         };
-        static NEXT_CACHE_PART: AtomicU64 = AtomicU64::new(0);
-        let sequence = NEXT_CACHE_PART.fetch_add(1, Ordering::Relaxed);
-        let pid = std::process::id();
-        let (Some(path), Some(destination)) = (
-            root.join_relative(format!("{key}.part-{pid}-{sequence}")),
-            root.join_relative(key),
-        ) else {
+        let Some(destination) = root.join_relative(key) else {
             anyhow::bail!("refusing to cache under `{key}`");
         };
-        let file = async_fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-            .await?;
+        let pid = std::process::id();
+        let (path, file) = loop {
+            let sequence = self.next_cache_part.fetch_add(1, Ordering::Relaxed);
+            let Some(path) = root.join_relative(format!("{key}.part-{pid}-{sequence}")) else {
+                anyhow::bail!("refusing to cache under `{key}`");
+            };
+            match async_fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+                .await
+            {
+                Ok(file) => break (path, file),
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error.into()),
+            }
+        };
         let mut staging = CacheTemp {
             path,
             published: false,

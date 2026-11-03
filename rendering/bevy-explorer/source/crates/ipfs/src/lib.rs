@@ -15,7 +15,7 @@ use std::{
     marker::PhantomData,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU16, AtomicU32, Ordering},
+        atomic::{AtomicU16, AtomicU32, AtomicU64, Ordering},
         Arc, Weak,
     },
 };
@@ -965,6 +965,7 @@ pub struct IpfsIo {
     is_preview: bool, // determines whether we always retry failed assets immediately
     default_io: Box<dyn ErasedAssetReader>,
     default_fs_path: Option<PathBuf>,
+    next_cache_part: AtomicU64,
     realm_config_receiver: tokio::sync::watch::Receiver<Option<RealmConfig>>,
     realm_config_sender: tokio::sync::watch::Sender<Option<RealmConfig>>,
     pub context: AsyncRwLock<IpfsContext>,
@@ -1002,6 +1003,7 @@ impl IpfsIo {
             is_preview,
             default_io,
             default_fs_path,
+            next_cache_part: AtomicU64::new(0),
             realm_config_receiver: receiver,
             realm_config_sender: sender,
             context: AsyncRwLock::new(IpfsContext {
@@ -2217,9 +2219,20 @@ mod tests {
     };
 
     #[cfg(not(target_arch = "wasm32"))]
+    fn read_request_headers(stream: &std::net::TcpStream) {
+        use std::io::{BufRead, BufReader};
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+            .unwrap();
+        assert!(BufReader::new(stream)
+            .lines()
+            .any(|line| line.unwrap().is_empty()));
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn content_retry_stops_after_four_attempts() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         use std::sync::Arc;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
@@ -2240,11 +2253,7 @@ mod tests {
                     }
                 };
                 stream.set_nonblocking(false).unwrap();
-                stream
-                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-                    .unwrap();
-                let mut request = [0; 1024];
-                stream.read(&mut request).unwrap();
+                read_request_headers(&stream);
                 stream.write_all(b"HTTP/1.1 503 Service Unavailable\r\nRetry-After: 0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
             }
             let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
@@ -2283,7 +2292,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn engine_request_keeps_its_slot_until_the_body_finishes() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         use std::sync::{mpsc, Arc};
         use std::time::Duration;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2292,8 +2301,7 @@ mod tests {
         let (resume, resumed) = mpsc::channel();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0; 1024];
-            stream.read(&mut request).unwrap();
+            read_request_headers(&stream);
             stream
                 .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\n")
                 .unwrap();
@@ -2345,7 +2353,7 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[tokio::test]
     async fn unsigned_content_fetch_retries_503_and_reports_terminal_404() {
-        use std::io::{Read, Write};
+        use std::io::Write;
         use std::sync::Arc;
         use std::time::Duration;
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -2366,9 +2374,7 @@ mod tests {
                     }
                 };
                 stream.set_nonblocking(false).unwrap();
-                stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
-                let mut request = [0; 1024];
-                stream.read(&mut request).unwrap();
+                read_request_headers(&stream);
                 stream.write_all(response.as_bytes()).unwrap();
             }
         });
