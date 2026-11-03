@@ -605,7 +605,7 @@
     {
       "id": "api_http:GET:/v1/communities/:id",
       "owner": "community-http",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
       "evidence": [
         {
@@ -623,7 +623,9 @@
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Pinned get-community handlers return unexpected dependency failures as500 {message}; the current generic CommError path returns a different envelope. Dedicated source-executed failure comparisons and scoped fixes are in progress."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -1094,7 +1096,7 @@
     {
       "id": "api_http:GET:/v2/communities/:id",
       "owner": "community-http",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
       "evidence": [
         {
@@ -1112,7 +1114,9 @@
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Pinned get-community handlers return unexpected dependency failures as500 {message}; the current generic CommError path returns a different envelope. Dedicated source-executed failure comparisons and scoped fixes are in progress."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -5582,6 +5586,15 @@
         "rpc_unary:RPC:unblockUser"
       ],
       "description": "RPC historical single/list profile semantics now pass executed-source cases, while community owner single lookups and the one registry cache shared across domains remain to be consolidated. New profile-write identity validation remains enforced; current local RPC and community caches are distinct."
+    },
+    {
+      "id": "community-dependency-error-boundaries",
+      "status": "known_gap",
+      "operations": [
+        "api_http:GET:/v1/communities/:id",
+        "api_http:GET:/v2/communities/:id"
+      ],
+      "description": "Static comparison confirms get-community v1/v2 catch unexpected dependency failures as500 {message}, while the generic target path emits another envelope. Other community CRUD/list handlers have handler-specific catches that require individual failure injection; successful DTO comparisons do not establish those boundaries. Voice mutation error middleware remains separate. Evidence: pinned src/controllers/handlers/http/get-community-handler.ts and get-community-v2-handler.ts against services/catalyst/social/src/communities/http.rs."
     }
   ]
 }
