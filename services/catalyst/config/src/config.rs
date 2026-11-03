@@ -187,6 +187,10 @@ impl Config {
                 "CATALYRST_SOCIAL_RPC_ADMIN_TOKEN",
                 &mut self.social.catalyrst_social_rpc_admin_token,
             ),
+            (
+                "WKC_METRICS_BEARER_TOKEN",
+                &mut self.social.wkc_metrics_bearer_token,
+            ),
             ("MODERATOR_TOKEN", &mut self.social.moderator_token),
             (
                 "COMMS_GATEKEEPER_AUTH_TOKEN",

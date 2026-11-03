@@ -34,6 +34,7 @@ use super::{Settings, State};
 use crate::comms::gatekeeper::voice::db::{PendingPrivateCall, VoiceDb};
 use crate::jobs::Jobs;
 
+mod auxiliary_source_cases;
 mod community_voice;
 mod connectivity;
 mod failures;

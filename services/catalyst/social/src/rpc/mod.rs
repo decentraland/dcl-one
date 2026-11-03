@@ -28,7 +28,9 @@
 //! method on `/social-rpc/health/live`,
 //! `GET /social-rpc/v1/users/{address}/privacy-settings` and a 404
 //! `{"error":"Not Found"}` for every other `/social-rpc/*` path or method,
-//! all with `Access-Control-Allow-Origin: *`; then the bearer-gated
+//! those wrapped routes carry `Access-Control-Allow-Origin: *`. The configured
+//! GET metrics path reads a filtered view of the existing recorder without CORS;
+//! then the bearer-gated
 //! `/admin/social/*` (`admin`). The procedures' HTTP twins on the social-api
 //! host are `http::router`, which `social::router` mounts beside the
 //! communities routes.
@@ -40,6 +42,7 @@ mod fanout;
 pub mod http;
 pub use crate::shared::rpc::{drpc, handshake};
 pub mod limits;
+mod metrics;
 pub mod profiles;
 pub mod proto;
 pub mod pubsub;
@@ -115,8 +118,14 @@ pub struct Settings {
     /// `SOCIAL_WRITES_ENABLED`: false answers every mutating procedure with a
     /// 503 `WritesDisabled` remote error (`social::writes`).
     pub writes_enabled: bool,
-    /// `COMMIT_HASH` (or the build's `CATALYST_COMMIT_HASH`) for `/social-rpc/status`.
+    /// Source COMMIT_HASH string; absent returns empty, without build fallback.
     pub commit_hash: Option<String>,
+    pub current_version: Option<String>,
+    pub metrics_path: Option<String>,
+    pub metrics_bearer_token: Option<String>,
+    pub metrics_reset_at_night: bool,
+    /// Existing process recorder; this route installs no exporter or listener.
+    pub metrics_handle: Option<crate::comms::metrics::PrometheusHandle>,
 }
 
 impl Default for Settings {
@@ -139,6 +148,11 @@ impl Default for Settings {
             admin_token: None,
             writes_enabled: true,
             commit_hash: None,
+            current_version: None,
+            metrics_path: None,
+            metrics_bearer_token: None,
+            metrics_reset_at_night: false,
+            metrics_handle: None,
         }
     }
 }
@@ -194,6 +208,11 @@ impl State {
         ctx: Context,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
+        if settings.metrics_reset_at_night {
+            tracing::warn!(
+                "WKC_METRICS_RESET_AT_NIGHT is configured; social-view reset remains unsupported; the shared recorder is preserved"
+            );
+        }
         ctx.admission().configure(settings.admission);
         ctx.friendship_limiter()
             .configure(settings.friendship_limits);
@@ -354,6 +373,10 @@ pub fn router(state: Arc<State>) -> Router {
         .route("/social-rpc/{*rest}", any(not_found))
         .layer(axum::middleware::map_response(allow_any_origin))
         .nest("/admin/social", admin::router())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            metrics::serve_if_requested,
+        ))
         .with_state(state)
 }
 
@@ -378,7 +401,7 @@ async fn status(AxumState(state): AxumState<Arc<State>>) -> Json<serde_json::Val
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
     Json(json!({
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": state.settings.current_version.as_deref().unwrap_or(""),
         "currentTime": current_time,
         "commitHash": state.settings.commit_hash.as_deref().unwrap_or(""),
     }))

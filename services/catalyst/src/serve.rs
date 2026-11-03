@@ -193,17 +193,17 @@ fn register_metrics() {
     ops::telemetry::register_metrics();
 }
 
-fn install_metrics(raw: &str) -> anyhow::Result<()> {
+fn install_metrics(raw: &str) -> anyhow::Result<comms::metrics::PrometheusHandle> {
     let bind = comms::metrics::serve_metrics_bind(raw)?;
-    comms::metrics::install_prometheus_exporter(bind)?;
+    let handle = comms::metrics::install_prometheus_exporter(bind)?;
     register_metrics();
     tracing::info!(%bind, "serve /metrics listening");
-    Ok(())
+    Ok(handle)
 }
 
 pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     config.node.init_tracing();
-    install_metrics(&config.node.serve_metrics_bind)?;
+    let metrics_handle = install_metrics(&config.node.serve_metrics_bind)?;
     tracing::info!("{}", catalyst_config::posture::startup_line(&config));
     config.resolve_secret_files()?;
     config.content.eth_rpc_url()?;
@@ -908,6 +908,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         comms_stage.gatekeeper.clone(),
         eip1654,
         &explore,
+        metrics_handle,
     )?;
     social
         .rpc
@@ -1851,6 +1852,7 @@ fn social_states(
     comms: comms::gatekeeper::SharedState,
     eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>>,
     explore: &explore::SharedState,
+    metrics_handle: comms::metrics::PrometheusHandle,
 ) -> anyhow::Result<social::States> {
     let non_empty = Config::non_empty;
     let public_url = config
@@ -2134,7 +2136,13 @@ fn social_states(
             },
             admin_token: non_empty(&config.social.catalyrst_social_rpc_admin_token),
             writes_enabled: config.writes.social_writes_enabled,
-            commit_hash: config.commit_hash(),
+            commit_hash: config.node.commit_hash.clone(),
+            current_version: config.social.social_rpc_current_version.clone(),
+            metrics_path: config.social.wkc_metrics_public_path.clone(),
+            metrics_bearer_token: config.social.wkc_metrics_bearer_token.clone(),
+            metrics_reset_at_night: config.social.wkc_metrics_reset_at_night.as_deref()
+                == Some("true"),
+            metrics_handle: Some(metrics_handle),
         },
         eip1654,
         comms.clone(),

@@ -22,6 +22,7 @@ const CAPTURES: [&str; 5] = [
 fn app(pool: PgPool) -> Router {
     let settings = Settings {
         commit_hash: Some("cafe".into()),
+        current_version: Some("fixture-version".into()),
         ..Default::default()
     };
     super::super::router(Arc::new(State::new(
@@ -79,7 +80,7 @@ async fn the_rpc_host_routes_follow_upstream_and_keep_the_local_ones() {
     let (status, origin, body) = call(&app, Method::GET, "/social-rpc/status").await;
     assert_eq!((status, origin.as_deref()), (StatusCode::OK, Some("*")));
     let v: Value = serde_json::from_str(&body).unwrap();
-    assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(v["version"], "fixture-version");
     assert_eq!(v["commitHash"], "cafe");
     assert!(
         v["currentTime"].as_u64().unwrap() > 1_700_000_000_000,

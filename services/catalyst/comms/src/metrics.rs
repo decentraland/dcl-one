@@ -1,5 +1,6 @@
 //! One Prometheus exporter installer for the Pulse and serve processes.
 use crate::pulse::metrics::{CLUSTER_SIZE_BUCKETS, RESYNC_SEQ_GAP_BUCKETS};
+pub use metrics_exporter_prometheus::PrometheusHandle;
 use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder};
 use std::net::SocketAddr;
 
@@ -32,16 +33,17 @@ pub fn prometheus_builder() -> Result<PrometheusBuilder, BuildError> {
 /// Both production callers propagate through `main`, which drops that runtime.
 /// Duplicate recorder rejection drops the unspawned HTTP listener, but its upkeep
 /// also lasts until runtime exit. This is not a reusable/recoverable installer.
-pub fn install_prometheus_exporter(bind: SocketAddr) -> anyhow::Result<()> {
+pub fn install_prometheus_exporter(bind: SocketAddr) -> anyhow::Result<PrometheusHandle> {
     let runtime = tokio::runtime::Handle::try_current()?;
     let (recorder, exporter) = prometheus_builder()?
         .with_http_listener(bind)
         .build()
         .map_err(|e| anyhow::anyhow!("failed to bind prometheus exporter on {bind}: {e}"))?;
+    let handle = recorder.handle();
     metrics::set_global_recorder(recorder)
         .map_err(|e| anyhow::anyhow!("failed to install prometheus recorder: {e}"))?;
     runtime.spawn(exporter);
-    Ok(())
+    Ok(handle)
 }
 
 /// Serve's exporter is operator-local; exposing it requires an explicit proxy.
