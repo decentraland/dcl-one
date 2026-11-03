@@ -98,6 +98,7 @@ pub struct Settings {
     /// The per-address limits both sockets share (`WS_MAX_CONNECTIONS_PER_ADDRESS`,
     /// `WS_SUBSCRIPTIONS_PER_SECOND`, `WS_SUBSCRIPTION_BURST`, `WS_ADDRESS_BUDGET_CAPACITY`).
     pub admission: limits::AdmissionLimits,
+    pub friendship_limits: limits::FriendshipLimits,
     /// `/v1/stream`'s own (`STREAM_WS_*`).
     pub stream: stream::StreamLimits,
     /// `CATALYRST_SOCIAL_RPC_ADMIN_TOKEN`: the `/admin/social` bearer; unset refuses.
@@ -120,6 +121,7 @@ impl Default for Settings {
             ws_max_payload_bytes: 1024 * 1024,
             ws_max_backpressure_bytes: 128 * 1024,
             admission: Default::default(),
+            friendship_limits: Default::default(),
             stream: Default::default(),
             admin_token: None,
             writes_enabled: true,
@@ -167,6 +169,8 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
         ctx.admission().configure(settings.admission);
+        ctx.friendship_limiter()
+            .configure(settings.friendship_limits);
         let (sender, server) = build_rpc_server(ctx.clone());
         let rpc_events = OnceCell::new();
         rpc_events.set(sender).ok();
@@ -202,6 +206,18 @@ impl State {
                 Ok(())
             });
         }
+        let limiter_ctx = self.ctx.clone();
+        jobs.spawn_periodic_leased(
+            "friendship-mutation-limit-expiry",
+            PeriodicCfg::every(Duration::from_secs(1)),
+            move |_job| {
+                let ctx = limiter_ctx.clone();
+                async move {
+                    ctx.friendship_limiter().cleanup_expired().await?;
+                    Ok(())
+                }
+            },
+        );
         let ctx = self.ctx.clone();
         let expiration_ms = self.settings.private_voice_chat_expiration_ms;
         let batch_size = self.settings.private_voice_chat_expiration_batch_size;

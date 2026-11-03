@@ -22,6 +22,7 @@ pub(crate) async fn block(
     if !ctx
         .friendship_limiter()
         .allow(me, other, PairScope::Directional)
+        .await
     {
         tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));
@@ -63,6 +64,7 @@ pub(crate) async fn unblock(ctx: &Context, me: &str, other: &str) -> Result<(), 
     if !ctx
         .friendship_limiter()
         .allow(me, other, PairScope::Directional)
+        .await
     {
         tracing::warn!(actor = %me, target = %other, "block mutation rate limited");
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));

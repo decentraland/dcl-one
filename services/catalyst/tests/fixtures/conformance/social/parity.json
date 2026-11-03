@@ -50,7 +50,7 @@
       "id": "api_http:DELETE:/v1/blocks/:address",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validated idempotent unblock; no fake friendship rewrite or event on a retry.",
+      "result": "Validated idempotent unblock; no fake friendship rewrite or event on a retry. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -65,6 +65,16 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "shared_sql_limiter_matches_executed_upstream_redis_scenarios",
+          "scope": "Eight scenarios execute the actual pinned friends component and Redis adapter against Redis, then compare SQL decisions and counter state; this establishes limiter scope, not full endpoint equality."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "concurrent_replicas_share_one_atomic_pair_budget",
+          "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
         }
       ],
       "gaps": [],
@@ -280,7 +290,7 @@
       "id": "api_http:DELETE:/v1/friends/:address",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validated signed delete applies the friendship state machine; refusal status mapped by domain errors.",
+      "result": "Validated signed delete applies the friendship state machine; refusal status mapped by domain errors. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -295,6 +305,16 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "shared_sql_limiter_matches_executed_upstream_redis_scenarios",
+          "scope": "Eight scenarios execute the actual pinned friends component and Redis adapter against Redis, then compare SQL decisions and counter state; this establishes limiter scope, not full endpoint equality."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "concurrent_replicas_share_one_atomic_pair_budget",
+          "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
         }
       ],
       "gaps": [],
@@ -1148,7 +1168,7 @@
       "id": "api_http:PATCH:/v1/friendship-requests/:address",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Accepted/rejected/cancelled intentions invoke same state machine and mapped refusals.",
+      "result": "Accepted/rejected/cancelled intentions invoke same state machine and mapped refusals. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -1163,6 +1183,16 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "shared_sql_limiter_matches_executed_upstream_redis_scenarios",
+          "scope": "Eight scenarios execute the actual pinned friends component and Redis adapter against Redis, then compare SQL decisions and counter state; this establishes limiter scope, not full endpoint equality."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "concurrent_replicas_share_one_atomic_pair_budget",
+          "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
         }
       ],
       "gaps": [],
@@ -1214,7 +1244,7 @@
       "id": "api_http:POST:/v1/blocks",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Schema and signed-fetch validation; atomically blocks/deactivates existing friendship, emits friendship event only when one exists.",
+      "result": "Schema and signed-fetch validation; atomically blocks/deactivates existing friendship, emits friendship event only when one exists. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -1229,6 +1259,16 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "shared_sql_limiter_matches_executed_upstream_redis_scenarios",
+          "scope": "Eight scenarios execute the actual pinned friends component and Redis adapter against Redis, then compare SQL decisions and counter state; this establishes limiter scope, not full endpoint equality."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "concurrent_replicas_share_one_atomic_pair_budget",
+          "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
         }
       ],
       "gaps": [],
@@ -1467,7 +1507,7 @@
       "id": "api_http:POST:/v1/friendship-requests",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Schema/signed-fetch gates, request/state/rate/block checks; response identifies friendship, event identifies action.",
+      "result": "Schema/signed-fetch gates, request/state/rate/block checks; response identifies friendship, event identifies action. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -1482,6 +1522,16 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "shared_sql_limiter_matches_executed_upstream_redis_scenarios",
+          "scope": "Eight scenarios execute the actual pinned friends component and Redis adapter against Redis, then compare SQL decisions and counter state; this establishes limiter scope, not full endpoint equality."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "concurrent_replicas_share_one_atomic_pair_budget",
+          "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
         }
       ],
       "gaps": [],
@@ -1721,7 +1771,7 @@
       "id": "rpc_unary:RPC:blockUser",
       "owner": "friends-settings-blocks",
       "status": "known_gap",
-      "result": "Validates raw target/self, records block and existing friendship action atomically; only existing friendships emit friendship updates; write response retains profile fallback.",
+      "result": "Validates raw target/self, records block and existing friendship action atomically; only existing friendships emit friendship updates; write response retains profile fallback. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/blocks.rs",
@@ -1741,6 +1791,16 @@
           "path": "services/catalyst/content/src/validator/checker.rs",
           "test": "profile_identity_mismatch_is_rejected_per_field",
           "scope": "Identity metadata is constrained only at/after PROFILE_IDENTITY; does not prove historical data has no mismatches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "shared_sql_limiter_matches_executed_upstream_redis_scenarios",
+          "scope": "Eight scenarios execute the actual pinned friends component and Redis adapter against Redis, then compare SQL decisions and counter state; this establishes limiter scope, not full endpoint equality."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "concurrent_replicas_share_one_atomic_pair_budget",
+          "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
         }
       ],
       "gaps": [
@@ -2101,7 +2161,7 @@
       "id": "rpc_unary:RPC:unblockUser",
       "owner": "friends-settings-blocks",
       "status": "known_gap",
-      "result": "Validates raw target/self; actual block removal and friendship delete action commit atomically; retry without block has no action/event; write response retains profile fallback.",
+      "result": "Validates raw target/self; actual block removal and friendship delete action commit atomically; retry without block has no action/event; write response retains profile fallback. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/blocks.rs",
@@ -2121,6 +2181,16 @@
           "path": "services/catalyst/content/src/validator/checker.rs",
           "test": "profile_identity_mismatch_is_rejected_per_field",
           "scope": "Identity metadata is constrained only at/after PROFILE_IDENTITY; does not prove historical data has no mismatches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "shared_sql_limiter_matches_executed_upstream_redis_scenarios",
+          "scope": "Eight scenarios execute the actual pinned friends component and Redis adapter against Redis, then compare SQL decisions and counter state; this establishes limiter scope, not full endpoint equality."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "concurrent_replicas_share_one_atomic_pair_budget",
+          "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
         }
       ],
       "gaps": [
@@ -2132,7 +2202,7 @@
       "id": "rpc_unary:RPC:upsertFriendship",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validates action/address/self/message/rate/state; atomically writes action, keeps friendship creation time, uses action UUID for updates, and can return a profile error after commit. Request stream omits unresolved sender profiles.",
+      "result": "Validates action/address/self/message/rate/state; atomically writes action, keeps friendship creation time, uses action UUID for updates, and can return a profile error after commit. Request stream omits unresolved sender profiles. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/friends.rs",
@@ -2147,6 +2217,16 @@
           "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
           "test": "rpc_wire_answers_match_executed_upstream_source_cases",
           "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "shared_sql_limiter_matches_executed_upstream_redis_scenarios",
+          "scope": "Eight scenarios execute the actual pinned friends component and Redis adapter against Redis, then compare SQL decisions and counter state; this establishes limiter scope, not full endpoint equality."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/limits.rs",
+          "test": "concurrent_replicas_share_one_atomic_pair_budget",
+          "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
         }
       ],
       "gaps": [],

@@ -130,13 +130,14 @@ impl Context {
         profiles: Profiles,
         voice: Arc<dyn VoiceRooms>,
     ) -> Self {
+        let friendship_limiter = FriendshipMutationLimiter::new(db.pool().clone());
         Self(Arc::new(ContextInner {
             voice_settings,
             db,
             pubsub: PubSub::new(),
             voice,
             profiles,
-            friendship_limiter: FriendshipMutationLimiter::new(),
+            friendship_limiter,
             admission: Admission::default(),
             identities: DashMap::new(),
             subscriptions: DashMap::new(),

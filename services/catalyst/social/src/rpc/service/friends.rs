@@ -49,6 +49,7 @@ pub(crate) async fn apply_friendship_action(
     if !ctx
         .friendship_limiter()
         .allow(me, other, PairScope::Symmetric)
+        .await
     {
         tracing::warn!(actor = %me, target = %other, "friendship mutation rate limited");
         return Err(Refusal::RateLimited(FRIENDSHIP_RATE_LIMIT_MESSAGE.into()));

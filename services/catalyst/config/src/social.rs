@@ -48,6 +48,29 @@ pub struct SocialConfig {
     #[arg(long, env = "COMMUNITIES_MIRROR_INTERVAL_SECS", default_value_t = 3600)]
     pub communities_mirror_interval_secs: u64,
 
+    /// Friendship/block fixed-window limits, shared by every serving replica.
+    #[arg(
+        long,
+        env = "FRIENDSHIP_RATE_LIMIT_WINDOW_SECONDS",
+        default_value_t = 60.0,
+        allow_hyphen_values = true
+    )]
+    pub friendship_rate_limit_window_seconds: f64,
+    #[arg(
+        long,
+        env = "FRIENDSHIP_RATE_LIMIT_PER_ACTOR",
+        default_value_t = 30.0,
+        allow_hyphen_values = true
+    )]
+    pub friendship_rate_limit_per_actor: f64,
+    #[arg(
+        long,
+        env = "FRIENDSHIP_RATE_LIMIT_PER_PAIR",
+        default_value_t = 10.0,
+        allow_hyphen_values = true
+    )]
+    pub friendship_rate_limit_per_pair: f64,
+
     /// Handshake frame deadline and timestamp window, seconds.
     #[arg(long, env = "AUTH_WINDOW_SECS", default_value_t = 300)]
     pub social_rpc_auth_window_secs: i64,
@@ -450,6 +473,33 @@ mod tests {
 
     fn social(pairs: &[(&'static str, &'static str)]) -> Result<super::SocialConfig, clap::Error> {
         Config::parse_env_for_tests(BASE.iter().chain(pairs).copied()).map(|c| c.social)
+    }
+
+    #[test]
+    fn friendship_limits_read_source_variables_including_zero_and_negative_values() {
+        let defaults = social(&[]).unwrap();
+        assert_eq!(
+            (
+                defaults.friendship_rate_limit_window_seconds,
+                defaults.friendship_rate_limit_per_actor,
+                defaults.friendship_rate_limit_per_pair
+            ),
+            (60.0, 30.0, 10.0)
+        );
+        let configured = social(&[
+            ("FRIENDSHIP_RATE_LIMIT_WINDOW_SECONDS", "-1"),
+            ("FRIENDSHIP_RATE_LIMIT_PER_ACTOR", "0"),
+            ("FRIENDSHIP_RATE_LIMIT_PER_PAIR", "2.5"),
+        ])
+        .unwrap();
+        assert_eq!(
+            (
+                configured.friendship_rate_limit_window_seconds,
+                configured.friendship_rate_limit_per_actor,
+                configured.friendship_rate_limit_per_pair
+            ),
+            (-1.0, 0.0, 2.5)
+        );
     }
 
     /// The social sockets' limits are upstream social-service-ea's variables

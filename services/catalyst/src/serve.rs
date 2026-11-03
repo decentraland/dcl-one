@@ -1998,6 +1998,11 @@ fn social_states(
             ws_max_concurrent_connections: config.social.ws_max_concurrent_connections,
             ws_max_payload_bytes: config.social.ws_max_payload_length,
             ws_max_backpressure_bytes: config.social.ws_max_backpressure,
+            friendship_limits: social_rpc::limits::FriendshipLimits {
+                window_seconds: config.social.friendship_rate_limit_window_seconds,
+                per_actor: config.social.friendship_rate_limit_per_actor,
+                per_pair: config.social.friendship_rate_limit_per_pair,
+            },
             admission: social_rpc::limits::AdmissionLimits {
                 max_per_address: config.social.ws_max_connections_per_address as usize,
                 subscriptions_per_second: config.social.ws_subscriptions_per_second,
