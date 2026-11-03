@@ -1,0 +1,957 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "packages": {
+    "analytics": "1.0.5",
+    "fetch": "1.1.1"
+  },
+  "scope": "Installed upstream analytics SDK, config provider, fetch wrapper and Node timers; controlled fetch/Response streams plus real loopback redirect server. No real analytics endpoint or mutation hooks in this capture.",
+  "configuration": [
+    {
+      "omitted": null,
+      "configured": true,
+      "request": {
+        "url": "https://analytics.example/events",
+        "timeout": 10000
+      }
+    },
+    {
+      "omitted": "ANALYTICS_CONTEXT",
+      "error": "Configuration: string ANALYTICS_CONTEXT is required"
+    },
+    {
+      "omitted": "ANALYTICS_API_URL",
+      "error": "Configuration: string ANALYTICS_API_URL is required"
+    },
+    {
+      "omitted": "ANALYTICS_API_TOKEN",
+      "error": "Configuration: string ANALYTICS_API_TOKEN is required"
+    },
+    {
+      "omitted": "ENV",
+      "error": "Configuration: string ENV is required"
+    },
+    {
+      "omitted": "all-empty",
+      "configured": true,
+      "request": {
+        "url": "",
+        "timeout": 10000
+      }
+    }
+  ],
+  "timeouts": [
+    {
+      "raw": null,
+      "configured_number": null,
+      "timeout": 10000,
+      "timer_bucket_ms": 10000,
+      "logs": []
+    },
+    {
+      "raw": "0",
+      "configured_number": 0,
+      "timeout": 10000,
+      "timer_bucket_ms": 10000,
+      "logs": [
+        {
+          "level": "warn",
+          "message": "ANALYTICS_REQUEST_TIMEOUT value \"0\" is invalid; using default 10000ms"
+        }
+      ]
+    },
+    {
+      "raw": "-1",
+      "configured_number": -1,
+      "timeout": 10000,
+      "timer_bucket_ms": 10000,
+      "logs": [
+        {
+          "level": "warn",
+          "message": "ANALYTICS_REQUEST_TIMEOUT value \"-1\" is invalid; using default 10000ms"
+        }
+      ]
+    },
+    {
+      "raw": "2.75ms",
+      "configured_number": 2.75,
+      "timeout": 2.75,
+      "timer_bucket_ms": 2,
+      "logs": []
+    },
+    {
+      "raw": "0.25",
+      "configured_number": 0.25,
+      "timeout": 0.25,
+      "timer_bucket_ms": 1,
+      "logs": []
+    },
+    {
+      "raw": "Infinity",
+      "configured_number": "Infinity",
+      "timeout": 10000,
+      "timer_bucket_ms": 10000,
+      "logs": [
+        {
+          "level": "warn",
+          "message": "ANALYTICS_REQUEST_TIMEOUT value \"Infinity\" is invalid; using default 10000ms"
+        }
+      ]
+    },
+    {
+      "raw": "-Infinity",
+      "configured_number": "-Infinity",
+      "timeout": 10000,
+      "timer_bucket_ms": 10000,
+      "logs": [
+        {
+          "level": "warn",
+          "message": "ANALYTICS_REQUEST_TIMEOUT value \"-Infinity\" is invalid; using default 10000ms"
+        }
+      ]
+    },
+    {
+      "raw": "2147483647",
+      "configured_number": 2147483647,
+      "timeout": 2147483647,
+      "timer_bucket_ms": 2147483647,
+      "logs": []
+    },
+    {
+      "raw": "2147483648",
+      "configured_number": 2147483648,
+      "timeout": 2147483648,
+      "timer_bucket_ms": 1,
+      "logs": []
+    },
+    {
+      "raw": "1e300",
+      "configured_number": 1e+300,
+      "timeout": 1e+300,
+      "timer_bucket_ms": 1,
+      "logs": []
+    },
+    {
+      "raw": "NaN",
+      "error": "Configuration: config \"ANALYTICS_REQUEST_TIMEOUT\" should be a number, got string (NaN) instead",
+      "logs": []
+    },
+    {
+      "raw": "",
+      "error": "Configuration: config \"ANALYTICS_REQUEST_TIMEOUT\" should be a number, got string () instead",
+      "logs": []
+    }
+  ],
+  "transport": [
+    {
+      "scenario": "success",
+      "calls": [
+        {
+          "url": "https://analytics.example/events",
+          "method": "POST",
+          "headers": {
+            "x-token": "fixture-token",
+            "Content-Type": "application/json"
+          },
+          "payload": {
+            "event": "START_CALL",
+            "body": {
+              "call_id": "fixture-call",
+              "env": "fixture",
+              "user_id": "fixture-caller"
+            },
+            "context": "social-fixture"
+          },
+          "redirect": "follow"
+        }
+      ],
+      "order": [
+        "fetch",
+        "cancel",
+        "resolved"
+      ],
+      "logs": [],
+      "result": "undefined"
+    },
+    {
+      "scenario": "503",
+      "calls": [
+        {
+          "url": "https://analytics.example/events",
+          "method": "POST",
+          "headers": {
+            "x-token": "fixture-token",
+            "Content-Type": "application/json"
+          },
+          "payload": {
+            "event": "START_CALL",
+            "body": {
+              "call_id": "fixture-call",
+              "env": "fixture",
+              "user_id": "fixture-caller"
+            },
+            "context": "social-fixture"
+          },
+          "redirect": "follow"
+        }
+      ],
+      "order": [
+        "fetch",
+        "cancel",
+        "resolved"
+      ],
+      "logs": [
+        {
+          "level": "error",
+          "message": "Error sending event to Analytics START_CALL",
+          "data": {
+            "error": "Got status 503 from the Analytics API"
+          }
+        }
+      ],
+      "result": "undefined"
+    },
+    {
+      "scenario": "429",
+      "calls": [
+        {
+          "url": "https://analytics.example/events",
+          "method": "POST",
+          "headers": {
+            "x-token": "fixture-token",
+            "Content-Type": "application/json"
+          },
+          "payload": {
+            "event": "START_CALL",
+            "body": {
+              "call_id": "fixture-call",
+              "env": "fixture",
+              "user_id": "fixture-caller"
+            },
+            "context": "social-fixture"
+          },
+          "redirect": "follow"
+        }
+      ],
+      "order": [
+        "fetch",
+        "cancel",
+        "resolved"
+      ],
+      "logs": [
+        {
+          "level": "error",
+          "message": "Error sending event to Analytics START_CALL",
+          "data": {
+            "error": "Got status 429 from the Analytics API"
+          }
+        }
+      ],
+      "result": "undefined"
+    },
+    {
+      "scenario": "network-failure",
+      "calls": [
+        {
+          "url": "https://analytics.example/events",
+          "method": "POST",
+          "headers": {
+            "x-token": "fixture-token",
+            "Content-Type": "application/json"
+          },
+          "payload": {
+            "event": "START_CALL",
+            "body": {
+              "call_id": "fixture-call",
+              "env": "fixture",
+              "user_id": "fixture-caller"
+            },
+            "context": "social-fixture"
+          },
+          "redirect": "follow"
+        }
+      ],
+      "order": [
+        "fetch",
+        "resolved"
+      ],
+      "logs": [
+        {
+          "level": "error",
+          "message": "Error sending event to Analytics START_CALL",
+          "data": {
+            "error": "synthetic network failure"
+          }
+        }
+      ],
+      "result": "undefined"
+    },
+    {
+      "scenario": "cancel-failure",
+      "calls": [
+        {
+          "url": "https://analytics.example/events",
+          "method": "POST",
+          "headers": {
+            "x-token": "fixture-token",
+            "Content-Type": "application/json"
+          },
+          "payload": {
+            "event": "START_CALL",
+            "body": {
+              "call_id": "fixture-call",
+              "env": "fixture",
+              "user_id": "fixture-caller"
+            },
+            "context": "social-fixture"
+          },
+          "redirect": "follow"
+        }
+      ],
+      "order": [
+        "fetch",
+        "cancel",
+        "resolved"
+      ],
+      "logs": [],
+      "result": "undefined"
+    },
+    {
+      "scenario": "body-absent",
+      "calls": [
+        {
+          "url": "https://analytics.example/events",
+          "method": "POST",
+          "headers": {
+            "x-token": "fixture-token",
+            "Content-Type": "application/json"
+          },
+          "payload": {
+            "event": "START_CALL",
+            "body": {
+              "call_id": "fixture-call",
+              "env": "fixture",
+              "user_id": "fixture-caller"
+            },
+            "context": "social-fixture"
+          },
+          "redirect": "follow"
+        }
+      ],
+      "order": [
+        "fetch",
+        "resolved"
+      ],
+      "logs": [],
+      "result": "undefined"
+    },
+    {
+      "scenario": "timeout",
+      "calls": [
+        {
+          "url": "https://analytics.example/events",
+          "method": "POST",
+          "headers": {
+            "x-token": "fixture-token",
+            "Content-Type": "application/json"
+          },
+          "payload": {
+            "event": "START_CALL",
+            "body": {
+              "call_id": "fixture-call",
+              "env": "fixture",
+              "user_id": "fixture-caller"
+            },
+            "context": "social-fixture"
+          },
+          "redirect": "follow"
+        }
+      ],
+      "order": [
+        "fetch",
+        "abort",
+        "resolved"
+      ],
+      "logs": [
+        {
+          "level": "error",
+          "message": "Error sending event to Analytics START_CALL",
+          "data": {
+            "error": "Request aborted (timed out)"
+          }
+        }
+      ],
+      "result": "undefined"
+    },
+    {
+      "scenario": "fire-and-forget",
+      "result": "undefined",
+      "before_release": [
+        "fetch",
+        "caller-returned"
+      ],
+      "order": [
+        "fetch",
+        "caller-returned",
+        "cancel"
+      ]
+    }
+  ],
+  "redirects": [
+    {
+      "status": 301,
+      "hops": 3,
+      "requests": [
+        {
+          "path": "/jump/301/3",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/301/2",
+          "method": "GET",
+          "content_type": null,
+          "content_length": null,
+          "token": "fixture-token",
+          "body": ""
+        },
+        {
+          "path": "/jump/301/1",
+          "method": "GET",
+          "content_type": null,
+          "content_length": null,
+          "token": "fixture-token",
+          "body": ""
+        },
+        {
+          "path": "/jump/301/0",
+          "method": "GET",
+          "content_type": null,
+          "content_length": null,
+          "token": "fixture-token",
+          "body": ""
+        }
+      ],
+      "logs": []
+    },
+    {
+      "status": 302,
+      "hops": 3,
+      "requests": [
+        {
+          "path": "/jump/302/3",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/302/2",
+          "method": "GET",
+          "content_type": null,
+          "content_length": null,
+          "token": "fixture-token",
+          "body": ""
+        },
+        {
+          "path": "/jump/302/1",
+          "method": "GET",
+          "content_type": null,
+          "content_length": null,
+          "token": "fixture-token",
+          "body": ""
+        },
+        {
+          "path": "/jump/302/0",
+          "method": "GET",
+          "content_type": null,
+          "content_length": null,
+          "token": "fixture-token",
+          "body": ""
+        }
+      ],
+      "logs": []
+    },
+    {
+      "status": 303,
+      "hops": 3,
+      "requests": [
+        {
+          "path": "/jump/303/3",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/303/2",
+          "method": "GET",
+          "content_type": null,
+          "content_length": null,
+          "token": "fixture-token",
+          "body": ""
+        },
+        {
+          "path": "/jump/303/1",
+          "method": "GET",
+          "content_type": null,
+          "content_length": null,
+          "token": "fixture-token",
+          "body": ""
+        },
+        {
+          "path": "/jump/303/0",
+          "method": "GET",
+          "content_type": null,
+          "content_length": null,
+          "token": "fixture-token",
+          "body": ""
+        }
+      ],
+      "logs": []
+    },
+    {
+      "status": 307,
+      "hops": 3,
+      "requests": [
+        {
+          "path": "/jump/307/3",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/2",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/1",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/0",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        }
+      ],
+      "logs": []
+    },
+    {
+      "status": 308,
+      "hops": 3,
+      "requests": [
+        {
+          "path": "/jump/308/3",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/308/2",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/308/1",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/308/0",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        }
+      ],
+      "logs": []
+    },
+    {
+      "status": 307,
+      "hops": 20,
+      "requests": [
+        {
+          "path": "/jump/307/20",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/19",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/18",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/17",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/16",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/15",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/14",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/13",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/12",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/11",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/10",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/9",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/8",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/7",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/6",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/5",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/4",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/3",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/2",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/1",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/0",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        }
+      ],
+      "logs": []
+    },
+    {
+      "status": 307,
+      "hops": 21,
+      "requests": [
+        {
+          "path": "/jump/307/21",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/20",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/19",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/18",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/17",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/16",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/15",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/14",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/13",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/12",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/11",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/10",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/9",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/8",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/7",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/6",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/5",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/4",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/3",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/2",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        },
+        {
+          "path": "/jump/307/1",
+          "method": "POST",
+          "content_type": "application/json",
+          "content_length": "105",
+          "token": "fixture-token",
+          "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+        }
+      ],
+      "logs": [
+        {
+          "level": "error",
+          "message": "Error sending event to Analytics REDIRECT_FIXTURE",
+          "data": {
+            "error": "fetch failed"
+          }
+        }
+      ]
+    }
+  ]
+}

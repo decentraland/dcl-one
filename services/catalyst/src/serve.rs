@@ -1895,7 +1895,7 @@ fn social_states(
         communities::Settings {
             http_max_request_body_bytes: config.social.social_http_max_request_body_bytes,
             compliance: communities::compliance::Settings {
-                environment: config.social.social_environment.clone(),
+                environment: config.social.social_environment.clone().unwrap_or_default(),
                 model: config.social.community_compliance_model.clone(),
                 api_key: config.social.community_compliance_api_key.clone(),
                 base_url: config.social.community_compliance_base_url.clone(),
@@ -1955,7 +1955,7 @@ fn social_states(
                 slack: communities::referral::SlackSettings {
                     token: config.social.referral_slack_token.clone(),
                     dashboard: config.social.referral_metabase_dashboard.clone(),
-                    environment: config.social.social_environment.clone(),
+                    environment: config.social.social_environment.clone().unwrap_or_default(),
                 },
                 denylist_url: (!config.explore.explorer_denylist_source_url.is_empty())
                     .then(|| config.explore.explorer_denylist_source_url.clone()),
@@ -2006,6 +2006,21 @@ fn social_states(
         http_client,
         explore.clone(),
     ));
+
+    if let Some(analytics) = social::analytics::Analytics::new(
+        http_client,
+        social::analytics::Settings {
+            context: config.social.social_analytics_context.clone(),
+            api_url: config.social.social_analytics_api_url.clone(),
+            api_token: config.social.social_analytics_api_token.clone(),
+            environment: config.social.social_environment.clone(),
+            request_timeout_ms: config.social.social_analytics_request_timeout_ms,
+        },
+    )
+    .map_err(anyhow::Error::msg)?
+    {
+        communities.set_analytics(analytics);
+    }
 
     let notifications = Arc::new(notifications::State::new(
         pool.clone(),

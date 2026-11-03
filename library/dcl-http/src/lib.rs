@@ -673,6 +673,7 @@ impl Outbound {
             outbound: self.clone(),
             builder: self.shared.request(method, url),
             max_redirects: None,
+            fetch_redirects: false,
         }
     }
 
@@ -688,7 +689,7 @@ impl Outbound {
     /// with the guard re-run on each. A body that cannot be cloned (a
     /// stream) is sent once and its redirect, if any, returned as is.
     pub async fn execute(&self, req: reqwest::Request) -> Result<reqwest::Response, SendError> {
-        self.execute_with_redirect_limit(req, self.max_redirects)
+        self.execute_with_redirect_limit(req, self.max_redirects, false)
             .await
     }
 
@@ -696,8 +697,9 @@ impl Outbound {
         &self,
         mut req: reqwest::Request,
         max_redirects: usize,
+        fetch_redirects: bool,
     ) -> Result<reqwest::Response, SendError> {
-        if self.allow_private && max_redirects == self.max_redirects {
+        if self.allow_private && max_redirects == self.max_redirects && !fetch_redirects {
             return Ok(self.shared.execute(req).await?);
         }
         for hop in 0..=max_redirects {
@@ -711,8 +713,18 @@ impl Outbound {
                 None => return Ok(client.execute(req).await?),
             };
             let status = resp.status();
-            if !status.is_redirection() || hop == max_redirects {
+            if !status.is_redirection()
+                || (fetch_redirects && !matches!(status.as_u16(), 301 | 302 | 303 | 307 | 308))
+            {
                 return Ok(resp);
+            }
+            if hop == max_redirects {
+                return if fetch_redirects && resp.headers().contains_key(reqwest::header::LOCATION)
+                {
+                    Err(SendError::Refused("redirect count exceeded".into()))
+                } else {
+                    Ok(resp)
+                };
             }
             let Some(location) = resp
                 .headers()
@@ -726,7 +738,7 @@ impl Outbound {
             })?;
             let method = req.method().clone();
             match status.as_u16() {
-                303 => {
+                303 if !fetch_redirects || method != reqwest::Method::HEAD => {
                     *req.method_mut() = reqwest::Method::GET;
                     *req.body_mut() = None;
                 }
@@ -734,10 +746,25 @@ impl Outbound {
                     *req.method_mut() = reqwest::Method::GET;
                     *req.body_mut() = None;
                 }
-                301 | 302 | 307 | 308 => {}
+                301 | 302 | 303 | 307 | 308 => {}
                 _ => return Ok(resp),
             }
-            if next.host_str() != req.url().host_str() {
+            if fetch_redirects && req.method() != method {
+                for name in [
+                    "content-encoding",
+                    "content-language",
+                    "content-location",
+                    "content-type",
+                    "content-length",
+                ] {
+                    req.headers_mut().remove(name);
+                }
+            }
+            if if fetch_redirects {
+                next.origin() != req.url().origin()
+            } else {
+                next.host_str() != req.url().host_str()
+            } {
                 let headers = req.headers_mut();
                 headers.remove(reqwest::header::AUTHORIZATION);
                 headers.remove(reqwest::header::COOKIE);
@@ -842,6 +869,7 @@ pub struct GuardedRequest {
     outbound: Outbound,
     builder: reqwest::RequestBuilder,
     max_redirects: Option<usize>,
+    fetch_redirects: bool,
 }
 
 impl GuardedRequest {
@@ -875,6 +903,14 @@ impl GuardedRequest {
         self
     }
 
+    /// Opts this request into Fetch redirect semantics and its own hop limit.
+    /// Every hop retains the existing host guard and shared pinned clients.
+    pub fn following_redirects(mut self, maximum: usize) -> Self {
+        self.max_redirects = Some(maximum);
+        self.fetch_redirects = true;
+        self
+    }
+
     pub fn json<T: serde::Serialize + ?Sized>(self, json: &T) -> Self {
         self.map(|b| b.json(json))
     }
@@ -889,6 +925,7 @@ impl GuardedRequest {
             .execute_with_redirect_limit(
                 req,
                 self.max_redirects.unwrap_or(self.outbound.max_redirects),
+                self.fetch_redirects,
             )
             .await
     }
@@ -1309,6 +1346,70 @@ mod tests {
             "the next request keeps the configured default"
         );
         server.abort();
+    }
+
+    #[tokio::test]
+    async fn opt_in_fetch_redirects_match_the_executed_social_analytics_sdk() {
+        use axum::{Router, extract::Request, response::IntoResponse};
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/social/analytics-source-cases.json"
+        )))
+        .unwrap();
+        for case in fixture["redirects"].as_array().unwrap() {
+            let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+            let observed = requests.clone();
+            let app = Router::new().fallback(move |request: Request| {
+                let observed = observed.clone(); async move {
+                    let path = request.uri().path().to_string();
+                    let method = request.method().to_string();
+                    let headers = request.headers().clone();
+                    let bytes = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
+                    let header = |name: &str| headers.get(name).map(|value| value.to_str().unwrap().to_string());
+                    observed.lock().unwrap().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
+                    let parts: Vec<_> = path.split('/').collect();
+                    let status: u16 = parts[2].parse().unwrap();
+                    let remaining: usize = parts[3].parse().unwrap();
+                    if remaining == 0 { return "unused response body".into_response(); }
+                    (axum::http::StatusCode::from_u16(status).unwrap(), [("location", format!("/jump/{status}/{}", remaining-1))]).into_response()
+                }
+            });
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            // Defaults remain two hops; this one request opts into Fetch's 20.
+            let http = Outbound::new(HttpClientCfg::default().following_redirects(2))
+                .unwrap()
+                .allowing_private_hosts();
+            let first = &case["requests"][0];
+            let result = http
+                .post(format!(
+                    "http://{address}{}",
+                    first["path"].as_str().unwrap()
+                ))
+                .header("x-token", "fixture-token")
+                .header("content-type", "application/json")
+                .body(first["body"].as_str().unwrap().to_string())
+                .following_redirects(20)
+                .send()
+                .await;
+            assert_eq!(
+                result.is_err(),
+                !case["logs"].as_array().unwrap().is_empty(),
+                "status={} hops={}",
+                case["status"],
+                case["hops"]
+            );
+            drop(result);
+            assert_eq!(
+                *requests.lock().unwrap(),
+                *case["requests"].as_array().unwrap(),
+                "status={} hops={}",
+                case["status"],
+                case["hops"]
+            );
+            server.abort();
+        }
     }
 
     fn strict(addr: SocketAddr) -> Outbound {

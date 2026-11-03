@@ -173,6 +173,7 @@ pub struct State {
     pub presence: Presence,
     /// One DAPPS document shared by moderator, compliance and referral decisions.
     pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
+    analytics: std::sync::OnceLock<crate::analytics::Analytics>,
     compliance: std::sync::OnceLock<Result<compliance::Adapter, String>>,
     compliance_allow_private: bool,
     /// `POST /v1/friends/{peer}/messages`: 60 sends per signer per minute,
@@ -277,6 +278,7 @@ impl State {
             referral,
             presence,
             flags: Arc::new(crate::explore::api::feature_flags::Snapshot::empty()),
+            analytics: std::sync::OnceLock::new(),
             compliance: std::sync::OnceLock::new(),
             compliance_allow_private: http.allows_private_hosts(),
             dm_limiter,
@@ -300,6 +302,17 @@ impl State {
             crate::explore::Settings::for_tests(),
             None,
         ))
+    }
+
+    /// One configured analytics adapter shared with voice through this State.
+    pub fn set_analytics(&self, analytics: crate::analytics::Analytics) {
+        let _ = self.analytics.set(analytics);
+    }
+
+    pub(crate) fn fire_analytics(&self, event: &str, properties: serde_json::Value) {
+        if let Some(analytics) = self.analytics.get() {
+            analytics.fire_event(event, properties);
+        }
     }
 
     /// Records the communities mirror's upstream (once).

@@ -35,6 +35,7 @@ use std::sync::Arc;
 
 use axum::Router;
 
+pub mod analytics;
 pub mod badges;
 pub mod chat;
 pub mod comms_directory;

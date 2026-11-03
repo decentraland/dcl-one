@@ -252,6 +252,7 @@ const ROWS: &[Row] = &[
         "FF_URL",
         "https://feature-flags.decentraland.org",
     ),
+    upstream("social analytics", "ANALYTICS_API_URL", ""),
     upstream(
         "community compliance",
         "OPENAI_BASE_URL",
@@ -960,6 +961,11 @@ const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
     ),
     ("SENDGRID_API_KEY", None, "SendGrid's mail API"),
     ("SLACK_BOT_TOKEN", None, "Slack Web API"),
+    (
+        "ANALYTICS_API_TOKEN",
+        Some("ANALYTICS_API_URL"),
+        "Social Analytics API",
+    ),
     ("AWS_SNS_ARN", Some("AWS_SNS_ENDPOINT"), "Amazon SNS"),
     (
         "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",

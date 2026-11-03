@@ -96,7 +96,7 @@ fn source_body_limit(raw: &str) -> Result<usize, String> {
 }
 
 /// Social: communities, the social RPC, comms, notifications, badges, media and profile images.
-#[derive(Args, Clone, Debug)]
+#[derive(Args, Clone)]
 pub struct SocialConfig {
     /// Request-body cap for the social-api gateway, validated before serving.
     #[arg(long,env="HTTP_MAX_REQUEST_BODY_BYTES",default_value="1048576",value_parser=source_body_limit,allow_hyphen_values=true)]
@@ -144,8 +144,26 @@ pub struct SocialConfig {
     pub social_referral_registration_disabled_override: Option<String>,
 
     /// Source environment for AI compliance and the Slack development channel.
-    #[arg(long, env = "ENV", default_value = "")]
-    pub social_environment: String,
+    #[arg(long, env = "ENV")]
+    pub social_environment: Option<String>,
+
+    #[arg(long, env = "ANALYTICS_CONTEXT")]
+    pub social_analytics_context: Option<String>,
+
+    #[arg(long, env = "ANALYTICS_API_URL")]
+    pub social_analytics_api_url: Option<String>,
+
+    /// Also readable from ANALYTICS_API_TOKEN_FILE; never accepted on argv.
+    #[arg(
+        id = "analytics_api_token",
+        long = "analytics-api-token",
+        env = "ANALYTICS_API_TOKEN",
+        hide_env_values = true
+    )]
+    pub social_analytics_api_token: Option<String>,
+
+    #[arg(long, env = "ANALYTICS_REQUEST_TIMEOUT", value_parser = source_number, allow_hyphen_values = true)]
+    pub social_analytics_request_timeout_ms: Option<f64>,
 
     #[arg(long, env = "OPEN_AI_MODEL", default_value = "gpt-5-nano")]
     pub community_compliance_model: String,
@@ -747,6 +765,12 @@ fn positive(raw: &str) -> Result<f64, String> {
     }
 }
 
+impl std::fmt::Debug for SocialConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SocialConfig").finish_non_exhaustive()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::config::Config;
@@ -789,6 +813,69 @@ mod tests {
 
     fn social(pairs: &[(&str, &str)]) -> Result<super::SocialConfig, clap::Error> {
         Config::parse_env_for_tests(BASE.iter().chain(pairs).copied()).map(|c| c.social)
+    }
+
+    #[test]
+    fn analytics_config_preserves_source_strings_numbers_and_secret_slot() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/social/analytics-source-cases.json"
+        )))
+        .unwrap();
+        let absent = social(&[]).unwrap();
+        assert!(absent.social_analytics_api_token.is_none() && absent.social_environment.is_none());
+        let configured = social(&[
+            ("ANALYTICS_CONTEXT", ""),
+            ("ANALYTICS_API_URL", ""),
+            ("ANALYTICS_API_TOKEN", "fixture-token"),
+            ("ENV", ""),
+        ])
+        .unwrap();
+        assert_eq!(configured.social_analytics_context.as_deref(), Some(""));
+        assert_eq!(configured.social_environment.as_deref(), Some(""));
+        assert!(!format!("{configured:?}").contains("fixture-token"));
+        for case in fixture["timeouts"].as_array().unwrap() {
+            let raw = case["raw"].as_str();
+            let result = match raw {
+                Some(raw) => social(&[("ANALYTICS_REQUEST_TIMEOUT", raw)]),
+                None => social(&[]),
+            };
+            if !case["error"].is_null() {
+                assert!(result.is_err());
+                continue;
+            }
+            let parsed = result.unwrap().social_analytics_request_timeout_ms;
+            match &case["configured_number"] {
+                serde_json::Value::Null => assert!(parsed.is_none()),
+                serde_json::Value::String(value) => {
+                    assert!(parsed.unwrap().is_infinite());
+                    assert_eq!(parsed.unwrap().is_sign_negative(), value.starts_with('-'));
+                }
+                expected => assert_eq!(parsed.unwrap(), expected.as_f64().unwrap()),
+            }
+        }
+        let (mut config, matches) = Config::parse_with_matches_for_tests(&[
+            "catalyst",
+            "--database-url",
+            "postgres://x/y",
+            "--analytics-api-token",
+            "argv-token",
+        ])
+        .unwrap();
+        assert_eq!(config.secret_slots().len(), 73);
+        assert!(
+            config
+                .secret_slots()
+                .iter()
+                .any(|(key, _)| *key == "ANALYTICS_API_TOKEN")
+        );
+        assert!(
+            config
+                .refuse_argv_secrets(&matches)
+                .unwrap_err()
+                .to_string()
+                .contains("ANALYTICS_API_TOKEN")
+        );
     }
 
     #[test]
@@ -896,7 +983,7 @@ mod tests {
             "https://dashboard.example.org"
         );
         assert_eq!(configured.referral_suspicious_window_ms, 1500.0);
-        assert_eq!(configured.social_environment, "dev");
+        assert_eq!(configured.social_environment.as_deref(), Some("dev"));
         assert!(social(&[("REFERRAL_FIVE_MINUTES_IN_MS", "NaN")]).is_err());
     }
 
