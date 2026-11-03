@@ -518,7 +518,7 @@ async fn a_check_past_its_deadline_is_undecided() {
 }
 
 #[tokio::test]
-async fn a_contract_of_no_known_standard_is_probed_again() {
+async fn a_contract_of_no_known_standard_is_probed_again_only_after_a_while() {
     let not_nft = "0x0000000000000000000000000000000000000bad";
     let probes = Arc::new(AtomicUsize::new(0));
     let seen = probes.clone();
@@ -538,7 +538,68 @@ async fn a_contract_of_no_known_standard_is_probed_again() {
     let first = probes.load(Ordering::SeqCst);
     assert_eq!(first, 2, "balanceOf, then ownerOf");
     assert_eq!(a.items(OWNER, &urns, TS).await.unwrap(), vec![false]);
+    assert_eq!(probes.load(Ordering::SeqCst), first, "kept for a while");
+    for (_, at) in a.nft_kinds.lock().values_mut() {
+        *at = Instant::now() - UNKNOWN_KIND_TTL;
+    }
+    assert_eq!(a.items(OWNER, &urns, TS).await.unwrap(), vec![false]);
     assert_eq!(probes.load(Ordering::SeqCst), 2 * first);
+}
+
+#[tokio::test]
+async fn the_standards_are_probed_in_one_batch_each() {
+    let chain = fake_chain::serve(|q, _| match q {
+        Query::BalanceOf { contract, .. } if contract.as_slice()[19] % 2 == 0 => {
+            Reply::Balance(U256::ZERO)
+        }
+        Query::BalanceOf { .. } => Reply::Revert,
+        Query::OwnerOf { token, .. } if token.is_zero() => Reply::Revert,
+        Query::OwnerOf { .. } => Reply::Owner(addr(OWNER)),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(None, Some(&chain.url));
+    let urns: Vec<String> = (1..=10u8)
+        .map(|c| format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:matic:0x{c:040x}:1"))
+        .collect();
+    a.l2().unwrap().chain.blocks_for(TS).await.unwrap();
+    chain.clear();
+    let owned = a.items(OWNER, &urns, TS).await.unwrap();
+    // The ERC-721s answer ownerOf; the ERC-1155s hold a zero balance.
+    assert_eq!(owned, (1..=10u8).map(|c| c % 2 == 1).collect::<Vec<_>>());
+    // balanceOf probes, ownerOf probes of the rest, then the items at each block.
+    assert_eq!(chain.requests(), 2 + 2);
+}
+
+#[tokio::test]
+async fn items_of_contracts_past_the_cap_are_not_owned_and_not_probed() {
+    let chain = fake_chain::serve(|q, _| match q {
+        Query::BalanceOf { .. } => Reply::Revert,
+        Query::OwnerOf { .. } => Reply::Owner(addr(OWNER)),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(None, Some(&chain.url));
+    let urns: Vec<String> = (1..=MAX_NFT_CONTRACTS_ASKED + 2)
+        .flat_map(|c| {
+            (1..=2).map(move |t| {
+                format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:matic:0x{c:040x}:{t}")
+            })
+        })
+        .collect();
+    let owned = a.items(OWNER, &urns, TS).await.unwrap();
+    assert_eq!(
+        owned[..2 * MAX_NFT_CONTRACTS_ASKED],
+        vec![true; 2 * MAX_NFT_CONTRACTS_ASKED]
+    );
+    assert_eq!(owned[2 * MAX_NFT_CONTRACTS_ASKED..], [false; 4]);
+    let at = format!("eth_call@{}", at_deployment(TS));
+    let probed = chain
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("eth_call") && **c != at)
+        .count();
+    assert_eq!(probed, 2 * MAX_NFT_CONTRACTS_ASKED);
 }
 
 #[tokio::test]

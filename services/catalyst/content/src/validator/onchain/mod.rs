@@ -59,17 +59,21 @@ pub fn checker_bytecode() -> &'static str {
     CHECKER_BYTECODE.trim()
 }
 
-/// Distinct item URNs asked about per check; the rest are not owned. Far
-/// above what a profile wears (about 20 wearable and 10 emote slots per
-/// avatar, an outfits entity a few dozen); neither the reference nor
-/// `@dcl/schemas` caps them.
-pub(crate) const MAX_ITEMS_ASKED: usize = 1000;
+/// Distinct item URNs asked about per check; the rest are not owned. An
+/// avatar wears at most 18 wearable categories and 10 emotes, an outfits
+/// entity about ten avatars of those; `@dcl/schemas` caps neither list.
+pub(crate) const MAX_ITEMS_ASKED: usize = 200;
+/// Distinct third-party NFT contracts asked about per check; items of the
+/// rest are not owned.
+pub(crate) const MAX_NFT_CONTRACTS_ASKED: usize = 32;
 /// `eth_call`s per JSON-RPC batch request.
 const CALLS_PER_BATCH: usize = 100;
 /// Single calls in flight at once when an endpoint answers no batch.
 const CALLS_IN_FLIGHT: usize = 8;
 /// Third-party NFT standards kept before the memo starts over.
 const NFT_KINDS_CAP: usize = 10_000;
+/// How long a contract of no known standard is not probed again.
+const UNKNOWN_KIND_TTL: Duration = Duration::from_secs(300);
 /// How long the blocks of a timestamp are reused, and how many are kept.
 const BLOCKS_MEMO_TTL: Duration = Duration::from_secs(60);
 const BLOCKS_MEMO_CAP: usize = 4096;
@@ -294,9 +298,8 @@ impl Chain {
     async fn call_each(
         &self,
         calls: &[(Address, Vec<u8>)],
-        block: u64,
+        tag: BlockTag,
     ) -> Result<Vec<Option<Vec<u8>>>, ValidatorError> {
-        let tag = BlockTag::Number(block);
         let mut out = Vec::with_capacity(calls.len());
         for chunk in calls.chunks(CALLS_PER_BATCH) {
             let requests: Vec<Value> = chunk
@@ -474,8 +477,8 @@ struct L2 {
 pub struct OnChainAccess {
     l1: Result<L1, String>,
     l2: Result<L2, String>,
-    /// ERC-721 or ERC-1155 per third-party NFT contract, once known.
-    nft_kinds: parking_lot::Mutex<HashMap<(bool, Address), NftKind>>,
+    /// The standard of each third-party NFT contract and when it was probed.
+    nft_kinds: parking_lot::Mutex<HashMap<(bool, Address), (NftKind, Instant)>>,
     deadline: Duration,
 }
 
@@ -729,8 +732,9 @@ impl OnChainAccess {
     /// (`ownerOf`), a third-party item's linked NFT (`ownerOf` or
     /// `balanceOf`), the items of each chain all at one block. Assets without
     /// a token and URNs that are not collection items are not asked about and
-    /// count as owned; a collection URN naming no askable item, and every
-    /// distinct item past [`MAX_ITEMS_ASKED`], is never owned.
+    /// count as owned; a collection URN naming no askable item, every
+    /// distinct item past [`MAX_ITEMS_ASKED`] and every third-party item of a
+    /// contract past [`MAX_NFT_CONTRACTS_ASKED`] is never owned.
     pub async fn items(
         &self,
         address: &str,
@@ -744,10 +748,21 @@ impl OnChainAccess {
             .collect();
         let mut asked: Vec<&items::ItemRef> = Vec::new();
         let mut seen = HashSet::new();
+        let mut contracts = HashSet::new();
         for r in &refs {
-            if r.on_l1().is_some() && asked.len() < MAX_ITEMS_ASKED && seen.insert(r) {
-                asked.push(r);
+            if r.on_l1().is_none() || asked.len() >= MAX_ITEMS_ASKED || seen.contains(r) {
+                continue;
             }
+            if let items::ItemRef::ThirdParty { l1, contract, .. } = r
+                && !contracts.contains(&(*l1, *contract))
+            {
+                if contracts.len() >= MAX_NFT_CONTRACTS_ASKED {
+                    continue;
+                }
+                contracts.insert((*l1, *contract));
+            }
+            seen.insert(r);
+            asked.push(r);
         }
         let Ok(owner) = address.parse::<Address>() else {
             return Ok(owned);
@@ -798,24 +813,17 @@ impl OnChainAccess {
         refs: &[&items::ItemRef],
         timestamp_ms: i64,
     ) -> Result<Vec<bool>, ValidatorError> {
-        // Each third-party contract's standard once, before the calls that need it.
-        let contracts: HashSet<Address> = refs
+        // Each third-party contract's standard, before the calls that need it.
+        let mut contracts: Vec<Address> = refs
             .iter()
             .filter_map(|r| match r {
                 items::ItemRef::ThirdParty { contract, .. } => Some(*contract),
                 _ => None,
             })
             .collect();
-        let probes: Vec<_> = contracts
-            .into_iter()
-            .map(|c| async move {
-                Ok::<_, ValidatorError>((c, self.nft_kind(chain, l1_layer, c).await?))
-            })
-            .collect();
-        let kinds: HashMap<Address, NftKind> = futures::stream::iter(probes)
-            .buffer_unordered(CALLS_IN_FLIGHT)
-            .try_collect()
-            .await?;
+        contracts.sort();
+        contracts.dedup();
+        let kinds = self.nft_kinds(chain, l1_layer, &contracts).await?;
         let blocks = chain.blocks_for(timestamp_ms).await?;
         all_at_one_block(refs.len(), blocks, |block| {
             self.owns_at(chain, owner, refs, &kinds, block)
@@ -870,7 +878,10 @@ impl OnChainAccess {
             .flatten()
             .map(|(to, data, _)| (*to, data.clone()))
             .collect();
-        let mut answers = chain.call_each(&calls, block).await?.into_iter();
+        let mut answers = chain
+            .call_each(&calls, BlockTag::Number(block))
+            .await?
+            .into_iter();
         Ok(asks
             .iter()
             .map(|ask| {
@@ -889,51 +900,80 @@ impl OnChainAccess {
             .collect())
     }
 
-    /// Whether a third-party NFT contract answers as ERC-1155, else ERC-721,
-    /// probed at the head as the reference checker does; a contract that is
-    /// neither is asked again next time.
-    async fn nft_kind(
+    /// Whether each third-party NFT contract answers as ERC-1155, else
+    /// ERC-721, probed at the head as the reference checker does, in one batch
+    /// per standard; a contract that is neither is probed again once
+    /// [`UNKNOWN_KIND_TTL`] has passed.
+    async fn nft_kinds(
         &self,
         chain: &Chain,
         l1_layer: bool,
-        contract: Address,
-    ) -> Result<NftKind, ValidatorError> {
-        if let Some(kind) = self.nft_kinds.lock().get(&(l1_layer, contract)) {
-            return Ok(*kind);
-        }
-        let erc1155 = Erc1155::balanceOfCall {
-            account: contract,
-            id: U256::ZERO,
-        }
-        .abi_encode();
-        let kind = match chain
-            .call(contract, &erc1155, BlockTag::Latest, None)
-            .await?
+        contracts: &[Address],
+    ) -> Result<HashMap<Address, NftKind>, ValidatorError> {
+        let mut kinds = HashMap::new();
+        let mut probe = Vec::new();
         {
-            Some(out) if out.len() >= 32 => NftKind::Erc1155,
-            _ => {
-                let erc721 = Erc721::ownerOfCall {
-                    tokenId: U256::ZERO,
+            let memo = self.nft_kinds.lock();
+            for c in contracts {
+                match memo.get(&(l1_layer, *c)) {
+                    Some((NftKind::Unknown, at)) if at.elapsed() >= UNKNOWN_KIND_TTL => {
+                        probe.push(*c)
+                    }
+                    Some((kind, _)) => {
+                        kinds.insert(*c, *kind);
+                    }
+                    None => probe.push(*c),
+                }
+            }
+        }
+        if probe.is_empty() {
+            return Ok(kinds);
+        }
+        let erc1155: Vec<(Address, Vec<u8>)> = probe
+            .iter()
+            .map(|c| {
+                let data = Erc1155::balanceOfCall {
+                    account: *c,
+                    id: U256::ZERO,
                 }
                 .abi_encode();
-                match chain
-                    .call(contract, &erc721, BlockTag::Latest, None)
-                    .await?
-                {
-                    None => NftKind::Erc721,
-                    Some(out) if out.len() >= 32 => NftKind::Erc721,
-                    Some(_) => NftKind::Unknown,
-                }
+                (*c, data)
+            })
+            .collect();
+        let answers = chain.call_each(&erc1155, BlockTag::Latest).await?;
+        let mut found = Vec::with_capacity(probe.len());
+        let mut erc721 = Vec::new();
+        for (c, answer) in probe.iter().zip(answers) {
+            match answer {
+                Some(out) if out.len() >= 32 => found.push((*c, NftKind::Erc1155)),
+                _ => erc721.push((
+                    *c,
+                    Erc721::ownerOfCall {
+                        tokenId: U256::ZERO,
+                    }
+                    .abi_encode(),
+                )),
             }
-        };
-        if kind != NftKind::Unknown {
-            let mut kinds = self.nft_kinds.lock();
-            if kinds.len() >= NFT_KINDS_CAP {
-                kinds.clear();
-            }
-            kinds.insert((l1_layer, contract), kind);
         }
-        Ok(kind)
+        let answers = chain.call_each(&erc721, BlockTag::Latest).await?;
+        for ((c, _), answer) in erc721.iter().zip(answers) {
+            let kind = match answer {
+                None => NftKind::Erc721,
+                Some(out) if out.len() >= 32 => NftKind::Erc721,
+                Some(_) => NftKind::Unknown,
+            };
+            found.push((*c, kind));
+        }
+        let now = Instant::now();
+        let mut memo = self.nft_kinds.lock();
+        if memo.len() + found.len() > NFT_KINDS_CAP {
+            memo.clear();
+        }
+        for (c, kind) in found {
+            memo.insert((l1_layer, c), (kind, now));
+            kinds.insert(c, kind);
+        }
+        Ok(kinds)
     }
 }
 
