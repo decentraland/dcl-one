@@ -530,10 +530,12 @@ invalidate these facts; the source retains its previous value until expiry. The
 six V1 profile-enriched community reads (community listing, members, bans,
 community requests, member requests and posts) propagate cache-read failures to
 their handler error boundary. Consumers that intentionally use the best-effort
-profile wrapper retain that behavior; missing or invalid profiles retain their
-existing fallback. Cache writes are best effort: a batch first uses one set write
-and retries individual keys if it fails, so one failed key does not prevent
-successful keys from being retained.
+profile wrapper retain that behavior. V1 members, bans and community requests
+omit unresolved profile rows after database pagination, preserving the database
+total; their V2 responses retain those rows without profiles. Post-author and
+strict single-owner behavior remain separate. Cache writes are best effort: a
+batch first uses one set write and retries individual keys if it fails, so one
+failed key does not prevent successful keys from being retained.
 
 The workload consists of indexed key/`ANY` reads, existing active-pointer/profile
 lookups on misses and bounded page writes. No external await occurs inside an SQL
@@ -618,3 +620,13 @@ active-room endpoint first read all active rooms; an empty or failed voice read
 returns an empty response before community SQL. This all-room query still grows
 with stored voice presence. These local SQL catches do not describe direct
 HTTP-provider errors in the separate Social deployment.
+
+Signed community listings, members, bans and member-request summaries propagate
+relationship-query failures through their handler boundary on the existing pool.
+Members and bans read relationship facts before V1 profiles, including empty
+pages; anonymous listing and member reads omit those relationship queries.
+Community-request rows carry `friendshipStatus: NONE` without a relationship
+read. Ordinary signed community pages use the existing accepted-friend read and
+at most three matching member addresses per community; no index or storage was
+added. The legacy best-effort friendship-status wrapper remains available to
+its existing consumers outside these community reads.

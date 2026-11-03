@@ -58,6 +58,8 @@ const FORGED: &str = "/v1/forged/not-a-route";
 /// rows and the one that reads the list empty take turns.
 static VOICE_ROWS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 static DAPPS_FLAGS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+/// GRANT/REVOKE update shared PostgreSQL ACL catalog rows across these fixtures.
+static DATABASE_PERMISSIONS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct Wallet {
     signer: PrivateKeySigner,
@@ -926,7 +928,16 @@ async fn every_route_answers_its_contract() {
     )
     .await;
     let rows = v["data"]["results"].as_array().unwrap();
-    assert_eq!(rows.len(), 3);
+    assert_eq!(rows.len(), 2, "V1 omits the member without a profile: {v}");
+    assert_eq!(
+        v["data"]["total"], 3,
+        "profile filtering preserves the database total"
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row["memberAddress"] == m2.address.as_str())
+    );
     assert_eq!(rows[0]["role"], "owner", "owner first: {v}");
     assert_eq!(rows[0]["name"], "Owner");
     assert_eq!(rows[0]["hasClaimedName"], true);
@@ -944,6 +955,11 @@ async fn every_route_answers_its_contract() {
             .await,
     )
     .await;
+    assert_eq!(
+        v["data"]["results"].as_array().unwrap().len(),
+        3,
+        "V2 retains unresolved members"
+    );
     assert!(
         v["data"]["results"][0].get("name").is_none(),
         "v2 members carry no profile fields: {v}"
@@ -1590,6 +1606,9 @@ async fn every_route_answers_its_contract() {
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
+    // The later V1 ban-row shape requires a resolved profile. The earlier
+    // member read deliberately exercised this wallet without one.
+    rig.profile(&m2, "MemberTwo", false).await;
     let ban_path = format!("/v1/communities/{c1}/members/{}/bans", m2.address);
     let (status, _) = hit(app, Case::new("post", &ban_path).signed(&user).await).await;
     assert_eq!(status, StatusCode::NO_CONTENT);
@@ -2556,3 +2575,5 @@ fn settings_fold_restricted_names_and_validate_moderators() {
         "http://cdn/social/communities/x/raw-thumbnail.png"
     );
 }
+
+mod friendship_parity;

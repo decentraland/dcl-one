@@ -18,7 +18,6 @@ use serde_json::json;
 use crate::{Address, CommunityId, CommunityPermission};
 
 use super::dto::{CommunityDetail, CommunityListItem};
-use super::friendship::community_friends;
 use super::http::{
     CommError, EnvelopeData, Paginated, Pagination, get_all, get_bool, get_first,
     get_pagination_params, handler_error as err_json,
@@ -177,16 +176,19 @@ fn friend_profile(address: &str, info: &ProfileInfo) -> serde_json::Value {
     })
 }
 
-async fn friends_by_community(
-    state: &SharedState,
-    viewer: &Address,
-    items: &[CommunityListItem],
-) -> HashMap<CommunityId, Vec<String>> {
-    let ids: Vec<CommunityId> = items.iter().map(|o| CommunityId::from_uuid(o.id)).collect();
-    if ids.is_empty() {
-        return HashMap::new();
-    }
-    community_friends(&state.pool, viewer, &ids).await
+fn friends_by_community(items: &[CommunityListItem]) -> HashMap<CommunityId, Vec<String>> {
+    items
+        .iter()
+        .map(|item| {
+            let addresses = item
+                .friends
+                .iter()
+                .flatten()
+                .filter_map(|value| value.as_str().map(str::to_string))
+                .collect();
+            (CommunityId::from_uuid(item.id), addresses)
+        })
+        .collect()
 }
 
 async fn enrich_with_friends(
@@ -306,15 +308,13 @@ pub async fn get_communities(
     .await
     .map_err(super::http::database_error)?;
 
+    let by_community = friends_by_community(&results);
     let owners = owner_addresses(&results);
-    let (owner_names, by_community) =
-        tokio::join!(state.profiles.get_owner_names(&owners), async {
-            match signer.as_ref() {
-                Some(user) => friends_by_community(&state, user, &results).await,
-                None => HashMap::new(),
-            }
-        });
-    let owner_names = owner_names.map_err(super::http::database_error)?;
+    let owner_names = state
+        .profiles
+        .get_owner_names(&owners)
+        .await
+        .map_err(super::http::database_error)?;
     enrich_list_v1(&state.settings.cdn_url, &mut results, &owner_names);
     enrich_with_friends(&state, by_community, &mut results)
         .await
@@ -443,19 +443,6 @@ pub async fn get_communities_v2(
     .map_err(super::http::database_error)?;
     for item in results.iter_mut() {
         set_thumbnail_list(&state.settings.cdn_url, item);
-    }
-    if let Some(user) = signer.as_ref() {
-        let by_community = friends_by_community(&state, user, &results).await;
-        for item in results.iter_mut() {
-            if let Some(addresses) = by_community.get(&CommunityId::from_uuid(item.id)) {
-                item.friends = Some(
-                    addresses
-                        .iter()
-                        .map(|a| serde_json::Value::String(a.clone()))
-                        .collect(),
-                );
-            }
-        }
     }
     Ok(Json(EnvelopeData {
         data: Paginated {

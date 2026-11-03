@@ -4,6 +4,7 @@ use super::*;
 
 #[tokio::test]
 async fn every_community_http_database_failure_uses_the_source_message_boundary() {
+    let _permissions = DATABASE_PERMISSIONS.lock().await;
     let actor = wallet();
     let target = wallet();
     let mut settings = Settings::for_tests();

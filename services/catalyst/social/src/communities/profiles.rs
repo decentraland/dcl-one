@@ -492,10 +492,10 @@ fn community_profile(profile: RegistryProfile) -> ProfileInfo {
 }
 
 /// `name`, `profilePictureUrl`, `hasClaimedName` (and `nameColor` when known)
-/// on every row whose `addr_field` resolved; placeholders otherwise.
+/// on rows whose `addr_field` resolved; unresolved rows are omitted.
 pub async fn enrich_with_profiles(
     profiles: &ProfilesCache,
-    rows: &mut [serde_json::Value],
+    rows: &mut Vec<serde_json::Value>,
     addr_field: &str,
 ) -> sqlx::Result<()> {
     if rows.is_empty() {
@@ -510,6 +510,13 @@ pub async fn enrich_with_profiles(
         })
         .collect();
     let map = profiles.try_get_profiles(&addresses).await?;
+    // The V1 member mapper omits unresolved profiles without changing the
+    // database total or pagination. V2 callers do not use this mapper.
+    rows.retain(|row| {
+        row.get(addr_field)
+            .and_then(|value| value.as_str())
+            .is_some_and(|address| map.contains_key(&address.to_lowercase()))
+    });
     for row in rows.iter_mut() {
         let Some(obj) = row.as_object_mut() else {
             continue;
@@ -899,7 +906,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn member_rows_get_all_profile_fields_and_posts_get_author_fields() {
+    async fn unresolved_members_are_omitted_while_posts_keep_the_author_fallback() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
@@ -916,21 +923,9 @@ mod tests {
         enrich_with_profiles(&profiles, &mut rows, "memberAddress")
             .await
             .unwrap();
-        let m = rows[0].as_object().unwrap();
-        for key in [
-            "memberAddress",
-            "name",
-            "profilePictureUrl",
-            "hasClaimedName",
-        ] {
-            assert!(m.contains_key(key), "member missing {key}");
-        }
-        assert_eq!(m["name"], "");
-        assert_eq!(m["profilePictureUrl"], "");
-        assert_eq!(m["hasClaimedName"], false);
         assert!(
-            !m.contains_key("nameColor"),
-            "unresolved member must not carry a nameColor key"
+            rows.is_empty(),
+            "source V1 member mapping omits an unresolved profile"
         );
 
         let mut rows =

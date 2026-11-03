@@ -86,7 +86,11 @@ async fn community_requests_page(
             .map_err(super::http::database_error)?;
     let json_rows = rows
         .into_iter()
-        .map(|r| serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
+        .map(|r| {
+            let mut row = serde_json::to_value(r).unwrap_or(serde_json::Value::Null);
+            row["friendshipStatus"] = json!(super::friendship::friendship_status::NONE);
+            row
+        })
         .collect();
     Ok((json_rows, total, pagination, signer))
 }
@@ -98,12 +102,11 @@ pub async fn get_community_requests(
     Path(id_str): Path<String>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
-    let (mut rows, total, pagination, signer) =
+    let (mut rows, total, pagination, _signer) =
         community_requests_page(&state, &headers, &original, &id_str, "v1", &pairs).await?;
     enrich_with_profiles(&state.profiles, &mut rows, "memberAddress")
         .await
         .map_err(super::http::database_error)?;
-    super::members::enrich_with_friendship_status(&state, Some(&signer), &mut rows).await;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -116,9 +119,8 @@ pub async fn get_community_requests_v2(
     Path(id_str): Path<String>,
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
-    let (mut rows, total, pagination, signer) =
+    let (rows, total, pagination, _signer) =
         community_requests_page(&state, &headers, &original, &id_str, "v2", &pairs).await?;
-    super::members::enrich_with_friendship_status(&state, Some(&signer), &mut rows).await;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -163,7 +165,13 @@ async fn member_requests_page(
                 .and_then(|id| CommunityId::parse(id).ok())
         })
         .collect();
-    let friends = super::friendship::community_friends(&state.pool, &signer, &ids).await;
+    let friends = if ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        super::friendship::community_friends(&state.pool, &signer, &ids)
+            .await
+            .map_err(super::http::database_error)?
+    };
     for row in &mut rows {
         if let Some(id) = row["communityId"]
             .as_str()

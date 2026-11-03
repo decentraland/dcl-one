@@ -316,6 +316,7 @@ async fn active_handler_preserves_empty_error_and_all_settled_source_contracts()
 
 #[tokio::test]
 async fn voice_sql_failures_degrade_separately_from_core_community_failures() {
+    let _permissions = DATABASE_PERMISSIONS.lock().await;
     let _voice = VOICE_ROWS.lock().await;
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;

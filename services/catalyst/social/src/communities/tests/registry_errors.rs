@@ -4,6 +4,7 @@ use super::*;
 
 #[tokio::test]
 async fn community_registry_read_errors_propagate_but_cache_write_errors_do_not() {
+    let _permissions = DATABASE_PERMISSIONS.lock().await;
     let source:Value=serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"),"/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-registry-errors.json"))).unwrap();
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;

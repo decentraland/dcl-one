@@ -19,7 +19,7 @@ use crate::identity::can_act_on_member;
 use crate::{Address, CommunityId, CommunityPermission, CommunityRole, CommunityStanding};
 
 use super::dto::{CommunityMember, CommunityMemberV2Wire, CommunityMemberWire};
-use super::friendship::{friendship_status, friendship_statuses};
+use super::friendship::{friendship_status, try_friendship_statuses};
 use super::http::{
     CommError, Paginated, get_first, get_pagination_params, handler_error as err_json,
 };
@@ -70,16 +70,16 @@ async fn member_friendship_statuses(
     state: &SharedState,
     signer: Option<&Address>,
     members: &[CommunityMember],
-) -> HashMap<String, i32> {
+) -> sqlx::Result<HashMap<String, i32>> {
     match signer {
-        Some(user) if !members.is_empty() => {
+        Some(user) => {
             let addresses: Vec<String> = members
                 .iter()
                 .map(|m| m.member_address.to_lowercase())
                 .collect();
-            friendship_statuses(&state.pool, user, &addresses).await
+            try_friendship_statuses(&state.pool, user, &addresses).await
         }
-        _ => HashMap::new(),
+        _ => Ok(HashMap::new()),
     }
 }
 
@@ -89,35 +89,24 @@ async fn to_member_wire_rows(
     members: Vec<CommunityMember>,
 ) -> sqlx::Result<Vec<CommunityMemberWire>> {
     let addresses: Vec<String> = members.iter().map(|m| m.member_address.clone()).collect();
-    let (profiles, statuses) = tokio::join!(
-        state.profiles.try_get_profiles(&addresses),
-        member_friendship_statuses(state, signer, &members)
-    );
-    let profiles = profiles?;
+    let statuses = member_friendship_statuses(state, signer, &members).await?;
+    let profiles = state.profiles.try_get_profiles(&addresses).await?;
     Ok(members
         .into_iter()
-        .map(|m| {
+        .filter_map(|m| {
             let addr = m.member_address.to_lowercase();
-            let info = profiles.get(&addr);
-            let (name, profile_picture_url, has_claimed_name) = match info {
-                Some(info) => (
-                    info.name.clone(),
-                    info.profile_picture_url.clone(),
-                    info.has_claimed_name,
-                ),
-                None => (String::new(), String::new(), false),
-            };
-            CommunityMemberWire {
-                name_color: info.and_then(|i| i.name_color.clone()),
+            let info = profiles.get(&addr)?;
+            Some(CommunityMemberWire {
+                name_color: info.name_color.clone(),
                 friendship_status: statuses
                     .get(&addr)
                     .copied()
                     .unwrap_or(friendship_status::NONE),
                 base: m,
-                name,
-                profile_picture_url,
-                has_claimed_name,
-            }
+                name: info.name.clone(),
+                profile_picture_url: info.profile_picture_url.clone(),
+                has_claimed_name: info.has_claimed_name,
+            })
         })
         .collect())
 }
@@ -126,9 +115,9 @@ async fn to_member_v2_wire_rows(
     state: &SharedState,
     signer: Option<&Address>,
     members: Vec<CommunityMember>,
-) -> Vec<CommunityMemberV2Wire> {
-    let statuses = member_friendship_statuses(state, signer, &members).await;
-    members
+) -> sqlx::Result<Vec<CommunityMemberV2Wire>> {
+    let statuses = member_friendship_statuses(state, signer, &members).await?;
+    Ok(members
         .into_iter()
         .map(|m| CommunityMemberV2Wire {
             friendship_status: statuses
@@ -137,7 +126,7 @@ async fn to_member_v2_wire_rows(
                 .unwrap_or(friendship_status::NONE),
             base: m,
         })
-        .collect()
+        .collect())
 }
 
 /// `friendshipStatus` on JSON rows keyed by `memberAddress` (the v2 requests
@@ -146,10 +135,7 @@ pub(crate) async fn enrich_with_friendship_status(
     state: &SharedState,
     signer: Option<&Address>,
     rows: &mut [serde_json::Value],
-) {
-    if rows.is_empty() {
-        return;
-    }
+) -> sqlx::Result<()> {
     let statuses = match signer {
         Some(user) => {
             let addresses: Vec<String> = rows
@@ -160,7 +146,7 @@ pub(crate) async fn enrich_with_friendship_status(
                         .map(|s| s.to_lowercase())
                 })
                 .collect();
-            friendship_statuses(&state.pool, user, &addresses).await
+            try_friendship_statuses(&state.pool, user, &addresses).await?
         }
         None => HashMap::new(),
     };
@@ -182,6 +168,7 @@ pub(crate) async fn enrich_with_friendship_status(
             serde_json::Value::Number(status.into()),
         );
     }
+    Ok(())
 }
 
 async fn members_page(
@@ -264,7 +251,9 @@ pub async fn get_members_v2(
     )
     .await?;
     let (members, total, pagination) = members_page(&state, id, &pairs).await?;
-    let rows = to_member_v2_wire_rows(&state, signer.as_ref(), members).await;
+    let rows = to_member_v2_wire_rows(&state, signer.as_ref(), members)
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -334,10 +323,12 @@ pub async fn get_bans(
         bans_listing(&state, &headers, &original, &id_str, "v1", &pairs).await?;
     // upstream `mapMembersWithProfiles`: the profile fields and the
     // viewer's `friendshipStatus`
+    enrich_with_friendship_status(&state, Some(&signer), &mut rows)
+        .await
+        .map_err(super::http::database_error)?;
     enrich_with_profiles(&state.profiles, &mut rows, "memberAddress")
         .await
         .map_err(super::http::database_error)?;
-    enrich_with_friendship_status(&state, Some(&signer), &mut rows).await;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -352,7 +343,9 @@ pub async fn get_bans_v2(
 ) -> Result<Json<serde_json::Value>, CommError> {
     let (mut rows, total, pagination, signer) =
         bans_listing(&state, &headers, &original, &id_str, "v2", &pairs).await?;
-    enrich_with_friendship_status(&state, Some(&signer), &mut rows).await;
+    enrich_with_friendship_status(&state, Some(&signer), &mut rows)
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))

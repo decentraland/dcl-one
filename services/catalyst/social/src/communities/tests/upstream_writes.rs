@@ -386,6 +386,7 @@ async fn ban_rows_carry_millisecond_banned_at_and_the_friendship_status() {
     };
     let (owner, friend) = (wallet(), wallet());
     let c = rig.community(&owner, false).await;
+    rig.profile(&friend, "Friend", true).await;
     rig.friends(&owner, &friend).await;
     sqlx::query("INSERT INTO social.community_bans (community_id, banned_address, banned_by, banned_at) VALUES ($1, $2, $3, '2025-03-04 05:06:07.891234')")
         .bind(c)

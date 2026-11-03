@@ -471,6 +471,18 @@ pub async fn list(
     })
     .await?;
 
+    // The source includes friendship facts in its fallible core query, even
+    // for an empty page. Active-provider early returns above skip this read.
+    let friends = match viewer {
+        Some(viewer) => {
+            let ids: Vec<_> = rows
+                .iter()
+                .map(|row| CommunityId::from_uuid(row.0))
+                .collect();
+            super::friendship::community_friends(pool, viewer, &ids).await?
+        }
+        None => Default::default(),
+    };
     let stats = match active_stats {
         Some(stats) => stats,
         None => {
@@ -534,7 +546,15 @@ pub async fn list(
                     is_banned: None,
                     thumbnail_url: mirror_thumbnail,
                     owner_name: None,
-                    friends: signed.then(Vec::new),
+                    friends: signed.then(|| {
+                        friends
+                            .get(&CommunityId::from_uuid(id))
+                            .into_iter()
+                            .flatten()
+                            .cloned()
+                            .map(serde_json::Value::String)
+                            .collect()
+                    }),
                     has_thumbnail,
                 }
             },
