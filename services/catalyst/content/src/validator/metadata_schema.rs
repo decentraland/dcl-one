@@ -585,9 +585,11 @@ fn world_configuration(v: &Value, p: &str) -> Check {
     nullable(m, "skyboxConfig", p, |v, p| {
         let m = obj(v, p)?;
         nullable(m, "fixedTime", p, num_check)?;
-        nullable(m, "textures", p, |v, p| {
-            strings(v, p)?;
-            if ![0, 1, 6].contains(&array(v, p)?.len()) {
+        // `null` matches all three length branches of the oneOf, so it fails.
+        optional(m, "textures", p, |v, p| {
+            let fits =
+                strings(v, p).is_ok() && v.as_array().is_some_and(|a| [0, 1, 6].contains(&a.len()));
+            if !fits {
                 return Err("customSkybox must be an array of 0, 1 or 6 strings".to_string());
             }
             Ok(())
@@ -1146,6 +1148,15 @@ mod tests {
             s,
             "metadata.allowedMediaHostnames must NOT have more than 0 items",
         );
+        for textures in [Value::Null, json!(["a", "b"]), json!([1])] {
+            let mut s = scene();
+            s["worldConfiguration"] = json!({"skyboxConfig": {"textures": textures}});
+            assert_invalid(
+                EntityType::Scene,
+                s,
+                "customSkybox must be an array of 0, 1 or 6 strings",
+            );
+        }
         let mut s = scene();
         s["creator"] = json!("bob");
         assert_invalid(
