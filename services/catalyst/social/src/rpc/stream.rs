@@ -53,7 +53,7 @@ use crate::rpc::proto::v2::{
 use crate::rpc::pubsub::SocialEvent;
 use crate::rpc::ws::{AUTH_TIMEOUT, POOL_FULL, UNAUTHORIZED};
 use crate::shared::rpc::handshake::{
-    HandshakeError, handshake_path, validator_ref, verify_handshake_ms,
+    HandshakeError, handshake_path, validator_ref, verify_handshake_number_ms,
 };
 use crate::shared::rpc::ws::{IdleAction, IdleTimer, SocketClose, close_message};
 
@@ -189,7 +189,7 @@ fn header_frame(headers: &HeaderMap) -> Option<String> {
 }
 
 async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, HandshakeError> {
-    let verdict = verify_handshake_ms(
+    let verdict = verify_handshake_number_ms(
         frame,
         "get",
         paths,

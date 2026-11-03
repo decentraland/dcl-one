@@ -53,6 +53,22 @@ fn source_number(raw: &str) -> Result<f64, String> {
         .map_err(|_| "Value is not a number".into())
 }
 
+// uWS's binding converts through Int32Value into an unsigned-short field.
+// The native context then accepts zero (disabled), or 8..=960 seconds.
+fn source_idle_timeout(raw: &str) -> Result<u64, String> {
+    let number = source_number(raw)?;
+    let seconds = if number.is_finite() {
+        number.trunc().rem_euclid(65536.0) as u64
+    } else {
+        0
+    };
+    if seconds == 0 || (8..=960).contains(&seconds) {
+        Ok(seconds)
+    } else {
+        Err("idle timeout must resolve to zero or 8..=960 seconds".into())
+    }
+}
+
 /// Social: communities, the social RPC, comms, notifications, badges, media and profile
 /// images.
 #[derive(Args, Clone, Debug)]
@@ -253,13 +269,13 @@ pub struct SocialConfig {
     pub social_rpc_auth_window_secs: i64,
 
     /// First-frame authentication deadline; independent of signature age.
-    #[arg(long, env = "WS_AUTH_TIMEOUT_IN_MS")]
-    pub ws_auth_timeout_in_ms: Option<u64>,
+    #[arg(long, env = "WS_AUTH_TIMEOUT_IN_MS", value_parser = source_number, allow_hyphen_values = true)]
+    pub ws_auth_timeout_in_ms: Option<f64>,
     /// Maximum absolute signature age in milliseconds.
-    #[arg(long, env = "WS_AUTH_SIGNATURE_EXPIRATION_IN_MS")]
-    pub ws_auth_signature_expiration_in_ms: Option<i64>,
+    #[arg(long, env = "WS_AUTH_SIGNATURE_EXPIRATION_IN_MS", value_parser = source_number, allow_hyphen_values = true)]
+    pub ws_auth_signature_expiration_in_ms: Option<f64>,
     /// Seconds without socket traffic; zero disables idle expiry.
-    #[arg(long, env = "WS_IDLE_TIMEOUT_IN_SECONDS", default_value_t = 300)]
+    #[arg(long, env = "WS_IDLE_TIMEOUT_IN_SECONDS", default_value_t = 300, value_parser = source_idle_timeout, allow_hyphen_values = true)]
     pub ws_idle_timeout_in_seconds: u64,
 
     /// A private call not accepted within this many ms expires.
@@ -682,7 +698,7 @@ mod tests {
 
     const BASE: [(&str, &str); 1] = [("DATABASE_URL", "postgres:///catalyst")];
 
-    fn social(pairs: &[(&'static str, &'static str)]) -> Result<super::SocialConfig, clap::Error> {
+    fn social(pairs: &[(&str, &str)]) -> Result<super::SocialConfig, clap::Error> {
         Config::parse_env_for_tests(BASE.iter().chain(pairs).copied()).map(|c| c.social)
     }
 
@@ -764,6 +780,53 @@ mod tests {
     }
 
     #[test]
+    fn socket_numeric_settings_match_executed_source_and_native_idle_admission() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tests/fixtures/conformance/social/ws-numbers-source-cases.json"
+        )))
+        .unwrap();
+        for case in fixture["auth"].as_array().unwrap() {
+            for field in [
+                "WS_AUTH_TIMEOUT_IN_MS",
+                "WS_AUTH_SIGNATURE_EXPIRATION_IN_MS",
+            ] {
+                let raw = case["raw"].as_str();
+                let values = raw.map(|raw| vec![(field, raw)]).unwrap_or_default();
+                let actual = social(&values);
+                if case.get("error").is_some() {
+                    assert!(actual.is_err(), "{field} {raw:?}");
+                    continue;
+                }
+                let configured = actual.unwrap();
+                let number = if field == "WS_AUTH_TIMEOUT_IN_MS" {
+                    configured.ws_auth_timeout_in_ms
+                } else {
+                    configured.ws_auth_signature_expiration_in_ms
+                }
+                .unwrap_or(300000.0);
+                let expected = case["number"]
+                    .as_f64()
+                    .unwrap_or_else(|| case["number"].as_str().unwrap().parse().unwrap());
+                assert_eq!(number, expected, "{field} {raw:?}");
+            }
+        }
+        for case in fixture["idle"].as_array().unwrap() {
+            let raw = case["raw"].as_str().unwrap();
+            let actual = social(&[("WS_IDLE_TIMEOUT_IN_SECONDS", raw)]);
+            if case["native_allowed"] == true {
+                assert_eq!(
+                    actual.unwrap().ws_idle_timeout_in_seconds,
+                    case["native_seconds"].as_u64().unwrap(),
+                    "{raw}"
+                );
+            } else {
+                assert!(actual.is_err(), "{raw}");
+            }
+        }
+    }
+
+    #[test]
     fn socket_deadline_signature_age_and_idle_have_independent_source_variables() {
         let defaults = social(&[]).unwrap();
         assert_eq!(defaults.ws_idle_timeout_in_seconds, 300);
@@ -774,8 +837,8 @@ mod tests {
             ("WS_IDLE_TIMEOUT_IN_SECONDS", "0"),
         ])
         .unwrap();
-        assert_eq!(config.ws_auth_timeout_in_ms, Some(7));
-        assert_eq!(config.ws_auth_signature_expiration_in_ms, Some(23));
+        assert_eq!(config.ws_auth_timeout_in_ms, Some(7.0));
+        assert_eq!(config.ws_auth_signature_expiration_in_ms, Some(23.0));
         assert_eq!(config.ws_idle_timeout_in_seconds, 0);
     }
 

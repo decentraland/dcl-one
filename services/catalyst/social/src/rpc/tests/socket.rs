@@ -497,8 +497,8 @@ async fn shutdown_ends_every_socket_with_1001() {
 #[tokio::test]
 async fn both_socket_protocols_separate_auth_deadline_from_signature_age() {
     let settings = Settings {
-        ws_auth_timeout_ms: Some(100),
-        ws_auth_signature_expiration_ms: Some(10_000),
+        ws_auth_timeout_ms: Some(100.0),
+        ws_auth_signature_expiration_ms: Some(10_000.0),
         ws_idle_timeout_secs: 0,
         ..Default::default()
     };
@@ -528,8 +528,8 @@ async fn both_socket_protocols_separate_auth_deadline_from_signature_age() {
     }
     server.jobs.shutdown(Duration::from_secs(2)).await;
     let settings = Settings {
-        ws_auth_timeout_ms: Some(10_000),
-        ws_auth_signature_expiration_ms: Some(20),
+        ws_auth_timeout_ms: Some(10_000.0),
+        ws_auth_signature_expiration_ms: Some(20.0),
         ws_idle_timeout_secs: 0,
         ..Default::default()
     };
@@ -589,4 +589,38 @@ async fn both_socket_protocols_probe_idle_connections_with_ping() {
         );
     }
     server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+#[test]
+fn source_numeric_auth_timer_buckets_remain_independent_from_signature_windows() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/ws-numbers-source-cases.json"
+    )))
+    .unwrap();
+    for case in fixture["auth"].as_array().unwrap() {
+        if case.get("error").is_some() {
+            continue;
+        }
+        let number = case["number"]
+            .as_f64()
+            .unwrap_or_else(|| case["number"].as_str().unwrap().parse().unwrap());
+        let settings = Settings {
+            ws_auth_timeout_ms: Some(number),
+            ws_auth_signature_expiration_ms: Some(number),
+            ..Settings::default()
+        };
+        assert_eq!(
+            settings.auth_timeout().as_millis(),
+            case["timer_bucket_ms"].as_u64().unwrap() as u128,
+            "{}",
+            case["raw"]
+        );
+        assert_eq!(
+            settings.auth_signature_expiration_ms(),
+            number,
+            "{}",
+            case["raw"]
+        );
+    }
 }

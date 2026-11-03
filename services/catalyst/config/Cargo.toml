@@ -17,3 +17,4 @@ ts = []
 test-support = []
 
 [dev-dependencies]
+serde_json.workspace = true

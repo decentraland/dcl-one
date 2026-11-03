@@ -149,6 +149,18 @@ A stalled write keeps the existing five-second deadline and retires the socket.
 The producer waits for each acknowledgement and rechecks topology and privacy
 before writing. Other domains retain their default 16 KiB guarded-frame limit.
 
+Both Social socket protocols read `WS_AUTH_TIMEOUT_IN_MS` and
+`WS_AUTH_SIGNATURE_EXPIRATION_IN_MS` separately using the source environment
+provider's numeric-prefix parser. The authentication timer follows Node's
+millisecond timer conversion: values outside 1..=2,147,483,647 schedule one
+millisecond, and valid fractions are truncated. Signature age checks retain the
+configured numeric value and the original signed timestamp text; timestamp
+conversion accepts the source's finite JavaScript Number forms. Idle timeout
+uses the pinned native binding's unsigned-short conversion, accepting zero or
+8..=960 seconds after conversion. The source-executed numeric fixtures exercise
+these conversions and native option admission; they do not measure native idle
+timer scheduling or kernel buffering.
+
 Oversized community voice metadata is stored as one immutable binary protobuf
 snapshot in `social.event_payloads`, with a UUID and a 24-hour expiry, before a
 small reference is published. A subscriber reads that exact snapshot through its

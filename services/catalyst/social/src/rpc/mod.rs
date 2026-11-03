@@ -86,9 +86,9 @@ pub struct Settings {
     /// far its timestamp may sit from the server clock.
     pub auth_window_secs: i64,
     /// WS_AUTH_TIMEOUT_IN_MS; unset keeps the legacy AUTH_WINDOW_SECS fallback.
-    pub ws_auth_timeout_ms: Option<u64>,
+    pub ws_auth_timeout_ms: Option<f64>,
     /// WS_AUTH_SIGNATURE_EXPIRATION_IN_MS, independent from the first-frame timer.
-    pub ws_auth_signature_expiration_ms: Option<i64>,
+    pub ws_auth_signature_expiration_ms: Option<f64>,
     /// WS_IDLE_TIMEOUT_IN_SECONDS; zero disables automatic ping/idle expiry.
     pub ws_idle_timeout_secs: u64,
     /// `PRIVATE_VOICE_CHAT_EXPIRATION_TIME` (ms): a call not accepted within it expires.
@@ -161,14 +161,21 @@ impl Default for Settings {
 
 impl Settings {
     pub(crate) fn auth_timeout(&self) -> Duration {
-        Duration::from_millis(
-            self.ws_auth_timeout_ms
-                .unwrap_or_else(|| self.auth_window_secs.max(0).saturating_mul(1000) as u64),
-        )
+        let configured = self
+            .ws_auth_timeout_ms
+            .unwrap_or_else(|| self.auth_window_secs as f64 * 1000.0);
+        // Node setTimeout inserts into an integer millisecond bucket and uses
+        // one millisecond outside its supported positive signed-32-bit range.
+        let ms = if (1.0..=i32::MAX as f64).contains(&configured) {
+            configured.trunc() as u64
+        } else {
+            1
+        };
+        Duration::from_millis(ms)
     }
-    pub(crate) fn auth_signature_expiration_ms(&self) -> i64 {
+    pub(crate) fn auth_signature_expiration_ms(&self) -> f64 {
         self.ws_auth_signature_expiration_ms
-            .unwrap_or_else(|| self.auth_window_secs.saturating_mul(1000))
+            .unwrap_or_else(|| self.auth_window_secs as f64 * 1000.0)
     }
 }
 

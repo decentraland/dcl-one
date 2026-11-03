@@ -17,6 +17,8 @@
 //! EIP-1654 (contract wallet) SIGNER links verify through the validator the
 //! caller passes; with `None` they fail closed.
 
+mod number;
+
 use std::sync::Arc;
 
 use axum::http::HeaderMap;
@@ -245,22 +247,70 @@ pub async fn verify_handshake_ms(
     now_ms: i64,
     validator: Option<&dyn Eip1654Validator>,
 ) -> Result<Address, HandshakeError> {
+    verify_handshake_inner(
+        frame_json,
+        method,
+        paths,
+        expiration_ms as f64,
+        now_ms,
+        validator,
+        false,
+    )
+    .await
+}
+/// Social's source uses JavaScript Number for timestamps and a numeric
+/// millisecond expiry. Existing integer callers retain their header syntax.
+pub async fn verify_handshake_number_ms(
+    frame_json: &str,
+    method: &str,
+    paths: &[String],
+    expiration_ms: f64,
+    now_ms: i64,
+    validator: Option<&dyn Eip1654Validator>,
+) -> Result<Address, HandshakeError> {
+    verify_handshake_inner(
+        frame_json,
+        method,
+        paths,
+        expiration_ms,
+        now_ms,
+        validator,
+        true,
+    )
+    .await
+}
+async fn verify_handshake_inner(
+    frame_json: &str,
+    method: &str,
+    paths: &[String],
+    expiration_ms: f64,
+    now_ms: i64,
+    validator: Option<&dyn Eip1654Validator>,
+    number_timestamp: bool,
+) -> Result<Address, HandshakeError> {
     let now_secs = now_ms / 1000;
     let obj = frame_object(frame_json)?;
     let chain = extract_from_object(&obj)?;
-    let timestamp = obj_str(&obj, AUTH_TIMESTAMP_HEADER)
-        .ok_or(HandshakeError::MissingHeader(AUTH_TIMESTAMP_HEADER))?;
-    let signed_ms = timestamp
-        .parse::<i64>()
-        .map_err(|_| HandshakeError::MalformedChain {
-            index: 0,
-            detail: format!("invalid timestamp: {}", truncate_detail(timestamp)),
-        })?;
-    if expiration_ms < 0 || now_ms.abs_diff(signed_ms) > expiration_ms as u64 {
+    let timestamp = if number_timestamp {
+        obj_str(&obj, AUTH_TIMESTAMP_HEADER).unwrap_or("")
+    } else {
+        obj_str(&obj, AUTH_TIMESTAMP_HEADER)
+            .ok_or(HandshakeError::MissingHeader(AUTH_TIMESTAMP_HEADER))?
+    };
+    let signed_ms = if number_timestamp {
+        number::timestamp(timestamp)
+    } else {
+        timestamp.parse::<i64>().ok().map(|value| value as f64)
+    }
+    .ok_or_else(|| HandshakeError::MalformedChain {
+        index: 0,
+        detail: format!("invalid timestamp: {}", truncate_detail(timestamp)),
+    })?;
+    if signed_ms + expiration_ms < now_ms as f64 || signed_ms > now_ms as f64 + expiration_ms {
         return Err(HandshakeError::Expired {
-            signed_at: signed_ms / 1000,
+            signed_at: (signed_ms / 1000.0) as i64,
             now: now_secs,
-            window_secs: expiration_ms / 1000,
+            window_secs: (expiration_ms / 1000.0) as i64,
         });
     }
     // An absent metadata reads as `{}` and is signed as nothing: `createPayload`
@@ -433,6 +483,63 @@ mod tests {
             super::verify_handshake_ms(&frame, "get", &paths, 16, now, None).await,
             Err(super::HandshakeError::Expired { .. })
         ));
+    }
+    #[tokio::test]
+    async fn social_numeric_timestamps_and_expiry_match_executed_source_without_rewriting_signed_bytes()
+     {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../tests/fixtures/conformance/social/ws-numbers-source-cases.json"
+        )))
+        .unwrap();
+        let now = fixture["now"].as_i64().unwrap();
+        let paths = vec!["/".to_string()];
+        for case in fixture["timestamps"].as_array().unwrap() {
+            let raw = case["raw"].as_str();
+            let text = raw.unwrap_or("");
+            let payload = crate::signed_fetch::build_payload_v6("get", "/", text, "{}");
+            let (_, frame) = frame_with(&ROOT_WALLET, now, &payload, "{}").await;
+            let mut frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
+            if let Some(raw) = raw {
+                frame[super::AUTH_TIMESTAMP_HEADER] = serde_json::Value::String(raw.into());
+            } else {
+                frame
+                    .as_object_mut()
+                    .unwrap()
+                    .remove(super::AUTH_TIMESTAMP_HEADER);
+            }
+            let window = case["window"]
+                .as_f64()
+                .unwrap_or_else(|| case["window"].as_str().unwrap().parse().unwrap());
+            let result = super::verify_handshake_number_ms(
+                &frame.to_string(),
+                "get",
+                &paths,
+                window,
+                now,
+                None,
+            )
+            .await;
+            assert_eq!(
+                result.is_ok(),
+                case["accepted"].as_bool().unwrap(),
+                "{} {:?}",
+                case,
+                result
+            );
+            if let Some(expected) = case["parsed"].as_f64() {
+                assert_eq!(super::number::timestamp(text), Some(expected));
+            }
+        }
+        let (_, frame) = frame("/", now).await;
+        let mut frame: serde_json::Value = serde_json::from_str(&frame).unwrap();
+        frame[super::AUTH_TIMESTAMP_HEADER] = serde_json::Value::String(format!("0x{now:x}"));
+        assert!(
+            super::verify_handshake_number_ms(&frame.to_string(), "get", &paths, 1.0, now, None)
+                .await
+                .is_err(),
+            "a differently signed timestamp cannot authenticate just because its numeric value matches"
+        );
     }
     use super::*;
     use crate::signed_fetch::{FIVE_MINUTES, SCENE_SIGNER, build_payload_v6};

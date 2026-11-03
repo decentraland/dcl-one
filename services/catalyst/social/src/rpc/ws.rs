@@ -22,7 +22,7 @@ use crate::rpc::State;
 use crate::rpc::limits::Protocol;
 use crate::shared::identity::Address;
 use crate::shared::rpc::handshake::{
-    HandshakeError, candidate_paths, validator_ref, verify_handshake_ms,
+    HandshakeError, candidate_paths, validator_ref, verify_handshake_number_ms,
 };
 use crate::shared::rpc::ws::{
     AxumWsTransport, IdleAction, IdleTimer, RPC_TRANSPORT_CLOSED, SocketClose, close_message,
@@ -129,7 +129,7 @@ async fn auth_handshake(
             },
         }
     };
-    let verification = verify_handshake_ms(
+    let verification = verify_handshake_number_ms(
         &frame,
         "get",
         paths,
