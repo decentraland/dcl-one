@@ -358,6 +358,32 @@ pub mod scratch {
         Some(url)
     }
 
+    /// `/proc` is absent on macOS. Signal zero probes existence without sending
+    /// a signal; permission denied also proves that a process still exists.
+    pub(super) fn process_alive(pid: u32) -> bool {
+        if pid == std::process::id() {
+            return true;
+        }
+        #[cfg(unix)]
+        {
+            let Ok(pid) = libc::pid_t::try_from(pid) else {
+                return false;
+            };
+            if pid <= 0 {
+                return false;
+            }
+            // SAFETY: signal 0 never delivers a signal and pid is a positive process id.
+            let exists = unsafe { libc::kill(pid, 0) == 0 };
+            exists || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
+        }
+        #[cfg(not(unix))]
+        {
+            // Without a portable existence probe, retain a database rather than
+            // forcibly dropping another test process's active database.
+            true
+        }
+    }
+
     /// Drops the scratch databases of test processes that no longer exist.
     async fn sweep_dead(admin: &PgPool) {
         let names: Vec<String> = sqlx::query_scalar(
@@ -372,9 +398,7 @@ pub mod scratch {
                 .split('_')
                 .next()
                 .and_then(|p| p.parse::<u32>().ok());
-            let alive = pid.is_some_and(|pid| {
-                pid == std::process::id() || std::path::Path::new(&format!("/proc/{pid}")).exists()
-            });
+            let alive = pid.is_none_or(process_alive);
             if alive {
                 continue;
             }
@@ -394,6 +418,22 @@ pub mod scratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn scratch_cleanup_distinguishes_a_live_child_from_a_reaped_process() {
+        assert!(scratch::process_alive(std::process::id()));
+        let mut child = std::process::Command::new("sleep")
+            .arg("10")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        assert!(scratch::process_alive(pid));
+        child.kill().unwrap();
+        child.wait().unwrap();
+        assert!(!scratch::process_alive(pid));
+        assert!(!scratch::process_alive(u32::MAX));
+    }
 
     /// Once bootstrap verified a database, any connection opened to it
     /// afterwards (a reconnect after the backends were killed, here a second
