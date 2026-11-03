@@ -240,7 +240,7 @@ pub async fn dispatch(state: &communities::State, event: &Value) -> anyhow::Resu
             .map_err(|error| anyhow::anyhow!("{error:?}"))?;
         return Ok(true);
     }
-    Ok(false)
+    Ok(communities::ranking::apply_external_event(&state.pool, event).await?)
 }
 
 #[cfg(test)]
@@ -420,6 +420,80 @@ mod tests {
         );
         let count:i64=sqlx::query_scalar("SELECT count(*) FROM social.notifications WHERE address=$1 AND type='referral_invited_users_accepted'").bind(referrer).fetch_one(&pool).await.unwrap();
         assert_eq!(count, 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn queue_dispatch_updates_all_three_source_ranking_kinds_before_acknowledgement() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        struct Acks(parking_lot::Mutex<Vec<String>>);
+        #[async_trait::async_trait]
+        impl Queue for Acks {
+            async fn receive(&self) -> anyhow::Result<Vec<QueueMessage>> {
+                unreachable!()
+            }
+            async fn delete(&self, receipt: &str) -> anyhow::Result<()> {
+                self.0.lock().push(receipt.into());
+                Ok(())
+            }
+            async fn release(&self, _: &str) -> anyhow::Result<()> {
+                unreachable!()
+            }
+        }
+        let dir =
+            std::env::temp_dir().join(format!("social-ranking-queue-{}", uuid::Uuid::new_v4()));
+        let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
+        let state = communities::State::new(
+            pool.clone(),
+            storage,
+            communities::Settings::for_tests(),
+            None,
+            &crate::http::Outbound::for_tests(),
+            communities::State::explore_for_tests(&pool),
+        );
+        let community = uuid::Uuid::new_v4();
+        let place = uuid::Uuid::new_v4().to_string();
+        sqlx::query("INSERT INTO social.communities(id,name,owner_address) VALUES($1,'ranking fixture','fixture-owner')").bind(community).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO social.community_places(community_id,place_id,added_by) VALUES($1,$2,'fixture-owner')")
+            .bind(community)
+            .bind(&place)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let queue = Acks(Default::default());
+        for (receipt, event) in [
+            (
+                "photo",
+                serde_json::json!({"type":"camera","subType":"photo-taken","metadata":{"placeId":place}}),
+            ),
+            (
+                "event",
+                serde_json::json!({"type":"event","subType":"event-ended","metadata":{"communityId":community,"totalAttendees":4.9}}),
+            ),
+            (
+                "stream",
+                serde_json::json!({"type":"streaming","subType":"community-streaming-ended","metadata":{"communityId":community,"totalParticipants":3.8}}),
+            ),
+            (
+                "failure",
+                serde_json::json!({"type":"event","subType":"event-ended","metadata":{"communityId":"invalid"}}),
+            ),
+        ] {
+            process_message(
+                &queue,
+                &state,
+                &QueueMessage {
+                    body: Some(event.to_string()),
+                    receipt: Some(receipt.into()),
+                },
+            )
+            .await;
+        }
+        assert_eq!(*queue.0.lock(), ["photo", "event", "stream", "failure"]);
+        let counts:(i32,i32,i32,i32,i32)=sqlx::query_as("SELECT ranking_events_count,ranking_photos_count,ranking_streams_count,ranking_events_total_attendees,ranking_streams_total_participants FROM social.communities WHERE id=$1").bind(community).fetch_one(&pool).await.unwrap();
+        assert_eq!(counts, (1, 1, 1, 4, 3));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
