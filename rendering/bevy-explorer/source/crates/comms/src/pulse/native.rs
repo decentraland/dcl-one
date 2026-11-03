@@ -24,8 +24,8 @@ use rusty_enet as enet;
 use tokio::net::UdpSocket;
 
 use super::transport::{
-    PulseDisconnect, PulseDriverChannels, PulseFrame, PulseReliability, PulseStatus,
-    PulseTransportConfig,
+    collapse_inputs, PulseDisconnect, PulseDriverChannels, PulseFrame, PulseReliability,
+    PulseStatus, PulseTransportConfig,
 };
 
 /// Channels in server order: RELIABLE=0, UNRELIABLE_SEQUENCED=1, UNRELIABLE_UNSEQUENCED=2
@@ -143,15 +143,21 @@ async fn drive(channels: &mut PulseDriverChannels, address: SocketAddr, stop: &A
             _ = host.socket().0.readable() => None,
             _ = tokio::time::sleep(MAINTENANCE_INTERVAL) => None,
         };
+        let mut batch = Vec::new();
         match outbound {
             // Channel closed — the protocol layer dropped the link; stop the driver.
             Some(None) => break,
-            Some(Some(frame)) => queue_frame(&mut host, peer, &frame),
+            Some(Some(frame)) => batch.push(frame),
             None => {}
         }
 
         // Drain any further queued outbound without blocking; the next service flushes them.
         while let Ok(frame) = channels.outbound.try_recv() {
+            batch.push(frame);
+        }
+        // Frames queued behind each other go out as one batch, so a run of inputs is cut down to
+        // its newest before it reaches the peer.
+        for frame in collapse_inputs(batch) {
             queue_frame(&mut host, peer, &frame);
         }
 
@@ -237,6 +243,7 @@ fn fail(channels: &mut PulseDriverChannels, message: String) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::pulse::transport::FrameKind;
 
     #[test]
     fn native_frame_mapping_preserves_channels_and_explicit_throttle_bypass() {
@@ -263,6 +270,7 @@ mod tests {
             let frame = PulseFrame {
                 bytes: vec![1, 2, 3],
                 reliability,
+                kind: FrameKind::Control,
             };
             let (actual_channel, packet) = packet_for_frame(&frame);
             assert_eq!(actual_channel, channel);

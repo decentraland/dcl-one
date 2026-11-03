@@ -34,8 +34,8 @@ use super::framing::{
     frame_datagram, frame_stream, StreamAssembler, CHANNEL_SEQUENCED, CHANNEL_UNSEQUENCED,
 };
 use super::transport::{
-    PulseDisconnect, PulseDriverChannels, PulseFrame, PulseReliability, PulseStatus,
-    PulseTransportConfig,
+    collapse_inputs, PulseDisconnect, PulseDriverChannels, PulseFrame, PulseReliability,
+    PulseStatus, PulseTransportConfig,
 };
 
 /// How often the outbound pump wakes to re-check the stop flag when no frames are flowing, so a
@@ -171,44 +171,57 @@ async fn pump_outbound(
     // Leaving on purpose (stop flag / link dropped) closes GRACEFUL; a broken stream does not.
     let mut graceful = true;
 
-    while !stop.load(Ordering::Relaxed) {
+    'pump: while !stop.load(Ordering::Relaxed) {
         // Race the next frame against a short timeout so a bare stop flip (no channel close) is still
-        // observed promptly.
-        let recv = std::pin::pin!(outbound.recv());
-        let timer = std::pin::pin!(TimeoutFuture::new(STOP_POLL_MS));
-        let frame = match select(recv, timer).await {
-            Either::Left((Some(frame), _)) => frame,
-            // Outbound channel closed — the protocol layer dropped the link. Tear down.
-            Either::Left((None, _)) => break,
-            // Timeout — loop and re-check stop.
-            Either::Right(_) => continue,
+        // observed promptly. The block ends the pending `recv` before the drain below borrows
+        // `outbound` again.
+        let first = {
+            let recv = std::pin::pin!(outbound.recv());
+            let timer = std::pin::pin!(TimeoutFuture::new(STOP_POLL_MS));
+            match select(recv, timer).await {
+                Either::Left((Some(frame), _)) => frame,
+                // Outbound channel closed — the protocol layer dropped the link. Tear down.
+                Either::Left((None, _)) => break,
+                // Timeout — loop and re-check stop.
+                Either::Right(_) => continue,
+            }
         };
 
-        match frame.reliability {
-            PulseReliability::Reliable => {
-                // The reliable channel is a single ordered stream: a failed write means it's broken
-                // and unrecoverable, so drop the session (the watcher then reports a retryable
-                // disconnect and the protocol layer reconnects).
-                let framed = frame_stream(&frame.bytes);
-                if let Err(err) = write(&stream_writer, &framed).await {
-                    warn!("pulse: webtransport reliable send failed: {err:?}");
-                    graceful = false;
-                    break;
-                }
-            }
-            PulseReliability::UnreliableSequenced | PulseReliability::UnreliableUnsequenced => {
-                // Unreliable: a dropped datagram (send failure or over-MTU) is tolerable and expected
-                // — like the reference client, skip this one and keep the session, rather than bounce
-                // the whole connection (a full re-handshake + re-teleport) over one lost packet.
-                let (channel, seq) = match frame.reliability {
-                    PulseReliability::UnreliableSequenced => {
-                        (CHANNEL_SEQUENCED, next_seq(&mut seq_sequenced))
+        // Frames queued behind the first go out in the same pass, so a run of inputs is cut down to
+        // its newest before anything is written.
+        let mut batch = vec![first];
+        while let Ok(frame) = outbound.try_recv() {
+            batch.push(frame);
+        }
+
+        for frame in collapse_inputs(batch) {
+            match frame.reliability {
+                PulseReliability::Reliable => {
+                    // The reliable channel is a single ordered stream: a failed write means it's
+                    // broken and unrecoverable, so drop the session (the watcher then reports a
+                    // retryable disconnect and the protocol layer reconnects).
+                    let framed = frame_stream(&frame.bytes);
+                    if let Err(err) = write(&stream_writer, &framed).await {
+                        warn!("pulse: webtransport reliable send failed: {err:?}");
+                        graceful = false;
+                        break 'pump;
                     }
-                    _ => (CHANNEL_UNSEQUENCED, next_seq(&mut seq_unsequenced)),
-                };
-                let framed = frame_datagram(channel, seq, &frame.bytes);
-                if let Err(err) = write(&datagram_writer, &framed).await {
-                    warn!("pulse: webtransport datagram send failed (dropped): {err:?}");
+                }
+                PulseReliability::UnreliableSequenced | PulseReliability::UnreliableUnsequenced => {
+                    // Unreliable: a dropped datagram (send failure or over-MTU) is tolerable and
+                    // expected — like the reference client, skip this one and keep the session,
+                    // rather than bounce the whole connection (a full re-handshake + re-teleport)
+                    // over one lost packet.
+                    let (channel, seq) = match frame.reliability {
+                        PulseReliability::UnreliableSequenced => {
+                            (CHANNEL_SEQUENCED, next_seq(&mut seq_sequenced))
+                        }
+                        _ => (CHANNEL_UNSEQUENCED, next_seq(&mut seq_unsequenced)),
+                    };
+                    let framed = frame_datagram(channel, seq, &frame.bytes);
+                    if let Err(err) = write(&datagram_writer, &framed).await {
+                        warn!("pulse: webtransport datagram send failed (dropped): {err:?}");
+                    }
                 }
             }
         }

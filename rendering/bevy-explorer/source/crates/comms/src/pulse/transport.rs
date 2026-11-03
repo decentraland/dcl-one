@@ -25,11 +25,44 @@ pub enum PulseReliability {
     UnreliableUnsequenced,
 }
 
+/// What a frame carries, for the decisions made below the protocol layer: collapsing (inputs)
+/// and pacing (teleports, emotes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameKind {
+    /// A `PlayerStateInput`. A newer one supersedes an older one still waiting in the queue.
+    Input,
+    /// A `TeleportRequest`.
+    Teleport,
+    /// An `EmoteStart` or `EmoteStop`.
+    Emote,
+    /// Everything else: handshakes, resync, profile announcements, scene-listener updates.
+    Control,
+}
+
 /// One outbound unit of work: an already-encoded `ClientMessage` plus how to deliver it.
 #[derive(Debug)]
 pub struct PulseFrame {
     pub bytes: Vec<u8>,
     pub reliability: PulseReliability,
+    pub kind: FrameKind,
+}
+
+/// unity-explorer `ENetTransport.SendOutgoingMessages`: in each run of consecutive `Input` frames
+/// only the newest survives; every other frame keeps its place.
+pub fn collapse_inputs(frames: Vec<PulseFrame>) -> Vec<PulseFrame> {
+    let mut collapsed: Vec<PulseFrame> = Vec::with_capacity(frames.len());
+    for frame in frames {
+        // An input replaces the input right before it, so each run shrinks to its newest.
+        if frame.kind == FrameKind::Input
+            && collapsed
+                .last()
+                .is_some_and(|last| last.kind == FrameKind::Input)
+        {
+            collapsed.pop();
+        }
+        collapsed.push(frame);
+    }
+    collapsed
 }
 
 /// Connection lifecycle, surfaced from the driver to the protocol layer.
@@ -233,3 +266,6 @@ pub fn spawn_pulse_driver(
         PulseDriverHandle { stop }
     }
 }
+
+#[cfg(test)]
+mod tests;

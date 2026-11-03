@@ -53,7 +53,7 @@ use self::{
     profile::UserProfilePlugin,
     pulse::{
         from_movement,
-        transport::{PulseFrame, PulseReliability},
+        transport::{FrameKind, PulseFrame, PulseReliability},
         PulseCtx,
     },
     websocket_room::{StartWsRoom, WebsocketRoomPlugin},
@@ -271,6 +271,7 @@ impl Broadcast for rfc4::Movement {
             }
             .encode_to_vec(),
             reliability: PulseReliability::UnreliableSequenced,
+            kind: FrameKind::Input,
         })
     }
 }
@@ -326,6 +327,7 @@ impl Broadcast for Emote {
             }
             .encode_to_vec(),
             reliability: PulseReliability::Reliable,
+            kind: FrameKind::Emote,
         })
     }
 }
@@ -348,6 +350,7 @@ impl Broadcast for rfc4::AnnounceProfileVersion {
             }
             .encode_to_vec(),
             reliability: PulseReliability::Reliable,
+            kind: FrameKind::Control,
         })
     }
 }
@@ -383,6 +386,7 @@ impl Broadcast for ProfileUpdate {
             }
             .encode_to_vec(),
             reliability: PulseReliability::Reliable,
+            kind: FrameKind::Control,
         })
     }
 }

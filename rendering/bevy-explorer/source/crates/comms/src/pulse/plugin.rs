@@ -38,7 +38,7 @@ use tokio::sync::mpsc;
 use wallet::Wallet;
 
 use super::transport::{
-    self, PulseDriverHandle, PulseFrame, PulseLink, PulseReliability, PulseStatus,
+    self, FrameKind, PulseDriverHandle, PulseFrame, PulseLink, PulseReliability, PulseStatus,
     PulseTransportConfig,
 };
 use super::{PulseCtx, PulseDecoder, PulseEvent, PulseParcelGrid};
@@ -948,6 +948,7 @@ fn drive_connection(
                             let _ = link.outbound.try_send(PulseFrame {
                                 bytes,
                                 reliability: PulseReliability::Reliable,
+                                kind: FrameKind::Control,
                             });
                         }
                         info!("pulse: {} sent", session.role.handshake_label());
@@ -1033,6 +1034,7 @@ fn drain_inbound(
                         let _ = link.outbound.try_send(PulseFrame {
                             bytes: message.encode_to_vec(),
                             reliability: PulseReliability::Reliable,
+                            kind: FrameKind::Control,
                         });
                     }
                 }
@@ -1427,6 +1429,7 @@ fn flush_listener_aoi(session: &mut PulseSession, now: f64) {
     let _ = link.outbound.try_send(PulseFrame {
         bytes: message.encode_to_vec(),
         reliability: PulseReliability::Reliable,
+        kind: FrameKind::Control,
     });
 }
 
@@ -1663,6 +1666,7 @@ fn send_teleport_at(session: &PulseSession, realm: &CurrentRealm, world: Vec3) {
     let _ = link.outbound.try_send(PulseFrame {
         bytes: message.encode_to_vec(),
         reliability: PulseReliability::Reliable,
+        kind: FrameKind::Teleport,
     });
     info!("pulse: teleport sent (realm {realm_name}, parcel {parcel_index})");
 }
