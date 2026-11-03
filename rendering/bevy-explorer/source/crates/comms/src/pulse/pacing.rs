@@ -32,8 +32,8 @@ pub const PACED_EVENTS_BURST: f64 = 8.0;
 /// new connection starts from: the servers count each peer's budget from full.
 #[derive(Default)]
 pub struct DiscreteEventPacer {
-    /// How far below full the bucket was at `refilled_at`, in events: zero is a full bucket, so
-    /// the default is one.
+    /// How far below full the bucket was at `refilled_at`, in events, so the zero default is a
+    /// full bucket.
     spent: f64,
     /// The time `spent` is as of.
     refilled_at: f64,

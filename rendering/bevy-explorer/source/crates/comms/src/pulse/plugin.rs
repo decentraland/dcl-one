@@ -8,7 +8,7 @@
 //! Connect sequence, mirroring the Unity reference client: once the driver reports
 //! [`PulseStatus::Connected`] we send a [`pulse::HandshakeRequest`] (a signed auth chain, identical
 //! in shape to the platform's `x-identity-*` header dictionary but delivered as protobuf bytes,
-//! with the player's last state as its initial state when it has sent one); on the server's
+//! with the player's last state as its initial state once built); on the server's
 //! `HandshakeResponse` we send the first gameplay message, a [`pulse::TeleportRequest`] announcing
 //! our realm + position so the server starts streaming same-realm peers — unless the initial state
 //! already carried this realm — and then the profile version, which the servers ignore in the

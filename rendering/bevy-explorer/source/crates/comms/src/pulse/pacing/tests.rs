@@ -161,7 +161,7 @@ fn the_bucket_holds_eight_and_gives_back_ten_a_second() {
 
     pacer.offer(teleport(8));
     assert!(pacer.release(0.0).is_empty());
-    // A token takes a tenth of a second, and half of one is not enough.
+    // A token takes a tenth of a second, and nine tenths of one is not enough.
     assert!(pacer.release(0.09).is_empty());
     assert_eq!(numbers(pacer.release(0.11)), [8]);
 }

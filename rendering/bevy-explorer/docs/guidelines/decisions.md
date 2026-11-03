@@ -39,9 +39,11 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   already accepted, and ends Pulse on codes 17 and 18, which it does not know (`reconnect.rs`).
 - **A rejected Pulse handshake is retried, and a realm change ends a terminal stop.** A rejection,
   or no answer within 10 s, closes the connection and the next attempt is a new one on the
-  backoff; a ban, an eviction, misbehaviour or an unknown code stops Pulse until the realm changes.
-  unity-explorer stops Pulse in all of these cases until a new sign-in, which has no counterpart
-  here: the account is fixed once in the world.
+  backoff; a ban, an eviction, misbehaviour or an unknown code stops Pulse until the realm changes,
+  or for a scene listener, which follows no realm, until restart. unity-explorer stops Pulse on a
+  rejection and on those codes until a new sign-in, which has no counterpart here: the account is
+  fixed once in the world. It has no response timeout: it waits, and the server's pre-auth
+  deadline ends the attempt with AUTH_TIMEOUT, which it retries.
 - **Teleports and emotes are paced.** The client lets out 10 a second with a burst of 8, half of
   what both servers allow for them, and keeps only the latest teleport and the latest emote command
   while that is spent. Overrunning the servers' budget ends the session for good, and a scene that
