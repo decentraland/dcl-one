@@ -8,16 +8,22 @@
 mod ripples;
 #[cfg(test)]
 mod tests;
+mod waves;
 
 use std::collections::HashSet;
 
 use bevy::{
     asset::{embedded_asset, embedded_path, RenderAssetUsages},
-    pbr::{ExtendedMaterial, MaterialExtension, NotShadowCaster, NotShadowReceiver},
+    pbr::{
+        ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
+        NotShadowCaster, NotShadowReceiver,
+    },
     prelude::*,
     render::{
-        mesh::PrimitiveTopology,
-        render_resource::{AsBindGroup, ShaderRef},
+        mesh::{MeshVertexBufferLayoutRef, PrimitiveTopology},
+        render_resource::{
+            AsBindGroup, RenderPipelineDescriptor, ShaderRef, SpecializedMeshPipelineError,
+        },
     },
 };
 use common::{
@@ -58,8 +64,10 @@ const UNDERGROUND: f32 = -0.5;
 const WALL_HEIGHT: f32 = 50.0;
 const WALL_THICKNESS: f32 = 10.0;
 const OCEAN_SIZE: f32 = 32768.0;
-/// The ocean follows the camera on this grid, so its ripples don't slide.
+/// The flat ocean follows the camera on this grid, so its ripples don't slide.
 const OCEAN_SNAP: f32 = 64.0;
+/// The flat ocean lies below the wave grid, so the two never z-fight.
+const OCEAN_DROP: f32 = 0.5;
 
 pub(crate) struct CoastPlugin;
 
@@ -68,6 +76,7 @@ impl Plugin for CoastPlugin {
         embedded_asset!(app, "coast_surf.wgsl");
         embedded_asset!(app, "coast_cliff.wgsl");
         embedded_asset!(app, "coast_water.wgsl");
+        embedded_asset!(app, "coast_waves.wgsl");
 
         app.init_resource::<CoastState>()
             .add_plugins(MaterialPlugin::<CliffMaterial>::default())
@@ -106,8 +115,19 @@ type WaterMaterial = ExtendedMaterial<WaterExtension>;
 
 #[derive(Asset, TypePath, AsBindGroup, Clone)]
 struct WaterExtension {
+    // one uniform struct, `WaveUniform` in coast_waves.wgsl and coast_water.wgsl
+    /// The coast bounds, as `CliffExtension::bounds`.
     #[uniform(100)]
-    bounds: Vec4,
+    land_bounds: Vec4,
+    /// `waves::WAVE_FADE`.
+    #[uniform(100)]
+    fade: Vec2,
+    /// The camera, in bevy x/z, which the waves fade away from.
+    #[uniform(100)]
+    camera_xz: Vec2,
+    /// Seconds since startup.
+    #[uniform(100)]
+    time: f32,
     #[texture(101)]
     #[sampler(102)]
     ripples: Handle<Image>,
@@ -116,8 +136,26 @@ struct WaterExtension {
 impl MaterialExtension for WaterExtension {
     type Base = StandardMaterial;
 
+    fn vertex_shader() -> ShaderRef {
+        shader(&embedded_path!("coast_waves.wgsl"))
+    }
+
     fn fragment_shader() -> ShaderRef {
         shader(&embedded_path!("coast_water.wgsl"))
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let defs = waves::shader_defs();
+        descriptor.vertex.shader_defs.extend(defs.iter().cloned());
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader_defs.extend(defs);
+        }
+        Ok(())
     }
 }
 
@@ -132,8 +170,12 @@ struct CoastState {
     bounds: Option<Vec4>,
 }
 
+/// The sea's surfaces, which follow the camera on a `snap` grid at height `level`.
 #[derive(Component)]
-struct Ocean;
+struct Ocean {
+    snap: f32,
+    level: f32,
+}
 
 #[derive(Component)]
 struct Cliff {
@@ -173,21 +215,40 @@ fn setup(
             base_color: Color::srgb(0.065, 0.30, 0.36),
             perceptual_roughness: 0.26,
             reflectance: 0.38,
-            // the open sea reflects the sky; distance fog would paint a grey slab on the horizon
-            fog_enabled: false,
+            // draws the sea in the transmissive phase, after the copy of the opaque scene its
+            // refraction samples
+            specular_transmission: 1.0,
             ..default()
         },
         extension: WaterExtension {
-            bounds: NO_COAST,
+            land_bounds: NO_COAST,
+            fade: waves::WAVE_FADE,
+            camera_xz: Vec2::ZERO,
+            time: 0.0,
             ripples: images.add(ripples::image()),
         },
     });
     commands.spawn((
-        Name::new("Coast ocean"),
-        Ocean,
-        Mesh3d(meshes.add(Plane3d::default().mesh().size(OCEAN_SIZE, OCEAN_SIZE))),
+        Name::new("Coast waves"),
+        Ocean {
+            snap: waves::WAVE_GRID_SPACING_M,
+            level: SEA_LEVEL,
+        },
+        Mesh3d(meshes.add(waves::wave_grid_mesh())),
         MeshMaterial3d(water.clone()),
         Transform::from_xyz(0.0, SEA_LEVEL, 0.0),
+        Visibility::Hidden,
+        NotShadowCaster,
+    ));
+    commands.spawn((
+        Name::new("Coast ocean"),
+        Ocean {
+            snap: OCEAN_SNAP,
+            level: SEA_LEVEL - OCEAN_DROP,
+        },
+        Mesh3d(meshes.add(Plane3d::default().mesh().size(OCEAN_SIZE, OCEAN_SIZE))),
+        MeshMaterial3d(water.clone()),
+        Transform::from_xyz(0.0, SEA_LEVEL - OCEAN_DROP, 0.0),
         Visibility::Hidden,
         NotShadowCaster,
     ));
@@ -217,6 +278,7 @@ fn setup(
 fn update(
     mut commands: Commands,
     surface: Res<TerrainSurface>,
+    time: Res<Time>,
     mut state: ResMut<CoastState>,
     assets: Res<CoastAssets>,
     camera: Query<&GlobalTransform, With<PrimaryCamera>>,
@@ -224,7 +286,7 @@ fn update(
     mut meshes: ResMut<Assets<Mesh>>,
     mut cliff_materials: ResMut<Assets<CliffMaterial>>,
     mut water_materials: ResMut<Assets<WaterMaterial>>,
-    mut ocean: Query<(&mut Transform, &mut Visibility), With<Ocean>>,
+    mut ocean: Query<(&Ocean, &mut Transform, &mut Visibility)>,
     underground: Single<(&mut Transform, &mut Visibility), UndergroundOnly>,
     cliffs: Query<(Entity, &Cliff)>,
     walls: Single<&mut SceneColliderData, With<CoastWalls>>,
@@ -238,7 +300,7 @@ fn update(
             material.extension.bounds = uniform;
         }
         if let Some(material) = water_materials.get_mut(&assets.water) {
-            material.extension.bounds = uniform;
+            material.extension.land_bounds = uniform;
         }
         let (mut transform, mut visibility) = underground.into_inner();
         match bounds {
@@ -259,6 +321,12 @@ fn update(
         .ok()
         .map(GlobalTransform::translation)
         .filter(|position| position.is_finite());
+    if let Some(material) = water_materials.get_mut(&assets.water) {
+        material.extension.time = time.elapsed_secs();
+        if let Some(position) = position {
+            material.extension.camera_xz = position.xz();
+        }
+    }
     // chunks follow the player's parcel, so they only change when the player crosses a parcel
     let parcel = player
         .single()
@@ -267,7 +335,7 @@ fn update(
         .filter(|position| position.is_finite())
         .map(|position| parcel_to_vec3(vec3_to_parcel(position)));
     let (Some(bounds), Some(position), Some(parcel)) = (bounds, position, parcel) else {
-        for (_, mut visibility) in &mut ocean {
+        for (_, _, mut visibility) in &mut ocean {
             visibility.set_if_neq(Visibility::Hidden);
         }
         for (entity, cliff) in &cliffs {
@@ -277,9 +345,9 @@ fn update(
         return;
     };
 
-    for (mut transform, mut visibility) in &mut ocean {
-        let centre = (position.xz() / OCEAN_SNAP).round() * OCEAN_SNAP;
-        let translation = Vec3::new(centre.x, SEA_LEVEL, centre.y);
+    for (ocean, mut transform, mut visibility) in &mut ocean {
+        let centre = (position.xz() / ocean.snap).round() * ocean.snap;
+        let translation = Vec3::new(centre.x, ocean.level, centre.y);
         if transform.translation != translation {
             transform.translation = translation;
         }

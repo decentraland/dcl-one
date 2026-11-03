@@ -1,12 +1,19 @@
 // The sea: warped ripple slopes from two samples of one texture, lit by the standard pipeline,
-// with shallow water and foam at the shore.
+// with foam at the shore. Unity's Stylized Water 2 colours, refraction and surface foam
+// (unity:Explorer/Library/PackageCache/decentraland.rendergraphs@*/Ocean/Shaders/Libraries/ForwardPass.hlsl,
+// values from unity:Explorer/Assets/DCL/Landscape/Assets/Materials/Ocean.mat): the opaque scene
+// shows through by the depth below the surface, which is the coast profile's, not the depth buffer.
 
 #import bevy_pbr::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
-    mesh_view_bindings::globals,
+    mesh_view_bindings::{globals, view, view_transmission_texture, view_transmission_sampler},
 }
+#import "embedded://shaders/simplex.wgsl"::simplex_noise_3d
+#ifdef TONEMAP_IN_SHADER
+#import bevy_core_pipeline::tonemapping::approximate_inverse_tone_mapping
+#endif
 #import "embedded://visuals/coast_surf.wgsl"::coast_surf
 #import "embedded://visuals/coast_profile.wgsl"::coast_profile
 
@@ -27,13 +34,25 @@ override fn ambient::ambient_light(world_position: vec4<f32>, world_normal: vec3
 }
 #endif
 
-@group(2) @binding(100) var<uniform> land_bounds: vec4<f32>;
+// coast_waves.wgsl's uniform
+struct WaveUniform {
+    land_bounds: vec4<f32>,
+    fade: vec2<f32>,
+    camera_xz: vec2<f32>,
+    time: f32,
+}
+
+@group(2) @binding(100) var<uniform> wave: WaveUniform;
 @group(2) @binding(101) var ripples: texture_2d<f32>;
 @group(2) @binding(102) var ripple_sampler: sampler;
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    let land_bounds = wave.land_bounds;
     var pbr = pbr_input_from_standard_material(in, is_front);
+    // the material is transmissive only so that it draws after the opaque copy; the refraction
+    // below replaces the standard transmission
+    pbr.material.specular_transmission = 0.0;
     let p = in.world_position.xz;
     // long crossing swells carry smaller chop; the swell bends the chop's lookup so the two
     // layers don't read as rigid copies sliding over each other
@@ -80,17 +99,49 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
         let sand_normal = normalize(vec3(o.x * beach, 1.0, -o.y * beach));
         pbr.N = normalize(mix(pbr.N, sand_normal, meet));
     }
-    let shore = 1.0 - smoothstep(0.0, 18.0, wash.w);
-    let foam = wash.x;
-    let deep = vec3(0.032, 0.065, 0.15);
-    let shallow = vec3(0.09, 0.15, 0.19);
-    // wet sand seen through water that absorbs the reds
-    let sand = vec3(0.295, 0.233, 0.126);
-    let water = mix(mix(deep, shallow, shore * 0.75), sand, seabed);
-    let film = mix(water, vec3(0.09, 0.15, 0.19), wash.y * 0.35);
+    // `_Depth`: how far down the opaque scene stays visible
+    let clear = exp(-max(wash.w, 0.0) * (4.0 / 6.0) / 2.45);
+    // `_ShallowColor` and `_BaseColor`, linear
+    let shallow = vec3(0.1571, 0.8553, 1.1909);
+    let base = vec3(0.0079, 0.0060, 0.0454);
+    // the opaque scene, offset by the surface normal, one sample per channel for the
+    // chromatic aberration
+    let uv = (in.position.xy - view.viewport.xy) / view.viewport.zw;
+    let offset = pbr.N.xz * bitcast<f32>(#{REFRACTION_STRENGTH}u);
+    let chromatic = bitcast<f32>(#{REFRACTION_CHROMATIC}u);
+    let refracted = vec3(
+        background(uv + offset * (1.0 + chromatic)).r,
+        background(uv + offset).g,
+        background(uv + offset * (1.0 - chromatic)).b,
+    );
+    // surface foam: two scrolling layers at `_FoamTiling` 0.01 and `_FoamSubTiling` 0.5, moving
+    // at `_FoamSpeed` 0.15 and `_FoamSubSpeed` -0.25 along `_Direction` (Ocean.mat); simplex noise
+    // stands in for SW2's foam texture
+    let flow = -vec2(0.5, 0.5) * globals.time;
+    let foam_uv = unity * 0.01 + flow * 0.15 * 0.01;
+    let foam_sub_uv = unity * 0.005 + flow * (0.15 * -0.25 * 0.005);
+    let foam_texture = saturate(saturate(simplex_noise_3d(vec3(foam_uv * 8.0, 0.0)))
+        + saturate(simplex_noise_3d(vec3(foam_sub_uv * 8.0, 7.0))));
+    // `_FoamClipping` 0.75 and `_FoamBaseAmount` 0.109; `_FoamWaveAmount` is 0, so wave height
+    // adds none
+    let foam_mask = 1.0 - 0.109;
+    let sea_foam = smoothstep(foam_mask, foam_mask + 1.0, smoothstep(0.75, 1.0, foam_texture));
+    let foam = saturate(max(wash.x, sea_foam * 2.0));
+    let film = mix(base * (1.0 - clear), vec3(0.09, 0.15, 0.19), wash.y * 0.35);
     pbr.material.base_color = vec4(mix(film, vec3(0.72, 0.78, 0.78), foam), 1.0);
     pbr.material.perceptual_roughness = mix(0.28, 0.62, foam);
+    var color = apply_pbr_lighting(pbr);
+    color = vec4(color.rgb + refracted * shallow * clear * (1.0 - foam), color.a);
     var out: FragmentOutput;
-    out.color = main_pass_post_lighting_processing(pbr, apply_pbr_lighting(pbr));
+    out.color = main_pass_post_lighting_processing(pbr, color);
     return out;
+}
+
+// the opaque scene behind the water, in the lighting's units
+fn background(uv: vec2<f32>) -> vec3<f32> {
+    var color = textureSampleLevel(view_transmission_texture, view_transmission_sampler, uv, 0.0);
+#ifdef TONEMAP_IN_SHADER
+    color = approximate_inverse_tone_mapping(color, view.color_grading);
+#endif
+    return color.rgb;
 }
