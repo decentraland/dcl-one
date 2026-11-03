@@ -6,6 +6,8 @@ pub use priority_gate::{PriorityGate, Ticket};
 #[cfg(feature = "ipfs_debug")]
 mod ipfs_debug;
 pub mod ipfs_path;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod recording;
 #[cfg(any(target_arch = "wasm32", test))]
 pub mod web_cache;
 
@@ -563,21 +565,27 @@ impl Plugin for IpfsIoPlugin {
         app.insert_resource(IpfsResource { inner: ipfs_io });
         app.insert_resource(RealmInitialLocation::Base);
 
+        #[cfg(not(target_arch = "wasm32"))]
+        let recording = app
+            .world_mut()
+            .remove_resource::<recording::Recording>()
+            .map(Arc::new);
+        let source = AssetSource::build().with_reader(move || {
+            #[cfg(not(target_arch = "wasm32"))]
+            if let Some(recording) = &recording {
+                return Box::new(recording::RecordingReader::new(
+                    passthrough.clone(),
+                    recording.clone(),
+                ));
+            }
+            Box::new(passthrough.clone())
+        });
         #[cfg(feature = "hot_reload")]
-        app.register_asset_source(
-            AssetSourceId::Default,
-            AssetSource::build()
-                .with_reader(move || Box::new(passthrough.clone()))
-                .with_watcher(AssetSource::get_default_watcher(
-                    file_path,
-                    Duration::from_millis(300),
-                )),
-        );
-        #[cfg(not(feature = "hot_reload"))]
-        app.register_asset_source(
-            AssetSourceId::Default,
-            AssetSource::build().with_reader(move || Box::new(passthrough.clone())),
-        );
+        let source = source.with_watcher(AssetSource::get_default_watcher(
+            file_path,
+            Duration::from_millis(300),
+        ));
+        app.register_asset_source(AssetSourceId::Default, source);
 
         app.add_event::<ChangeRealmEvent>();
         app.init_resource::<WorldCommsSecret>();

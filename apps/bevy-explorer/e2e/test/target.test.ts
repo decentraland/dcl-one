@@ -34,7 +34,7 @@ describe('readTarget', () => {
       DCL_E2E_RECORD: 'true',
       DCL_E2E_WEB_PORT: '4000',
       DCL_E2E_NATIVE_BIN: '/bin/client',
-      DCL_E2E_NATIVE_ARGS: '--log-file run.log  --no_fog'
+      DCL_E2E_NATIVE_ARGS: '--log-file run.log  --no_fog --replay-assets capture'
     })
     assert.equal(target.baseDomain, 'example.test')
     assert.equal(target.transport, 'native')
@@ -44,7 +44,7 @@ describe('readTarget', () => {
     assert.deepEqual(target.windowSize, [960, 540])
     assert.equal(target.record, true)
     assert.equal(target.ports.web, 4000)
-    assert.deepEqual(target.native.args, ['--log-file', 'run.log', '--no_fog'])
+    assert.deepEqual(target.native.args, ['--log-file', 'run.log', '--no_fog', '--replay-assets', 'capture'])
   })
 
   test('refuses a bad transport, key or window', () => {

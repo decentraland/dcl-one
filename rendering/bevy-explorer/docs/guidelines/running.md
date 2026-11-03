@@ -41,6 +41,35 @@ The workflow also stages the CEF helper, runtime libraries, assets and sidecar. 
 platform packaging steps, then launch the packaged executable with `--realm <about-url>
 --position x,y`. A Cargo build alone does not bundle the HUD or package those runtime files.
 
+### Reproduce a native public asset read
+
+Use a capture when investigating a native Bevy loader or rendering issue at a particular
+Genesis City parcel. The two launches below use the same public realm and position. Start with
+a new recording directory outside the Explorer cache. In the first run, visit the scene and
+wait for the affected assets to load, then close the client before launching replay.
+
+```sh
+just native-debug --realm https://peer.decentraland.org --position 0,0 --record-assets ./asset-capture
+# Inspect the recorded CIDs and byte counts before repeating the visit.
+cat ./asset-capture/reads.log
+just native-debug --realm https://peer.decentraland.org --position 0,0 --replay-assets ./asset-capture
+```
+
+The reader covers Bevy asset loads resolved through a connected, secret-free Genesis realm
+on the selected `--base-domain`. It accepts immutable content under `peer` or `peer-ap1`
+and verifies each CID against the bytes from the normal reader, including warm cache hits.
+Selection uses the logical realm and content endpoints. The reader has no access to transport
+response headers or redirect history. A preview, world, explicit scene content base, URL
+asset or endpoint carrying credentials always takes the ordinary path.
+
+Capture writes a blob once per CID and appends a journal entry for each successful eligible
+read. The directory holds up to 4,096 blobs and 1 GiB in total, at most 16 MiB per blob and
+16,384 completed reads or 2 MiB of journal. Capture skips an oversized or unverifiable read
+and lets the asset load continue. Replay verifies journaled blobs and fails an eligible read
+on a miss or corruption, even if the normal cache has that CID. Realm discovery, scene
+execution, direct IPFS calls and other network traffic still run normally. To repeat a
+different deployment, capture its assets in a separate directory.
+
 ## Web
 
 `just wasm` builds the wasm package and the sandbox worker bundle, then starts the page dev

@@ -128,6 +128,8 @@ pub struct DecentralandAppConfig {
     pub arguments: DecentralandArguments,
     #[cfg(not(target_arch = "wasm32"))]
     pub crash_file: Option<PathBuf>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub recording: Option<ipfs::recording::Recording>,
     #[cfg(target_arch = "wasm32")]
     pub wasm_loader_handle: Option<WasmLoaderHandle>,
     /// Workers the page created for the compute task pool (they join it from
@@ -152,6 +154,8 @@ impl DecentralandAppConfig {
             arguments,
             #[cfg(not(target_arch = "wasm32"))]
             crash_file,
+            #[cfg(not(target_arch = "wasm32"))]
+            recording: None,
             #[cfg(target_arch = "wasm32")]
             wasm_loader_handle,
             #[cfg(target_arch = "wasm32")]
@@ -278,6 +282,14 @@ pub struct DecentralandArguments {
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub log_file: Option<std::path::PathBuf>,
+    /// Record public immutable content reads to this directory
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, conflicts_with = "replay_assets", help_heading = DEBUG)]
+    pub record_assets: Option<PathBuf>,
+    /// Replay recorded public immutable content reads without contacting their origin
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, conflicts_with = "record_assets", help_heading = DEBUG)]
+    pub replay_assets: Option<PathBuf>,
     // `--automation-token` and `--automation-port`: the loopback console server
     #[cfg(not(target_arch = "wasm32"))]
     #[command(flatten)]
@@ -365,7 +377,14 @@ impl DecentralandApp {
 
         // DefaultPlugins
         #[cfg(not(target_arch = "wasm32"))]
-        app.add_plugins(desktop_default_plugins(&decentraland_app_config));
+        let decentraland_app_config = {
+            let mut config = decentraland_app_config;
+            if let Some(recording) = config.recording.take() {
+                app.insert_resource(recording);
+            }
+            app.add_plugins(desktop_default_plugins(&config));
+            config
+        };
         #[cfg(target_arch = "wasm32")]
         app.add_plugins(wasm_default_plugins(&decentraland_app_config));
 

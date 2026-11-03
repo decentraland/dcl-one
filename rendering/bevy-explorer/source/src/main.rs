@@ -121,6 +121,32 @@ fn decentraland_app_config() -> Result<DecentralandAppConfig, UserError> {
         arguments.client.autopilot,
     )?;
     check_csv_folder(arguments.csv.as_deref(), arguments.client.autopilot)?;
+    let recording = arguments
+        .record_assets
+        .as_deref()
+        .map(|dir| (dir, ipfs::recording::Mode::Capture))
+        .or_else(|| {
+            arguments
+                .replay_assets
+                .as_deref()
+                .map(|dir| (dir, ipfs::recording::Mode::Replay))
+        })
+        .map(|(directory, mode)| {
+            let paths = platform::project_directories()
+                .ok_or_else(|| std::io::Error::other("cannot locate asset cache"))?;
+            let options = ipfs::recording::RecordingOptions::for_domain(common::base_domain::get());
+            ipfs::recording::Recording::open(
+                directory,
+                &paths.data_local_dir().join("cache"),
+                mode,
+                options,
+            )
+        })
+        .transpose()
+        .map_err(|error| {
+            error!("invalid asset recording: {error}");
+            UserError(USAGE_ERROR)
+        })?;
     let app_config = decentraland_serialized_app_config();
     let crash_file = decentraland_crash_file();
 
@@ -133,9 +159,9 @@ fn decentraland_app_config() -> Result<DecentralandAppConfig, UserError> {
         warn!("failed to write the session id to the crash marker: {e}");
     }
 
-    Ok(DecentralandAppConfig::new(
-        app_config, arguments, crash_file,
-    ))
+    let mut config = DecentralandAppConfig::new(app_config, arguments, crash_file);
+    config.recording = recording;
+    Ok(config)
 }
 
 fn decentraland_serialized_app_config() -> AppConfig {
@@ -471,6 +497,28 @@ mod tests {
         let args = DecentralandArguments::try_parse_from(warm_up).unwrap();
         assert!(args.client.autopilot && args.csv.is_none());
         assert_eq!(args.log_file.as_deref(), Some(Path::new("out/build_0.log")));
+    }
+
+    #[test]
+    fn asset_recording_flags_are_exclusive_and_default_off() {
+        let default = DecentralandArguments::try_parse_from(["explorer"]).unwrap();
+        assert!(default.record_assets.is_none() && default.replay_assets.is_none());
+        let capture =
+            DecentralandArguments::try_parse_from(["explorer", "--record-assets", "capture"])
+                .unwrap();
+        assert_eq!(capture.record_assets.as_deref(), Some(Path::new("capture")));
+        let replay =
+            DecentralandArguments::try_parse_from(["explorer", "--replay-assets", "capture"])
+                .unwrap();
+        assert_eq!(replay.replay_assets.as_deref(), Some(Path::new("capture")));
+        assert!(DecentralandArguments::try_parse_from([
+            "explorer",
+            "--record-assets",
+            "one",
+            "--replay-assets",
+            "two"
+        ])
+        .is_err());
     }
 
     fn log_file_in_a_missing_folder() -> std::path::PathBuf {

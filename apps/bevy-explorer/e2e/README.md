@@ -56,6 +56,9 @@ boots a second one on its own realm.
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
 
+For a local native reproduction, `DCL_E2E_NATIVE_ARGS="--replay-assets capture"` forwards a
+recording to the client. See the [capture and replay procedure](../../../rendering/bevy-explorer/docs/guidelines/running.md#reproduce-a-native-public-asset-read).
+
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
 console command, its reply or error and its time; `/login_identity` payloads redacted) and
 `final.png` (the engine's frame as the scenario left it). A failed visual scenario adds
