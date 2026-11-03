@@ -243,7 +243,7 @@ pub async fn moderate(
     event_id: &str,
     body: &AdminPatch,
     actor: &str,
-    _settings: &crate::Settings,
+    settings: &crate::Settings,
 ) -> Result<bool, ApiError> {
     super::mirror::reclaim_local(pool).await?;
     let mut tx = pool.begin().await?;
@@ -269,6 +269,9 @@ pub async fn moderate(
         return Err(mirrored_event(pool, event_id).await);
     }
     apply_admin_state(&mut raw, body, actor)?;
+    if !mirrored {
+        begin_metric_approval(&mut tx, before.as_object().unwrap_or(&Map::new()), &mut raw).await?;
+    }
     if mirrored && body.reason.is_some() && flag(&raw, "rejected") {
         let resolved = body.resolved()?;
         if resolved.rejected != Some(true) {
@@ -311,6 +314,7 @@ pub async fn moderate(
         Some(&before),
         &Value::Object(raw.clone()),
         !mirrored,
+        settings,
     )
     .await?;
     sqlx::query(
@@ -461,6 +465,7 @@ pub(super) async fn hide_mirrored_locked(
     before: &Map<String, Value>,
     raw: Map<String, Value>,
     actor: &str,
+    settings: &crate::Settings,
 ) -> Result<(), ApiError> {
     let decision = Decision {
         hidden: Some(true),
@@ -474,6 +479,7 @@ pub(super) async fn hide_mirrored_locked(
         Some(&Value::Object(before.clone())),
         &Value::Object(raw.clone()),
         false,
+        settings,
     )
     .await?;
     sqlx::query("UPDATE explore.event SET raw = $2 WHERE id = $1")
@@ -791,6 +797,104 @@ pub fn build_create_raw(
     Ok(Value::Object(doc))
 }
 
+fn metric_starts(raw: &Map<String, Value>) -> Vec<(String, DateTime<Utc>)> {
+    let values: Vec<&str> = match raw.get("recurrent_dates").and_then(Value::as_array) {
+        Some(dates) if !dates.is_empty() => dates.iter().filter_map(Value::as_str).collect(),
+        _ => raw
+            .get("start_at")
+            .and_then(Value::as_str)
+            .into_iter()
+            .collect(),
+    };
+    values
+        .into_iter()
+        .filter_map(|value| {
+            DateTime::parse_from_rfc3339(value)
+                .ok()
+                .map(|date| (value.to_owned(), date.with_timezone(&Utc)))
+        })
+        .collect()
+}
+
+/// Start a create/approval window without importing already-ended occurrences.
+/// A first occurrence already in progress remains eligible when it later ends.
+fn begin_metric_window(
+    raw: &mut Map<String, Value>,
+    at: DateTime<Utc>,
+    already_eligible: Option<&std::collections::BTreeSet<DateTime<Utc>>>,
+) {
+    let duration =
+        chrono::Duration::milliseconds(raw.get("duration").and_then(Value::as_i64).unwrap_or(0));
+    let preserved: Map<String, Value> = metric_starts(raw)
+        .into_iter()
+        .filter(|(_, start)| {
+            *start < at
+                && already_eligible.is_none_or(|eligible| eligible.contains(start))
+                && start
+                    .checked_add_signed(duration)
+                    .is_some_and(|end| end > at)
+        })
+        .map(|(key, _)| (key, Value::Bool(true)))
+        .collect();
+    raw.insert("_metrics_schedule_after".into(), json!(at.to_rfc3339()));
+    raw.insert("_metrics_preserved_starts".into(), Value::Object(preserved));
+}
+
+async fn begin_metric_approval(
+    tx: &mut Transaction<'_, Postgres>,
+    before: &Map<String, Value>,
+    raw: &mut Map<String, Value>,
+) -> Result<(), sqlx::Error> {
+    if !flag(before, "approved")
+        && flag(raw, "approved")
+        && !flag(raw, "rejected")
+        && !is_soft_deleted(raw)
+    {
+        let at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+            .fetch_one(&mut **tx)
+            .await?;
+        let eligible = eligible_metric_starts(raw);
+        begin_metric_window(raw, at, Some(&eligible));
+    }
+    Ok(())
+}
+
+fn eligible_metric_starts(raw: &Map<String, Value>) -> std::collections::BTreeSet<DateTime<Utc>> {
+    let old_cutoff = raw
+        .get("_metrics_schedule_after")
+        .and_then(Value::as_str)
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok());
+    let old_preserved = raw
+        .get("_metrics_preserved_starts")
+        .and_then(Value::as_object);
+    metric_starts(raw)
+        .into_iter()
+        .filter(|(key, date)| {
+            old_cutoff.is_none_or(|at| *date >= at)
+                || old_preserved.is_some_and(|old| old.contains_key(key))
+        })
+        .map(|(_, date)| date)
+        .collect()
+}
+
+/// Preserve eligible occurrence identities shared by the old and new schedules.
+/// The private lookup is bounded by the current materialized schedule; it never
+/// accumulates removed dates across edits or grants eligibility to new past dates.
+pub(super) fn preserve_metric_starts(
+    before: &Map<String, Value>,
+    after: &mut Map<String, Value>,
+    cutoff: DateTime<Utc>,
+) {
+    let eligible = eligible_metric_starts(before);
+    let preserved: Map<String, Value> = metric_starts(after)
+        .into_iter()
+        .filter(|(_, date)| *date < cutoff && eligible.contains(date))
+        .map(|(key, _)| (key, Value::Bool(true)))
+        .collect();
+    after.insert("_metrics_schedule_after".into(), json!(cutoff.to_rfc3339()));
+    after.insert("_metrics_preserved_starts".into(), Value::Object(preserved));
+}
+
 /// Event identifiers stay unique even when concurrent creates share a clock tick.
 fn generate_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -965,9 +1069,17 @@ pub async fn create_as(
     if let Some(raw) = doc.as_object() {
         validate_references(pool, raw).await?;
     }
+    let mut tx = pool.begin().await?;
+    let created_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *tx)
+        .await?;
+    if let Some(raw) = doc.as_object_mut() {
+        begin_metric_window(raw, created_at, None);
+    }
+    doc["created_at"] = json!(created_at.to_rfc3339());
+    doc["updated_at"] = json!(created_at.to_rfc3339());
     let f = super::mirror::extract_fields(&doc)
         .ok_or_else(|| ApiError::internal("event document without an id"))?;
-    let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO explore.event (id, name, start_at, finish_at, next_start_at, next_finish_at, duration_ms, recurrent, \
              highlighted, trending, approved, attending, community_id, user_creator, coordinates_x, coordinates_y, description, raw, origin) \
@@ -1002,7 +1114,7 @@ pub async fn create_as(
     .bind(json!({ "create": body }))
     .execute(&mut *tx)
     .await?;
-    super::notifications::record_transition(&mut tx, &id, None, &doc, true).await?;
+    super::notifications::record_transition(&mut tx, &id, None, &doc, true, settings).await?;
     tx.commit().await?;
     tracing::info!(event = %id, signer = operator, creator, "event created");
     Ok(id)
@@ -1014,10 +1126,12 @@ pub(super) async fn store_locked(
     tx: &mut Transaction<'_, Postgres>,
     event_id: &str,
     before: &Map<String, Value>,
-    raw: Map<String, Value>,
+    mut raw: Map<String, Value>,
     signer: &str,
     payload: Value,
+    settings: &crate::Settings,
 ) -> Result<(), ApiError> {
+    begin_metric_approval(tx, before, &mut raw).await?;
     let mut doc = Value::Object(raw);
     doc["id"] = json!(event_id);
     let f = super::mirror::extract_fields(&doc)
@@ -1029,6 +1143,7 @@ pub(super) async fn store_locked(
         Some(&Value::Object(before.clone())),
         &doc,
         true,
+        settings,
     )
     .await?;
     sqlx::query(

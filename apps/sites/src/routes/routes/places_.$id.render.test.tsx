@@ -1,16 +1,18 @@
 import type { ComponentProps } from "react";
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type PlaceDetail from "@ui/explorer/pages/PlaceDetail";
 
 import type { AuthIdentity } from "@/data/lib/auth/types";
 import { postJSON, signedGetJSON } from "@/data/lib/catalyst/client";
 import { openSignIn } from "@/features/components/auth/signin-store";
+import type { PlaceTravel } from "@/data/lib/catalyst/places/world-scenes";
+import { track } from "@/core/lib/telemetry/track";
 import PlaceDetailRoute from "./places_.$id";
 
-type DetailProps = ComponentProps<typeof PlaceDetail>;
+type DetailProps = NonNullable<ComponentProps<typeof PlaceDetail>>;
 const seen: { props: DetailProps | null } = { props: null };
 
 vi.mock("@ui/explorer/pages/PlaceDetail", () => ({
@@ -19,7 +21,7 @@ vi.mock("@ui/explorer/pages/PlaceDetail", () => ({
     return null;
   },
 }));
-vi.mock("@/features/explorer/jump-in/JumpIn", () => ({ default: () => null }));
+vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 vi.mock("@/features/components/auth/signin-store", () => ({ openSignIn: vi.fn() }));
 vi.mock("@/data/lib/catalyst/client", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/data/lib/catalyst/client")>()),
@@ -37,13 +39,14 @@ const IDENTITY: AuthIdentity = {
 };
 const PLACE_ID = "66ef7bd9-3060-4e1a-a6d7-edc8d251e0cb";
 
-function renderRoute() {
+function renderRoute(travel: PlaceTravel = { playBase: "/play/", jumpHref: "/play/?position=34%2C17&realm=fixture" }) {
   seen.props = null;
   const loaderData = {
     id: PLACE_ID,
     place: { id: PLACE_ID, title: "New Scene 12", base_position: "34,17", positions: ["34,17"], world: false },
     sid: "sid-1",
     unavailable: false,
+    travel,
   };
   // The exported route reads its loader data from the data router, so seed one with it.
   const router = createMemoryRouter(
@@ -61,6 +64,10 @@ beforeEach(() => {
 });
 
 describe("/places/:id likes and favorites", () => {
+  it("wires the visible travel control to the current parcel", () => {
+    expect(renderRoute().jumpHref).toBe("/play/?position=34%2C17&realm=fixture");
+  });
+
   it("hands PlaceDetail the place id and saves signed PATCHes to the node's places API", async () => {
     auth.identity = IDENTITY;
     auth.isConnected = true;
@@ -89,5 +96,26 @@ describe("/places/:id likes and favorites", () => {
     await expect(props.onLike!(PLACE_ID, true)).rejects.toThrow(/Sign in/);
     expect(openSignIn).toHaveBeenCalledTimes(2);
     expect(postJSON).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("when handing off place travel", () => {
+  let props: DetailProps;
+  beforeEach(() => { props = renderRoute(); });
+  afterEach(() => vi.clearAllMocks());
+  it("should retain started and completed launch telemetry", () => {
+    props.onJumpIn!();
+    expect(track).toHaveBeenCalledWith("jump_in_started", { place_id: PLACE_ID }, expect.anything());
+    expect(track).toHaveBeenCalledWith("jump_in_completed", { place_id: PLACE_ID, launch_url: props.jumpHref }, expect.anything());
+  });
+  describe("and the realm lookup failed", () => {
+    beforeEach(() => { props = renderRoute({ playBase: "/play/", launchError: "Travel is temporarily unavailable. Please retry." }); });
+    it("should retain failed telemetry and offer resolution again without a wrong-realm link", () => {
+      props.onJumpIn!();
+      expect(props.jumpHref).toBeUndefined();
+      expect(track).toHaveBeenCalledWith("jump_in_failed", { place_id: PLACE_ID, error: "Travel is temporarily unavailable. Please retry." }, expect.anything());
+      expect(track).not.toHaveBeenCalledWith("jump_in_completed", expect.anything(), expect.anything());
+    });
   });
 });
