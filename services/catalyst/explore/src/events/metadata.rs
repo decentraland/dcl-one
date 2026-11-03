@@ -64,13 +64,7 @@ fn refresh_poster(raw: &mut Map<String, Value>, place: Option<&Value>, creating:
         .and_then(Value::as_str)
         .filter(|image| crate::sanitize::sanitize_asset_url(image).is_ok())
         .map(str::to_owned)
-        .or_else(|| {
-            (raw.get("world").and_then(Value::as_bool) != Some(true)).then(|| {
-                let x = raw.get("x").and_then(Value::as_i64).unwrap_or(0);
-                let y = raw.get("y").and_then(Value::as_i64).unwrap_or(0);
-                format!("https://api.decentraland.org/v1/parcels/{x}/{y}/map.png")
-            })
-        });
+        .unwrap_or_else(|| super::posters::DEFAULT_EVENT_IMAGE.to_owned());
     raw.insert("image".into(), json!(fallback));
     raw.insert("_image_source".into(), json!("generated"));
 }
@@ -128,6 +122,7 @@ pub(super) async fn enrich(
     if previous.is_none() || moved || place.is_some() {
         refresh_poster(raw, place.as_ref(), previous.is_none());
     }
+
     Ok(())
 }
 
@@ -192,7 +187,8 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            raw["image"], "https://api.decentraland.org/v1/parcels/8/2/map.png",
+            raw["image"],
+            super::super::posters::DEFAULT_EVENT_IMAGE,
             "a move cannot retain the previous scene poster"
         );
     }
@@ -259,5 +255,22 @@ mod tests {
             raw["url"],
             "https://decentraland.org/play/?realm=custom.dcl.eth&position=1,2"
         );
+    }
+    #[tokio::test]
+    async fn a_relative_default_remains_origin_independent_when_catalogue_metadata_is_missing() {
+        let Some(pool) = crate::db::scratch::pool(2).await else {
+            return;
+        };
+        let mut raw = json!({"image":super::super::posters::DEFAULT_EVENT_IMAGE,"_image_source":"generated","x":1,"y":2}).as_object().unwrap().clone();
+        let previous = raw.clone();
+        enrich(
+            &mut pool.acquire().await.unwrap(),
+            &mut raw,
+            Some(&previous),
+            true,
+        )
+        .await
+        .unwrap();
+        assert_eq!(raw["image"], super::super::posters::DEFAULT_EVENT_IMAGE);
     }
 }

@@ -10,6 +10,7 @@ import type { SuggestionReason } from "@catalyst-api/market/SuggestionReason";
 import { shopClient, type ShopClient } from "../api/shop";
 import { shopFlags } from "./flags";
 import { readFreshness, type IndexFreshness } from "./freshness";
+import { catalogCategoryParams } from "./lib/categories";
 import { toCatalogItem, type CatalogItem, type ListingAcquisition, type ListingSource, type RawCollectionItem } from "./lib/catalogItem";
 
 export type Opts = { client?: ShopClient; signal?: AbortSignal };
@@ -82,7 +83,22 @@ export type ShopListingFilters = {
   onSale?: boolean;
   discounted?: boolean;
   listingType?: "primary" | "secondary";
+} & EmoteAttributeFilters;
+
+/** The emote attributes both catalog routes filter on. */
+export type EmoteAttributeFilters = {
+  emotePlayMode?: "simple" | "loop";
+  emoteHasSound?: boolean;
+  emoteHasGeometry?: boolean;
 };
+
+function emoteAttributeParams({ emotePlayMode, emoteHasSound, emoteHasGeometry }: EmoteAttributeFilters): QueryParams {
+  const q: QueryParams = {};
+  if (emotePlayMode) q.emotePlayMode = emotePlayMode;
+  if (emoteHasSound) q.emoteHasSound = "true";
+  if (emoteHasGeometry) q.emoteHasGeometry = "true";
+  return q;
+}
 
 function listingRowId(l: ShopListingRaw): string {
   if (l.tradeId) return l.tradeId;
@@ -156,7 +172,7 @@ function shopQuery(params: ShopListingFilters): QueryParams {
   if (params.onSale != null) q.onSale = String(params.onSale);
   if (params.discounted != null) q.discounted = String(params.discounted);
   if (params.listingType) q.listingType = params.listingType;
-  return q;
+  return { ...q, ...emoteAttributeParams(params) };
 }
 
 export async function fetchShopListingsRaw(
@@ -311,7 +327,7 @@ export type CatalogItemsFilters = {
   isOnSale?: boolean;
   minPriceCredits?: number;
   maxPriceCredits?: number;
-};
+} & EmoteAttributeFilters;
 
 async function withRunningSales(items: CatalogItem[], scope: { creator?: string; contractAddress?: string }, opts?: Opts): Promise<CatalogItem[]> {
   if (!scope.creator && !scope.contractAddress) return items;
@@ -355,6 +371,7 @@ export async function fetchCatalogItems(
     isOnSale,
     minPriceCredits,
     maxPriceCredits,
+    ...emote
   }: CatalogItemsFilters = {},
   opts?: Opts,
 ): Promise<ItemsPage> {
@@ -364,7 +381,7 @@ export async function fetchCatalogItems(
   if (contractAddresses) q.contractAddress = contractAddresses.length ? contractAddresses : [ZERO_ADDRESS];
   else if (contractAddress) q.contractAddress = contractAddress;
   if (rarities?.length) q.rarity = rarities;
-  if (wearableCategories?.length) q.wearableCategory = wearableCategories;
+  Object.assign(q, catalogCategoryParams(wearableCategories));
   if (wearableGenders?.length) q.wearableGender = wearableGenders;
   if (search) q.search = search;
   if (sortBy) q.sortBy = sortBy;
@@ -372,6 +389,7 @@ export async function fetchCatalogItems(
   if (isOnSale != null) q.isOnSale = String(isOnSale);
   if (minPriceCredits != null) q.minPriceCredits = minPriceCredits;
   if (maxPriceCredits != null) q.maxPriceCredits = maxPriceCredits;
+  Object.assign(q, emoteAttributeParams(emote));
   const json = await c(opts).catalog.items<DataTotal<RawCollectionItem>>(q, o(opts));
   const items = await withRunningSales((json.data ?? []).map(toCatalogItem), { creator, contractAddress }, opts);
   return { items, total: json.total ?? skip + items.length, meta: { freshness: readFreshness(json) } };

@@ -3,2813 +3,4262 @@
  * Do not make direct changes to the file.
  */
 
-
 export interface paths {
-  "/api/categories": {
-    get: operations["get_categories"];
-  };
-  "/api/destinations": {
-    get: operations["get_destinations_list"];
-    post: operations["post_destinations_list_by_id"];
-  };
-  "/api/destinations/ranking": {
-    /**
-     * Replace the whole automated ranking set in one transaction.
-     * @description The payload is the complete set for a run: every ranking it names is
-     * written, and every automated ranking it does not name is cleared, but only
-     * for the types the run declares in `replaces` (absent that, the types its
-     * entries carry). Curated destinations are never touched, not by the write
-     * and not by the clear, for both callers -- this route captures no token
-     * identity, so the admin bearer buys no override here the way it does on the
-     * single-destination routes.
-     *
-     * Answers 400 when the body is malformed (including a `replaces` that is not
-     * an array of unique "place"/"world" items), when a destination appears more
-     * than once, when an entry's type is outside `replaces`, or when every
-     * destination sent for one type is unknown, which would clear that type's
-     * rankings rather than replace them.
-     */
-    put: operations["put_destinations_ranking"];
-  };
-  "/api/map": {
-    get: operations["get_map_places"];
-  };
-  "/api/map/places": {
-    get: operations["get_all_places_list"];
-  };
-  "/api/places": {
-    get: operations["get_place_list"];
-    post: operations["post_place_list_by_id"];
-  };
-  "/api/places/{entity_id}/favorites": {
-    patch: operations["patch_place_favorites"];
-  };
-  "/api/places/{entity_id}/likes": {
-    patch: operations["patch_place_likes"];
-  };
-  "/api/places/{place_id}": {
-    get: operations["get_place"];
-  };
-  "/api/places/{place_id}/categories": {
-    get: operations["get_place_categories"];
-  };
-  "/api/places/{place_id}/disable": {
-    put: operations["put_place_disable"];
-    patch: operations["patch_place_disable"];
-  };
-  "/api/places/{place_id}/featured": {
-    put: operations["put_place_featured"];
-    delete: operations["delete_place_featured"];
-  };
-  "/api/places/{place_id}/highlight": {
-    put: operations["put_place_highlight"];
-  };
-  "/api/places/{place_id}/ranking": {
-    put: operations["put_place_ranking"];
-  };
-  "/api/places/{place_id}/ranking-exclusion": {
-    put: operations["put_place_ranking_exclusion"];
-    delete: operations["delete_place_ranking_exclusion"];
-  };
-  "/api/places/{place_id}/rating": {
-    put: operations["put_place_rating"];
-  };
-  "/api/places/status": {
-    post: operations["post_place_status_list_by_id"];
-  };
-  "/api/pois": {
-    get: operations["get_pois"];
-    post: operations["post_poi"];
-  };
-  "/api/pois/{position}": {
-    delete: operations["delete_poi"];
-    patch: operations["patch_poi"];
-  };
-  "/api/report": {
-    post: operations["post_report"];
-  };
-  "/api/report/upload/{filename}": {
-    put: operations["put_report_upload"];
-  };
-  "/api/reports": {
-    get: operations["get_reports"];
-  };
-  "/api/reports/{id}": {
-    patch: operations["patch_report"];
-  };
-  "/api/status": {
-    get: operations["status"];
-  };
-  "/api/world_names": {
-    get: operations["get_world_names_list"];
-  };
-  "/api/worlds": {
-    get: operations["get_world_list"];
-  };
-  "/api/worlds/{world_id}": {
-    get: operations["get_world"];
-  };
-  "/api/worlds/{world_id}/favorites": {
-    patch: operations["patch_world_favorites"];
-  };
-  "/api/worlds/{world_id}/featured": {
-    put: operations["put_world_featured"];
-    delete: operations["delete_world_featured"];
-  };
-  "/api/worlds/{world_id}/highlight": {
-    put: operations["put_world_highlight"];
-  };
-  "/api/worlds/{world_id}/likes": {
-    patch: operations["patch_world_likes"];
-  };
-  "/api/worlds/{world_id}/ranking": {
-    put: operations["put_world_ranking"];
-  };
-  "/api/worlds/{world_id}/ranking-exclusion": {
-    put: operations["put_world_ranking_exclusion"];
-    delete: operations["delete_world_ranking_exclusion"];
-  };
-  "/api/worlds/{world_id}/rating": {
-    put: operations["put_world_rating"];
-  };
-  "/federation/places/changes": {
-    get: operations["changes"];
-  };
-  "/federation/places/snapshot": {
-    get: operations["snapshot"];
-  };
-  "/places/place": {
-    get: operations["inject_place_metadata"];
-  };
-  "/places/world": {
-    get: operations["inject_world_metadata"];
-  };
-  "/v1/categories": {
-    get: operations["get_v1_categories"];
-  };
-  "/v1/destinations": {
-    get: operations["get_v1_destinations_list"];
-  };
-  "/v1/destinations/{id}": {
-    get: operations["get_v1_destination"];
-  };
-  "/v1/destinations/{id}/events": {
-    get: operations["get_v1_destination_events"];
-  };
-  "/v1/destinations/{id}/favorites": {
-    put: operations["put_v1_destination_favorites"];
-    delete: operations["delete_v1_destination_favorites"];
-  };
-  "/v1/destinations/{id}/likes": {
-    put: operations["put_v1_destination_likes"];
-    delete: operations["delete_v1_destination_likes"];
-  };
+    "/api/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_categories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_destinations_list"];
+        put?: never;
+        post: operations["post_destinations_list_by_id"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/destinations/ranking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replace the whole automated ranking set in one transaction.
+         * @description The payload is the complete set for a run: every ranking it names is
+         *     written, and every automated ranking it does not name is cleared, but only
+         *     for the types the run declares in `replaces` (absent that, the types its
+         *     entries carry). Curated destinations are never touched, not by the write
+         *     and not by the clear, for both callers -- this route captures no token
+         *     identity, so the admin bearer buys no override here the way it does on the
+         *     single-destination routes.
+         *
+         *     Answers 400 when the body is malformed (including a `replaces` that is not
+         *     an array of unique "place"/"world" items), when a destination appears more
+         *     than once, when an entry's type is outside `replaces`, or when every
+         *     destination sent for one type is unknown, which would clear that type's
+         *     rankings rather than replace them.
+         */
+        put: operations["put_destinations_ranking"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_map_places"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/map/places": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_all_places_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/places": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_place_list"];
+        put?: never;
+        post: operations["post_place_list_by_id"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/places/{entity_id}/favorites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["patch_place_favorites"];
+        trace?: never;
+    };
+    "/api/places/{entity_id}/likes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["patch_place_likes"];
+        trace?: never;
+    };
+    "/api/places/{place_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_place"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/places/{place_id}/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_place_categories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/places/{place_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_place_disable"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["patch_place_disable"];
+        trace?: never;
+    };
+    "/api/places/{place_id}/featured": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_place_featured"];
+        post?: never;
+        delete: operations["delete_place_featured"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/places/{place_id}/highlight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_place_highlight"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/places/{place_id}/ranking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_place_ranking"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/places/{place_id}/ranking-exclusion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_place_ranking_exclusion"];
+        post?: never;
+        delete: operations["delete_place_ranking_exclusion"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/places/{place_id}/rating": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_place_rating"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/places/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["post_place_status_list_by_id"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pois": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_pois"];
+        put?: never;
+        post: operations["post_poi"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pois/{position}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete: operations["delete_poi"];
+        options?: never;
+        head?: never;
+        patch: operations["patch_poi"];
+        trace?: never;
+    };
+    "/api/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["post_report"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/report/upload/{filename}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_report_upload"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_reports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/reports/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["patch_report"];
+        trace?: never;
+    };
+    "/api/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/world_names": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_world_names_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worlds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_world_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worlds/{world_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_world"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worlds/{world_id}/favorites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["patch_world_favorites"];
+        trace?: never;
+    };
+    "/api/worlds/{world_id}/featured": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_world_featured"];
+        post?: never;
+        delete: operations["delete_world_featured"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worlds/{world_id}/highlight": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_world_highlight"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worlds/{world_id}/likes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch: operations["patch_world_likes"];
+        trace?: never;
+    };
+    "/api/worlds/{world_id}/ranking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_world_ranking"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worlds/{world_id}/ranking-exclusion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_world_ranking_exclusion"];
+        post?: never;
+        delete: operations["delete_world_ranking_exclusion"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/worlds/{world_id}/rating": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_world_rating"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/federation/places/changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["changes"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/federation/places/snapshot": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["snapshot"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/places/place": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["inject_place_metadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/places/world": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["inject_world_metadata"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/categories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_v1_categories"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/destinations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_v1_destinations_list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/destinations/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_v1_destination"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/destinations/{id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["get_v1_destination_events"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/destinations/{id}/favorites": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_v1_destination_favorites"];
+        post?: never;
+        delete: operations["delete_v1_destination_favorites"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/destinations/{id}/likes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put: operations["put_v1_destination_likes"];
+        post?: never;
+        delete: operations["delete_v1_destination_likes"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
-
 export type webhooks = Record<string, never>;
-
 export interface components {
-  schemas: {
-    ApiData_Destination: {
-      data: {
-        base_position: string;
-        categories: string[];
-        /**
-         * @description Wallet addresses connected here, present only when with_connected_users=true:
-         * an empty array means nobody is connected, null means comms-gatekeeper could not
-         * be reached and the connected users are unknown.
-         */
-        connected_addresses?: string[] | null;
-        contact_email?: string | null;
-        contact_name?: string | null;
-        content_rating?: string | null;
-        /** Format: date-time */
-        created_at?: string | null;
-        creator_address?: string | null;
-        /** Format: date-time */
-        deployed_at?: string | null;
-        description?: string | null;
-        disabled: boolean;
-        /** Format: date-time */
-        disabled_at?: string | null;
-        /** Format: int32 */
-        dislikes: number;
-        /** Format: int32 */
-        favorites: number;
-        highlighted: boolean;
-        highlighted_image?: string | null;
-        id: string;
-        image?: string | null;
-        is_private: boolean;
-        kind: components["schemas"]["EntityType"];
-        /** Format: double */
-        like_rate?: number | null;
-        /** Format: double */
-        like_score?: number | null;
-        /** Format: int32 */
-        likes: number;
-        live?: boolean | null;
-        live_event?: boolean | null;
-        live_event_name?: string | null;
-        next_event?: null | components["schemas"]["DestinationNextEvent"];
-        owner?: string | null;
-        positions: string[];
-        /** Format: double */
-        ranking?: number | null;
-        realms_detail?: unknown[] | null;
-        sdk?: string | null;
-        title?: string | null;
-        /** Format: date-time */
-        updated_at?: string | null;
-        /** Format: int32 */
-        user_count?: number | null;
-        user_dislike: boolean;
-        user_favorite: boolean;
-        user_like: boolean;
-        /** Format: int32 */
-        user_visits: number;
-        world: boolean;
-        world_name?: string | null;
-      };
-      ok: boolean;
-    };
-    ApiData_FavoritesResult: {
-      data: {
-        /** Format: int32 */
-        favorites: number;
-        user_favorite: boolean;
-      };
-      ok: boolean;
-    };
-    ApiData_InteractionSummary: {
-      data: {
-        /** Format: int32 */
-        dislikes: number;
-        /** Format: int32 */
-        favorites: number;
-        /** Format: int32 */
-        likes: number;
-        user_dislike: boolean;
-        user_favorite: boolean;
-        user_like: boolean;
-      };
-      ok: boolean;
-    };
-    ApiData_LikesResult: {
-      data: {
-        /** Format: int32 */
-        dislikes: number;
-        /** Format: int32 */
-        likes: number;
-        user_dislike: boolean;
-        user_like: boolean;
-      };
-      ok: boolean;
-    };
-    ApiData_PlaceCategoriesOut: {
-      data: {
-        categories: string[];
-      };
-      ok: boolean;
-    };
-    ApiData_PlaceRow: {
-      data: {
-        base_position: string;
-        categories: string[];
-        /**
-         * @description Wallet addresses connected here, present only when with_connected_users=true:
-         * an empty array means nobody is connected, null means comms-gatekeeper could not
-         * be reached and the connected users are unknown.
-         */
-        connected_addresses?: string[] | null;
-        contact_email?: string | null;
-        contact_name?: string | null;
-        content_rating?: string | null;
-        /** Format: date-time */
-        created_at?: string | null;
-        creator_address?: string | null;
-        /** Format: date-time */
-        deployed_at?: string | null;
-        /**
-         * @description Immutable content-entity identifier for this indexed deployment.
-         * Null for legacy rows awaiting reconciliation (upstream places #856).
-         */
-        deployment_id?: string | null;
-        description?: string | null;
-        disabled: boolean;
-        /** Format: date-time */
-        disabled_at?: string | null;
-        disabled_reason?: string | null;
-        /** Format: int32 */
-        dislikes: number;
-        exclude_from_ranking: boolean;
-        /** Format: int32 */
-        favorites: number;
-        highlighted: boolean;
-        highlighted_image?: string | null;
-        id: string;
-        image?: string | null;
-        /** Format: double */
-        like_rate?: number | null;
-        /** Format: double */
-        like_score?: number | null;
-        /** Format: int32 */
-        likes: number;
-        live?: boolean | null;
-        live_event_name?: string | null;
-        owner?: string | null;
-        positions: string[];
-        /** Format: double */
-        ranking?: number | null;
-        realms_detail?: unknown[] | null;
-        sdk?: string | null;
-        title?: string | null;
-        /** Format: date-time */
-        updated_at?: string | null;
-        /** Format: int32 */
-        user_count?: number | null;
-        user_dislike: boolean;
-        user_favorite: boolean;
-        user_like: boolean;
-        /** Format: int32 */
-        user_visits: number;
-        world: boolean;
-        world_id?: string | null;
-        world_name?: string | null;
-      };
-      ok: boolean;
-    };
-    ApiData_PoiRow: {
-      data: {
-        /** Format: date-time */
-        created_at: string;
-        created_by?: string | null;
-        description?: string | null;
-        enabled: boolean;
-        entity_id?: string | null;
-        position: string;
-        title?: string | null;
-        /** Format: date-time */
-        updated_at: string;
-      };
-      ok: boolean;
-    };
-    ApiData_ReplaceRankingResult: {
-      data: {
-        places: components["schemas"]["ReplaceRankingPlaces"];
-        worlds: components["schemas"]["ReplaceRankingWorlds"];
-      };
-      ok: boolean;
-    };
-    ApiData_ReportRow: {
-      data: {
-        /** Format: date-time */
-        created_at: string;
-        entity_id?: string | null;
-        filename: string;
-        /** Format: int64 */
-        id: number;
-        moderator_notes?: string | null;
-        payload: unknown;
-        reporter: string;
-        resolution?: string | null;
-        /** Format: date-time */
-        resolved_at?: string | null;
-        resolved_by?: string | null;
-        signed_url: string;
-        status: string;
-      };
-      ok: boolean;
-    };
-    ApiData_Vec_CategoryOut: {
-      data: {
-          active: boolean;
-          /** Format: int64 */
-          count: number;
-          i18n: components["schemas"]["I18n"];
-          name: string;
-        }[];
-      ok: boolean;
-    };
-    ApiData_Vec_PoiRow: {
-      data: ({
-          /** Format: date-time */
-          created_at: string;
-          created_by?: string | null;
-          description?: string | null;
-          enabled: boolean;
-          entity_id?: string | null;
-          position: string;
-          title?: string | null;
-          /** Format: date-time */
-          updated_at: string;
-        })[];
-      ok: boolean;
-    };
-    ApiData_WorldRow: {
-      data: {
-        base_position: string;
-        categories: string[];
-        contact_name?: string | null;
-        content_rating?: string | null;
-        /** Format: date-time */
-        created_at?: string | null;
-        /** Format: date-time */
-        deployed_at?: string | null;
-        description?: string | null;
-        disabled: boolean;
-        /** Format: date-time */
-        disabled_at?: string | null;
-        /** Format: int32 */
-        dislikes: number;
-        exclude_from_ranking: boolean;
-        /** Format: int32 */
-        favorites: number;
-        highlighted: boolean;
-        highlighted_image?: string | null;
-        id: string;
-        image?: string | null;
-        is_private: boolean;
-        /** Format: double */
-        like_rate?: number | null;
-        /** Format: double */
-        like_score?: number | null;
-        /** Format: int32 */
-        likes: number;
-        owner?: string | null;
-        /** Format: double */
-        ranking?: number | null;
-        show_in_places: boolean;
-        single_player: boolean;
-        /** Format: double */
-        skybox_time?: number | null;
-        title?: string | null;
-        /** Format: date-time */
-        updated_at?: string | null;
-        /** Format: int32 */
-        user_count?: number | null;
-        user_dislike: boolean;
-        user_favorite: boolean;
-        user_like: boolean;
-        /** Format: int32 */
-        user_visits: number;
-        world: boolean;
-        world_name?: string | null;
-      };
-      ok: boolean;
-    };
-    ApiDataTotal_Destination: {
-      data: ({
-          base_position: string;
-          categories: string[];
-          /**
-           * @description Wallet addresses connected here, present only when with_connected_users=true:
-           * an empty array means nobody is connected, null means comms-gatekeeper could not
-           * be reached and the connected users are unknown.
-           */
-          connected_addresses?: string[] | null;
-          contact_email?: string | null;
-          contact_name?: string | null;
-          content_rating?: string | null;
-          /** Format: date-time */
-          created_at?: string | null;
-          creator_address?: string | null;
-          /** Format: date-time */
-          deployed_at?: string | null;
-          description?: string | null;
-          disabled: boolean;
-          /** Format: date-time */
-          disabled_at?: string | null;
-          /** Format: int32 */
-          dislikes: number;
-          /** Format: int32 */
-          favorites: number;
-          highlighted: boolean;
-          highlighted_image?: string | null;
-          id: string;
-          image?: string | null;
-          is_private: boolean;
-          kind: components["schemas"]["EntityType"];
-          /** Format: double */
-          like_rate?: number | null;
-          /** Format: double */
-          like_score?: number | null;
-          /** Format: int32 */
-          likes: number;
-          live?: boolean | null;
-          live_event?: boolean | null;
-          live_event_name?: string | null;
-          next_event?: null | components["schemas"]["DestinationNextEvent"];
-          owner?: string | null;
-          positions: string[];
-          /** Format: double */
-          ranking?: number | null;
-          realms_detail?: unknown[] | null;
-          sdk?: string | null;
-          title?: string | null;
-          /** Format: date-time */
-          updated_at?: string | null;
-          /** Format: int32 */
-          user_count?: number | null;
-          user_dislike: boolean;
-          user_favorite: boolean;
-          user_like: boolean;
-          /** Format: int32 */
-          user_visits: number;
-          world: boolean;
-          world_name?: string | null;
-        })[];
-      ok: boolean;
-      /** Format: int64 */
-      total: number;
-    };
-    ApiDataTotal_PlaceRow: {
-      data: ({
-          base_position: string;
-          categories: string[];
-          /**
-           * @description Wallet addresses connected here, present only when with_connected_users=true:
-           * an empty array means nobody is connected, null means comms-gatekeeper could not
-           * be reached and the connected users are unknown.
-           */
-          connected_addresses?: string[] | null;
-          contact_email?: string | null;
-          contact_name?: string | null;
-          content_rating?: string | null;
-          /** Format: date-time */
-          created_at?: string | null;
-          creator_address?: string | null;
-          /** Format: date-time */
-          deployed_at?: string | null;
-          /**
-           * @description Immutable content-entity identifier for this indexed deployment.
-           * Null for legacy rows awaiting reconciliation (upstream places #856).
-           */
-          deployment_id?: string | null;
-          description?: string | null;
-          disabled: boolean;
-          /** Format: date-time */
-          disabled_at?: string | null;
-          disabled_reason?: string | null;
-          /** Format: int32 */
-          dislikes: number;
-          exclude_from_ranking: boolean;
-          /** Format: int32 */
-          favorites: number;
-          highlighted: boolean;
-          highlighted_image?: string | null;
-          id: string;
-          image?: string | null;
-          /** Format: double */
-          like_rate?: number | null;
-          /** Format: double */
-          like_score?: number | null;
-          /** Format: int32 */
-          likes: number;
-          live?: boolean | null;
-          live_event_name?: string | null;
-          owner?: string | null;
-          positions: string[];
-          /** Format: double */
-          ranking?: number | null;
-          realms_detail?: unknown[] | null;
-          sdk?: string | null;
-          title?: string | null;
-          /** Format: date-time */
-          updated_at?: string | null;
-          /** Format: int32 */
-          user_count?: number | null;
-          user_dislike: boolean;
-          user_favorite: boolean;
-          user_like: boolean;
-          /** Format: int32 */
-          user_visits: number;
-          world: boolean;
-          world_id?: string | null;
-          world_name?: string | null;
-        })[];
-      ok: boolean;
-      /** Format: int64 */
-      total: number;
-    };
-    ApiDataTotal_PlaceStatusRow: {
-      data: ({
-          base_position: string;
-          disabled: boolean;
-          id: string;
-          world: boolean;
-          world_name?: string | null;
-        })[];
-      ok: boolean;
-      /** Format: int64 */
-      total: number;
-    };
-    ApiDataTotal_ReportRow: {
-      data: ({
-          /** Format: date-time */
-          created_at: string;
-          entity_id?: string | null;
-          filename: string;
-          /** Format: int64 */
-          id: number;
-          moderator_notes?: string | null;
-          payload: unknown;
-          reporter: string;
-          resolution?: string | null;
-          /** Format: date-time */
-          resolved_at?: string | null;
-          resolved_by?: string | null;
-          signed_url: string;
-          status: string;
-        })[];
-      ok: boolean;
-      /** Format: int64 */
-      total: number;
-    };
-    ApiDataTotal_String: {
-      data: string[];
-      ok: boolean;
-      /** Format: int64 */
-      total: number;
-    };
-    ApiDataTotal_WorldRow: {
-      data: ({
-          base_position: string;
-          categories: string[];
-          contact_name?: string | null;
-          content_rating?: string | null;
-          /** Format: date-time */
-          created_at?: string | null;
-          /** Format: date-time */
-          deployed_at?: string | null;
-          description?: string | null;
-          disabled: boolean;
-          /** Format: date-time */
-          disabled_at?: string | null;
-          /** Format: int32 */
-          dislikes: number;
-          exclude_from_ranking: boolean;
-          /** Format: int32 */
-          favorites: number;
-          highlighted: boolean;
-          highlighted_image?: string | null;
-          id: string;
-          image?: string | null;
-          is_private: boolean;
-          /** Format: double */
-          like_rate?: number | null;
-          /** Format: double */
-          like_score?: number | null;
-          /** Format: int32 */
-          likes: number;
-          owner?: string | null;
-          /** Format: double */
-          ranking?: number | null;
-          show_in_places: boolean;
-          single_player: boolean;
-          /** Format: double */
-          skybox_time?: number | null;
-          title?: string | null;
-          /** Format: date-time */
-          updated_at?: string | null;
-          /** Format: int32 */
-          user_count?: number | null;
-          user_dislike: boolean;
-          user_favorite: boolean;
-          user_like: boolean;
-          /** Format: int32 */
-          user_visits: number;
-          world: boolean;
-          world_name?: string | null;
-        })[];
-      ok: boolean;
-      /** Format: int64 */
-      total: number;
-    };
-    ApiDataTotalMap_MapEntry: {
-      data: {
-        [key: string]: {
-          base_position: string;
-          categories: string[];
-          contact_name?: string | null;
-          description?: string | null;
-          id: string;
-          image?: string | null;
-          realms_detail?: unknown[] | null;
-          title?: string | null;
-          /** Format: int32 */
-          user_count: number;
-          user_dislike: boolean;
-          user_favorite: boolean;
-          user_like: boolean;
-          /** Format: int32 */
-          user_visits: number;
+    schemas: {
+        ApiData_Destination: {
+            data: {
+                base_position: string;
+                categories: string[];
+                /**
+                 * @description Wallet addresses connected here, present only when with_connected_users=true:
+                 *     an empty array means nobody is connected, null means comms-gatekeeper could not
+                 *     be reached and the connected users are unknown.
+                 */
+                connected_addresses?: string[] | null;
+                contact_email?: string | null;
+                contact_name?: string | null;
+                content_rating?: string | null;
+                /** Format: date-time */
+                created_at?: string | null;
+                creator_address?: string | null;
+                /** Format: date-time */
+                deployed_at?: string | null;
+                description?: string | null;
+                disabled: boolean;
+                /** Format: date-time */
+                disabled_at?: string | null;
+                /** Format: int32 */
+                dislikes: number;
+                /** Format: int32 */
+                favorites: number;
+                highlighted: boolean;
+                highlighted_image?: string | null;
+                id: string;
+                image?: string | null;
+                is_private: boolean;
+                kind: components["schemas"]["EntityType"];
+                /** Format: double */
+                like_rate?: number | null;
+                /** Format: double */
+                like_score?: number | null;
+                /** Format: int32 */
+                likes: number;
+                live?: boolean | null;
+                live_event?: boolean | null;
+                live_event_name?: string | null;
+                next_event?: null | components["schemas"]["DestinationNextEvent"];
+                owner?: string | null;
+                positions: string[];
+                /** Format: double */
+                ranking?: number | null;
+                realms_detail?: unknown[] | null;
+                sdk?: string | null;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+                /** Format: int32 */
+                user_count?: number | null;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+                /** Format: int32 */
+                user_visits: number;
+                world: boolean;
+                world_name?: string | null;
+            };
+            ok: boolean;
         };
-      };
-      ok: boolean;
-      /** Format: int64 */
-      total: number;
+        ApiData_FavoritesResult: {
+            data: {
+                /** Format: int32 */
+                favorites: number;
+                user_favorite: boolean;
+            };
+            ok: boolean;
+        };
+        ApiData_InteractionSummary: {
+            data: {
+                /** Format: int32 */
+                dislikes: number;
+                /** Format: int32 */
+                favorites: number;
+                /** Format: int32 */
+                likes: number;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+            };
+            ok: boolean;
+        };
+        ApiData_LikesResult: {
+            data: {
+                /** Format: int32 */
+                dislikes: number;
+                /** Format: int32 */
+                likes: number;
+                user_dislike: boolean;
+                user_like: boolean;
+            };
+            ok: boolean;
+        };
+        ApiData_PlaceCategoriesOut: {
+            data: {
+                categories: string[];
+            };
+            ok: boolean;
+        };
+        ApiData_PlaceRow: {
+            data: {
+                base_position: string;
+                categories: string[];
+                /**
+                 * @description Wallet addresses connected here, present only when with_connected_users=true:
+                 *     an empty array means nobody is connected, null means comms-gatekeeper could not
+                 *     be reached and the connected users are unknown.
+                 */
+                connected_addresses?: string[] | null;
+                contact_email?: string | null;
+                contact_name?: string | null;
+                content_rating?: string | null;
+                /** Format: date-time */
+                created_at?: string | null;
+                creator_address?: string | null;
+                /** Format: date-time */
+                deployed_at?: string | null;
+                /**
+                 * @description Immutable content-entity identifier for this indexed deployment.
+                 *     Null for legacy rows awaiting reconciliation (upstream places #856).
+                 */
+                deployment_id?: string | null;
+                description?: string | null;
+                disabled: boolean;
+                /** Format: date-time */
+                disabled_at?: string | null;
+                disabled_reason?: string | null;
+                /** Format: int32 */
+                dislikes: number;
+                exclude_from_ranking: boolean;
+                /** Format: int32 */
+                favorites: number;
+                highlighted: boolean;
+                highlighted_image?: string | null;
+                id: string;
+                image?: string | null;
+                /** Format: double */
+                like_rate?: number | null;
+                /** Format: double */
+                like_score?: number | null;
+                /** Format: int32 */
+                likes: number;
+                live?: boolean | null;
+                live_event_name?: string | null;
+                owner?: string | null;
+                positions: string[];
+                /** Format: double */
+                ranking?: number | null;
+                realms_detail?: unknown[] | null;
+                sdk?: string | null;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+                /** Format: int32 */
+                user_count?: number | null;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+                /** Format: int32 */
+                user_visits: number;
+                world: boolean;
+                world_id?: string | null;
+                world_name?: string | null;
+            };
+            ok: boolean;
+        };
+        ApiData_PoiRow: {
+            data: {
+                /** Format: date-time */
+                created_at: string;
+                created_by?: string | null;
+                description?: string | null;
+                enabled: boolean;
+                entity_id?: string | null;
+                position: string;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at: string;
+            };
+            ok: boolean;
+        };
+        ApiData_ReplaceRankingResult: {
+            data: {
+                places: components["schemas"]["ReplaceRankingPlaces"];
+                worlds: components["schemas"]["ReplaceRankingWorlds"];
+            };
+            ok: boolean;
+        };
+        ApiData_ReportRow: {
+            data: {
+                /** Format: date-time */
+                created_at: string;
+                entity_id?: string | null;
+                filename: string;
+                /** Format: int64 */
+                id: number;
+                moderator_notes?: string | null;
+                payload: unknown;
+                reporter: string;
+                resolution?: string | null;
+                /** Format: date-time */
+                resolved_at?: string | null;
+                resolved_by?: string | null;
+                signed_url: string;
+                status: string;
+            };
+            ok: boolean;
+        };
+        ApiData_Vec_CategoryOut: {
+            data: {
+                active: boolean;
+                /** Format: int64 */
+                count: number;
+                i18n: components["schemas"]["I18n"];
+                name: string;
+            }[];
+            ok: boolean;
+        };
+        ApiData_Vec_PoiRow: {
+            data: {
+                /** Format: date-time */
+                created_at: string;
+                created_by?: string | null;
+                description?: string | null;
+                enabled: boolean;
+                entity_id?: string | null;
+                position: string;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at: string;
+            }[];
+            ok: boolean;
+        };
+        ApiData_WorldRow: {
+            data: {
+                base_position: string;
+                categories: string[];
+                contact_name?: string | null;
+                content_rating?: string | null;
+                /** Format: date-time */
+                created_at?: string | null;
+                /** Format: date-time */
+                deployed_at?: string | null;
+                description?: string | null;
+                disabled: boolean;
+                /** Format: date-time */
+                disabled_at?: string | null;
+                /** Format: int32 */
+                dislikes: number;
+                exclude_from_ranking: boolean;
+                /** Format: int32 */
+                favorites: number;
+                highlighted: boolean;
+                highlighted_image?: string | null;
+                id: string;
+                image?: string | null;
+                is_private: boolean;
+                /** Format: double */
+                like_rate?: number | null;
+                /** Format: double */
+                like_score?: number | null;
+                /** Format: int32 */
+                likes: number;
+                owner?: string | null;
+                /** Format: double */
+                ranking?: number | null;
+                show_in_places: boolean;
+                single_player: boolean;
+                /** Format: double */
+                skybox_time?: number | null;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+                /** Format: int32 */
+                user_count?: number | null;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+                /** Format: int32 */
+                user_visits: number;
+                world: boolean;
+                world_name?: string | null;
+            };
+            ok: boolean;
+        };
+        ApiDataTotal_Destination: {
+            data: {
+                base_position: string;
+                categories: string[];
+                /**
+                 * @description Wallet addresses connected here, present only when with_connected_users=true:
+                 *     an empty array means nobody is connected, null means comms-gatekeeper could not
+                 *     be reached and the connected users are unknown.
+                 */
+                connected_addresses?: string[] | null;
+                contact_email?: string | null;
+                contact_name?: string | null;
+                content_rating?: string | null;
+                /** Format: date-time */
+                created_at?: string | null;
+                creator_address?: string | null;
+                /** Format: date-time */
+                deployed_at?: string | null;
+                description?: string | null;
+                disabled: boolean;
+                /** Format: date-time */
+                disabled_at?: string | null;
+                /** Format: int32 */
+                dislikes: number;
+                /** Format: int32 */
+                favorites: number;
+                highlighted: boolean;
+                highlighted_image?: string | null;
+                id: string;
+                image?: string | null;
+                is_private: boolean;
+                kind: components["schemas"]["EntityType"];
+                /** Format: double */
+                like_rate?: number | null;
+                /** Format: double */
+                like_score?: number | null;
+                /** Format: int32 */
+                likes: number;
+                live?: boolean | null;
+                live_event?: boolean | null;
+                live_event_name?: string | null;
+                next_event?: null | components["schemas"]["DestinationNextEvent"];
+                owner?: string | null;
+                positions: string[];
+                /** Format: double */
+                ranking?: number | null;
+                realms_detail?: unknown[] | null;
+                sdk?: string | null;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+                /** Format: int32 */
+                user_count?: number | null;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+                /** Format: int32 */
+                user_visits: number;
+                world: boolean;
+                world_name?: string | null;
+            }[];
+            ok: boolean;
+            /** Format: int64 */
+            total: number;
+        };
+        ApiDataTotal_PlaceRow: {
+            data: {
+                base_position: string;
+                categories: string[];
+                /**
+                 * @description Wallet addresses connected here, present only when with_connected_users=true:
+                 *     an empty array means nobody is connected, null means comms-gatekeeper could not
+                 *     be reached and the connected users are unknown.
+                 */
+                connected_addresses?: string[] | null;
+                contact_email?: string | null;
+                contact_name?: string | null;
+                content_rating?: string | null;
+                /** Format: date-time */
+                created_at?: string | null;
+                creator_address?: string | null;
+                /** Format: date-time */
+                deployed_at?: string | null;
+                /**
+                 * @description Immutable content-entity identifier for this indexed deployment.
+                 *     Null for legacy rows awaiting reconciliation (upstream places #856).
+                 */
+                deployment_id?: string | null;
+                description?: string | null;
+                disabled: boolean;
+                /** Format: date-time */
+                disabled_at?: string | null;
+                disabled_reason?: string | null;
+                /** Format: int32 */
+                dislikes: number;
+                exclude_from_ranking: boolean;
+                /** Format: int32 */
+                favorites: number;
+                highlighted: boolean;
+                highlighted_image?: string | null;
+                id: string;
+                image?: string | null;
+                /** Format: double */
+                like_rate?: number | null;
+                /** Format: double */
+                like_score?: number | null;
+                /** Format: int32 */
+                likes: number;
+                live?: boolean | null;
+                live_event_name?: string | null;
+                owner?: string | null;
+                positions: string[];
+                /** Format: double */
+                ranking?: number | null;
+                realms_detail?: unknown[] | null;
+                sdk?: string | null;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+                /** Format: int32 */
+                user_count?: number | null;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+                /** Format: int32 */
+                user_visits: number;
+                world: boolean;
+                world_id?: string | null;
+                world_name?: string | null;
+            }[];
+            ok: boolean;
+            /** Format: int64 */
+            total: number;
+        };
+        ApiDataTotal_PlaceStatusRow: {
+            data: {
+                base_position: string;
+                disabled: boolean;
+                id: string;
+                world: boolean;
+                world_name?: string | null;
+            }[];
+            ok: boolean;
+            /** Format: int64 */
+            total: number;
+        };
+        ApiDataTotal_ReportRow: {
+            data: {
+                /** Format: date-time */
+                created_at: string;
+                entity_id?: string | null;
+                filename: string;
+                /** Format: int64 */
+                id: number;
+                moderator_notes?: string | null;
+                payload: unknown;
+                reporter: string;
+                resolution?: string | null;
+                /** Format: date-time */
+                resolved_at?: string | null;
+                resolved_by?: string | null;
+                signed_url: string;
+                status: string;
+            }[];
+            ok: boolean;
+            /** Format: int64 */
+            total: number;
+        };
+        ApiDataTotal_String: {
+            data: string[];
+            ok: boolean;
+            /** Format: int64 */
+            total: number;
+        };
+        ApiDataTotal_WorldRow: {
+            data: {
+                base_position: string;
+                categories: string[];
+                contact_name?: string | null;
+                content_rating?: string | null;
+                /** Format: date-time */
+                created_at?: string | null;
+                /** Format: date-time */
+                deployed_at?: string | null;
+                description?: string | null;
+                disabled: boolean;
+                /** Format: date-time */
+                disabled_at?: string | null;
+                /** Format: int32 */
+                dislikes: number;
+                exclude_from_ranking: boolean;
+                /** Format: int32 */
+                favorites: number;
+                highlighted: boolean;
+                highlighted_image?: string | null;
+                id: string;
+                image?: string | null;
+                is_private: boolean;
+                /** Format: double */
+                like_rate?: number | null;
+                /** Format: double */
+                like_score?: number | null;
+                /** Format: int32 */
+                likes: number;
+                owner?: string | null;
+                /** Format: double */
+                ranking?: number | null;
+                show_in_places: boolean;
+                single_player: boolean;
+                /** Format: double */
+                skybox_time?: number | null;
+                title?: string | null;
+                /** Format: date-time */
+                updated_at?: string | null;
+                /** Format: int32 */
+                user_count?: number | null;
+                user_dislike: boolean;
+                user_favorite: boolean;
+                user_like: boolean;
+                /** Format: int32 */
+                user_visits: number;
+                world: boolean;
+                world_name?: string | null;
+            }[];
+            ok: boolean;
+            /** Format: int64 */
+            total: number;
+        };
+        ApiDataTotalMap_MapEntry: {
+            data: {
+                [key: string]: {
+                    base_position: string;
+                    categories: string[];
+                    contact_name?: string | null;
+                    description?: string | null;
+                    id: string;
+                    image?: string | null;
+                    realms_detail?: unknown[] | null;
+                    title?: string | null;
+                    /** Format: int32 */
+                    user_count: number;
+                    user_dislike: boolean;
+                    user_favorite: boolean;
+                    user_like: boolean;
+                    /** Format: int32 */
+                    user_visits: number;
+                };
+            };
+            ok: boolean;
+            /** Format: int64 */
+            total: number;
+        };
+        ApiErrorBody: {
+            error: string;
+            federation_adr?: string | null;
+            message: string;
+            ok: boolean;
+        };
+        ApiJsonList: {
+            data: Record<string, never>[];
+            ok: boolean;
+        };
+        CategoryOut: {
+            active: boolean;
+            /** Format: int64 */
+            count: number;
+            i18n: components["schemas"]["I18n"];
+            name: string;
+        };
+        Destination: {
+            base_position: string;
+            categories: string[];
+            /**
+             * @description Wallet addresses connected here, present only when with_connected_users=true:
+             *     an empty array means nobody is connected, null means comms-gatekeeper could not
+             *     be reached and the connected users are unknown.
+             */
+            connected_addresses?: string[] | null;
+            contact_email?: string | null;
+            contact_name?: string | null;
+            content_rating?: string | null;
+            /** Format: date-time */
+            created_at?: string | null;
+            creator_address?: string | null;
+            /** Format: date-time */
+            deployed_at?: string | null;
+            description?: string | null;
+            disabled: boolean;
+            /** Format: date-time */
+            disabled_at?: string | null;
+            /** Format: int32 */
+            dislikes: number;
+            /** Format: int32 */
+            favorites: number;
+            highlighted: boolean;
+            highlighted_image?: string | null;
+            id: string;
+            image?: string | null;
+            is_private: boolean;
+            kind: components["schemas"]["EntityType"];
+            /** Format: double */
+            like_rate?: number | null;
+            /** Format: double */
+            like_score?: number | null;
+            /** Format: int32 */
+            likes: number;
+            live?: boolean | null;
+            live_event?: boolean | null;
+            live_event_name?: string | null;
+            next_event?: null | components["schemas"]["DestinationNextEvent"];
+            owner?: string | null;
+            positions: string[];
+            /** Format: double */
+            ranking?: number | null;
+            realms_detail?: unknown[] | null;
+            sdk?: string | null;
+            title?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+            /** Format: int32 */
+            user_count?: number | null;
+            user_dislike: boolean;
+            user_favorite: boolean;
+            user_like: boolean;
+            /** Format: int32 */
+            user_visits: number;
+            world: boolean;
+            world_name?: string | null;
+        };
+        DestinationNextEvent: {
+            id: string;
+            name: string;
+            next_start_at: string;
+        };
+        /** @enum {string} */
+        EntityType: "place" | "world";
+        FavoritesResult: {
+            /** Format: int32 */
+            favorites: number;
+            user_favorite: boolean;
+        };
+        I18n: {
+            en?: string | null;
+        };
+        InteractionSummary: {
+            /** Format: int32 */
+            dislikes: number;
+            /** Format: int32 */
+            favorites: number;
+            /** Format: int32 */
+            likes: number;
+            user_dislike: boolean;
+            user_favorite: boolean;
+            user_like: boolean;
+        };
+        LikesResult: {
+            /** Format: int32 */
+            dislikes: number;
+            /** Format: int32 */
+            likes: number;
+            user_dislike: boolean;
+            user_like: boolean;
+        };
+        MapEntry: {
+            base_position: string;
+            categories: string[];
+            contact_name?: string | null;
+            description?: string | null;
+            id: string;
+            image?: string | null;
+            realms_detail?: unknown[] | null;
+            title?: string | null;
+            /** Format: int32 */
+            user_count: number;
+            user_dislike: boolean;
+            user_favorite: boolean;
+            user_like: boolean;
+            /** Format: int32 */
+            user_visits: number;
+        };
+        PlaceCategoriesOut: {
+            categories: string[];
+        };
+        PlaceRow: {
+            base_position: string;
+            categories: string[];
+            /**
+             * @description Wallet addresses connected here, present only when with_connected_users=true:
+             *     an empty array means nobody is connected, null means comms-gatekeeper could not
+             *     be reached and the connected users are unknown.
+             */
+            connected_addresses?: string[] | null;
+            contact_email?: string | null;
+            contact_name?: string | null;
+            content_rating?: string | null;
+            /** Format: date-time */
+            created_at?: string | null;
+            creator_address?: string | null;
+            /** Format: date-time */
+            deployed_at?: string | null;
+            /**
+             * @description Immutable content-entity identifier for this indexed deployment.
+             *     Null for legacy rows awaiting reconciliation (upstream places #856).
+             */
+            deployment_id?: string | null;
+            description?: string | null;
+            disabled: boolean;
+            /** Format: date-time */
+            disabled_at?: string | null;
+            disabled_reason?: string | null;
+            /** Format: int32 */
+            dislikes: number;
+            exclude_from_ranking: boolean;
+            /** Format: int32 */
+            favorites: number;
+            highlighted: boolean;
+            highlighted_image?: string | null;
+            id: string;
+            image?: string | null;
+            /** Format: double */
+            like_rate?: number | null;
+            /** Format: double */
+            like_score?: number | null;
+            /** Format: int32 */
+            likes: number;
+            live?: boolean | null;
+            live_event_name?: string | null;
+            owner?: string | null;
+            positions: string[];
+            /** Format: double */
+            ranking?: number | null;
+            realms_detail?: unknown[] | null;
+            sdk?: string | null;
+            title?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+            /** Format: int32 */
+            user_count?: number | null;
+            user_dislike: boolean;
+            user_favorite: boolean;
+            user_like: boolean;
+            /** Format: int32 */
+            user_visits: number;
+            world: boolean;
+            world_id?: string | null;
+            world_name?: string | null;
+        };
+        PlaceStatusRow: {
+            base_position: string;
+            disabled: boolean;
+            id: string;
+            world: boolean;
+            world_name?: string | null;
+        };
+        PoiRow: {
+            /** Format: date-time */
+            created_at: string;
+            created_by?: string | null;
+            description?: string | null;
+            enabled: boolean;
+            entity_id?: string | null;
+            position: string;
+            title?: string | null;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ReplaceRankingPlaces: {
+            /** Format: int64 */
+            applied: number;
+            /** Format: int64 */
+            cleared: number;
+            replaced: boolean;
+            skipped_curated: string[];
+            skipped_missing: string[];
+            skipped_world_backed: string[];
+        };
+        ReplaceRankingResult: {
+            places: components["schemas"]["ReplaceRankingPlaces"];
+            worlds: components["schemas"]["ReplaceRankingWorlds"];
+        };
+        ReplaceRankingWorlds: {
+            /** Format: int64 */
+            applied: number;
+            /** Format: int64 */
+            cleared: number;
+            replaced: boolean;
+            skipped_curated: string[];
+            skipped_missing: string[];
+        };
+        ReportRow: {
+            /** Format: date-time */
+            created_at: string;
+            entity_id?: string | null;
+            filename: string;
+            /** Format: int64 */
+            id: number;
+            moderator_notes?: string | null;
+            payload: unknown;
+            reporter: string;
+            resolution?: string | null;
+            /** Format: date-time */
+            resolved_at?: string | null;
+            resolved_by?: string | null;
+            signed_url: string;
+            status: string;
+        };
+        WorldRow: {
+            base_position: string;
+            categories: string[];
+            contact_name?: string | null;
+            content_rating?: string | null;
+            /** Format: date-time */
+            created_at?: string | null;
+            /** Format: date-time */
+            deployed_at?: string | null;
+            description?: string | null;
+            disabled: boolean;
+            /** Format: date-time */
+            disabled_at?: string | null;
+            /** Format: int32 */
+            dislikes: number;
+            exclude_from_ranking: boolean;
+            /** Format: int32 */
+            favorites: number;
+            highlighted: boolean;
+            highlighted_image?: string | null;
+            id: string;
+            image?: string | null;
+            is_private: boolean;
+            /** Format: double */
+            like_rate?: number | null;
+            /** Format: double */
+            like_score?: number | null;
+            /** Format: int32 */
+            likes: number;
+            owner?: string | null;
+            /** Format: double */
+            ranking?: number | null;
+            show_in_places: boolean;
+            single_player: boolean;
+            /** Format: double */
+            skybox_time?: number | null;
+            title?: string | null;
+            /** Format: date-time */
+            updated_at?: string | null;
+            /** Format: int32 */
+            user_count?: number | null;
+            user_dislike: boolean;
+            user_favorite: boolean;
+            user_like: boolean;
+            /** Format: int32 */
+            user_visits: number;
+            world: boolean;
+            world_name?: string | null;
+        };
     };
-    ApiErrorBody: {
-      error: string;
-      federation_adr?: string | null;
-      message: string;
-      ok: boolean;
-    };
-    ApiJsonList: {
-      data: Record<string, never>[];
-      ok: boolean;
-    };
-    CategoryOut: {
-      active: boolean;
-      /** Format: int64 */
-      count: number;
-      i18n: components["schemas"]["I18n"];
-      name: string;
-    };
-    Destination: {
-      base_position: string;
-      categories: string[];
-      /**
-       * @description Wallet addresses connected here, present only when with_connected_users=true:
-       * an empty array means nobody is connected, null means comms-gatekeeper could not
-       * be reached and the connected users are unknown.
-       */
-      connected_addresses?: string[] | null;
-      contact_email?: string | null;
-      contact_name?: string | null;
-      content_rating?: string | null;
-      /** Format: date-time */
-      created_at?: string | null;
-      creator_address?: string | null;
-      /** Format: date-time */
-      deployed_at?: string | null;
-      description?: string | null;
-      disabled: boolean;
-      /** Format: date-time */
-      disabled_at?: string | null;
-      /** Format: int32 */
-      dislikes: number;
-      /** Format: int32 */
-      favorites: number;
-      highlighted: boolean;
-      highlighted_image?: string | null;
-      id: string;
-      image?: string | null;
-      is_private: boolean;
-      kind: components["schemas"]["EntityType"];
-      /** Format: double */
-      like_rate?: number | null;
-      /** Format: double */
-      like_score?: number | null;
-      /** Format: int32 */
-      likes: number;
-      live?: boolean | null;
-      live_event?: boolean | null;
-      live_event_name?: string | null;
-      next_event?: null | components["schemas"]["DestinationNextEvent"];
-      owner?: string | null;
-      positions: string[];
-      /** Format: double */
-      ranking?: number | null;
-      realms_detail?: unknown[] | null;
-      sdk?: string | null;
-      title?: string | null;
-      /** Format: date-time */
-      updated_at?: string | null;
-      /** Format: int32 */
-      user_count?: number | null;
-      user_dislike: boolean;
-      user_favorite: boolean;
-      user_like: boolean;
-      /** Format: int32 */
-      user_visits: number;
-      world: boolean;
-      world_name?: string | null;
-    };
-    DestinationNextEvent: {
-      id: string;
-      name: string;
-      next_start_at: string;
-    };
-    /** @enum {string} */
-    EntityType: "place" | "world";
-    FavoritesResult: {
-      /** Format: int32 */
-      favorites: number;
-      user_favorite: boolean;
-    };
-    I18n: {
-      en?: string | null;
-    };
-    InteractionSummary: {
-      /** Format: int32 */
-      dislikes: number;
-      /** Format: int32 */
-      favorites: number;
-      /** Format: int32 */
-      likes: number;
-      user_dislike: boolean;
-      user_favorite: boolean;
-      user_like: boolean;
-    };
-    LikesResult: {
-      /** Format: int32 */
-      dislikes: number;
-      /** Format: int32 */
-      likes: number;
-      user_dislike: boolean;
-      user_like: boolean;
-    };
-    MapEntry: {
-      base_position: string;
-      categories: string[];
-      contact_name?: string | null;
-      description?: string | null;
-      id: string;
-      image?: string | null;
-      realms_detail?: unknown[] | null;
-      title?: string | null;
-      /** Format: int32 */
-      user_count: number;
-      user_dislike: boolean;
-      user_favorite: boolean;
-      user_like: boolean;
-      /** Format: int32 */
-      user_visits: number;
-    };
-    PlaceCategoriesOut: {
-      categories: string[];
-    };
-    PlaceRow: {
-      base_position: string;
-      categories: string[];
-      /**
-       * @description Wallet addresses connected here, present only when with_connected_users=true:
-       * an empty array means nobody is connected, null means comms-gatekeeper could not
-       * be reached and the connected users are unknown.
-       */
-      connected_addresses?: string[] | null;
-      contact_email?: string | null;
-      contact_name?: string | null;
-      content_rating?: string | null;
-      /** Format: date-time */
-      created_at?: string | null;
-      creator_address?: string | null;
-      /** Format: date-time */
-      deployed_at?: string | null;
-      /**
-       * @description Immutable content-entity identifier for this indexed deployment.
-       * Null for legacy rows awaiting reconciliation (upstream places #856).
-       */
-      deployment_id?: string | null;
-      description?: string | null;
-      disabled: boolean;
-      /** Format: date-time */
-      disabled_at?: string | null;
-      disabled_reason?: string | null;
-      /** Format: int32 */
-      dislikes: number;
-      exclude_from_ranking: boolean;
-      /** Format: int32 */
-      favorites: number;
-      highlighted: boolean;
-      highlighted_image?: string | null;
-      id: string;
-      image?: string | null;
-      /** Format: double */
-      like_rate?: number | null;
-      /** Format: double */
-      like_score?: number | null;
-      /** Format: int32 */
-      likes: number;
-      live?: boolean | null;
-      live_event_name?: string | null;
-      owner?: string | null;
-      positions: string[];
-      /** Format: double */
-      ranking?: number | null;
-      realms_detail?: unknown[] | null;
-      sdk?: string | null;
-      title?: string | null;
-      /** Format: date-time */
-      updated_at?: string | null;
-      /** Format: int32 */
-      user_count?: number | null;
-      user_dislike: boolean;
-      user_favorite: boolean;
-      user_like: boolean;
-      /** Format: int32 */
-      user_visits: number;
-      world: boolean;
-      world_id?: string | null;
-      world_name?: string | null;
-    };
-    PlaceStatusRow: {
-      base_position: string;
-      disabled: boolean;
-      id: string;
-      world: boolean;
-      world_name?: string | null;
-    };
-    PoiRow: {
-      /** Format: date-time */
-      created_at: string;
-      created_by?: string | null;
-      description?: string | null;
-      enabled: boolean;
-      entity_id?: string | null;
-      position: string;
-      title?: string | null;
-      /** Format: date-time */
-      updated_at: string;
-    };
-    ReplaceRankingPlaces: {
-      /** Format: int64 */
-      applied: number;
-      /** Format: int64 */
-      cleared: number;
-      replaced: boolean;
-      skipped_curated: string[];
-      skipped_missing: string[];
-      skipped_world_backed: string[];
-    };
-    ReplaceRankingResult: {
-      places: components["schemas"]["ReplaceRankingPlaces"];
-      worlds: components["schemas"]["ReplaceRankingWorlds"];
-    };
-    ReplaceRankingWorlds: {
-      /** Format: int64 */
-      applied: number;
-      /** Format: int64 */
-      cleared: number;
-      replaced: boolean;
-      skipped_curated: string[];
-      skipped_missing: string[];
-    };
-    ReportRow: {
-      /** Format: date-time */
-      created_at: string;
-      entity_id?: string | null;
-      filename: string;
-      /** Format: int64 */
-      id: number;
-      moderator_notes?: string | null;
-      payload: unknown;
-      reporter: string;
-      resolution?: string | null;
-      /** Format: date-time */
-      resolved_at?: string | null;
-      resolved_by?: string | null;
-      signed_url: string;
-      status: string;
-    };
-    WorldRow: {
-      base_position: string;
-      categories: string[];
-      contact_name?: string | null;
-      content_rating?: string | null;
-      /** Format: date-time */
-      created_at?: string | null;
-      /** Format: date-time */
-      deployed_at?: string | null;
-      description?: string | null;
-      disabled: boolean;
-      /** Format: date-time */
-      disabled_at?: string | null;
-      /** Format: int32 */
-      dislikes: number;
-      exclude_from_ranking: boolean;
-      /** Format: int32 */
-      favorites: number;
-      highlighted: boolean;
-      highlighted_image?: string | null;
-      id: string;
-      image?: string | null;
-      is_private: boolean;
-      /** Format: double */
-      like_rate?: number | null;
-      /** Format: double */
-      like_score?: number | null;
-      /** Format: int32 */
-      likes: number;
-      owner?: string | null;
-      /** Format: double */
-      ranking?: number | null;
-      show_in_places: boolean;
-      single_player: boolean;
-      /** Format: double */
-      skybox_time?: number | null;
-      title?: string | null;
-      /** Format: date-time */
-      updated_at?: string | null;
-      /** Format: int32 */
-      user_count?: number | null;
-      user_dislike: boolean;
-      user_favorite: boolean;
-      user_like: boolean;
-      /** Format: int32 */
-      user_visits: number;
-      world: boolean;
-      world_name?: string | null;
-    };
-  };
-  responses: never;
-  parameters: never;
-  requestBodies: never;
-  headers: never;
-  pathItems: never;
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
 }
-
 export type $defs = Record<string, never>;
-
-export type external = Record<string, never>;
-
 export interface operations {
-
-  get_categories: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_Vec_CategoryOut"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_destinations_list: {
-    parameters: {
-      query?: {
-        limit?: number;
-        offset?: number;
-        ids?: string[];
-        positions?: string[];
-        pointer?: string[];
-        world_names?: string[];
-        names?: string[];
-        kinds?: string[];
-        only_places?: string;
-        only_worlds?: string;
-        categories?: string[];
-        only_highlighted?: string;
-        only_favorites?: string;
-        search?: string;
-        owner?: string;
-        creator_address?: string;
-        sdk?: string;
-        only_sdk7?: string;
-        /** @description like_score (default) | most_active | user_visits | updated_at | created_at. most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
-        order_by?: string;
-        order?: string;
-        with?: string[];
-        with_live_events?: string;
-        /** @description True to add connected_addresses to each destination: an array of the connected wallet addresses (empty when nobody is connected), or null when comms-gatekeeper could not be reached */
-        with_connected_users?: string;
-        with_realms_detail?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotal_Destination"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  post_destinations_list_by_id: {
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotal_Destination"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  /**
-   * Replace the whole automated ranking set in one transaction.
-   * @description The payload is the complete set for a run: every ranking it names is
-   * written, and every automated ranking it does not name is cleared, but only
-   * for the types the run declares in `replaces` (absent that, the types its
-   * entries carry). Curated destinations are never touched, not by the write
-   * and not by the clear, for both callers -- this route captures no token
-   * identity, so the admin bearer buys no override here the way it does on the
-   * single-destination routes.
-   *
-   * Answers 400 when the body is malformed (including a `replaces` that is not
-   * an array of unique "place"/"world" items), when a destination appears more
-   * than once, when an entry's type is outside `replaces`, or when every
-   * destination sent for one type is unknown, which would clear that type's
-   * rankings rather than replace them.
-   */
-  put_destinations_ranking: {
-    /** @description { replaces?: ("place"|"world")[] | null, entries: [{ entity_type: "place"|"world", id: string, ranking: number }] }. replaces is optional and nullable, holds at most 2 unique items, and names the types this run clears and replaces; absent or null falls back to the types the entries carry, and [] replaces nothing. */
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      201: {
-        content: {
-          "application/json": components["schemas"]["ApiData_ReplaceRankingResult"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_map_places: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotalMap_MapEntry"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_all_places_list: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotal_PlaceRow"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_place_list: {
-    parameters: {
-      query?: {
-        limit?: number;
-        offset?: number;
-        positions?: string[];
-        names?: string[];
-        categories?: string[];
-        only_highlighted?: string;
-        /** @description True to show only entries the automated ranking is not allowed to touch */
-        only_excluded_from_ranking?: string;
-        only_favorites?: string;
-        search?: string;
-        creator_address?: string;
-        sdk?: string;
-        order_by?: string;
-        order?: string;
-        owner?: string;
-        with_realms_detail?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotal_PlaceRow"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  post_place_list_by_id: {
-    requestBody: {
-      content: {
-        "application/json": string[];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotal_PlaceRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  patch_place_favorites: {
-    parameters: {
-      path: {
-        entity_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_FavoritesResult"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  patch_place_likes: {
-    parameters: {
-      path: {
-        entity_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_LikesResult"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_place: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PlaceRow"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_place_categories: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PlaceCategoriesOut"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_place_disable: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PlaceRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  patch_place_disable: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_place_featured: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PlaceRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_place_featured: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PlaceRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_place_highlight: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PlaceRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_place_ranking: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      201: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PlaceRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_place_ranking_exclusion: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PlaceRow"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_place_ranking_exclusion: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PlaceRow"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_place_rating: {
-    parameters: {
-      path: {
-        place_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PlaceRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  post_place_status_list_by_id: {
-    requestBody: {
-      content: {
-        "application/json": string[];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotal_PlaceStatusRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_pois: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_Vec_PoiRow"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  post_poi: {
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PoiRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_poi: {
-    parameters: {
-      path: {
-        position: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  patch_poi: {
-    parameters: {
-      path: {
-        position: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_PoiRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  post_report: {
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_report_upload: {
-    parameters: {
-      path: {
-        filename: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/octet-stream": number[];
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_reports: {
-    parameters: {
-      query?: {
-        limit?: number;
-        offset?: number;
-        status?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotal_ReportRow"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  patch_report: {
-    parameters: {
-      path: {
-        id: number;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_ReportRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  status: {
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-    };
-  };
-  get_world_names_list: {
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotal_String"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_world_list: {
-    parameters: {
-      query?: {
-        limit?: number;
-        offset?: number;
-        names?: string[];
-        categories?: string[];
-        only_favorites?: string;
-        only_highlighted?: string;
-        /** @description True to show only entries the automated ranking is not allowed to touch */
-        only_excluded_from_ranking?: string;
-        search?: string;
-        order_by?: string;
-        order?: string;
-        owner?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotal_WorldRow"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_world: {
-    parameters: {
-      path: {
-        world_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_WorldRow"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  patch_world_favorites: {
-    parameters: {
-      path: {
-        world_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_FavoritesResult"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_world_featured: {
-    parameters: {
-      path: {
-        world_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_WorldRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_world_featured: {
-    parameters: {
-      path: {
-        world_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_WorldRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_world_highlight: {
-    parameters: {
-      path: {
-        world_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_WorldRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  patch_world_likes: {
-    parameters: {
-      path: {
-        world_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_LikesResult"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_world_ranking: {
-    parameters: {
-      path: {
-        world_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      201: {
-        content: {
-          "application/json": components["schemas"]["ApiData_WorldRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      403: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_world_ranking_exclusion: {
-    parameters: {
-      path: {
-        world_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_WorldRow"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_world_ranking_exclusion: {
-    parameters: {
-      path: {
-        world_id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_WorldRow"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_world_rating: {
-    parameters: {
-      path: {
-        world_id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_WorldRow"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      501: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  changes: {
-    parameters: {
-      query?: {
-        since?: number;
-        limit?: number;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  snapshot: {
-    responses: {
-      200: {
-        content: {
-          "application/json": unknown;
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  inject_place_metadata: {
-    parameters: {
-      query?: {
-        id?: string;
-        position?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "text/html": string;
-        };
-      };
-    };
-  };
-  inject_world_metadata: {
-    parameters: {
-      query?: {
-        id?: string;
-        name?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "text/html": string;
-        };
-      };
-    };
-  };
-  get_v1_categories: {
-    parameters: {
-      query?: {
-        target?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiJsonList"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_v1_destinations_list: {
-    parameters: {
-      query?: {
-        limit?: number;
-        offset?: number;
-        ids?: string[];
-        positions?: string[];
-        pointer?: string[];
-        world_names?: string[];
-        names?: string[];
-        kinds?: string[];
-        only_places?: string;
-        only_worlds?: string;
-        categories?: string[];
-        only_highlighted?: string;
-        only_favorites?: string;
-        search?: string;
-        owner?: string;
-        creator_address?: string;
-        sdk?: string;
-        only_sdk7?: string;
-        /** @description like_score (default) | most_active | user_visits | updated_at | created_at. most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
-        order_by?: string;
-        order?: string;
-        with?: string[];
-        with_live_events?: string;
-        /** @description True to add connected_addresses to each destination: an array of the connected wallet addresses (empty when nobody is connected), or null when comms-gatekeeper could not be reached */
-        with_connected_users?: string;
-        with_realms_detail?: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiDataTotal_Destination"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_v1_destination: {
-    parameters: {
-      query?: {
-        with?: string[];
-        with_live_events?: string;
-        /** @description True to add connected_addresses to each destination: an array of the connected wallet addresses (empty when nobody is connected), or null when comms-gatekeeper could not be reached */
-        with_connected_users?: string;
-        with_realms_detail?: string;
-      };
-      path: {
-        id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_Destination"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  get_v1_destination_events: {
-    parameters: {
-      path: {
-        id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiJsonList"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_v1_destination_favorites: {
-    parameters: {
-      path: {
-        id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_InteractionSummary"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_v1_destination_favorites: {
-    parameters: {
-      path: {
-        id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_InteractionSummary"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  put_v1_destination_likes: {
-    parameters: {
-      path: {
-        id: string;
-      };
-    };
-    requestBody: {
-      content: {
-        "application/json": unknown;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_InteractionSummary"];
-        };
-      };
-      400: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
-  delete_v1_destination_likes: {
-    parameters: {
-      path: {
-        id: string;
-      };
-    };
-    responses: {
-      200: {
-        content: {
-          "application/json": components["schemas"]["ApiData_InteractionSummary"];
-        };
-      };
-      401: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      404: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      500: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-      503: {
-        content: {
-          "application/json": components["schemas"]["ApiErrorBody"];
-        };
-      };
-    };
-  };
+    get_categories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_Vec_CategoryOut"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_destinations_list: {
+        parameters: {
+            query?: {
+                categories?: string[];
+                creator_address?: string;
+                ids?: string[];
+                kinds?: string[];
+                limit?: number;
+                names?: string[];
+                offset?: number;
+                only_favorites?: string;
+                only_highlighted?: string;
+                only_places?: string;
+                only_sdk7?: string;
+                only_worlds?: string;
+                order?: string;
+                /** @description like_score (default) | most_active | user_visits | updated_at | created_at. most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
+                order_by?: string;
+                owner?: string;
+                pointer?: string[];
+                positions?: string[];
+                sdk?: string;
+                search?: string;
+                with?: string[];
+                /** @description True to add connected_addresses to each destination: an array of the connected wallet addresses (empty when nobody is connected), or null when comms-gatekeeper could not be reached */
+                with_connected_users?: string;
+                with_live_events?: string;
+                with_realms_detail?: string;
+                world_names?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_Destination"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    post_destinations_list_by_id: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_Destination"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_destinations_ranking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description { replaces?: ("place"|"world")[] | null, entries: [{ entity_type: "place"|"world", id: string, ranking: number }] }. replaces is optional and nullable, holds at most 2 unique items, and names the types this run clears and replaces; absent or null falls back to the types the entries carry, and [] replaces nothing. */
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_ReplaceRankingResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_map_places: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotalMap_MapEntry"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_all_places_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_PlaceRow"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_place_list: {
+        parameters: {
+            query?: {
+                categories?: string[];
+                creator_address?: string;
+                limit?: number;
+                names?: string[];
+                offset?: number;
+                /** @description True to show only entries the automated ranking is not allowed to touch */
+                only_excluded_from_ranking?: string;
+                only_favorites?: string;
+                only_highlighted?: string;
+                order?: string;
+                order_by?: string;
+                owner?: string;
+                positions?: string[];
+                sdk?: string;
+                search?: string;
+                with_realms_detail?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_PlaceRow"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    post_place_list_by_id: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": string[];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_PlaceRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    patch_place_favorites: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_FavoritesResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    patch_place_likes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                entity_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_LikesResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_place: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_place_categories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PlaceCategoriesOut"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_place_disable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    patch_place_disable: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_place_featured: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_place_featured: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_place_highlight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_place_ranking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_place_ranking_exclusion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_place_ranking_exclusion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_place_rating: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                place_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PlaceRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    post_place_status_list_by_id: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": string[];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_PlaceStatusRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_pois: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_Vec_PoiRow"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    post_poi: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PoiRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_poi: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                position: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    patch_poi: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                position: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_PoiRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    post_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_report_upload: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                filename: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/octet-stream": number[];
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_reports: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                status?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_ReportRow"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    patch_report: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_ReportRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    get_world_names_list: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_String"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_world_list: {
+        parameters: {
+            query?: {
+                categories?: string[];
+                limit?: number;
+                names?: string[];
+                offset?: number;
+                /** @description True to show only entries the automated ranking is not allowed to touch */
+                only_excluded_from_ranking?: string;
+                only_favorites?: string;
+                only_highlighted?: string;
+                order?: string;
+                order_by?: string;
+                owner?: string;
+                search?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_WorldRow"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_world: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    patch_world_favorites: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_FavoritesResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_world_featured: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_world_featured: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_world_highlight: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    patch_world_likes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_LikesResult"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_world_ranking: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_world_ranking_exclusion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_world_ranking_exclusion: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_world_rating: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                world_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_WorldRow"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            501: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    changes: {
+        parameters: {
+            query?: {
+                limit?: number;
+                since?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    snapshot: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    inject_place_metadata: {
+        parameters: {
+            query?: {
+                id?: string;
+                position?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    inject_world_metadata: {
+        parameters: {
+            query?: {
+                id?: string;
+                name?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/html": string;
+                };
+            };
+        };
+    };
+    get_v1_categories: {
+        parameters: {
+            query?: {
+                target?: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiJsonList"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_v1_destinations_list: {
+        parameters: {
+            query?: {
+                categories?: string[];
+                creator_address?: string;
+                ids?: string[];
+                kinds?: string[];
+                limit?: number;
+                names?: string[];
+                offset?: number;
+                only_favorites?: string;
+                only_highlighted?: string;
+                only_places?: string;
+                only_sdk7?: string;
+                only_worlds?: string;
+                order?: string;
+                /** @description like_score (default) | most_active | user_visits | updated_at | created_at. most_active is the one ordering where the current user count outranks highlighted, so a busy uncurated destination lists above an empty featured one */
+                order_by?: string;
+                owner?: string;
+                pointer?: string[];
+                positions?: string[];
+                sdk?: string;
+                search?: string;
+                with?: string[];
+                /** @description True to add connected_addresses to each destination: an array of the connected wallet addresses (empty when nobody is connected), or null when comms-gatekeeper could not be reached */
+                with_connected_users?: string;
+                with_live_events?: string;
+                with_realms_detail?: string;
+                world_names?: string[];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiDataTotal_Destination"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_v1_destination: {
+        parameters: {
+            query?: {
+                with?: string[];
+                /** @description True to add connected_addresses to each destination: an array of the connected wallet addresses (empty when nobody is connected), or null when comms-gatekeeper could not be reached */
+                with_connected_users?: string;
+                with_live_events?: string;
+                with_realms_detail?: string;
+            };
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_Destination"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    get_v1_destination_events: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiJsonList"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_v1_destination_favorites: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_InteractionSummary"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_v1_destination_favorites: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_InteractionSummary"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    put_v1_destination_likes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": unknown;
+            };
+        };
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_InteractionSummary"];
+                };
+            };
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
+    delete_v1_destination_likes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiData_InteractionSummary"];
+                };
+            };
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiErrorBody"];
+                };
+            };
+        };
+    };
 }

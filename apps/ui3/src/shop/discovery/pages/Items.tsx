@@ -20,7 +20,7 @@ import { shopFlags } from "../flags";
 import { useListingsFreshness, useScrollTopOnChange, useSeo, useUrlFilters } from "../hooks";
 import { t } from "../intl";
 import type { CatalogItem } from "../lib/catalogItem";
-import { dealsRequestedIn, defaultSortFor, itemsFilterDefaults, itemsGrid, itemsQuery } from "../lib/itemsGrid";
+import { dealsRequestedIn, defaultSortFor, emoteFilterBindings, itemsFilterDefaults, itemsGrid, itemsQuery } from "../lib/itemsGrid";
 import { listingKey } from "../lib/listingKey";
 import { rarityLabel } from "../lib/rarity";
 import { NAMES_ROUTE } from "../lib/routes";
@@ -53,6 +53,7 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
   const [filterState, setFilters] = useUrlFilters(filterDefaults);
   const { subCategory, rarities, priceMin, priceMax, smart } = filterState;
   const { defaultStatus, deals, category, status, isUnified, min, max, bodyShape, listingType, wearableGenders, sortOptions, sortOption, key, fetchPage } = itemsGrid(filterState, q, { contracts, hideNames, lockStatus });
+  const emoteFilters = emoteFilterBindings(category, filterState, setFilters);
   useScrollTopOnChange(`${category}:${subCategory ?? ""}`);
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -62,16 +63,17 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
 
   if (category === "names") return <Navigate to={NAMES_ROUTE} replace />;
 
-  const pickCategory = (key: string) => setFilters({ category: key, subCategory: null });
+  const pickCategory = (key: string) => setFilters({ category: key, subCategory: null, ...emoteFilters.resetFor(key) });
   const toggleRarity = (r: string) => setFilters({ rarities: rarities.includes(r) ? rarities.filter((x) => x !== r) : [...rarities, r] });
   const clearFilters = () => setFilters(filterDefaults);
 
   const chips: FilterChip[] = [];
-  if (min != null || max != null) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
+  if (status !== "not_for_sale" && (min != null || max != null)) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
   for (const r of RARITIES) if (rarities.includes(r)) chips.push({ key: `rarity-${r}`, label: rarityLabel(r), onRemove: () => toggleRarity(r) });
   if (wearableGenders) chips.push({ key: "bodyShape", label: t(`itemDetail.gender${bodyShape[0]!.toUpperCase()}${bodyShape.slice(1)}`), onRemove: () => setFilters({ bodyShape: "all" }) });
   if (isUnified && listingType) chips.push({ key: "listingType", label: t(`filter.${listingType}`), onRemove: () => setFilters({ listingType: "all" }) });
   if (smart) chips.push({ key: "smart", label: t("filter.smart"), onRemove: () => setFilters({ smart: false }) });
+  chips.push(...emoteFilters.chips);
   if (deals) chips.push({ key: "deals", label: t("filter.deals"), onRemove: () => setFilters({ deals: false, sort: defaultSortFor(!!q, false) }) });
   if (!lockStatus && status !== defaultStatus)
     chips.push({
@@ -108,9 +110,11 @@ export default function Items({ contracts, hideNames = false, seo, lockStatus }:
             status={status}
             onStatus={(s) => setFilters({ status: s })}
             hideStatus={!!lockStatus}
+            hidePrice={status === "not_for_sale"}
             hideNames={hideNames}
             smart={smart}
             onSmart={(v) => setFilters({ smart: v })}
+            {...emoteFilters.props}
             deals={deals}
             onDeals={flags.creatorSales ? (v) => setFilters({ deals: v, sort: defaultSortFor(!!q, v) }) : undefined}
           />

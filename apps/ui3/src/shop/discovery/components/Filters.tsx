@@ -179,6 +179,19 @@ export function FilterSection({
   );
 }
 
+function SwitchRow({ label, checked, onChange, testId }: { label: string; checked: boolean; onChange: (v: boolean) => void; testId: string }) {
+  return (
+    <div className="shop-filters__toggle">
+      <span className="shop-filters__toggleleft">
+        <span className="shop-filters__toggletitle">{label}</span>
+      </span>
+      <button type="button" role="switch" className="shop-filters__switch" aria-checked={checked} aria-label={label} data-testid={testId} onClick={() => onChange(!checked)}>
+        <span className="shop-filters__knob" />
+      </button>
+    </div>
+  );
+}
+
 export type FiltersProps = {
   category: string;
   subCategory: string | null;
@@ -200,9 +213,18 @@ export type FiltersProps = {
   onSmart: (v: boolean) => void;
   deals?: boolean;
   onDeals?: (v: boolean) => void;
+  /** The emote attributes, offered while browsing emotes (the handlers' presence shows them). */
+  emotePlayMode?: string;
+  onEmotePlayMode?: (v: string) => void;
+  emoteSound?: boolean;
+  onEmoteSound?: (v: boolean) => void;
+  emoteProps?: boolean;
+  onEmoteProps?: (v: boolean) => void;
   hideNames?: boolean;
   hideAll?: boolean;
   hideStatus?: boolean;
+  /** Hides the price range, for a status whose items have no price (Not for sale). */
+  hidePrice?: boolean;
   collections?: boolean;
   onCollections?: () => void;
 };
@@ -261,6 +283,8 @@ export default function Filters(props: FiltersProps) {
 
       <hr className="shop-filters__divider" />
 
+      {props.hidePrice ? null : (
+        <>
       <FilterSection title={t("filter.price")} open={openPrice} onToggle={() => setOpenPrice((o) => !o)} summary={priceSummary} desktopStatic>
         <div className="shop-filters__prices">
           <label>
@@ -319,6 +343,8 @@ export default function Filters(props: FiltersProps) {
       </FilterSection>
 
       <hr className="shop-filters__divider" />
+        </>
+      )}
 
       <FilterSection title={t("assets.rarity")} open={openRarity} onToggle={() => setOpenRarity((o) => !o)} summary={raritySummary} testId="sidebar-section-toggle">
         <div className="shop-filters__rarities" data-testid="rarity-filter">
@@ -381,6 +407,19 @@ export default function Filters(props: FiltersProps) {
           </select>
         </label>
       ) : null}
+
+      {props.onEmotePlayMode ? (
+        <label className="shop-filters__toggle shop-filters__toggle--select">
+          <span className="shop-filters__toggletitle">{t("filter.emotePlayMode")}</span>
+          <select aria-label={t("filter.emotePlayMode")} value={props.emotePlayMode ?? "all"} onChange={(e) => props.onEmotePlayMode?.(e.target.value)} data-testid="emote-play-mode">
+            <option value="all">{t("filter.statusAll")}</option>
+            <option value="simple">{t("filter.emotePlayOnce")}</option>
+            <option value="loop">{t("filter.emoteLoop")}</option>
+          </select>
+        </label>
+      ) : null}
+      {props.onEmoteSound ? <SwitchRow label={t("filter.emoteWithSound")} checked={!!props.emoteSound} onChange={props.onEmoteSound} testId="emote-sound" /> : null}
+      {props.onEmoteProps ? <SwitchRow label={t("filter.emoteWithProps")} checked={!!props.emoteProps} onChange={props.onEmoteProps} testId="emote-props" /> : null}
 
       {props.onDeals ? (
         <div className="shop-filters__toggle" data-testid="deals-row">

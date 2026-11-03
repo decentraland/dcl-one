@@ -702,6 +702,388 @@ async fn blocking_status_reads_each_direction_alone() {
     cleanup_pair(&rig.db, &a, &b).await;
 }
 
+fn request_with(to: Option<&str>, message: Option<&str>) -> upsert_friendship_payload::Action {
+    upsert_friendship_payload::Action::Request(upsert_friendship_payload::RequestPayload {
+        user: to.and_then(user),
+        message: message.map(str::to_string),
+    })
+}
+
+/// Upstream `upsert-friendship.ts` (`decentraland/social-service-ea` at
+/// `b6b2cef`, `:22-33`): an unknown action is `invalidRequest` "Unknown
+/// message", a request to yourself `invalidFriendshipAction`, an address that
+/// is not one `invalidRequest`; any other action to yourself meets the state
+/// machine. An explicit `""` message is no message
+/// (`parseUpsertFriendshipRequest`), and the answer's message reads `''`
+/// (`parseFriendshipRequestToFriendshipRequestResponse`). Nothing refused is
+/// written.
+#[tokio::test]
+async fn upsert_friendship_validates_and_reads_messages_as_upstream() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let (a, b) = (addr("uv1"), addr("uv2"));
+    let refusal = |r: upsert_friendship_response::Response| match r {
+        upsert_friendship_response::Response::InvalidRequest(e) => {
+            ("invalidRequest", e.message.unwrap_or_default())
+        }
+        upsert_friendship_response::Response::InvalidFriendshipAction(e) => {
+            ("invalidFriendshipAction", e.message.unwrap_or_default())
+        }
+        other => panic!("not a refusal: {other:?}"),
+    };
+    let unknown = SocialServiceImpl
+        .upsert_friendship(UpsertFriendshipPayload { action: None }, rig.as_(&a))
+        .await
+        .unwrap()
+        .response
+        .unwrap();
+    assert_eq!(
+        refusal(unknown),
+        ("invalidRequest", "Unknown message".into())
+    );
+    let checksummed_self = a.to_uppercase().replacen("0X", "0x", 1);
+    assert_eq!(
+        refusal(rig.upsert(&a, request(&checksummed_self)).await),
+        (
+            "invalidFriendshipAction",
+            "You cannot send a friendship request to yourself".into()
+        )
+    );
+    for target in [Some("0x12"), Some(""), Some("not an address"), None] {
+        assert_eq!(
+            refusal(rig.upsert(&a, request_with(target, None)).await),
+            (
+                "invalidRequest",
+                "Invalid user address in the request payload".into()
+            ),
+            "{target:?}"
+        );
+    }
+    assert_eq!(
+        refusal(rig.upsert(&a, accept(&a)).await),
+        (
+            "invalidFriendshipAction",
+            "The friendship action is not valid for the current friendship status".into()
+        ),
+        "an accept to yourself meets the state machine"
+    );
+    assert!(
+        rig.db
+            .last_friendship_action(&a, &a)
+            .await
+            .unwrap()
+            .is_none()
+    );
+
+    let mut to_b = rig.events(&b);
+    let accepted = match rig.upsert(&a, request_with(Some(&b), Some(""))).await {
+        upsert_friendship_response::Response::Accepted(ok) => ok,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(accepted.message.as_deref(), Some(""));
+    let stored: Option<serde_json::Value> = sqlx::query_scalar(
+        "SELECT fa.metadata::jsonb FROM social.friendship_actions fa \
+         WHERE fa.friendship_id = $1",
+    )
+    .bind(Uuid::parse_str(&accepted.id).unwrap())
+    .fetch_one(rig.db.pool())
+    .await
+    .unwrap();
+    assert_eq!(stored, None, "an explicit empty message stores none");
+    assert!(matches!(
+        &*to_b.try_recv().unwrap(),
+        SocialEvent::Friendship(FriendshipUpdate {
+            update: Some(friendship_update::Update::Request(r)),
+            ..
+        }) if r.message.is_none()
+    ));
+    cleanup_pair(&rig.db, &a, &b).await;
+}
+
+/// Upstream `block-user.ts` / `unblock-user.ts` (`:20-26`): the raw address
+/// must be one, then not the caller's own, in any letter case.
+#[tokio::test]
+async fn block_targets_are_checked_as_upstream() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let a = addr("bt1");
+    let checksummed = a.to_uppercase().replacen("0X", "0x", 1);
+    let message = |r: block_user_response::Response| match r {
+        block_user_response::Response::InvalidRequest(e) => e.message.unwrap_or_default(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        message(rig.block(&a, &checksummed).await),
+        "Cannot block yourself"
+    );
+    assert_eq!(
+        message(rig.block(&a, "0x12").await),
+        "Invalid user address in the request payload"
+    );
+    let missing = SocialServiceImpl
+        .block_user(BlockUserPayload { user: None }, rig.as_(&a))
+        .await
+        .unwrap()
+        .response
+        .unwrap();
+    assert_eq!(
+        message(missing),
+        "Invalid user address in the request payload"
+    );
+    let unblock_message = |r: unblock_user_response::Response| match r {
+        unblock_user_response::Response::InvalidRequest(e) => e.message.unwrap_or_default(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        unblock_message(rig.unblock(&a, &checksummed).await),
+        "Cannot unblock yourself"
+    );
+    assert_eq!(
+        unblock_message(rig.unblock(&a, "nope").await),
+        "Invalid user address in the request payload"
+    );
+    assert!(
+        rig.db
+            .get_blocked_users(&a, 10, 0)
+            .await
+            .unwrap()
+            .0
+            .is_empty()
+    );
+}
+
+/// Upstream `applyBlock` (`src/logic/friends/component.ts`): a stranger has
+/// no friendship to end, so only the block update is published.
+#[tokio::test]
+async fn blocking_a_stranger_publishes_only_the_block_update() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let (a, b) = (addr("bs3"), addr("bs4"));
+    let mut to_b = rig.events(&b);
+    assert!(matches!(
+        rig.block(&a, &b).await,
+        block_user_response::Response::Ok(_)
+    ));
+    let events = drained(&mut to_b);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        &*events[0],
+        SocialEvent::Block(BlockUpdate { address, is_blocked: true, .. }) if *address == a
+    ));
+    cleanup_pair(&rig.db, &a, &b).await;
+}
+
+/// Upstream `applyBlock` writes the block and the friendship's `block`
+/// action in one transaction: when the action's write fails, the block is
+/// rolled back with it and no one is told.
+#[tokio::test]
+async fn a_block_whose_friendship_write_fails_is_rolled_back() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let (a, b) = (addr("br1"), addr("br2"));
+    rig.befriend(&a, &b).await;
+    // A trigger refusing this blocker's friendship actions, and only theirs.
+    let tag = Uuid::new_v4().simple().to_string();
+    let function = format!("social.refuse_{tag}");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS $$ \
+         BEGIN IF NEW.acting_user = '{a}' THEN RAISE EXCEPTION 'refused by test'; END IF; RETURN NEW; END $$"
+    )))
+    .execute(rig.db.pool())
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE TRIGGER refuse_{tag} BEFORE INSERT ON social.friendship_actions \
+         FOR EACH ROW EXECUTE FUNCTION {function}()"
+    )))
+    .execute(rig.db.pool())
+    .await
+    .unwrap();
+    let mut to_b = rig.events(&b);
+    let answer = rig.block(&a, &b).await;
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER refuse_{tag} ON social.friendship_actions"
+    )))
+    .execute(rig.db.pool())
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("DROP FUNCTION {function}()")))
+        .execute(rig.db.pool())
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            answer,
+            block_user_response::Response::InternalServerError(_)
+        ),
+        "{answer:?}"
+    );
+    assert!(
+        !rig.db.is_blocked(&a, &b).await.unwrap(),
+        "the block rolled back"
+    );
+    assert_eq!(rig.friends_of(&a).await, vec![b.clone()], "still friends");
+    assert!(drained(&mut to_b).is_empty());
+    cleanup_pair(&rig.db, &a, &b).await;
+}
+
+/// With a profile source, a wallet without a profile is left out where
+/// upstream's registry drops it: a listed friend or request (the total
+/// stays the row count), a friendship update it sends; an upsert naming it
+/// answers `internalServerError` after the write
+/// (`src/logic/friends/component.ts` `upsertFriendship`,
+/// `src/logic/friends/friendships.ts:254-266`). A listed request's absent
+/// message reads `''` (`:242`).
+#[tokio::test]
+async fn a_wallet_without_a_profile_is_left_out_with_a_profile_source() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let db = Db::new(pool.clone());
+    let ctx = profiled_ctx(db.clone(), Arc::new(FakeVoiceRooms::new(pool.clone())));
+    let (me, known, unknown) = (addr("np1"), addr("np2"), addr("np3"));
+    let (pm, pk) = (
+        deploy_profile(&pool, &me, "Me").await,
+        deploy_profile(&pool, &known, "Known").await,
+    );
+    let mut to_me = ctx.pubsub().subscribe(&me);
+    for from in [&known, &unknown] {
+        db.apply_friendship_action(from, &me, "request", false, None, None)
+            .await
+            .unwrap();
+    }
+    let pending = SocialServiceImpl
+        .get_pending_friendship_requests(
+            GetFriendshipRequestsPayload { pagination: None },
+            procedure_ctx(&ctx, &me, rand_transport()),
+        )
+        .await
+        .unwrap();
+    let Some(paginated_friendship_requests_response::Response::Requests(list)) = pending.response
+    else {
+        panic!("{pending:?}");
+    };
+    assert_eq!(list.requests.len(), 1);
+    let only = &list.requests[0];
+    assert_eq!(only.friend.as_ref().unwrap().address, known);
+    assert_eq!(only.friend.as_ref().unwrap().name, "Known");
+    assert_eq!(
+        only.message.as_deref(),
+        Some(""),
+        "an absent message reads ''"
+    );
+    assert_eq!(pending.pagination_data.unwrap().total, 2);
+
+    // an upsert naming the wallet without a profile is written, then fails
+    let answer = SocialServiceImpl
+        .upsert_friendship(
+            UpsertFriendshipPayload {
+                action: Some(accept(&unknown)),
+            },
+            procedure_ctx(&ctx, &me, rand_transport()),
+        )
+        .await
+        .unwrap()
+        .response
+        .unwrap();
+    assert!(
+        matches!(
+            answer,
+            upsert_friendship_response::Response::InternalServerError(_)
+        ),
+        "{answer:?}"
+    );
+    assert_eq!(
+        db.last_friendship_action(&me, &unknown)
+            .await
+            .unwrap()
+            .unwrap()
+            .action,
+        "accept"
+    );
+    // a friendship update from a wallet without a profile reaches no one
+    let answer = SocialServiceImpl
+        .upsert_friendship(
+            UpsertFriendshipPayload {
+                action: Some(delete(&me)),
+            },
+            procedure_ctx(&ctx, &unknown, rand_transport()),
+        )
+        .await
+        .unwrap()
+        .response
+        .unwrap();
+    assert!(matches!(
+        answer,
+        upsert_friendship_response::Response::InternalServerError(_)
+    ));
+    assert!(
+        drained(&mut to_me).is_empty(),
+        "nothing from the profile-less wallet"
+    );
+    // the known wallet's cancel does reach me
+    assert!(matches!(
+        upsert_with(&ctx, &known, cancel(&me)).await,
+        upsert_friendship_response::Response::Accepted(_)
+    ));
+    assert!(matches!(
+        &*to_me.try_recv().unwrap(),
+        SocialEvent::Friendship(FriendshipUpdate {
+            update: Some(friendship_update::Update::Cancel(_)),
+            ..
+        })
+    ));
+
+    // friends: the profile-less friend is left out, the total keeps it
+    db.apply_friendship_action(&me, &known, "accept", true, None, None)
+        .await
+        .unwrap();
+    db.apply_friendship_action(&me, &unknown, "accept", true, None, None)
+        .await
+        .unwrap();
+    let friends = SocialServiceImpl
+        .get_friends(
+            GetFriendsPayload { pagination: None },
+            procedure_ctx(&ctx, &me, rand_transport()),
+        )
+        .await
+        .unwrap();
+    let addresses: Vec<String> = friends.friends.iter().map(|f| f.address.clone()).collect();
+    assert_eq!(addresses, vec![known.clone()]);
+    assert_eq!(friends.pagination_data.unwrap().total, 2);
+
+    drop_profile(&pool, &me, &pm).await;
+    drop_profile(&pool, &known, &pk).await;
+    let _ = sqlx::query("DELETE FROM social.notifications WHERE address = ANY($1)")
+        .bind(vec![me.clone(), known.clone(), unknown.clone()])
+        .execute(&pool)
+        .await;
+    cleanup_pair(&db, &me, &known).await;
+    cleanup_pair(&db, &me, &unknown).await;
+}
+
+async fn upsert_with(
+    ctx: &Context,
+    me: &str,
+    action: upsert_friendship_payload::Action,
+) -> upsert_friendship_response::Response {
+    SocialServiceImpl
+        .upsert_friendship(
+            UpsertFriendshipPayload {
+                action: Some(action),
+            },
+            procedure_ctx(ctx, me, rand_transport()),
+        )
+        .await
+        .unwrap()
+        .response
+        .unwrap()
+}
+
 /// Accepting changes the connectivity audience without another Pulse frame.
 /// Each recipient learns only about peers actually online in that snapshot.
 #[tokio::test]
