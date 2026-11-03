@@ -3,12 +3,10 @@
 //! keys, `entityHash` recomputed from the uploaded entity bytes in their own
 //! key order) and the proof against a registry root.
 
-use std::fmt;
-
-use serde::de::{MapAccess, SeqAccess, Visitor};
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Serialize};
 
 use super::error::ValidationResponse;
+use super::jsjson::{self, JsValue};
 use super::types::*;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,248 +159,28 @@ pub fn verify_third_party_merkle_proof(proof: &MerkleProof, root: &[u8; 32]) -> 
     super::merkle::verify_proof(proof.index, &proof.entity_hash, &decoded, root)
 }
 
-/// The reference algorithm (`@dcl/hashing` `keccak256Hash`) hashes
-/// `JSON.stringify(pick(metadata, hashingKeys))`, preserving the metadata's own insertion order.
-/// `serde_json::Value` re-sorts object keys under the shipped (no `preserve_order`) build, which
-/// produces a different byte string and rejects every legitimate third-party deployment; this
-/// order-preserving representation keeps the hash independent of that feature flag.
-enum OrderedJson {
-    Null,
-    Bool(bool),
-    Number(f64),
-    String(String),
-    Array(Vec<OrderedJson>),
-    Object(Vec<(String, OrderedJson)>),
-}
-
-impl<'de> Deserialize<'de> for OrderedJson {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        struct OrderedVisitor;
-
-        impl<'de> Visitor<'de> for OrderedVisitor {
-            type Value = OrderedJson;
-
-            fn expecting(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                f.write_str("any JSON value")
-            }
-
-            fn visit_bool<E>(self, v: bool) -> Result<Self::Value, E> {
-                Ok(OrderedJson::Bool(v))
-            }
-
-            fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
-                Ok(OrderedJson::Number(v as f64))
-            }
-
-            fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
-                Ok(OrderedJson::Number(v as f64))
-            }
-
-            fn visit_f64<E>(self, v: f64) -> Result<Self::Value, E> {
-                Ok(OrderedJson::Number(v))
-            }
-
-            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
-                Ok(OrderedJson::String(v.to_string()))
-            }
-
-            fn visit_string<E>(self, v: String) -> Result<Self::Value, E> {
-                Ok(OrderedJson::String(v))
-            }
-
-            fn visit_none<E>(self) -> Result<Self::Value, E> {
-                Ok(OrderedJson::Null)
-            }
-
-            fn visit_unit<E>(self) -> Result<Self::Value, E> {
-                Ok(OrderedJson::Null)
-            }
-
-            fn visit_some<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
-            where
-                D: Deserializer<'de>,
-            {
-                Deserialize::deserialize(deserializer)
-            }
-
-            fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
-            where
-                A: SeqAccess<'de>,
-            {
-                let mut items = Vec::new();
-                while let Some(item) = seq.next_element()? {
-                    items.push(item);
-                }
-                Ok(OrderedJson::Array(items))
-            }
-
-            fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
-            where
-                A: MapAccess<'de>,
-            {
-                let mut entries = Vec::new();
-                while let Some((key, value)) = map.next_entry::<String, OrderedJson>()? {
-                    entries.push((key, value));
-                }
-                if let [(key, OrderedJson::String(digits))] = entries.as_slice()
-                    && key == "$serde_json::private::Number"
-                    && let Ok(n) = digits.parse::<f64>()
-                {
-                    return Ok(OrderedJson::Number(n));
-                }
-                Ok(OrderedJson::Object(entries))
-            }
-        }
-
-        deserializer.deserialize_any(OrderedVisitor)
-    }
-}
-
-impl OrderedJson {
-    fn as_object(&self) -> Option<&[(String, OrderedJson)]> {
-        match self {
-            OrderedJson::Object(entries) => Some(entries),
-            _ => None,
-        }
-    }
-
-    fn write_js(&self, out: &mut String) {
-        match self {
-            OrderedJson::Null => out.push_str("null"),
-            OrderedJson::Bool(true) => out.push_str("true"),
-            OrderedJson::Bool(false) => out.push_str("false"),
-            OrderedJson::Number(n) => out.push_str(&js_number_to_string(*n)),
-            OrderedJson::String(s) => push_js_string(out, s),
-            OrderedJson::Array(items) => {
-                out.push('[');
-                for (i, item) in items.iter().enumerate() {
-                    if i != 0 {
-                        out.push(',');
-                    }
-                    item.write_js(out);
-                }
-                out.push(']');
-            }
-            OrderedJson::Object(entries) => {
-                out.push('{');
-                for (i, (key, value)) in entries.iter().enumerate() {
-                    if i != 0 {
-                        out.push(',');
-                    }
-                    push_js_string(out, key);
-                    out.push(':');
-                    value.write_js(out);
-                }
-                out.push('}');
-            }
-        }
-    }
-}
-
-/// Reproduces `keccak256(JSON.stringify(pick(entity.metadata, hashingKeys)))` from the raw
-/// uploaded entity JSON. `None` when the bytes are not valid JSON or carry no `metadata` object.
+/// `keccak256(JSON.stringify(pick(entity.metadata, hashingKeys)))` of the
+/// reference (`@dcl/hashing`), from the raw uploaded entity JSON: `pick` keeps
+/// each present key once, in `hashingKeys` order, and `JSON.stringify` writes
+/// it in JS property order. `None` when the bytes are not valid JSON or carry
+/// no `metadata` object.
 fn entity_hash_from_entity_bytes(entity_bytes: &[u8], hashing_keys: &[String]) -> Option<String> {
-    let root: OrderedJson = serde_json::from_slice(entity_bytes).ok()?;
-    let metadata = root
-        .as_object()?
-        .iter()
-        .find(|(key, _)| key == "metadata")
-        .map(|(_, value)| value)?;
-    let metadata_entries = metadata.as_object()?;
-
-    let mut serialized = String::from("{");
-    let mut first = true;
+    let root: JsValue = serde_json::from_slice(entity_bytes).ok()?;
+    let metadata = root.get("metadata")?.as_object()?;
+    let mut picked: Vec<(&str, &JsValue)> = Vec::new();
     for key in hashing_keys {
-        if let Some((_, value)) = metadata_entries.iter().find(|(k, _)| k == key) {
-            if !first {
-                serialized.push(',');
-            }
-            first = false;
-            push_js_string(&mut serialized, key);
-            serialized.push(':');
-            value.write_js(&mut serialized);
+        if picked.iter().any(|(k, _)| k == key) {
+            continue;
+        }
+        if let Some((k, value)) = metadata.iter().find(|(k, _)| k == key) {
+            picked.push((k, value));
         }
     }
-    serialized.push('}');
-
+    let mut serialized = String::new();
+    jsjson::write_object(picked, &mut serialized);
     Some(hex::encode(alloy_primitives::keccak256(
         serialized.as_bytes(),
     )))
-}
-
-fn push_js_string(out: &mut String, value: &str) {
-    out.push('"');
-    for ch in value.chars() {
-        match ch {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\u{0008}' => out.push_str("\\b"),
-            '\u{000C}' => out.push_str("\\f"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-}
-
-fn js_number_to_string(value: f64) -> String {
-    if value == 0.0 {
-        return "0".to_string();
-    }
-    if !value.is_finite() {
-        return "null".to_string();
-    }
-    if value < 0.0 {
-        return format!("-{}", js_number_to_string(-value));
-    }
-
-    let formatted = format!("{value:e}");
-    let (mantissa, exp_str) = match formatted.split_once('e') {
-        Some(parts) => parts,
-        None => return formatted,
-    };
-    let exp: i32 = match exp_str.parse() {
-        Ok(e) => e,
-        Err(_) => return formatted,
-    };
-    let (int_part, frac_part) = match mantissa.split_once('.') {
-        Some((i, f)) => (i, f),
-        None => (mantissa, ""),
-    };
-
-    let mut digits = String::with_capacity(int_part.len() + frac_part.len());
-    digits.push_str(int_part);
-    digits.push_str(frac_part);
-    let digits = digits.trim_end_matches('0');
-    let digits = if digits.is_empty() { "0" } else { digits };
-
-    let k = digits.len() as i32;
-    let n = exp + 1;
-
-    if k <= n && n <= 21 {
-        let mut s = String::from(digits);
-        s.push_str(&"0".repeat((n - k) as usize));
-        s
-    } else if 0 < n && n <= 21 {
-        format!("{}.{}", &digits[..n as usize], &digits[n as usize..])
-    } else if -6 < n && n <= 0 {
-        format!("0.{}{}", "0".repeat((-n) as usize), digits)
-    } else {
-        let e = n - 1;
-        let sign = if e >= 0 { "+" } else { "-" };
-        let magnitude = e.abs();
-        if k == 1 {
-            format!("{digits}e{sign}{magnitude}")
-        } else {
-            format!("{}.{}e{sign}{magnitude}", &digits[..1], &digits[1..])
-        }
-    }
 }
 
 pub fn get_third_party_id(urn: &str) -> Option<String> {
@@ -524,71 +302,17 @@ mod tests {
     }
 
     #[test]
-    fn ordered_parse_preserves_insertion_order_independent_of_serde_json_feature() {
-        let input = br#"{"b":1,"a":2,"c":{"z":10,"y":20},"d":[3,2,1]}"#;
-        let parsed: OrderedJson = serde_json::from_slice(input).unwrap();
-        let mut out = String::new();
-        parsed.write_js(&mut out);
-        assert_eq!(out, r#"{"b":1,"a":2,"c":{"z":10,"y":20},"d":[3,2,1]}"#);
-    }
-
-    #[test]
-    fn serde_json_value_ordering_divergence_guard() {
-        let input = r#"{"b":1,"a":2}"#;
-
-        let ordered: OrderedJson = serde_json::from_str(input).unwrap();
-        let mut ordered_out = String::new();
-        ordered.write_js(&mut ordered_out);
+    fn picked_keys_are_written_once_in_javascript_property_order() {
+        let entity = br#"{"metadata":{"b":1,"2":"two","a":{"z":10,"1":20},"skip":0}}"#;
+        let keys: Vec<String> = ["b", "a", "2", "b", "missing"]
+            .iter()
+            .map(|k| k.to_string())
+            .collect();
+        let expected = r#"{"2":"two","b":1,"a":{"1":20,"z":10}}"#;
         assert_eq!(
-            ordered_out, input,
-            "the order-preserving parser must always keep insertion order"
+            entity_hash_from_entity_bytes(entity, &keys).unwrap(),
+            hex::encode(alloy_primitives::keccak256(expected.as_bytes()))
         );
-
-        let value: serde_json::Value = serde_json::from_str(input).unwrap();
-        let via_value = serde_json::to_string(&value).unwrap();
-        if via_value != input {
-            assert_eq!(
-                via_value, r#"{"a":2,"b":1}"#,
-                "when serde_json re-sorts (the shipped catalyrst-server build), it must sort \
-                 keys; if this changes, the third-party hash source assumption must be revisited"
-            );
-            assert_ne!(
-                via_value, ordered_out,
-                "serde_json::Value serialization diverges from the reference order here, which is \
-                 exactly why the hash is sourced from the order-preserving parser, not the Value"
-            );
-        }
-    }
-
-    #[test]
-    fn js_number_printing_matches_ecmascript() {
-        for (input, expected) in [
-            (0.0, "0"),
-            (-0.0, "0"),
-            (2.0, "2"),
-            (2.5, "2.5"),
-            (-3.0, "-3"),
-            (0.5, "0.5"),
-            (100.0, "100"),
-            (123.0, "123"),
-            (0.0001, "0.0001"),
-            (1e21, "1e+21"),
-            (1e-7, "1e-7"),
-            (1000.0, "1000"),
-        ] {
-            assert_eq!(
-                js_number_to_string(input),
-                expected,
-                "js_number_to_string({input}) mismatch"
-            );
-        }
-    }
-
-    #[test]
-    fn js_string_escaping_matches_ecmascript() {
-        let mut out = String::new();
-        push_js_string(&mut out, "a\"b\\c\n\t\u{0008}\u{000C}\r\u{0001}/\u{e9}");
-        assert_eq!(out, "\"a\\\"b\\\\c\\n\\t\\b\\f\\r\\u0001/\u{e9}\"");
     }
 
     #[test]
