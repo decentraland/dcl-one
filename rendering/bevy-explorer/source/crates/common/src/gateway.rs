@@ -89,14 +89,7 @@ impl Gateway {
             return None;
         }
         let image = Url::parse(raw).ok()?;
-        // nginx decodes escaped separators before normalizing its proxy path.
-        let decoded = image
-            .path()
-            .to_ascii_lowercase()
-            .replace("%2f", "/")
-            .replace("%5c", "/")
-            .replace("%2e", ".");
-        if decoded.split('/').any(|part| matches!(part, "." | "..")) {
+        if has_proxy_dot_segment(image.path()) {
             return None;
         }
         Some(format!(
@@ -108,27 +101,64 @@ impl Gateway {
 
     // nginx sets x-original-path to the path after the service segment only
     // on the gateway virtual host. An apex request signs its entire public path.
-    pub fn original_path(&self, raw: &str) -> Option<String> {
+    pub fn original_path(&self, raw: &str) -> anyhow::Result<Option<String>> {
         if !self.virtual_host {
-            return None;
+            return Ok(None);
         }
-        let target = Url::parse(raw).ok()?;
+        let Ok(target) = Url::parse(raw) else {
+            return Ok(None);
+        };
+        let origin = target.origin().ascii_serialization();
+        let Some(mount) = self.prefix.strip_prefix(&origin) else {
+            return Ok(None);
+        };
+        if !mount.is_empty() && !mount.starts_with('/') {
+            return Ok(None);
+        }
+
+        // reqwest resolves dot segments before sending, while nginx also decodes
+        // separators before routing. Never mint a signature for a normalized target.
+        let (_, authority_and_path) = raw
+            .split_once("://")
+            .ok_or_else(|| anyhow::anyhow!("invalid gateway signing URL"))?;
+        let public_target = authority_and_path
+            .split(['?', '#'])
+            .next()
+            .unwrap_or_default();
+        let raw_path = public_target.find('/').map_or("/", |i| &public_target[i..]);
+        anyhow::ensure!(
+            !public_target.contains('\\')
+                && raw_path == target.path()
+                && !has_proxy_dot_segment(raw_path),
+            "ambiguous gateway signing path"
+        );
+
+        let Some(rest) = raw_path
+            .strip_prefix(mount)
+            .and_then(|rest| rest.strip_prefix('/'))
+        else {
+            return Ok(None);
+        };
         // nginx strips an alias only when a slash follows it. A bare alias keeps its
         // public path, even when its query contains a slash.
-        let origin = target.origin().ascii_serialization();
-        let mount = self.prefix.strip_prefix(&origin)?;
-        if !mount.is_empty() && !mount.starts_with('/') {
-            return None;
-        }
-        let rest = target.path().strip_prefix(mount)?.strip_prefix('/')?;
         let (segment, path) = rest.split_once('/').unwrap_or((rest, rest));
         if !HUD_ALIASES.contains(&segment)
             && !Service::all().any(|service| self.segment(service) == Some(segment))
         {
-            return None;
+            return Ok(None);
         }
-        Some(format!("/{path}"))
+        Ok(Some(format!("/{path}")))
     }
+}
+
+// nginx decodes escaped separators before normalizing its proxy path.
+fn has_proxy_dot_segment(path: &str) -> bool {
+    path.to_ascii_lowercase()
+        .replace("%2f", "/")
+        .replace("%5c", "/")
+        .replace("%2e", ".")
+        .split('/')
+        .any(|part| matches!(part, "." | ".."))
 }
 
 #[cfg(test)]
@@ -146,6 +176,7 @@ mod gateway_tests {
         assert_eq!(
             vhost
                 .original_path("https://gateway.example.test/mount/comms-gatekeeper/a%2Fb?q=1")
+                .unwrap()
                 .as_deref(),
             Some("/a%2Fb")
         );
@@ -154,7 +185,7 @@ mod gateway_tests {
             "https://gateway.example.test/mount2/comms-gatekeeper/a",
             "https://gateway.example.test/mount/unknown/a",
         ] {
-            assert_eq!(vhost.original_path(raw), None);
+            assert_eq!(vhost.original_path(raw).unwrap(), None);
         }
         for (target, expected) in [
             ("social-api", Some("/social-api")),
@@ -168,11 +199,16 @@ mod gateway_tests {
             ),
         ] {
             let raw = format!("https://gateway.example.test/mount/{target}");
-            assert_eq!(vhost.original_path(&raw).as_deref(), expected, "{target}");
+            assert_eq!(
+                vhost.original_path(&raw).unwrap().as_deref(),
+                expected,
+                "{target}"
+            );
         }
         assert_eq!(
             vhost
                 .original_path("https://user@GATEWAY.example.test:443/mount/social-api/v1/search")
+                .unwrap()
                 .as_deref(),
             Some("/v1/search")
         );
@@ -192,7 +228,9 @@ mod gateway_tests {
             Some("http://localhost:5222/camera-reel-service")
         );
         assert_eq!(
-            direct.original_path("http://localhost:5222/comms-gatekeeper/a"),
+            direct
+                .original_path("http://localhost:5222/comms-gatekeeper/a")
+                .unwrap(),
             None
         );
     }

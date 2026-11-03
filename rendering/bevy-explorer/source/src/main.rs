@@ -541,21 +541,30 @@ mod tests {
             bases["notifications"]
         );
         assert_eq!(
-            base_domain::gateway_signed_path(&notices).as_deref(),
+            base_domain::gateway_signed_path(&notices)
+                .unwrap()
+                .as_deref(),
             Some("/notifications/read")
         );
         assert!(!serde_json::to_string(&bases).unwrap().contains("secret"));
         let adapter = base_domain::url(Service::CommsGatekeeper, "/get-scene-adapter");
         assert_eq!(
-            base_domain::gateway_signed_path(&adapter).as_deref(),
+            base_domain::gateway_signed_path(&adapter)
+                .unwrap()
+                .as_deref(),
             Some("/get-scene-adapter")
         );
         let preview = base_domain::url(Service::PreviewGatekeeper, "/adapter");
         assert_eq!(
-            base_domain::gateway_signed_path(&preview).as_deref(),
+            base_domain::gateway_signed_path(&preview)
+                .unwrap()
+                .as_deref(),
             Some("/custom/adapter")
         );
-        assert_eq!(base_domain::gateway_signed_path(&bases["socialApi"]), None);
+        assert_eq!(
+            base_domain::gateway_signed_path(&bases["socialApi"]).unwrap(),
+            None
+        );
         assert_eq!(
             base_domain::url(Service::Places, "/tiles"),
             format!("{gateway}/tiles")

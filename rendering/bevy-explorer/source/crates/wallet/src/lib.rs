@@ -299,6 +299,24 @@ mod gateway_signing_tests {
         let mut wallet = Wallet::default();
         wallet.finalize_as_guest_with_seed([42; 32]);
         async_std::task::block_on(async {
+            for path in [
+                "/social-api/v2/communities/../../../auth-api/x",
+                "/social-api/v2/communities/%2e%2E/%2e%2e/%2E%2e/auth-api/x",
+                "/social-api/v2/communities/id%2f..%2f..%2f..%2f..%2fauth-api/x",
+                "/social-api/v2/communities/id%5c..%5c..%5c..%5c..%5cauth-api/x",
+                "/outside/../social-api/x",
+            ] {
+                let attack: Uri = format!("https://gateway.example.test{path}")
+                    .parse()
+                    .unwrap();
+                assert!(
+                    sign_service_request("GET", &attack, &wallet, "{}".into())
+                        .await
+                        .is_err(),
+                    "{path}"
+                );
+            }
+
             for (headers, path) in [
                 (
                     sign_service_request("POST", &uri, &wallet, "{}".into())
@@ -341,7 +359,7 @@ pub async fn sign_service_request(
     wallet: &Wallet,
     meta: String,
 ) -> Result<Vec<(String, String)>, anyhow::Error> {
-    let original = common::base_domain::gateway_signed_path(&uri.to_string());
+    let original = common::base_domain::gateway_signed_path(&uri.to_string())?;
     sign_path(
         method,
         original.as_deref().unwrap_or_else(|| uri.path()),

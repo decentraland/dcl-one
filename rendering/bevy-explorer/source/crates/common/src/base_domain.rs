@@ -68,8 +68,11 @@ pub fn profile_image(raw: &str) -> std::borrow::Cow<'_, str> {
         .map_or(raw.into(), std::borrow::Cow::Owned)
 }
 
-pub fn gateway_signed_path(raw: &str) -> Option<String> {
-    GATEWAY.get()?.original_path(raw)
+pub fn gateway_signed_path(raw: &str) -> anyhow::Result<Option<String>> {
+    match GATEWAY.get() {
+        Some(gateway) => gateway.original_path(raw),
+        None => Ok(None),
+    }
 }
 
 pub fn set(domain: &str) -> Result<(), String> {
