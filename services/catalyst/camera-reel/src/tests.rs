@@ -403,6 +403,131 @@ fn metadata_json(address: &str, place_id: &str) -> Value {
 }
 
 #[tokio::test]
+async fn photo_ranking_finalization_is_atomic_repairable_and_never_counts_incomplete_blobs() {
+    let Some(mut s) = scratch(Settings::new(API_URL)).await else {
+        return;
+    };
+    let owner = s.owner(&random_address());
+    let community = Uuid::new_v4();
+    let place = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO social.communities(id,name,owner_address) VALUES($1,'Photo ranking',$2)",
+    )
+    .bind(community)
+    .bind(&owner)
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO social.community_places(community_id,place_id,added_by) VALUES($1,$2,$3)",
+    )
+    .bind(community)
+    .bind(&place)
+    .bind(&owner)
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    let bytes = bytes::Bytes::from_static(b"complete image");
+    let thumb = bytes::Bytes::from_static(b"complete thumbnail");
+    let mut photo = image(
+        &owner,
+        &hash_bytes_v1(&bytes),
+        &hash_bytes_v1(&thumb),
+        true,
+        &place,
+    );
+    // Own the final keyset range: other parallel tests deliberately insert
+    // invalid placeholder hashes and do not share this test's blob store.
+    photo.id = Uuid::from_u128(u128::MAX - 1);
+    s.db()
+        .insert_image_within_limit(&photo, 500)
+        .await
+        .unwrap()
+        .unwrap();
+    s.state
+        .storage
+        .store(&photo.image_hash, bytes)
+        .await
+        .unwrap();
+    let mut cursor = Uuid::from_u128(u128::MAX - 2);
+    s.state
+        .repair_ranking_publications(&mut cursor)
+        .await
+        .unwrap();
+    let pending: bool =
+        sqlx::query_scalar("SELECT NOT ranking_published FROM camera_reel.images WHERE id=$1")
+            .bind(photo.id)
+            .fetch_one(s.db().pool())
+            .await
+            .unwrap();
+    assert!(pending, "a missing thumbnail does not publish an upload");
+    assert_eq!(cursor, photo.id, "an incomplete upload advances the cursor");
+    s.state
+        .repair_ranking_publications(&mut cursor)
+        .await
+        .unwrap();
+    assert_eq!(cursor, Uuid::nil(), "the empty final page wraps the cursor");
+    s.state
+        .storage
+        .store(&photo.thumbnail_hash, thumb)
+        .await
+        .unwrap();
+    let function = format!("ranking_failure_{}", Uuid::new_v4().simple());
+    let trigger = format!("ranking_failure_{}", Uuid::new_v4().simple());
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE FUNCTION social.{function}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.id='{community}'::uuid THEN RAISE EXCEPTION 'injected ranking failure'; END IF; RETURN NEW; END $$")))
+        .execute(s.db().pool()).await.unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {trigger} BEFORE UPDATE ON social.communities FOR EACH ROW EXECUTE FUNCTION social.{function}()")))
+        .execute(s.db().pool()).await.unwrap();
+    assert!(s.db().publish_ranking(photo.id).await.is_err());
+    let row:(bool,i32,i64)=sqlx::query_as("SELECT NOT i.ranking_published,c.ranking_photos_count,(SELECT count(*) FROM social.community_ranking_events r WHERE r.community_id=c.id) FROM camera_reel.images i CROSS JOIN social.communities c WHERE i.id=$1 AND c.id=$2")
+        .bind(photo.id).bind(community).fetch_one(s.db().pool()).await.unwrap();
+    assert_eq!(
+        row,
+        (true, 0, 0),
+        "the receipt, counter and publication marker roll back together"
+    );
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {trigger} ON social.communities"
+    )))
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP FUNCTION social.{function}()"
+    )))
+    .execute(s.db().pool())
+    .await
+    .unwrap();
+    cursor = Uuid::from_u128(u128::MAX - 2);
+    s.state
+        .repair_ranking_publications(&mut cursor)
+        .await
+        .unwrap();
+    s.db().publish_ranking(photo.id).await.unwrap();
+    let count: i32 =
+        sqlx::query_scalar("SELECT ranking_photos_count FROM social.communities WHERE id=$1")
+            .bind(community)
+            .fetch_one(s.db().pool())
+            .await
+            .unwrap();
+    assert_eq!(count, 1, "repair and a replay publish once");
+    s.db().delete_image(photo.id).await.unwrap();
+    let count: i32 =
+        sqlx::query_scalar("SELECT ranking_photos_count FROM social.communities WHERE id=$1")
+            .bind(community)
+            .fetch_one(s.db().pool())
+            .await
+            .unwrap();
+    assert_eq!(count, 1, "deletion does not decrement a lifetime fact");
+    sqlx::query("DELETE FROM social.communities WHERE id=$1")
+        .bind(community)
+        .execute(s.db().pool())
+        .await
+        .unwrap();
+    s.done().await;
+}
+
+#[tokio::test]
 async fn private_image_metadata_is_returned_without_auth() {
     let Some(mut s) = scratch(Settings::new(API_URL)).await else {
         return;

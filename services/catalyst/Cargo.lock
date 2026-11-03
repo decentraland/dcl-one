@@ -2018,13 +2018,16 @@ name = "catalyst-camera-reel"
 version = "0.1.0"
 dependencies = [
  "alloy",
+ "anyhow",
  "axum",
  "base64 0.23.1",
  "bytes",
  "catalyst-builder",
  "catalyst-content",
  "catalyst-db",
+ "catalyst-jobs",
  "catalyst-shared",
+ "catalyst-social",
  "catalyst-storage",
  "chrono",
  "dcl-auth",

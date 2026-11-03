@@ -221,6 +221,12 @@ async fn finalize_upload(
         return Err(err);
     }
 
+    // PhotoTaken's counter handler is best-effort upstream. Retain the false
+    // publication marker on failure so the repair pass can retry after restart.
+    if let Err(error) = state.db.publish_ranking(new_image.id).await {
+        tracing::error!(%error, image_id=%new_image.id, "photo ranking publication deferred");
+    }
+
     let response = UploadResponse {
         image,
         user_data: UserDataResponse {
@@ -229,6 +235,42 @@ async fn finalize_upload(
         },
     };
     Ok((StatusCode::OK, Json(response)).into_response())
+}
+
+impl crate::State {
+    pub async fn repair_ranking_publications(&self, after: &mut Uuid) -> anyhow::Result<u64> {
+        let mut published = 0;
+        let rows = self.db.pending_rankings(*after).await?;
+        // Advance past incomplete blobs as well: an abandoned upload cannot
+        // monopolize the bounded due page. Wrap after the end of the key range.
+        *after = rows.last().map(|row| row.0).unwrap_or(Uuid::nil());
+        for (id, image, thumbnail) in rows {
+            // No database transaction or row lock is held during storage I/O.
+            if self.storage.exist(&image).await? && self.storage.exist(&thumbnail).await? {
+                self.db.publish_ranking(id).await?;
+                published += 1;
+            }
+        }
+        Ok(published)
+    }
+
+    pub fn spawn_ranking_job(self: &std::sync::Arc<Self>, jobs: &crate::jobs::Jobs) {
+        let state = self.clone();
+        jobs.spawn_leased("camera-photo-ranking", move |ctx| {
+            let state = state.clone();
+            async move {
+                let mut after=Uuid::nil();
+                loop {
+                    match state.repair_ranking_publications(&mut after).await {
+                        Ok(count)=>ctx.progress(format!("{count} photo ranking publications repaired")),
+                        Err(error)=>{ctx.error(error.to_string()); tracing::error!(%error,"photo ranking repair failed");}
+                    }
+                    ctx.pass_done();
+                    tokio::select! { _=ctx.cancel.cancelled()=>return Ok(()), _=tokio::time::sleep(std::time::Duration::from_secs(60))=>{} }
+                }
+            }
+        });
+    }
 }
 
 pub async fn delete_image(

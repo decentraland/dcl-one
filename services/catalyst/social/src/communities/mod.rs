@@ -34,6 +34,7 @@ pub mod mirror;
 pub mod presence;
 pub mod profiles;
 pub mod queries;
+pub mod ranking;
 pub mod standing;
 pub mod thumbnail;
 pub mod validate;

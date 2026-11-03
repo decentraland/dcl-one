@@ -438,8 +438,8 @@ impl Database {
             .await?;
         let count = sqlx::query_scalar::<_, i64>(
             "WITH ins AS ( \
-                 INSERT INTO camera_reel.images (id, user_address, image_hash, thumbnail_hash, is_public, metadata) \
-                 SELECT $1, $2, $3, $4, $5, $6 \
+                 INSERT INTO camera_reel.images (id, user_address, image_hash, thumbnail_hash, is_public, metadata, ranking_published) \
+                 SELECT $1, $2, $3, $4, $5, $6, false \
                  WHERE (SELECT COUNT(*) FROM camera_reel.images WHERE user_address = $2) < $7 \
                  RETURNING id \
              ) \
@@ -456,6 +456,35 @@ impl Database {
         .await?;
         tx.commit().await?;
         Ok(count.map(|c| c as u64))
+    }
+
+    /// Blob I/O finishes before this transaction. The marker, local receipt and
+    /// all attached communities' counters either commit together or remain due.
+    pub async fn publish_ranking(&self, id: Uuid) -> Result<(), sqlx::Error> {
+        let mut tx = self.pool.begin().await?;
+        let row: Option<(String, NaiveDateTime)> = sqlx::query_as(
+            "UPDATE camera_reel.images SET ranking_published=true WHERE id=$1 AND NOT ranking_published RETURNING COALESCE(place_id,''),created_at")
+            .bind(id).fetch_optional(&mut *tx).await?;
+        if let Some((place, occurred_at)) = row
+            && !place.is_empty()
+        {
+            crate::social::communities::ranking::record_photo(
+                &mut tx,
+                &id.to_string(),
+                &place,
+                occurred_at,
+            )
+            .await?;
+        }
+        tx.commit().await
+    }
+
+    pub async fn pending_rankings(
+        &self,
+        after: Uuid,
+    ) -> Result<Vec<(Uuid, String, String)>, sqlx::Error> {
+        sqlx::query_as("SELECT id,image_hash,thumbnail_hash FROM camera_reel.images WHERE NOT ranking_published AND id>$1 ORDER BY id LIMIT 100")
+            .bind(after).fetch_all(&self.pool).await
     }
 
     pub async fn delete_image(&self, id: Uuid) -> Result<(), sqlx::Error> {

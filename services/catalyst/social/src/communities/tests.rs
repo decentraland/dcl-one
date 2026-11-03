@@ -32,6 +32,7 @@ mod full_http_parity;
 mod mute_body;
 mod post_create;
 mod post_edit;
+mod ranking_parity;
 mod referral_lifecycle;
 mod request_lifecycle;
 mod selected_community;

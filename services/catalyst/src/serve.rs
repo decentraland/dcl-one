@@ -751,6 +751,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .load_withheld()
         .await
         .context("loading camera_reel.withheld_blobs")?;
+    camera_reel.spawn_ranking_job(&jobs);
     tracing::info!(
         builder = %builder.sources_label(),
         camera_reel_api_url = %camera_reel.settings.api_url,
@@ -945,6 +946,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social
         .communities
         .spawn_flags_job(&jobs, explorer_api.clone());
+    communities::ranking::spawn_jobs(&social.communities, &jobs);
     // A permission, access-setting or block edit reaches the running rooms
     // at once: the host's sockets and comms' LiveKit participants.
     if let Some(host) = &stage5.scene_host {

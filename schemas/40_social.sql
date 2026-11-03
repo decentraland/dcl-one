@@ -201,9 +201,10 @@ CREATE INDEX private_voice_chat_participants_status_idx
 -- ── communities ────────────────────────────────────────────────────────────
 
 -- active = false is the (federation-visible) deletion; suspended is the local
--- operator hold (a separate axis, 0005). ranking_score has no writer yet
--- (derived column, source "none"; stays 0), editors_choice is set by the
--- admin route; both are read by the listing's ORDER BY.
+-- operator hold (a separate axis, 0005). The local ranking job derives
+-- ranking_score from the five lifetime counters and current community facts.
+-- Its activation timestamp prevents rebuilding missing lifetime history from
+-- an old event catalogue. Mirrored rankings are not recalculated.
 CREATE TABLE social.communities (
     id uuid NOT NULL,
     name text NOT NULL,
@@ -214,6 +215,12 @@ CREATE TABLE social.communities (
     unlisted boolean NOT NULL DEFAULT false,
     editors_choice boolean NOT NULL DEFAULT false,
     ranking_score real NOT NULL DEFAULT 0,
+    ranking_events_count integer NOT NULL DEFAULT 0,
+    ranking_photos_count integer NOT NULL DEFAULT 0,
+    ranking_streams_count integer NOT NULL DEFAULT 0,
+    ranking_events_total_attendees integer NOT NULL DEFAULT 0,
+    ranking_streams_total_participants integer NOT NULL DEFAULT 0,
+    ranking_tracking_since timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     suspended boolean NOT NULL DEFAULT false,
     suspended_at timestamp without time zone,
     suspended_by text,
@@ -232,9 +239,23 @@ CREATE TABLE social.communities (
         OR (voice_notification_scope IS NOT NULL AND voice_notification_scope IN ('all', 'members') AND voice_notification_expires_at IS NOT NULL AND voice_notification_generation IS NOT NULL)
     ),
     CONSTRAINT communities_origin_known CHECK (origin IN ('upstream', 'local')),
+    CONSTRAINT communities_ranking_nonnegative CHECK (ranking_events_count >= 0 AND ranking_photos_count >= 0 AND ranking_streams_count >= 0 AND ranking_events_total_attendees >= 0 AND ranking_streams_total_participants >= 0),
     CONSTRAINT communities_suspension_check
         CHECK ((suspended AND suspended_at IS NOT NULL AND suspended_by IS NOT NULL)
             OR (NOT suspended AND suspended_at IS NULL AND suspended_by IS NULL AND suspension_reason IS NULL))
+);
+
+-- Local lifecycle retries and ended-occurrence scans share a durable receipt.
+-- A photo fans out to several communities, hence community_id is part of its
+-- key. Counters and receipts commit together; receipts are retained for the
+-- community's lifetime and never expire behind a scanner checkpoint.
+CREATE TABLE social.community_ranking_events (
+    kind text NOT NULL,
+    event_key text NOT NULL,
+    community_id uuid NOT NULL REFERENCES social.communities(id) ON DELETE CASCADE,
+    occurred_at timestamp without time zone NOT NULL,
+    PRIMARY KEY (kind, event_key, community_id),
+    CHECK (kind IN ('photo', 'event', 'stream'))
 );
 
 -- The public listing's ORDER BY; the listing carries exactly this predicate.
