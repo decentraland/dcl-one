@@ -243,7 +243,7 @@ pub async fn moderate(
     event_id: &str,
     body: &AdminPatch,
     actor: &str,
-    _settings: &crate::Settings,
+    settings: &crate::Settings,
 ) -> Result<bool, ApiError> {
     super::mirror::reclaim_local(pool).await?;
     let mut tx = pool.begin().await?;
@@ -311,6 +311,7 @@ pub async fn moderate(
         Some(&before),
         &Value::Object(raw.clone()),
         !mirrored,
+        settings,
     )
     .await?;
     sqlx::query(
@@ -461,6 +462,7 @@ pub(super) async fn hide_mirrored_locked(
     before: &Map<String, Value>,
     raw: Map<String, Value>,
     actor: &str,
+    settings: &crate::Settings,
 ) -> Result<(), ApiError> {
     let decision = Decision {
         hidden: Some(true),
@@ -474,6 +476,7 @@ pub(super) async fn hide_mirrored_locked(
         Some(&Value::Object(before.clone())),
         &Value::Object(raw.clone()),
         false,
+        settings,
     )
     .await?;
     sqlx::query("UPDATE explore.event SET raw = $2 WHERE id = $1")
@@ -1002,7 +1005,7 @@ pub async fn create_as(
     .bind(json!({ "create": body }))
     .execute(&mut *tx)
     .await?;
-    super::notifications::record_transition(&mut tx, &id, None, &doc, true).await?;
+    super::notifications::record_transition(&mut tx, &id, None, &doc, true, settings).await?;
     tx.commit().await?;
     tracing::info!(event = %id, signer = operator, creator, "event created");
     Ok(id)
@@ -1017,6 +1020,7 @@ pub(super) async fn store_locked(
     raw: Map<String, Value>,
     signer: &str,
     payload: Value,
+    settings: &crate::Settings,
 ) -> Result<(), ApiError> {
     let mut doc = Value::Object(raw);
     doc["id"] = json!(event_id);
@@ -1029,6 +1033,7 @@ pub(super) async fn store_locked(
         Some(&Value::Object(before.clone())),
         &doc,
         true,
+        settings,
     )
     .await?;
     sqlx::query(

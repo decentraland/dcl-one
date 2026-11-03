@@ -810,6 +810,7 @@ pub async fn patch_event(
         raw,
         &signer,
         json!({ "edit": edit }),
+        &state.settings,
     )
     .await?;
     tx.commit().await?;
@@ -907,9 +908,26 @@ pub async fn delete_event(
     raw.insert("deleted_at".into(), json!(now));
     raw.insert("updated_at".into(), json!(now));
     if mirrored {
-        moderation::hide_mirrored_locked(&mut tx, &event_id, &before, raw, &provenance).await?;
+        moderation::hide_mirrored_locked(
+            &mut tx,
+            &event_id,
+            &before,
+            raw,
+            &provenance,
+            &state.settings,
+        )
+        .await?;
     } else {
-        moderation::store_locked(&mut tx, &event_id, &before, raw, &provenance, payload).await?;
+        moderation::store_locked(
+            &mut tx,
+            &event_id,
+            &before,
+            raw,
+            &provenance,
+            payload,
+            &state.settings,
+        )
+        .await?;
     }
     tx.commit().await?;
     answer(&state, &event_id, viewer.as_deref()).await

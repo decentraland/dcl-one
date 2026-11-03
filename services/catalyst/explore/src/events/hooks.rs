@@ -9,6 +9,9 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
+const RETENTION_DAYS: i32 = 30;
+const CLEANUP_LIMIT: i64 = 1000;
+
 fn flag(raw: &Value, key: &str) -> bool {
     raw.get(key).and_then(Value::as_bool).unwrap_or(false)
 }
@@ -104,13 +107,44 @@ fn message(event_id: &str, kind: &str, event: &Value, base: &str) -> Value {
     ]})
 }
 
+// Never remove deliverable retries. Expired terminal rows and history outside
+// the activation boundary can be collected even after delivery is disabled.
+async fn cleanup(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<u64> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout = '500ms'")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SET LOCAL lock_timeout = '100ms'")
+        .execute(&mut *tx)
+        .await?;
+    let removed = sqlx::query(
+        "DELETE FROM explore.event_moderation_hooks h WHERE h.id IN ( \
+            SELECT id FROM explore.event_moderation_hooks \
+            WHERE created_at < $1 - $2::int4 * interval '1 day' \
+              AND (completed_at < $1 - $2::int4 * interval '1 day' \
+                OR (attempts >= 6 AND next_attempt_at < $1 - $2::int4 * interval '1 day') \
+                OR created_at < COALESCE((SELECT activated_at FROM explore.event_moderation_hook_activation WHERE singleton),$1)) \
+            ORDER BY created_at,id LIMIT $3 FOR UPDATE SKIP LOCKED)",
+    ).bind(now).bind(RETENTION_DAYS).bind(CLEANUP_LIMIT).execute(&mut *tx).await?.rows_affected();
+    tx.commit().await?;
+    Ok(removed)
+}
+
 pub(super) async fn run_once(
     pool: &PgPool,
     client: &crate::http::Outbound,
-    endpoint: &str,
+    endpoint: Option<&str>,
     base: &str,
     now: NaiveDateTime,
 ) -> anyhow::Result<u64> {
+    match tokio::time::timeout(Duration::from_secs(1), cleanup(pool, now)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "event moderation hook cleanup deferred"),
+        Err(_) => tracing::warn!("event moderation hook cleanup exceeded budget"),
+    }
+    let Some(endpoint) = endpoint.filter(|endpoint| !endpoint.trim().is_empty()) else {
+        return Ok(0);
+    };
     let activated=sqlx::query("INSERT INTO explore.event_moderation_hook_activation (activated_at) VALUES ($1) ON CONFLICT DO NOTHING")
         .bind(now).execute(pool).await?.rows_affected()>0;
     if activated {
@@ -151,7 +185,7 @@ pub(super) async fn run_once(
 pub(crate) fn spawn(
     pool: PgPool,
     client: crate::http::Outbound,
-    endpoint: String,
+    endpoint: Option<String>,
     base: String,
     jobs: &crate::jobs::Jobs,
 ) {
@@ -162,7 +196,14 @@ pub(crate) fn spawn(
             let (pool, client, endpoint, base) =
                 (pool.clone(), client.clone(), endpoint.clone(), base.clone());
             async move {
-                run_once(&pool, &client, &endpoint, &base, Utc::now().naive_utc()).await?;
+                run_once(
+                    &pool,
+                    &client,
+                    endpoint.as_deref(),
+                    &base,
+                    Utc::now().naive_utc(),
+                )
+                .await?;
                 Ok(())
             }
         },
@@ -176,6 +217,130 @@ mod tests {
         Arc,
         atomic::{AtomicUsize, Ordering},
     };
+
+    static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[tokio::test]
+    async fn disabled_hook_capture_keeps_the_optional_outbox_empty() {
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let mut tx = pool.begin().await.unwrap();
+        let prefix = Uuid::new_v4().to_string();
+        let mut settings = crate::Settings::for_tests();
+        for (index, (writes, endpoint)) in [
+            (false, Some("http://127.0.0.1/hook")),
+            (true, None),
+            (true, Some("  ")),
+            (true, Some("http://127.0.0.1/hook")),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            settings.operator_writes_enabled = writes;
+            settings.events_slack_webhook = endpoint.map(str::to_owned);
+            super::super::notifications::record_transition(
+                &mut tx,
+                &format!("{prefix}-{index}"),
+                None,
+                &json!({"name":"Public event"}),
+                true,
+                &settings,
+            )
+            .await
+            .unwrap();
+        }
+        let captured: Vec<String> = sqlx::query_scalar(
+            "SELECT event_id FROM explore.event_moderation_hooks WHERE event_id LIKE $1",
+        )
+        .bind(format!("{prefix}-%"))
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(captured, vec![format!("{prefix}-3")]);
+        tx.rollback().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn disabled_delivery_cleans_expired_history_in_bounded_unlocked_batches_and_retains_retries()
+     {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let now = Utc::now().naive_utc();
+        let prefix = Uuid::new_v4().to_string();
+        // This integration test owns the activation singleton while holding TEST_LOCK.
+        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO explore.event_moderation_hook_activation(activated_at) VALUES($1-interval '50 days')").bind(now).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,created_at,completed_at) SELECT gen_random_uuid(),$1||'-completed','approved','{}',$2-interval '40 days',$2-interval '31 days' FROM generate_series(1,$3)")
+            .bind(&prefix).bind(now).bind(CLEANUP_LIMIT+5).execute(&pool).await.unwrap();
+        for (suffix, age, completed_age, attempts, retry_age) in [
+            ("before-activation", 60, None, 0, 60),
+            ("exhausted", 40, None, 6, 31),
+            ("retry", 40, None, 2, 31),
+            ("recent-completion", 40, Some(1), 1, 1),
+            ("recent-edit", 0, Some(0), 1, 0),
+            ("locked", 70, Some(31), 1, 31),
+        ] {
+            sqlx::query("INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,created_at,completed_at,attempts,next_attempt_at) VALUES($1,$2,'edited','{}',$3-$4::int4*interval '1 day',CASE WHEN $5::int4 IS NOT NULL THEN $3-$5::int4*interval '1 day' END,$6,$3-$7::int4*interval '1 day')")
+                .bind(Uuid::new_v4()).bind(format!("{prefix}-{suffix}")).bind(now).bind(age).bind(completed_age).bind(attempts).bind(retry_age).execute(&pool).await.unwrap();
+        }
+        let mut held = pool.begin().await.unwrap();
+        sqlx::query("SELECT id FROM explore.event_moderation_hooks WHERE event_id=$1 FOR UPDATE")
+            .bind(format!("{prefix}-locked"))
+            .fetch_one(&mut *held)
+            .await
+            .unwrap();
+        let before: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id LIKE $1",
+        )
+        .bind(format!("{prefix}-%"))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            run_once(
+                &pool,
+                &crate::http::Outbound::for_tests(),
+                None,
+                "https://example.org",
+                now
+            )
+            .await
+            .unwrap(),
+            0
+        );
+        let after: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id LIKE $1",
+        )
+        .bind(format!("{prefix}-%"))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(before - after, CLEANUP_LIMIT);
+        assert_eq!(cleanup(&pool, now).await.unwrap(), 7);
+        let retained:Vec<String> = sqlx::query_scalar("SELECT event_id FROM explore.event_moderation_hooks WHERE event_id LIKE $1 ORDER BY event_id").bind(format!("{prefix}-%")).fetch_all(&pool).await.unwrap();
+        assert_eq!(
+            retained,
+            ["locked", "recent-completion", "recent-edit", "retry"]
+                .map(|suffix| format!("{prefix}-{suffix}"))
+        );
+        held.rollback().await.unwrap();
+        assert_eq!(cleanup(&pool, now).await.unwrap(), 1);
+        sqlx::query("DELETE FROM explore.event_moderation_hooks WHERE event_id LIKE $1")
+            .bind(format!("{prefix}-%"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn edit_throttle_covers_the_rolling_minute_across_bucket_boundaries() {
@@ -219,6 +384,7 @@ mod tests {
 
     #[tokio::test]
     async fn moderation_hooks_skip_disabled_history_retry_boundedly_and_keep_private_fields_out() {
+        let _guard = TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
@@ -247,7 +413,7 @@ mod tests {
             .naive_utc();
         let client = crate::http::Outbound::for_tests();
         assert_eq!(
-            run_once(&pool, &client, &endpoint, "https://example.org", now)
+            run_once(&pool, &client, Some(&endpoint), "https://example.org", now)
                 .await
                 .unwrap(),
             0
@@ -282,7 +448,7 @@ mod tests {
             run_once(
                 &pool,
                 &client,
-                &endpoint,
+                Some(&endpoint),
                 "https://example.org",
                 now + chrono::Duration::seconds(1)
             )
@@ -299,7 +465,7 @@ mod tests {
             run_once(
                 &pool,
                 &client,
-                &endpoint,
+                Some(&endpoint),
                 "https://example.org",
                 now + chrono::Duration::seconds(2)
             )
@@ -311,7 +477,7 @@ mod tests {
             run_once(
                 &pool,
                 &client,
-                &endpoint,
+                Some(&endpoint),
                 "https://example.org",
                 now + chrono::Duration::minutes(2)
             )
@@ -329,7 +495,7 @@ mod tests {
         let exhausted = run_once(
             &pool,
             &client,
-            "http://127.0.0.1:1/unreachable",
+            Some("http://127.0.0.1:1/unreachable"),
             "https://example.org",
             now + chrono::Duration::minutes(3),
         )
