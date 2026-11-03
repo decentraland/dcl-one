@@ -212,7 +212,7 @@ fn is_snapshot_hash(s: &str) -> bool {
     s.len() == 59 && s.starts_with("ba") && s.bytes().all(|b| b.is_ascii_alphanumeric())
 }
 
-/// `^(?:https?):\/\/[^\s/$.?#].[^\s]*$`
+/// `^(?:https?):\/\/[^\s/$.?#].[^\s]*$` with the JS `u` flag.
 fn is_link_url(s: &str) -> bool {
     let Some(rest) = s
         .strip_prefix("https://")
@@ -223,8 +223,28 @@ fn is_link_url(s: &str) -> bool {
     let mut chars = rest.chars();
     let first_ok = chars
         .next()
-        .is_some_and(|c| !c.is_whitespace() && !"/$.?#".contains(c));
-    first_ok && chars.next().is_some() && !rest.chars().any(char::is_whitespace)
+        .is_some_and(|c| !is_js_space(c) && !"/$.?#".contains(c));
+    first_ok && chars.next().is_some_and(|c| !is_js_line_terminator(c)) && !chars.any(is_js_space)
+}
+
+/// JS `\s`.
+fn is_js_space(c: char) -> bool {
+    matches!(
+        c,
+        '\t' | '\n' | '\u{b}' | '\u{c}' | '\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'
+            ..='\u{200a}'
+                | '\u{2028}'
+                | '\u{2029}'
+                | '\u{202f}'
+                | '\u{205f}'
+                | '\u{3000}'
+                | '\u{feff}'
+    )
+}
+
+/// What JS `.` does not match.
+fn is_js_line_terminator(c: char) -> bool {
+    matches!(c, '\n' | '\r' | '\u{2028}' | '\u{2029}')
 }
 
 /// `^(?:0|-?[1-9][0-9]*),(?:0|-?[1-9][0-9]*)$`
@@ -1095,6 +1115,15 @@ mod tests {
             p,
             "metadata.avatars[0].links[0].url must match the expected pattern",
         );
+        for (url, valid) in [
+            ("https://a b", true),
+            ("https://\u{85}b", true),
+            ("https://ab\u{feff}c", false),
+            ("https://a\nb", false),
+            ("https://a", false),
+        ] {
+            assert_eq!(is_link_url(url), valid, "{url:?}");
+        }
         let mut p = profile();
         p["avatars"][0]["userId"] = Value::Null;
         assert_invalid(
