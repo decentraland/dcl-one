@@ -2,7 +2,8 @@
 //! size, item representations, profile content, item and face thumbnails,
 //! scene content, the content cross-check, outfits, the third-party merkle
 //! proof content, access. The first failing step answers; its strings are
-//! the old ones byte for byte.
+//! the old ones byte for byte, except the reasons after the metadata schema
+//! sentence (see [`super::metadata_schema`]).
 
 use std::collections::{HashMap, HashSet};
 

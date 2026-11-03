@@ -4,8 +4,12 @@
 //! standard/base/third-party item variants and the linked-wearable
 //! `mappings`. Not carried: the spring bones shape (checked by
 //! [`super::spring_bones`]).
-//! The first failure answers, as a path and an ajv-style reason after the
-//! reference's sentence.
+//!
+//! The reference's sentence is matched exactly; after it comes only the
+//! first failure, as a path and an ajv-style reason. The reference lists
+//! every ajv error (`allErrors`) without a path, including the errors of
+//! each failed `oneOf` branch and the schemas' `errorMessage` overrides, in
+//! ajv's evaluation order, which a hand-written check does not reproduce.
 
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
