@@ -56,7 +56,12 @@ python3 tooling/image-smoke.py
   jobs remove all listed unused SDKs before the LFS checkout, retaining maximum
   cold-build headroom. Cleanup duration and free space are logged.
 - Closing a PR removes caches for its merge ref through a workflow that never
-  checks out PR code. Quota/idle eviction still governs caches for open PRs.
+  checks out PR code. An hourly trusted sweep also removes uploads that finish
+  after closure and retains only the newest Development Rust snapshot per
+  platform, purpose and ref; image and Explorer caches are not pruned by that rule.
+- Multi-GB Rust PR snapshots require the `ci:cache` label and a same-repository
+  Linux test job. Main continues to refresh test and smoke snapshots. Cache
+  pressure is logged by the sweep; quota and idle eviction still apply between sweeps.
 - Imports use `--no-check-sigs`: only trusted workflows may write caches a publishing branch consumes.
 
 ## Publication and runtime

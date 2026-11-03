@@ -2,9 +2,12 @@ name: Remove closed PR caches
 on:
   pull_request_target:
     types: [closed]
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
 permissions: {}
 concurrency:
-  group: closed-pr-cache-${{ github.event.pull_request.number }}
+  group: closed-pr-cache
   cancel-in-progress: false
 jobs:
   cleanup:
@@ -27,26 +30,60 @@ jobs:
           import re
           import subprocess
 
-          number = os.environ['PR_NUMBER']
-          if not re.fullmatch(r'[1-9][0-9]*', number):
+          number = os.environ.get('PR_NUMBER', '')
+          event = os.environ.get('GITHUB_EVENT_NAME', 'pull_request_target')
+          targeted = event == 'pull_request_target'
+          if targeted and not re.fullmatch(r'[1-9][0-9]*', number):
               raise ValueError('Invalid pull request number')
-          ref = f'refs/pull/{number}/merge'
+          if event not in ('pull_request_target', 'schedule', 'workflow_dispatch'):
+              raise ValueError('Unsupported cleanup event')
+          ref = f'refs/pull/{number}/merge' if targeted else None
           repository = os.environ['GITHUB_REPOSITORY']
           # Snapshot all pages before deleting, so pagination cannot skip entries.
-          pages = json.loads(subprocess.check_output([
+          request = [
               'gh', 'api', '--method', 'GET', '--paginate', '--slurp',
-              f'repos/{repository}/actions/caches', '-f', f'ref={ref}',
-              '-f', 'per_page=100',
-          ], text=True))
-          cache_ids = {
-              cache['id']
-              for page in pages for cache in page['actions_caches']
-              if cache.get('ref') == ref and type(cache.get('id')) is int
-          }
+              f'repos/{repository}/actions/caches', '-f', 'per_page=100',
+          ]
+          if targeted:
+              request += ['-f', f'ref={ref}']
+          pages = json.loads(subprocess.check_output(request, text=True))
+          caches = [cache for page in pages for cache in page['actions_caches']
+                    if type(cache.get('id')) is int]
+          cache_ids, closed, snapshots = set(), {}, {}
+          namespace = re.compile(r'^foundation-dev-v2-(tests|smoke)-'
+                                 + re.escape(repository) + r'-(Linux|macOS)-(X64|ARM64)-')
+          for cache in caches:
+              cache_ref = cache.get('ref', '')
+              if targeted:
+                  if cache_ref == ref:
+                      cache_ids.add(cache['id'])
+                  continue
+              match = re.fullmatch(r'refs/pull/([1-9][0-9]*)/merge', cache_ref)
+              if match:
+                  pr = match[1]
+                  if pr not in closed:
+                      payload = json.loads(subprocess.check_output([
+                          'gh', 'api', f'repos/{repository}/pulls/{pr}',
+                      ], text=True))
+                      closed[pr] = payload['state'] == 'closed'
+                  if closed[pr]:
+                      cache_ids.add(cache['id'])
+                      continue
+              elif cache_ref != 'refs/heads/main':
+                  continue
+              family = namespace.match(cache.get('key', ''))
+              if family:
+                  snapshots.setdefault((cache_ref, family.group()), []).append(cache)
+          # Keep the newest build for each platform/purpose/ref; image and
+          # Explorer caches are outside this namespace and are never pruned.
+          for entries in snapshots.values():
+              entries.sort(key=lambda cache: (cache.get('created_at', ''), cache['id']), reverse=True)
+              cache_ids.update(cache['id'] for cache in entries[1:])
           for cache_id in sorted(cache_ids):
               subprocess.run([
                   'gh', 'api', '--method', 'DELETE',
                   f'repos/{repository}/actions/caches/{cache_id}',
               ], check=True)
-          print(f'Removed {len(cache_ids)} cache entries for {ref}')
+          print(f'Removed {len(cache_ids)} cache entries; inspected {len(caches)} entries, '
+                f'{sum(cache.get("size_in_bytes", 0) for cache in caches)} bytes')
           PY

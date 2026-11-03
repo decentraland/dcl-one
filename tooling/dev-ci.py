@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Select the Development environment's Rust test platforms: macOS for build, toolchain and dev-stack inputs; platform-neutral source runs on Linux on PRs and on macOS on main.
+"""Select Development CI platforms and frontend unit coverage, failing open to full coverage.
+
+macOS covers build, toolchain and dev-stack inputs on PRs; platform-neutral
+source runs on Linux on PRs and on macOS on main.
 
   python3 tooling/dev-ci.py plan                     in a pull_request run (compares the merge commit's parents)
   python3 tooling/dev-ci.py plan --base origin/main  locally (compares HEAD with its merge base)
+  python3 tooling/dev-ci.py --base SHA --head SHA   frontend unit selection (also reads BASE_SHA/GITHUB_SHA)
 """
 import argparse
 import importlib.util
@@ -67,7 +71,7 @@ BACKEND_CRATES = frozenset({
 })
 COMPANION_DOCS = frozenset({'DATABASE.md', 'METRICS.md', 'docs/readiness.md'})
 FRONTEND_ROOTS = ('apps/ui3', 'apps/sites', 'library')
-SOURCE_EXTENSIONS = ('ts', 'tsx', 'js', 'jsx', 'mts', 'mjs', 'cts', 'cjs')
+SOURCE_EXTENSIONS = ('ts', 'tsx', 'js', 'jsx', 'mts', 'mjs', 'cts', 'cjs', 'json')
 BACKEND_REFERENCE = re.compile(r'services/catalyst(?:/[A-Za-z0-9_.@+-]+)*')
 
 
@@ -118,7 +122,7 @@ def frontend_backend_references(head):
         text = subprocess.check_output(['git', 'show', blob], cwd=ROOT, text=True, timeout=60)
         # join(root, "services", "catalyst", ...) and string concatenation do
         # not give us a complete literal path. Keep the full frontend suites.
-        if (re.search(r'''["'`]services/?["'`]''', text)
+        if (re.search(r'''services/?["'`]''', text)
                 and re.search(r'''["'`]catalyst(?:/|["'`])''', text)):
             raise ValueError('Computed frontend backend dependency')
         for match in BACKEND_REFERENCE.finditer(text):
@@ -126,7 +130,10 @@ def frontend_backend_references(head):
             tail = text[match.end():]
             if '..' in PurePosixPath(path).parts or (tail and tail[0] in '/${\\'):
                 raise ValueError('Ambiguous frontend backend dependency')
+            # A sentence-ending period is not part of a Rust filename. Keep
+            # both interpretations conservative for directories with dots.
             references.add(path)
+            references.add(path.rstrip('.'))
     return references
 
 

@@ -45,12 +45,13 @@ class DevelopmentWorkflowTest(unittest.TestCase):
         self.assertIn('bash tooling/dev-test.sh e2e', jobs()['smoke'])
 
     def test_large_pr_snapshots_are_only_same_repository_linux_tests(self):
-        def allowed(job, event, ref, platform, same_repository=True, passed=True, hit=False):
+        def allowed(job, event, ref, platform, same_repository=True, passed=True, hit=False, cache_enabled=False):
             save = re.search(r'(?ms)^      - name: Save successful[^\n]*\n(.*?)(?=^      - |\Z)',
                              jobs()[job]).group(1)
             expression = re.search(r'^        if: (.+)$', save, re.M).group(1)
             expression = expression.replace('&&', 'and').replace('||', 'or')
             expression = expression.replace('steps.rust-cache.outputs.cache-hit', 'cache_hit')
+            expression = expression.replace("contains(github.event.pull_request.labels.*.name, 'ci:cache')", 'cache_enabled')
             github = SimpleNamespace(
                 event_name=event, ref=ref, repository='decentraland/dcl-one',
                 event=SimpleNamespace(pull_request=SimpleNamespace(head=SimpleNamespace(
@@ -58,6 +59,7 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             return eval(expression, {'__builtins__': {}}, {
                 'github': github, 'runner': SimpleNamespace(os=platform),
                 'success': lambda: passed, 'cache_hit': 'true' if hit else 'false',
+                'cache_enabled': cache_enabled,
             })
 
         for job in ('rust', 'smoke'):
@@ -68,10 +70,11 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                     self.assertFalse(allowed(job, 'workflow_dispatch', 'refs/heads/main', platform))
                     self.assertFalse(allowed(job, 'push', 'refs/heads/main', platform, passed=False))
                     self.assertFalse(allowed(job, 'push', 'refs/heads/main', platform, hit=True))
-                    self.assertEqual(allowed(job, 'pull_request', 'refs/pull/150/merge', platform),
+                    self.assertFalse(allowed(job, 'pull_request', 'refs/pull/150/merge', platform))
+                    self.assertEqual(allowed(job, 'pull_request', 'refs/pull/150/merge', platform, cache_enabled=True),
                                      job == 'rust' and platform == 'Linux')
                     self.assertFalse(allowed(job, 'pull_request', 'refs/pull/150/merge', platform,
-                                             same_repository=False))
+                                             same_repository=False, cache_enabled=True))
 
     def test_closed_pr_cleanup_deletes_only_exact_merge_ref_from_every_page(self):
         source = CLEANUP.read_text()
@@ -109,6 +112,45 @@ class DevelopmentWorkflowTest(unittest.TestCase):
                         exec(compile(script, str(CLEANUP), 'exec'), {})
                     listing.assert_not_called()
                     deletion.assert_not_called()
+
+    def test_scheduled_sweep_catches_late_uploads_and_bounds_only_dev_snapshots(self):
+        source = CLEANUP.read_text()
+        self.assertIn("cron: '17 * * * *'", source)
+        script = textwrap.dedent(source.split("python3 - <<'PY'\n", 1)[1].rsplit('\n          PY', 1)[0])
+        prefix = 'foundation-dev-v2-tests-decentraland/dcl-one-Linux-X64-'
+        caches = [
+            {'id': 1, 'ref': 'refs/heads/main', 'key': prefix + 'old'},
+            {'id': 2, 'ref': 'refs/heads/main', 'key': prefix + 'new'},
+            {'id': 3, 'ref': 'refs/heads/main', 'key': 'images-v2-main-exact'},
+            {'id': 4, 'ref': 'refs/pull/10/merge', 'key': prefix + 'late'},
+            {'id': 5, 'ref': 'refs/pull/10/merge', 'key': 'images-v2-pr-10-late'},
+            {'id': 6, 'ref': 'refs/pull/11/merge', 'key': prefix + 'old'},
+            {'id': 7, 'ref': 'refs/pull/11/merge', 'key': prefix + 'new'},
+            {'id': 8, 'ref': 'refs/pull/11/merge', 'key': 'images-v2-pr-11-exact'},
+            {'id': 9, 'ref': 'refs/pull/10/head', 'key': prefix + 'ignored'},
+            {'id': 10, 'ref': 'refs/heads/other', 'key': prefix + 'ignored'},
+            {'id': 11, 'ref': 'refs/heads/main', 'key': 'bevy-cache'},
+        ]
+        def api(args, **kwargs):
+            if any(arg.endswith('/actions/caches') for arg in args):
+                return json.dumps([{'actions_caches': caches}])
+            if args[-1].endswith('/pulls/10'):
+                return json.dumps({'state': 'closed'})
+            if args[-1].endswith('/pulls/11'):
+                return json.dumps({'state': 'open'})
+            self.fail(f'Unexpected API call: {args}')
+        with patch.dict(os.environ, {'GITHUB_EVENT_NAME': 'schedule', 'PR_NUMBER': '',
+                                     'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
+                patch('subprocess.check_output', side_effect=api) as listing, \
+                patch('subprocess.run') as deletion, patch('builtins.print'):
+            exec(compile(script, str(CLEANUP), 'exec'), {})
+        self.assertEqual([call.args[0][-1] for call in deletion.call_args_list], [
+            'repos/decentraland/dcl-one/actions/caches/1',
+            'repos/decentraland/dcl-one/actions/caches/4',
+            'repos/decentraland/dcl-one/actions/caches/5',
+            'repos/decentraland/dcl-one/actions/caches/6',
+        ])
+        self.assertEqual(listing.call_count, 3, 'one state lookup per PR, regardless of cache count')
 
     def test_source_key_tracks_embedded_inputs_but_not_unrelated_commits(self):
         commands = [re.search(r'^          source=(.*)$', jobs()[name], re.M).group(1)

@@ -30,7 +30,7 @@ class DevCiTest(unittest.TestCase):
 
     def test_linux_covered_inputs_skip_macos(self):
         for changed in (['apps/ui3/src/play/Hud.tsx'], ['apps/sites/src/app.ts', 'apps/ui3/package.json'],
-                        ['tooling/tests/test_dev.py'], ['tooling/bevy-dev.py'],
+                        ['tooling/tests/test_dev.py'], ['tooling/bevy-ci.py'],
                         ['rendering/bevy-explorer/upstream.lock.json'],
                         ['docs/development.md', 'rendering/bevy-explorer/source/react-web/src/App.tsx',
                          'apps/ui3/src/a.ts'],
@@ -83,7 +83,7 @@ class DevCiTest(unittest.TestCase):
         self.assertFalse(dev.plan('local', 'HEAD', 'HEAD')[0])
         self.assertTrue(dev.plan('pull_request', 'not-a-revision', 'HEAD')[0])
         self.assertTrue(dev.plan('local', 'not-a-revision', 'HEAD')[0])
-        with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('dev-local.py')):
+        with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('ci-local.py')):
             self.assertTrue(dev.plan('pull_request', 'HEAD', 'HEAD')[0])
 
     def run_main(self, summary):
@@ -251,7 +251,8 @@ class FrontendSelectionTest(unittest.TestCase):
         for helper in ('apps/ui3/src/helpers/backend-source.ts',
                        'apps/sites/src/backend-source.mjs',
                        'apps/ui3/editor-scene/test/source.cjs',
-                       'library/catalyst-api/backend-source.ts'):
+                       'library/catalyst-api/backend-source.ts',
+                       'apps/sites/src/fixtures/backend-source.json'):
             with self.subTest(helper=helper):
                 self.write(helper, f'export const source = "{self.backend}";')
                 before = self.commit()
@@ -274,6 +275,7 @@ class FrontendSelectionTest(unittest.TestCase):
 
     def test_computed_or_split_backend_paths_keep_units(self):
         for content in ('join(root, "services", "catalyst", crate, "src/lib.rs")',
+                        'const root = new URL("../../../services", import.meta.url); join(root, "catalyst", "worlds/src/storage/export.rs")',
                         '"services/" + "catalyst/" + crate + "/src/lib.rs"',
                         '`services/catalyst/${crate}/src/lib.rs`',
                         '"services/catalyst/" + crate + "/src/lib.rs"'):
@@ -282,6 +284,12 @@ class FrontendSelectionTest(unittest.TestCase):
                 before = self.commit()
                 self.write(self.backend, content)
                 self.assertTrue(self.selected(self.commit(), before))
+
+    def test_sentence_punctuation_does_not_hide_a_referenced_rust_file(self):
+        self.write('apps/sites/src/helper.ts', f'// This reads {self.backend}.')
+        before = self.commit()
+        self.write(self.backend, 'changed')
+        self.assertTrue(self.selected(self.commit(), before))
 
     def test_referenced_backend_deletion_and_rename_keep_units(self):
         self.write('apps/ui3/src/helper.ts', f'const source = "{self.backend}";')
