@@ -1,5 +1,7 @@
 use std::{cell::RefCell, rc::Rc, time::Duration};
 
+#[cfg(test)]
+mod cancel_tests;
 mod fetch_response_body_resource;
 mod request_budget;
 
@@ -9,10 +11,10 @@ use deno_core::{
     anyhow,
     error::{type_error, AnyError},
     futures::{FutureExt, TryStreamExt},
-    op2, AsyncRefCell, BufView, ByteString, CancelHandle, JsBuffer, OpDecl, OpState, Resource,
-    ResourceId,
+    op2, AsyncRefCell, BufView, ByteString, CancelFuture, CancelHandle, JsBuffer, OpDecl, OpState,
+    Resource, ResourceId,
 };
-use deno_fetch::FetchPermissions;
+use deno_fetch::{FetchCancelHandle, FetchPermissions};
 use deno_net::NetPermissions;
 use deno_web::TimersPermission;
 use http::{
@@ -90,6 +92,7 @@ pub fn ops() -> Vec<OpDecl> {
 }
 
 struct FetchRequestResource {
+    cancel: Rc<CancelHandle>,
     request: reqwest::RequestBuilder,
     request_body: Option<ResourceToBodyAdapter>,
     body_bytes: Option<Vec<u8>>,
@@ -219,7 +222,10 @@ where
     request = request.header("User-Agent", "DCLExplorer/0.1");
 
     debug!("request {url}");
+    let cancel = CancelHandle::new_rc();
+    let cancel_handle_rid = state.resource_table.add(FetchCancelHandle(cancel.clone()));
     let request_rid = state.resource_table.add(FetchRequestResource {
+        cancel,
         body_bytes,
         request_body,
         request,
@@ -231,7 +237,7 @@ where
     debug!("returning {:?}", request_rid);
     Ok(IsahcFetchReturn {
         request_rid,
-        cancel_handle_rid: None,
+        cancel_handle_rid: Some(cancel_handle_rid),
     })
 }
 
@@ -308,6 +314,18 @@ async fn fetch_send_inner(
         .ok()
         .expect("multiple op_fetch_send ongoing");
 
+    // Take the request first so its upload is dropped even when the signal has
+    // already fired and Deno never polls the permission or transfer future.
+    let cancel = request.cancel.clone();
+    send_with_permission(state, request)
+        .or_cancel(cancel)
+        .await?
+}
+
+async fn send_with_permission(
+    state: Rc<RefCell<OpState>>,
+    request: FetchRequestResource,
+) -> Result<FetchResponse, AnyError> {
     let (budget, is_server, preview) = {
         let mut op_state = state.borrow_mut();
         let ctx = op_state.borrow::<CrdtContext>();
