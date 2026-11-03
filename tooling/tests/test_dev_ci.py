@@ -1,4 +1,4 @@
-"""Pull requests run the Rust tests on macOS whenever they change what that job runs or builds."""
+"""Pull requests run the Rust tests on macOS for build, toolchain and dev-stack inputs; source stays on Linux."""
 import contextlib
 import importlib.util
 import io
@@ -32,13 +32,17 @@ class DevCiTest(unittest.TestCase):
                         ['tooling/tests/test_dev.py'], ['tooling/bevy-ci.py'],
                         ['rendering/bevy-explorer/upstream.lock.json'],
                         ['docs/development.md', 'rendering/bevy-explorer/source/react-web/src/App.tsx',
-                         'apps/ui3/src/a.ts']):
+                         'apps/ui3/src/a.ts'],
+                        ['services/catalyst/db/src/lib.rs'], ['library/protocol/proto/a.proto'],
+                        ['schemas/50_create.sql']):
             with self.subTest(changed=changed):
                 self.assertFalse(self.macos(*changed))
 
-    def test_rust_and_platform_inputs_run_macos(self):
-        for path in ('services/catalyst/db/src/lib.rs', 'library/protocol/proto/a.proto', 'schemas/50_create.sql',
-                     '.cargo/config.toml', 'flake.lock', 'Makefile', 'infra/dev/shell-hook.sh', 'tooling/dev.py',
+    def test_build_and_dev_stack_inputs_run_macos(self):
+        for path in ('services/catalyst/Cargo.lock', 'services/catalyst/social/Cargo.toml',
+                     'services/catalyst/comms/build.rs', 'services/catalyst/.cargo/config.toml',
+                     'library/vendor/rusty_enet/src/lib.rs', '.cargo/config.toml', 'flake.lock', 'Makefile',
+                     'infra/dev/shell-hook.sh', 'tooling/dev.py',
                      'tooling/dev-test.sh', 'tooling/dev-ci.py', 'tooling/enet-provenance.py',
                      'tooling/tests/test_dev_regressions.py', 'tooling/tests/test_enet_provenance.py',
                      '.github/workflows/development.yml'):

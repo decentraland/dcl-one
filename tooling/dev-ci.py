@@ -12,12 +12,15 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = 'development.yml'
-# What the macOS Rust job itself runs: the dev stack, the ENet pin check and dev-test.sh's tests.
+# What the macOS Rust job itself runs (the dev stack, the ENet pin check and dev-test.sh's tests)
+# and what changes how it builds (manifests, lockfiles, build scripts, toolchains, cargo config).
 MACOS = ('tooling/dev*', 'tooling/enet-provenance.py', 'tooling/tests/test_dev_regressions.py',
-         'tooling/tests/test_enet_provenance.py')
-# Watched by the workflow for smoke/web only; the Linux leg covers the Rust job's view of them.
+         'tooling/tests/test_enet_provenance.py', '**/Cargo.toml', '**/Cargo.lock', '**/build.rs',
+         '**/rust-toolchain*', 'services/catalyst/.cargo/**', 'library/vendor/rusty_enet/**')
+# Inputs whose Rust-job behaviour the Linux leg covers: web apps, other Python tooling and
+# platform-neutral Rust/SQL source. Main pushes still run them on macOS.
 LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**', 'rendering/bevy-explorer/upstream.lock.json',
-              'tooling/*.py', 'tooling/tests/**')
+              'tooling/*.py', 'tooling/tests/**', 'services/catalyst/**', 'library/**', 'schemas/**')
 
 
 def load_ci_local():
