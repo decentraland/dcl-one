@@ -90,3 +90,33 @@ understand the change in one sitting.
 
 - First response within one working day. If it hasn't come, ping the reviewer on Slack rather
   than wait.
+
+### Reviewing content request changes
+
+From the repository root, run `python tooling/bevy-http-checks.py` with the native build
+prerequisites. It runs the IPFS and platform libraries' tests in parallel and compiles
+`scene_inspector`, `imposters` and `scene_runner`. Those consumers exercise the editor
+import, imposter and font-loading interfaces. A missing or unexecuted required regression
+fails the check. For a targeted run, `--filter TEXT` selects matching tests and
+`--tests-only` skips consumer compilation. [Build prerequisites](running.md)
+
+| Check | Regression |
+|---|---|
+| One network attempt consumes one ticket and holds the permit through the body read | `a_content_fetch_uses_exactly_one_ticket_on_its_own_gate`, `engine_request_keeps_its_slot_until_the_body_finishes` |
+| Other downloads can run during backoff and the retry queues again under the current priorities | `retry_uses_live_priorities_after_another_download_completes_in_backoff`, `immediate_timeout_retry_yields_to_an_older_unowned_request` |
+| Equal-priority arrivals preserve their order even when the executor polls them in reverse | `shared_downloads_keep_arrival_order_when_workers_poll_in_reverse` |
+| Dropping a reader preserves other claims and dropping the last one cancels queue waits and retry timers | `dropping_shared_readers_withdraws_only_the_last_claim_of_each_owner`, `last_shared_reader_cancels_a_queued_attempt_and_a_retry_timer` |
+| Concurrent writers publish complete cache files and readiness polls obey server delays and their deadline | `concurrent_writes_to_one_cache_key_publish_complete_files`, `readiness_poll_respects_retry_after_and_remaining_deadline` |
+
+Give each test its own gate and counters so it can run alongside other tests. Trace destructor
+paths for nested locks or file I/O under a lock. When changing diagnostics, check the units
+and width of each counter against partial transfers and overlapping requests.
+
+Before adding a shared budget, identify the workload that needs it and measure the impact
+on unrelated callers. Give changes with independent consumers or failure modes their own
+PR and test evidence.
+
+For browser forwarding changes, run
+`npx vitest run src/test/serviceWorkerCache.test.ts src/test/previewRealm.test.ts` from
+`rendering/bevy-explorer/source/react-web`. Check abort propagation, streamed requests,
+referrer policy and disposal of unread response bodies.

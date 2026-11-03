@@ -155,3 +155,7 @@ With `--log-fps`, the diagnostics log includes `IPFS_REQUEST_ATTEMPTS`,
 `IPFS_REQUEST_CANCELLED`. Bytes count chunks received across attempts, including partial
 transfers. `IPFS_REQUEST_DURATION_MS` sums elapsed milliseconds across concurrent downloads,
 including queue and retry waits. All six counters are cumulative for the session.
+
+Editor imports queue under the edited scene's hash. Compile `scene_inspector` when changing
+the admission interface. The [content request review checks](contributing.md#reviewing-content-request-changes)
+exercise this interface and the retry, cancellation and cache lifecycles.
