@@ -96,6 +96,17 @@ impl TpSubgraph {
     /// Three attempts with doubling backoff and full jitter; `Err` when every
     /// attempt failed on the transport or upstream side.
     pub async fn block_for_timestamp(&self, timestamp_ms: i64) -> Result<Option<u64>, String> {
+        self.blocks_for_timestamp(timestamp_ms)
+            .await
+            .map(|(at_deployment, _)| at_deployment)
+    }
+
+    /// The window's last and first L2 blocks: the block at the deploy and the
+    /// one about five minutes before it, as [`Self::block_for_timestamp`].
+    pub async fn blocks_for_timestamp(
+        &self,
+        timestamp_ms: i64,
+    ) -> Result<(Option<u64>, Option<u64>), String> {
         let timestamp_sec = (timestamp_ms as f64 / 1000.0).ceil() as i64 + 8;
         let timestamp_5min = (timestamp_sec - 60 * 5 - 7).max(0);
         let query = r#"query getBlockForTimestampRange($timestamp: Int!, $timestamp5Min: Int!) {
@@ -104,13 +115,13 @@ impl TpSubgraph {
         }"#;
         let variables = json!({ "timestamp": timestamp_sec, "timestamp5Min": timestamp_5min });
 
-        let mut last = Ok(None);
+        let mut last = Ok((None, None));
         for attempt in 1..=BLOCK_FETCH_MAX_RETRIES {
             last = self
                 .graphql(&self.blocks_l2_url, query, variables.clone())
                 .await
-                .map(|data| parse_max_block(&data));
-            if matches!(last, Ok(Some(_))) {
+                .map(|data| (parse_max_block(&data), parse_block(&data, "min")));
+            if matches!(last, Ok((Some(_), _))) {
                 return last;
             }
             if attempt < BLOCK_FETCH_MAX_RETRIES {
@@ -156,8 +167,12 @@ impl TpSubgraph {
 }
 
 fn parse_max_block(data: &Value) -> Option<u64> {
+    parse_block(data, "max")
+}
+
+fn parse_block(data: &Value, alias: &str) -> Option<u64> {
     let num = data
-        .get("max")
+        .get(alias)
         .and_then(|m| m.as_array())
         .and_then(|a| a.first())
         .and_then(|b| b.get("number"))?;

@@ -8,7 +8,7 @@
 //! | LAND rights of a scene | `land_authz::can_deploy_batch`: the index once ready, the marketplace subgraph's owner leg before that (operator legs denied) | index: folded within 25 blocks, at most 30 min old; subgraph: 30 s memo | `Unavailable` |
 //! | claimed names | `marketplace::graph::owned_names` (the marketplace subgraph, `MARKETPLACE_SUBGRAPH_URL`) | 30 s memo per owner | `Unavailable` |
 //! | owned wearables/emotes | the collections subgraph of the URN's layer, three tiers (token, exact, prefix), plus the escrow lease overlay `shop.usage_grants` | live query | `Unavailable` |
-//! | collection access of a wearable/emote deploy | the collections subgraph of the URN's layer | live query | `Unavailable` |
+//! | collection access of a wearable/emote deploy | the L2 collections subgraph at the deploy's L2 block, or the block five minutes before ([`super::tp_subgraph`] for the blocks); L1 items only by the Decentraland address | per deploy | `Unavailable` |
 //! | third-party items | the registry root at the deploy's L2 block ([`super::tp_subgraph`]) | per finalized block, cached | `Unavailable` |
 //!
 //! Every subgraph call goes through the ONE `http::Outbound` (via
@@ -17,9 +17,7 @@
 //! source that is unset or fails is a [`ValidatorError`], which the access
 //! step turns into `Unavailable` (the old checker rejected with the error).
 //!
-//! Deviations from the squid reads: an item's collection access looks at
-//! the deployed item (`blockchainId`), where the squid query took whichever
-//! item of the collection `LIMIT 1` returned; URNs are compared lowercased
+//! Deviations from the squid reads: URNs are compared lowercased
 //! with `mainnet` spelled `ethereum` (the subgraphs' spelling), where the
 //! squid compared the bytes as given; the overlay is read unconditionally
 //! (the old `to_regclass('marketplace.usage_grants')` probe is gone: the
@@ -451,15 +449,13 @@ async fn nft_ownership_batch<S: NftBatchSource + ?Sized>(
     Ok(resolved)
 }
 
-const QUERY_COLLECTION: &str = r#"
-query collectionAccess($collection: String!) {
-  collections(where: { id: $collection }, first: 1) { creator owner managers minters }
-}"#;
-
-const QUERY_COLLECTION_AND_ITEM: &str = r#"
-query collectionAccess($collection: String!, $itemId: BigInt!) {
-  collections(where: { id: $collection }, first: 1) { creator owner managers minters }
-  items(where: { collection: $collection, blockchainId: $itemId }, first: 1) { creator managers minters }
+const QUERY_COLLECTION_ITEM_AT_BLOCK: &str = r#"
+query collectionItemAccess($collection: String!, $itemId: String!, $block: Int!) {
+  collections(where: { id: $collection }, block: { number: $block }, first: 1) {
+    creator managers isApproved isCompleted
+    items(where: { id: $itemId }, first: 1) { managers contentHash }
+  }
+  accounts(where: { isCommitteeMember: true }, block: { number: $block }, first: 1000) { id }
 }"#;
 
 fn strings_at(v: &Value, key: &str) -> Vec<String> {
@@ -478,30 +474,38 @@ fn str_at<'a>(v: &'a Value, key: &str) -> &'a str {
     v.get(key).and_then(Value::as_str).unwrap_or("")
 }
 
-/// The squid rule over one subgraph answer: the collection's creator, owner,
-/// managers or minters, else the item's creator, managers or minters.
-fn collection_grants(address: &str, data: &Value) -> bool {
-    let first = |field: &str| {
-        data.get(field)
-            .and_then(Value::as_array)
-            .and_then(|a| a.first())
-            .cloned()
-    };
-    let Some(collection) = first("collections") else {
+/// The reference rule over one answer at one block. An item with an on-chain
+/// `contentHash` is deployed only by a committee member, with content whose
+/// hash (`hashes`) equals it; otherwise by the collection's creator or a
+/// collection or item manager, while the collection is completed and not
+/// yet approved.
+fn collection_item_grants(address: &str, data: &Value, hashes: Option<&[String; 2]>) -> bool {
+    let Some(collection) = data
+        .get("collections")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first())
+    else {
         return false;
     };
-    if addresses_match(address, str_at(&collection, "creator"))
-        || addresses_match(address, str_at(&collection, "owner"))
-        || address_in_list(address, &strings_at(&collection, "managers"))
-        || address_in_list(address, &strings_at(&collection, "minters"))
-    {
-        return true;
+    let item = collection
+        .get("items")
+        .and_then(Value::as_array)
+        .and_then(|a| a.first());
+    let content_hash = item.map(|i| str_at(i, "contentHash")).unwrap_or("");
+    if !content_hash.is_empty() {
+        let committee: Vec<String> = data
+            .get("accounts")
+            .and_then(Value::as_array)
+            .map(|a| a.iter().map(|acc| str_at(acc, "id").to_string()).collect())
+            .unwrap_or_default();
+        return address_in_list(address, &committee)
+            && hashes.is_some_and(|h| h.iter().any(|h| h == content_hash));
     }
-    first("items").is_some_and(|item| {
-        addresses_match(address, str_at(&item, "creator"))
-            || address_in_list(address, &strings_at(&item, "managers"))
-            || address_in_list(address, &strings_at(&item, "minters"))
-    })
+    let has_role = addresses_match(address, str_at(collection, "creator"))
+        || address_in_list(address, &strings_at(collection, "managers"))
+        || item.is_some_and(|i| address_in_list(address, &strings_at(i, "managers")));
+    let flag = |key: &str| collection.get(key).and_then(Value::as_bool);
+    has_role && flag("isCompleted") == Some(true) && flag("isApproved") != Some(true)
 }
 
 #[async_trait]
@@ -560,40 +564,66 @@ impl BlockchainChecker for Sources {
         eth_address: &str,
         contract_address: &str,
         item_id: &str,
-        _entity: &Entity,
-        _timestamp: Timestamp,
+        deployment: &Deployment<'_>,
+        timestamp: Timestamp,
         layer: BlockchainLayer,
     ) -> Result<bool, ValidatorError> {
         // A v1 collection named by its name rather than its contract has no
-        // collection row keyed by it (the squid found none either).
+        // collection row keyed by it.
         if !crate::shared::identity::is_valid_eth_address(contract_address) {
             return Ok(false);
         }
-        let network = match layer {
-            BlockchainLayer::L1 => Network::Ethereum,
-            BlockchainLayer::L2 => Network::Matic,
-        };
-        let (market, url) = self.collections_reader(network)?;
-        let collection = contract_address.to_lowercase();
-        let data = if !item_id.is_empty() && item_id.bytes().all(|b| b.is_ascii_digit()) {
-            graph_query(
-                market,
-                url,
-                QUERY_COLLECTION_AND_ITEM,
-                json!({ "collection": collection, "itemId": item_id }),
-            )
-            .await
-        } else {
-            graph_query(
-                market,
-                url,
-                QUERY_COLLECTION,
-                json!({ "collection": collection }),
-            )
-            .await
+        // No L1 blocks source: L1 items fall back to the Decentraland address rule.
+        if layer == BlockchainLayer::L1 {
+            return Ok(false);
         }
-        .map_err(ValidatorError::SubgraphQuery)?;
-        Ok(collection_grants(eth_address, &data))
+        let Some(blocks) = self.third_party.as_ref() else {
+            return Err(ValidatorError::Unconfigured(
+                "no L2 blocks subgraph is configured (BLOCKS_L2_SUBGRAPH_URL)".to_string(),
+            ));
+        };
+        let (market, url) = self.collections_reader(Network::Matic)?;
+        let (at_deployment, five_min_before) = blocks
+            .blocks_for_timestamp(timestamp)
+            .await
+            .map_err(|e| ValidatorError::SubgraphQuery(format!("L2 blocks: {e}")))?;
+        if at_deployment.is_none() && five_min_before.is_none() {
+            return Err(ValidatorError::SubgraphQuery(
+                "the L2 blocks subgraph has no block for the deployment timestamp yet".to_string(),
+            ));
+        }
+        let collection = contract_address.to_lowercase();
+        let variables = |block: u64| {
+            json!({
+                "collection": collection,
+                "itemId": format!("{collection}-{item_id}"),
+                "block": block,
+            })
+        };
+        let hashes = super::item_hash::deployment_hashes(deployment);
+        // Access at the deploy's block, or five minutes before it, so a node
+        // whose subgraph is a few blocks ahead decides as the others did.
+        let mut failure = None;
+        for block in [at_deployment, five_min_before].into_iter().flatten() {
+            match graph_query(
+                market,
+                url,
+                QUERY_COLLECTION_ITEM_AT_BLOCK,
+                variables(block),
+            )
+            .await
+            {
+                Ok(data) if collection_item_grants(eth_address, &data, hashes.as_ref()) => {
+                    return Ok(true);
+                }
+                Ok(_) => {}
+                Err(e) => failure = Some(e),
+            }
+        }
+        match failure {
+            Some(e) => Err(ValidatorError::SubgraphQuery(e)),
+            None => Ok(false),
+        }
     }
 
     async fn check_third_party_access(
@@ -837,29 +867,65 @@ mod tests {
         assert!(failing_names(&names, &[owned("alice"), owned("Bob"), owned("carol")]).is_empty());
     }
 
+    fn collection_at(
+        approved: bool,
+        completed: bool,
+        content_hash: &str,
+        committee: &[&str],
+    ) -> Value {
+        json!({
+            "collections": [{
+                "creator": "0xCreator", "managers": ["0xManager"],
+                "isApproved": approved, "isCompleted": completed,
+                "items": [{ "managers": ["0xitemmanager"], "contentHash": content_hash }]
+            }],
+            "accounts": committee.iter().map(|id| json!({ "id": id })).collect::<Vec<_>>()
+        })
+    }
+
     #[test]
-    fn collection_access_follows_the_squid_legs() {
-        let data = json!({
-            "collections": [{ "creator": "0xCreator", "owner": "0xowner", "managers": ["0xManager"], "minters": ["0xminter"] }],
-            "items": [{ "creator": "0xitemcreator", "managers": ["0xitemmanager"], "minters": [] }]
-        });
-        for granted in [
-            "0xcreator",
-            "0xOWNER",
-            "0xmanager",
-            "0xMinter",
-            "0xItemCreator",
-            "0xitemmanager",
-        ] {
-            assert!(collection_grants(granted, &data), "{granted}");
+    fn collection_item_access_follows_the_reference_rule() {
+        let editable = collection_at(false, true, "", &["0xcommittee"]);
+        for granted in ["0xcreator", "0xMANAGER", "0xItemManager"] {
+            assert!(
+                collection_item_grants(granted, &editable, None),
+                "{granted}"
+            );
         }
-        assert!(!collection_grants("0xstranger", &data));
-        assert!(
-            !collection_grants("0xcreator", &json!({ "collections": [], "items": [] })),
-            "no collection, no access"
-        );
-        let without_item = json!({ "collections": [{ "creator": "0xa", "owner": "0xb", "managers": [], "minters": [] }] });
-        assert!(!collection_grants("0xitemmanager", &without_item));
+        for denied in ["0xstranger", "0xcommittee", "0xowner", "0xminter"] {
+            assert!(!collection_item_grants(denied, &editable, None), "{denied}");
+        }
+        assert!(!collection_item_grants(
+            "0xcreator",
+            &collection_at(true, true, "", &[]),
+            None
+        ));
+        assert!(!collection_item_grants(
+            "0xcreator",
+            &collection_at(false, false, "", &[]),
+            None
+        ));
+        assert!(!collection_item_grants(
+            "0xcreator",
+            &json!({ "collections": [], "accounts": [] }),
+            None
+        ));
+
+        let hashes = ["QmOld".to_string(), "bafkreinew".to_string()];
+        let pinned = collection_at(true, true, "bafkreinew", &["0xCommittee"]);
+        assert!(collection_item_grants(
+            "0xcommittee",
+            &pinned,
+            Some(&hashes)
+        ));
+        assert!(!collection_item_grants("0xcreator", &pinned, Some(&hashes)));
+        assert!(!collection_item_grants("0xcommittee", &pinned, None));
+        let other = ["QmOld".to_string(), "bafkreiother".to_string()];
+        assert!(!collection_item_grants(
+            "0xcommittee",
+            &pinned,
+            Some(&other)
+        ));
     }
 
     #[test]

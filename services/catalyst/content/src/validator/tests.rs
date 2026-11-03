@@ -811,29 +811,98 @@ fn wearable(pointer: &str) -> OwnedDeployment {
     })
 }
 
+const COMMITTEE: &str = "0xdddd000000000000000000000000000000000004";
+const MINTER: &str = "0xeeee000000000000000000000000000000000005";
+/// The L2 blocks at the deploy and about five minutes before it.
+const AT_DEPLOY: u64 = 70_000_000;
+const FIVE_MIN_BEFORE: u64 = 69_999_900;
+
+/// The L2 blocks subgraph's window for any deploy timestamp.
+async fn serve_blocks() -> String {
+    serve_graph(|query, vars| {
+        assert!(query.contains("getBlockForTimestampRange"), "{query}");
+        assert!(vars["timestamp"].as_i64().unwrap() > vars["timestamp5Min"].as_i64().unwrap());
+        Ok(json!({ "max": [{ "number": AT_DEPLOY.to_string() }], "min": [{ "number": FIVE_MIN_BEFORE.to_string() }] }))
+    })
+    .await
+}
+
+fn collections_settings(blocks: &str) -> Settings {
+    Settings {
+        third_party_registry_url: Some(blocks.to_string()),
+        blocks_l2_url: Some(blocks.to_string()),
+        ..Settings::default()
+    }
+}
+
+/// One collection's state at one block, as the collections subgraph answers.
+fn collection_state(approved: bool, completed: bool, content_hash: Option<&str>) -> Value {
+    json!({
+        "collections": [{
+            "creator": OWNER, "managers": [], "minters": [MINTER],
+            "isApproved": approved, "isCompleted": completed,
+            "items": [{ "managers": [OPERATOR], "minters": [MINTER], "contentHash": content_hash }]
+        }],
+        "accounts": [{ "id": COMMITTEE }]
+    })
+}
+
+const EDITABLE: &str = "0xc011000000000000000000000000000000000001";
+const APPROVED: &str = "0xc011000000000000000000000000000000000002";
+const APPROVED_LATELY: &str = "0xc011000000000000000000000000000000000003";
+const PINNED: &str = "0xc011000000000000000000000000000000000004";
+
+/// The ADR-32 hash of the pinned wearable below, written out by hand.
+fn pinned_hash() -> String {
+    hash_bytes_v1(
+        format!(
+            r#"{{"content":[{{"key":"model.glb","hash":"{STORED_HASH}"}}],"metadata":{{"name":"hat","id":"urn:decentraland:matic:collections-v2:{PINNED}:0","data":{{"z":1,"a":[1.5]}}}}}}"#
+        )
+        .as_bytes(),
+    )
+}
+
+/// A wearable of the pinned collection whose metadata keys are not sorted.
+fn pinned_wearable(name: &str) -> OwnedDeployment {
+    let file = format!(
+        r#"{{"version":"v3","type":"wearable","pointers":["urn:decentraland:matic:collections-v2:{PINNED}:0"],"timestamp":1700000000000,"content":[{{"file":"model.glb","hash":"{STORED_HASH}"}}],"metadata":{{"name":"{name}","id":"urn:decentraland:matic:collections-v2:{PINNED}:0","data":{{"z":1,"a":[1.5]}}}}}}"#
+    );
+    let id = hash_bytes_v1(file.as_bytes());
+    let mut d =
+        OwnedDeployment::new(entity_parser::parse_entity_from_bytes(file.as_bytes(), &id).unwrap());
+    d.files.insert(id, file.into_bytes());
+    d
+}
+
 #[tokio::test]
-async fn collection_access_reads_the_collections_subgraph_of_the_items_layer() {
+async fn collection_access_follows_the_collection_state_at_the_deploy_block() {
     let (storage, tmp) = temp_storage("collections").await;
-    const COLLECTION: &str = "0xc011000000000000000000000000000000000001";
-    let graph = serve_graph(|query, vars| {
+    let pinned = pinned_hash();
+    let graph = serve_graph(move |query, vars| {
         assert!(
-            query.contains("collectionAccess"),
+            query.contains("collectionItemAccess"),
             "unexpected query {query}"
         );
-        if vars["collection"] != COLLECTION {
-            return Ok(json!({ "collections": [], "items": [] }));
-        }
-        let items = if vars["itemId"] == "3" {
-            json!([{ "creator": OWNER, "managers": [OPERATOR], "minters": [] }])
-        } else {
-            json!([])
-        };
-        Ok(json!({
-            "collections": [{ "creator": OWNER, "owner": OWNER, "managers": [], "minters": [] }],
-            "items": items
-        }))
+        let collection = vars["collection"].as_str().unwrap().to_string();
+        assert_eq!(
+            vars["itemId"],
+            format!(
+                "{collection}-{}",
+                if collection == PINNED { "0" } else { "3" }
+            )
+        );
+        let block = vars["block"].as_u64().unwrap();
+        assert!(block == AT_DEPLOY || block == FIVE_MIN_BEFORE, "{block}");
+        Ok(match collection.as_str() {
+            EDITABLE => collection_state(false, true, None),
+            APPROVED => collection_state(true, true, None),
+            APPROVED_LATELY => collection_state(block == AT_DEPLOY, true, None),
+            PINNED => collection_state(true, true, Some(&pinned)),
+            _ => json!({ "collections": [], "accounts": [] }),
+        })
     })
     .await;
+    let blocks = serve_blocks().await;
     let s = sources(
         lazy_pool(),
         storage.clone(),
@@ -842,45 +911,70 @@ async fn collection_access_reads_the_collections_subgraph_of_the_items_layer() {
             matic: Some(graph.clone()),
             ..Default::default()
         })),
-        Settings::default(),
+        collections_settings(&blocks),
     );
-    let pointer = format!(
-        "urn:decentraland:matic:collections-v2:{}:3",
-        COLLECTION.to_uppercase().replace("0X", "0x")
-    );
-    let d = wearable(&pointer);
-
-    assert!(
-        validate_item_access(&d.view(), &s, OWNER).await.is_ok(),
-        "the collection's creator"
-    );
-    assert!(
-        validate_item_access(&d.view(), &s, OPERATOR).await.is_ok(),
-        "the deployed item's manager"
-    );
-    assert_eq!(
-        validate_item_access(
-            &wearable(&format!(
-                "urn:decentraland:matic:collections-v2:{COLLECTION}:4"
-            ))
-            .view(),
-            &s,
-            OPERATOR
-        )
-        .await
-        .into_result(),
+    let item = |collection: &str| {
+        wearable(&format!(
+            "urn:decentraland:matic:collections-v2:{}:3",
+            collection.to_uppercase().replace("0X", "0x")
+        ))
+    };
+    let denied = |who: &str, collection: &str, id: &str| {
         rejected(&[&format!(
-            "The provided Eth Address '{OPERATOR}' does not have access to the following item: ({COLLECTION}, 4)"
-        )]),
-        "another item's manager"
-    );
+            "The provided Eth Address '{who}' does not have access to the following item: ({collection}, {id})"
+        )])
+    };
+
+    for who in [OWNER, OPERATOR] {
+        assert!(
+            validate_item_access(&item(EDITABLE).view(), &s, who)
+                .await
+                .is_ok(),
+            "a completed, unapproved collection: {who}"
+        );
+    }
+    for who in [MINTER, STRANGER] {
+        assert_eq!(
+            validate_item_access(&item(EDITABLE).view(), &s, who)
+                .await
+                .into_result(),
+            denied(who, EDITABLE, "3"),
+            "{who}"
+        );
+    }
     assert_eq!(
-        validate_item_access(&d.view(), &s, STRANGER)
+        validate_item_access(&item(APPROVED).view(), &s, OWNER)
             .await
             .into_result(),
-        rejected(&[&format!(
-            "The provided Eth Address '{STRANGER}' does not have access to the following item: ({COLLECTION}, 3)"
-        )])
+        denied(OWNER, APPROVED, "3"),
+        "an approved collection is frozen"
+    );
+    assert!(
+        validate_item_access(&item(APPROVED_LATELY).view(), &s, OWNER)
+            .await
+            .is_ok(),
+        "editable five minutes before the deploy"
+    );
+
+    assert!(
+        validate_item_access(&pinned_wearable("hat").view(), &s, COMMITTEE)
+            .await
+            .is_ok(),
+        "a committee member deploying the content the item pins"
+    );
+    assert_eq!(
+        validate_item_access(&pinned_wearable("other").view(), &s, COMMITTEE)
+            .await
+            .into_result(),
+        denied(COMMITTEE, PINNED, "0"),
+        "content other than what the item pins"
+    );
+    assert_eq!(
+        validate_item_access(&pinned_wearable("hat").view(), &s, OWNER)
+            .await
+            .into_result(),
+        denied(OWNER, PINNED, "0"),
+        "a pinned item is not the creator's to change"
     );
 
     let v1 = wearable(
@@ -912,16 +1006,37 @@ async fn collection_access_reads_the_collections_subgraph_of_the_items_layer() {
             "The provided Eth Address '{STRANGER}' does not have access to the following item: 'urn:decentraland:off-chain:base-avatars:hat'"
         )])
     );
-
-    let eth_unset = wearable(&format!(
-        "urn:decentraland:ethereum:collections-v2:{COLLECTION}:3"
-    ));
     assert_eq!(
-        validate_item_access(&eth_unset.view(), &s, OWNER)
+        validate_item_access(
+            &wearable(&format!(
+                "urn:decentraland:ethereum:collections-v2:{EDITABLE}:3"
+            ))
+            .view(),
+            &s,
+            OWNER
+        )
+        .await
+        .into_result(),
+        denied(OWNER, EDITABLE, "3"),
+        "an L1 collection has no block source"
+    );
+
+    let no_blocks = sources(
+        lazy_pool(),
+        storage.clone(),
+        None,
+        Some(market_over(Readers {
+            matic: Some(graph),
+            ..Default::default()
+        })),
+        Settings::default(),
+    );
+    assert_eq!(
+        validate_item_access(&item(EDITABLE).view(), &no_blocks, OWNER)
             .await
             .into_result(),
         unavailable(&[
-            "Error checking collection access: no ethereum collections subgraph is configured (ETH_COLLECTIONS_SUBGRAPH_URL)"
+            "Error checking collection access: no L2 blocks subgraph is configured (BLOCKS_L2_SUBGRAPH_URL)"
         ])
     );
     let failing = serve_graph(|_, _| Err(400)).await;
@@ -933,9 +1048,9 @@ async fn collection_access_reads_the_collections_subgraph_of_the_items_layer() {
             matic: Some(failing),
             ..Default::default()
         })),
-        Settings::default(),
+        collections_settings(&blocks),
     );
-    let verdict = validate_item_access(&d.view(), &down, OWNER)
+    let verdict = validate_item_access(&item(EDITABLE).view(), &down, OWNER)
         .await
         .into_result()
         .unwrap_err();

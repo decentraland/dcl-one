@@ -42,6 +42,7 @@ pub mod erc721;
 pub mod error;
 mod helpers;
 pub mod image_metadata;
+mod item_hash;
 pub mod merkle;
 pub mod rules;
 mod scene_parcels;

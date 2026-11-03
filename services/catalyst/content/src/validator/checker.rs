@@ -41,7 +41,7 @@ pub trait BlockchainChecker: Send + Sync {
         eth_address: &str,
         contract_address: &str,
         item_id: &str,
-        entity: &Entity,
+        deployment: &Deployment<'_>,
         timestamp: Timestamp,
         layer: BlockchainLayer,
     ) -> Result<bool, ValidatorError>;
@@ -441,7 +441,7 @@ pub async fn validate_item_access(
                         deployer_address,
                         &contract,
                         &item_id,
-                        entity,
+                        deployment,
                         entity.timestamp,
                         layer,
                     )
