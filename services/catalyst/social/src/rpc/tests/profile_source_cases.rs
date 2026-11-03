@@ -157,6 +157,30 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
                 case["id"],
                 step["response"]
             );
+            if operation.starts_with("getFriends") {
+                let requested = targets
+                    .iter()
+                    .map(|target| target.as_str().unwrap().to_string())
+                    .collect::<Vec<_>>();
+                let associated = ctx
+                    .profiles()
+                    .get_profiles_with_actors_result(&requested)
+                    .await
+                    .unwrap();
+                assert!(
+                    associated
+                        .iter()
+                        .all(|(actor, _)| requested.contains(actor))
+                );
+                if case["id"] == "historical-alias-lists-and-single-cache" {
+                    assert!(
+                        associated
+                            .iter()
+                            .all(|(actor, profile)| actor == owner && profile.address == alias),
+                        "guard identities stay requested wallets, including cached/fetched aliases"
+                    );
+                }
+            }
             if operation == "blockUser" || operation == "unblockUser" {
                 assert_eq!(
                     db.is_blocked(me, owner).await.unwrap(),

@@ -104,14 +104,33 @@ impl Profiles {
         &self,
         addresses: &[String],
     ) -> Result<Vec<ProfileInfo>, sqlx::Error> {
+        Ok(self
+            .get_profiles_with_actors_result(addresses)
+            .await?
+            .into_iter()
+            .map(|(_, profile)| profile)
+            .collect())
+    }
+
+    /// Preserve the requested wallet separately from the public avatar identity
+    /// for topology/authorization guards. It is never substituted into the DTO.
+    pub(crate) async fn get_profiles_with_actors_result(
+        &self,
+        addresses: &[String],
+    ) -> Result<Vec<(String, ProfileInfo)>, sqlx::Error> {
         let wanted = dedup_lowercased(addresses);
         let mut profiles = wanted
             .iter()
-            .filter_map(|address| self.cache.get_fresh(address).flatten())
+            .filter_map(|address| {
+                self.cache
+                    .get_fresh(address)
+                    .flatten()
+                    .map(|profile| (address.clone(), profile))
+            })
             .collect::<Vec<_>>();
         let cached_identities = profiles
             .iter()
-            .map(|profile| profile.address.clone())
+            .map(|(_, profile)| profile.address.clone())
             .collect::<HashSet<_>>();
         let missing = wanted
             .into_iter()
@@ -119,7 +138,7 @@ impl Profiles {
             .collect::<Vec<_>>();
         if !missing.is_empty() {
             let fetched = self.load_profiles(&missing).await?;
-            for profile in &fetched {
+            for (_, profile) in &fetched {
                 self.cache
                     .insert(profile.address.clone(), Some(profile.clone()));
             }
@@ -142,14 +161,18 @@ impl Profiles {
             .load_profiles(std::slice::from_ref(&address))
             .await?
             .into_iter()
-            .next();
+            .next()
+            .map(|(_, profile)| profile);
         if let Some(profile) = &profile {
             self.cache.insert(address, Some(profile.clone()));
         }
         Ok(profile)
     }
 
-    async fn load_profiles(&self, addresses: &[String]) -> Result<Vec<ProfileInfo>, sqlx::Error> {
+    async fn load_profiles(
+        &self,
+        addresses: &[String],
+    ) -> Result<Vec<(String, ProfileInfo)>, sqlx::Error> {
         let Some(pool) = &self.pool else {
             return Ok(Vec::new());
         };
@@ -158,7 +181,7 @@ impl Profiles {
             .fetch_all(pool)
             .await?;
         let mut profiles = Vec::new();
-        for (_, avatar) in rows {
+        for (actor, avatar) in rows {
             let Some(avatar) = avatar else {
                 continue;
             };
@@ -188,16 +211,19 @@ impl Profiles {
                     b: color.get("b")?.as_f64()? as f32,
                 })
             });
-            profiles.push(ProfileInfo {
-                address: address.to_lowercase(),
-                name: name.into(),
-                profile_picture_url: picture.into(),
-                has_claimed_name: avatar
-                    .get("hasClaimedName")
-                    .and_then(serde_json::Value::as_bool)
-                    .unwrap_or(false),
-                name_color,
-            });
+            profiles.push((
+                actor,
+                ProfileInfo {
+                    address: address.to_lowercase(),
+                    name: name.into(),
+                    profile_picture_url: picture.into(),
+                    has_claimed_name: avatar
+                        .get("hasClaimedName")
+                        .and_then(serde_json::Value::as_bool)
+                        .unwrap_or(false),
+                    name_color,
+                },
+            ));
         }
         Ok(profiles)
     }
