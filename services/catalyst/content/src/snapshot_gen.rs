@@ -589,7 +589,7 @@ pub async fn snapshot_is_outdated(
 /// column carries microseconds and the row stores milliseconds. The
 /// sessions are visible because every writer of `content.deployments` runs
 /// as this pool's role.
-async fn read_horizon_ms(pool: &PgPool) -> Result<Timestamp, GenerationError> {
+async fn read_horizon_ms(conn: &mut sqlx::PgConnection) -> Result<Timestamp, GenerationError> {
     let ms: i64 = sqlx::query_scalar(
         "SELECT floor(EXTRACT(EPOCH FROM LEAST(now(), min(xact_start))) * 1000)::bigint
          FROM pg_stat_activity
@@ -597,10 +597,14 @@ async fn read_horizon_ms(pool: &PgPool) -> Result<Timestamp, GenerationError> {
            AND pid <> pg_backend_pid()
            AND xact_start IS NOT NULL",
     )
-    .fetch_one(pool)
+    .fetch_one(conn)
     .await?;
     Ok(ms - 1)
 }
+
+/// Advisory lock key the generator takes shared while it writes a window and
+/// the deleter repair takes exclusive while it marks windows outdated.
+pub const SNAPSHOT_ROWS_LOCK: i64 = 0x636f_6e74_656e_7473;
 
 async fn generate_window(
     pool: &PgPool,
@@ -609,8 +613,14 @@ async fn generate_window(
     cancel: Option<&CancellationToken>,
 ) -> Result<Written, GenerationError> {
     let started = Instant::now();
-    let generation_ms = read_horizon_ms(pool).await?;
-    let (bytes, entities) = read_window(pool, &window, cancel).await?;
+    // Held from the read to the row write, so the deleter repair's mark lands before or after.
+    let mut tx = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock_shared($1)")
+        .bind(SNAPSHOT_ROWS_LOCK)
+        .execute(&mut *tx)
+        .await?;
+    let generation_ms = read_horizon_ms(&mut tx).await?;
+    let (bytes, entities) = read_window(&mut tx, &window, cancel).await?;
     let number_of_entities = i32::try_from(entities).map_err(|_| {
         GenerationError::Invalid(format!(
             "snapshot deployment count {entities} overflows the i32 column"
@@ -623,7 +633,6 @@ async fn generate_window(
     let size = bytes.len() as u64;
     storage.store(&hash, Bytes::from(bytes)).await?;
 
-    let mut tx = pool.begin().await?;
     let gone: Vec<Option<String>> = sqlx::query_scalar(
         "WITH gone AS (
              DELETE FROM content.snapshots
@@ -672,7 +681,7 @@ async fn generate_window(
 /// The file bytes and the line count. Rows stream from one connection into
 /// the buffer; the buffer is the whole file (the store takes it whole).
 async fn read_window(
-    pool: &PgPool,
+    conn: &mut sqlx::PgConnection,
     window: &TimeRange,
     cancel: Option<&CancellationToken>,
 ) -> Result<(Vec<u8>, u64), GenerationError> {
@@ -683,7 +692,7 @@ async fn read_window(
         .persistent(false)
         .bind(naive(window.init_timestamp)?)
         .bind(naive(window.end_timestamp)?)
-        .fetch(pool);
+        .fetch(conn);
     let mut count = 0u64;
     while let Some(row) = rows.try_next().await? {
         write_line(

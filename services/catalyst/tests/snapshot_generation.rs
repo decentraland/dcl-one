@@ -1250,18 +1250,22 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
     let _ = std::fs::remove_dir_all(root_b);
 }
 
-/// A database an earlier unpublish left behind: the unpublish restored the
-/// older scene it had superseded (its deleter cleared, the parcel re-pointed)
-/// and the next pass wrote that scene into its window. The deleter repair
-/// supersedes it again, empties the parcel and marks the window, so the next
-/// pass regenerates it without the scene and `/pointer-changes` agrees.
-#[tokio::test]
-async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored() {
-    let Some(db_a) = db::scratch_database().await else {
-        return;
-    };
+/// A database an earlier unpublish left behind on 7,7: the newer local scene
+/// tombstoned, the older one it had superseded restored (deleter cleared, the
+/// parcel re-pointed). Returns the database, the store root, the node and the
+/// two entity ids (old, new).
+async fn restored_scene_database(
+    tag: &str,
+) -> Option<(
+    db::ScratchDb,
+    std::path::PathBuf,
+    Arc<ContentState>,
+    String,
+    String,
+)> {
+    let db_a = db::scratch_database().await?;
     let now = chrono::Utc::now().timestamp_millis();
-    let root = temp_dir("repair-window");
+    let root = temp_dir(tag);
     let node = content_state(&db_a.pool, &root).await;
     node.sync.set_state(SyncState::Syncing);
 
@@ -1303,6 +1307,21 @@ async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored()
             .await
             .unwrap();
     }
+    Some((db_a, root, node, old_local, new_local))
+}
+
+/// A database an earlier unpublish left behind: the unpublish restored the
+/// older scene it had superseded (its deleter cleared, the parcel re-pointed)
+/// and the next pass wrote that scene into its window. The deleter repair
+/// supersedes it again, empties the parcel and marks the window, so the next
+/// pass regenerates it without the scene and `/pointer-changes` agrees.
+#[tokio::test]
+async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored() {
+    let Some((db_a, root, node, old_local, new_local)) =
+        restored_scene_database("repair-window").await
+    else {
+        return;
+    };
     let generator = SnapshotGenerator::new(node.clone(), false, settings(100));
     let (before, _) = generator
         .generate(chrono::Utc::now().timestamp_millis())
@@ -1354,6 +1373,116 @@ async fn the_deleter_repair_regenerates_a_window_an_earlier_unpublish_restored()
     );
 
     serve.abort();
+    db_a.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Backends of this database waiting on a lock.
+async fn lock_waiters(pool: &PgPool) -> i64 {
+    sqlx::query_scalar(
+        "SELECT count(*) FROM pg_stat_activity
+         WHERE datname = current_database() AND wait_event_type = 'Lock'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+async fn wait_for_lock_waiters(pool: &PgPool, n: i64) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while lock_waiters(pool).await < n {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{n} lock waiters never showed up"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+/// The deleter repair commits while a pass is between reading a window and
+/// writing its row: the window's new row still carries the repair's mark, so
+/// the next pass regenerates it without the superseded scene. The test holds
+/// the window's row so the pass stops right before its write, then lets the
+/// repair run into it.
+#[tokio::test]
+async fn a_window_written_beside_the_deleter_repair_keeps_its_mark() {
+    let Some((db_a, root, node, _, _)) = restored_scene_database("repair-race").await else {
+        return;
+    };
+    let generator = SnapshotGenerator::new(node.clone(), false, settings(100));
+    let (before, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let window = before
+        .iter()
+        .find(|r| r.number_of_entities == 1)
+        .expect("the restored scene is in a window")
+        .time_range;
+
+    let mut hold = db_a.pool.begin().await.unwrap();
+    sqlx::query(
+        "SELECT 1 FROM content.snapshots
+         WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'
+         FOR UPDATE",
+    )
+    .bind(window.init_timestamp as f64)
+    .execute(&mut *hold)
+    .await
+    .unwrap();
+    let pass = tokio::spawn({
+        let generator = generator.clone();
+        async move {
+            generator
+                .regenerate(chrono::Utc::now().timestamp_millis())
+                .await
+        }
+    });
+    wait_for_lock_waiters(&db_a.pool, 1).await;
+    let repair = tokio::spawn({
+        let pool = db_a.pool.clone();
+        async move {
+            catalyst::content::sync::LiveDeploymentRepository::new(
+                pool,
+                Arc::new(SyncStatus::default()),
+            )
+            .resolve_deleter_deployments()
+            .await
+        }
+    });
+    wait_for_lock_waiters(&db_a.pool, 2).await;
+    hold.rollback().await.unwrap();
+    let (written, _) = pass.await.unwrap().unwrap();
+    repair.await.unwrap().unwrap();
+    let row = written
+        .iter()
+        .find(|r| r.time_range == window)
+        .expect("the window's row");
+    assert_eq!(row.number_of_entities, 1, "the pass read before the repair");
+
+    assert!(
+        snapshot_is_outdated(&db_a.pool, &window, {
+            let generated: chrono::NaiveDateTime = sqlx::query_scalar(
+                "SELECT generation_time FROM content.snapshots
+                 WHERE init_timestamp = to_timestamp($1 / 1000.0) AT TIME ZONE 'UTC'",
+            )
+            .bind(window.init_timestamp as f64)
+            .fetch_one(&db_a.pool)
+            .await
+            .unwrap();
+            generated.and_utc().timestamp_millis()
+        })
+        .await
+        .unwrap(),
+        "the window keeps the repair's mark"
+    );
+    let (after, _) = generator
+        .generate(chrono::Utc::now().timestamp_millis())
+        .await
+        .unwrap();
+    let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
+    assert_eq!(in_files, 0, "the next pass leaves the scene out");
+
     db_a.teardown().await;
     let _ = std::fs::remove_dir_all(root);
 }

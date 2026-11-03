@@ -147,6 +147,12 @@ impl LiveDeploymentRepository {
         let start = std::time::Instant::now();
         let storage = |e: sqlx::Error| SyncError::Storage(e.to_string());
         let mut tx = self.pool.begin().await.map_err(storage)?;
+        // Waits out a window write in progress, so its row takes the mark below.
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(crate::snapshot_gen::SNAPSHOT_ROWS_LOCK)
+            .execute(&mut *tx)
+            .await
+            .map_err(storage)?;
         let (superseded, cleared, outdated): (i64, i64, i64) = sqlx::query_as(
             r#"
             WITH pointer_successors AS (
