@@ -794,6 +794,56 @@ pub fn build_create_raw(
     Ok(Value::Object(doc))
 }
 
+/// Preserve eligible occurrence identities shared by the old and new schedules.
+/// The private lookup is bounded by the current materialized schedule; it never
+/// accumulates removed dates across edits or grants eligibility to new past dates.
+pub(super) fn preserve_metric_starts(
+    before: &Map<String, Value>,
+    after: &mut Map<String, Value>,
+    cutoff: DateTime<Utc>,
+) {
+    fn starts(raw: &Map<String, Value>) -> Vec<(String, DateTime<Utc>)> {
+        let values: Vec<&str> = match raw.get("recurrent_dates").and_then(Value::as_array) {
+            Some(dates) if !dates.is_empty() => dates.iter().filter_map(Value::as_str).collect(),
+            _ => raw
+                .get("start_at")
+                .and_then(Value::as_str)
+                .into_iter()
+                .collect(),
+        };
+        values
+            .into_iter()
+            .filter_map(|value| {
+                DateTime::parse_from_rfc3339(value)
+                    .ok()
+                    .map(|date| (value.to_owned(), date.with_timezone(&Utc)))
+            })
+            .collect()
+    }
+    let old_cutoff = before
+        .get("_metrics_schedule_after")
+        .and_then(Value::as_str)
+        .and_then(|value| DateTime::parse_from_rfc3339(value).ok());
+    let old_preserved = before
+        .get("_metrics_preserved_starts")
+        .and_then(Value::as_object);
+    let eligible: std::collections::BTreeSet<DateTime<Utc>> = starts(before)
+        .into_iter()
+        .filter(|(key, date)| {
+            old_cutoff.is_none_or(|at| *date >= at)
+                || old_preserved.is_some_and(|old| old.contains_key(key))
+        })
+        .map(|(_, date)| date)
+        .collect();
+    let preserved: Map<String, Value> = starts(after)
+        .into_iter()
+        .filter(|(_, date)| *date < cutoff && eligible.contains(date))
+        .map(|(key, _)| (key, Value::Bool(true)))
+        .collect();
+    after.insert("_metrics_schedule_after".into(), json!(cutoff.to_rfc3339()));
+    after.insert("_metrics_preserved_starts".into(), Value::Object(preserved));
+}
+
 /// Event identifiers stay unique even when concurrent creates share a clock tick.
 fn generate_id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -968,9 +1018,15 @@ pub async fn create_as(
     if let Some(raw) = doc.as_object() {
         validate_references(pool, raw).await?;
     }
+    let mut tx = pool.begin().await?;
+    let created_at: DateTime<Utc> = sqlx::query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut *tx)
+        .await?;
+    doc["_metrics_schedule_after"] = json!(created_at.to_rfc3339());
+    doc["created_at"] = json!(created_at.to_rfc3339());
+    doc["updated_at"] = json!(created_at.to_rfc3339());
     let f = super::mirror::extract_fields(&doc)
         .ok_or_else(|| ApiError::internal("event document without an id"))?;
-    let mut tx = pool.begin().await?;
     sqlx::query(
         "INSERT INTO explore.event (id, name, start_at, finish_at, next_start_at, next_finish_at, duration_ms, recurrent, \
              highlighted, trending, approved, attending, community_id, user_creator, coordinates_x, coordinates_y, description, raw, origin) \
