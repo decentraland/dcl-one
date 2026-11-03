@@ -42,10 +42,51 @@ describe("when repeated place requests resolve the same node's realm", () => {
 
   describe("and a lookup fails", () => {
     beforeEach(() => { fetchImpl.mockResolvedValueOnce(new Response("Unavailable", { status: 503 })); });
-    it("should leave the failure uncached so Retry can recover immediately", async () => {
+    it("should fail fast during the short outage cache window", async () => {
       await expect(loadPlaceTravel(place, { base })).resolves.toBeNull();
+      await expect(loadPlaceTravel(place, { base })).resolves.toBeNull();
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+    it("should refresh immediately for an explicit Retry", async () => {
+      await expect(loadPlaceTravel(place, { base })).resolves.toBeNull();
+      await expect(loadPlaceTravel(place, { base, refreshRealm: true })).resolves.toHaveProperty("jumpHref");
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+    it("should allow ordinary reads to recover after the outage cache expires", async () => {
+      await expect(loadPlaceTravel(place, { base })).resolves.toBeNull();
+      vi.setSystemTime(new Date("2026-11-03T18:00:11Z"));
       await expect(loadPlaceTravel(place, { base })).resolves.toHaveProperty("jumpHref");
       expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("and concurrent requests arrive before the node responds", () => {
+    let resolveRead: (response: Response) => void;
+    let first: ReturnType<typeof loadPlaceTravel>;
+    let second: ReturnType<typeof loadPlaceTravel>;
+    let upstreamSignal: AbortSignal;
+    beforeEach(() => {
+      fetchImpl.mockImplementationOnce(async (_input, init) => {
+        upstreamSignal = init!.signal!;
+        return new Promise<Response>((resolve) => { resolveRead = resolve; });
+      });
+      first = loadPlaceTravel(place, { base, signal: controller.signal });
+      second = loadPlaceTravel({ ...place, base_position: "3,4" }, { base });
+    });
+    it("should share one upstream lookup and build each place's own target", async () => {
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      resolveRead(new Response(JSON.stringify({ configurations: { realmName: "shared-node" } })));
+      await expect(first).resolves.toMatchObject({ jumpHref: expect.stringContaining("position=1%2C2") });
+      await expect(second).resolves.toMatchObject({ jumpHref: expect.stringContaining("position=3%2C4") });
+    });
+    it("should cancel one waiter without cancelling the shared read or the other waiter", async () => {
+      controller.abort();
+      await expect(first).rejects.toMatchObject({ name: "AbortError" });
+      expect(upstreamSignal.aborted).toBe(false);
+      resolveRead(new Response(JSON.stringify({ configurations: { realmName: "shared-node" } })));
+      await expect(second).resolves.toHaveProperty("jumpHref");
+      await expect(loadPlaceTravel(place, { base })).resolves.toHaveProperty("jumpHref");
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
   });
 

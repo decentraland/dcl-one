@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { redirect, useNavigate, useRevalidator } from "react-router";
+import { redirect, useLocation, useNavigate, useNavigation } from "react-router";
 
 import type { PlaceViewer } from "@ui/data/catalyst/places";
 import PlaceDetail from "@ui/explorer/pages/PlaceDetail";
@@ -52,7 +52,15 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     return redirect(`/places/${encodeURIComponent(place.id)}${search}`, 301);
   }
 
-  const resolvedTravel = place ? await loadPlaceTravel(place, { signal: request.signal }) : null;
+  const url = new URL(request.url);
+  const refreshRealm = url.searchParams.get("retry_travel") === "1";
+  const resolvedTravel = place ? await loadPlaceTravel(place, { signal: request.signal, refreshRealm }) : null;
+  if (refreshRealm) {
+    url.searchParams.delete("retry_travel");
+    url.searchParams.delete("_routes");
+    url.searchParams.delete("_data");
+    return redirect(`/places/${encodeURIComponent(id)}${url.search}`, 303);
+  }
   const travel = resolvedTravel ?? (place ? { playBase: playUrl(), launchError: "Travel is temporarily unavailable. Please retry." } : null);
   return wrap(
     { id, place, sid, unavailable, travel },
@@ -85,7 +93,13 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
   const { place, sid, unavailable, travel } = loaderData;
   const { identity, isConnected } = useAuth();
   const navigate = useNavigate();
-  const revalidator = useRevalidator();
+  const navigation = useNavigation();
+  const location = useLocation();
+  function retryTravel() {
+    const query = new URLSearchParams(location.search);
+    query.set("retry_travel", "1");
+    void navigate(`${location.pathname}?${query}`, { replace: true, preventScrollReset: true });
+  }
   const signer = isConnected ? identity : null;
   const viewer = usePlaceViewer(signer, place?.id);
 
@@ -142,10 +156,10 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
         onJumpIn={() => {
           if (!place) return;
           onTravel(place.id, travel?.jumpHref, travel?.launchError);
-          if (!travel?.jumpHref) void revalidator.revalidate();
+          if (!travel?.jumpHref) retryTravel();
         }}
         detailSlot={<>
-          {travel?.launchError && <div role="alert"><p>{travel.launchError}</p><button type="button" disabled={revalidator.state !== "idle"} onClick={() => { void revalidator.revalidate(); }}>Retry travel</button></div>}
+          {travel?.launchError && <div role="alert"><p>{travel.launchError}</p><button type="button" disabled={navigation.state !== "idle"} onClick={() => { retryTravel(); }}>Retry travel</button></div>}
           {place?.world && place.world_name && <WorldScenes worldName={place.world_name} selectedId={place.id} playBase={travel?.playBase} onVisit={onTravel} />}
         </>}
         notFound={!place}
