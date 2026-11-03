@@ -272,6 +272,145 @@ async fn rate_limiter_ttl_and_size() {
 }
 
 #[test]
+fn a_reservation_holds_its_pointers_only_once_kept() {
+    let rl = DeployRateLimiter::with_reference_defaults();
+    let ptrs = vec!["0,0".to_string(), "0,1".to_string(), "0,0".to_string()];
+
+    let held = rl.reserve("scene", &ptrs, false).unwrap();
+    assert!(
+        rl.reserve("scene", &ptrs[1..2], false).is_none(),
+        "a held pointer refuses a second reservation"
+    );
+    drop(held);
+    assert!(
+        !rl.is_rate_limited("scene", &ptrs),
+        "a dropped reservation is released"
+    );
+
+    rl.reserve("scene", &ptrs, false).unwrap().keep();
+    assert!(
+        rl.is_rate_limited("scene", &ptrs),
+        "an accepted deploy is still limited"
+    );
+
+    let profile = vec!["0xabc".to_string()];
+    rl.reserve("profile", &profile, true).unwrap().keep();
+    assert!(rl.is_unchanged_limited(&profile));
+    rl.clear();
+    rl.reserve("profile", &profile, true).unwrap().keep();
+    rl.buckets
+        .lock()
+        .get_mut("profile")
+        .unwrap()
+        .entries
+        .clear();
+    assert!(
+        rl.reserve("profile", &profile, true).is_none(),
+        "the unchanged bucket refuses on its own"
+    );
+    assert!(
+        !rl.is_rate_limited("profile", &profile),
+        "a refused unchanged reservation releases the type bucket"
+    );
+}
+
+const DEPLOYER_KEY: &str = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+
+/// A signed scene entity with no content files: its bytes, id and auth chain.
+async fn signed_scene(pointers: &[String], timestamp: i64) -> (Bytes, String, Value) {
+    use alloy::signers::{Signer, local::PrivateKeySigner};
+    let bytes = Bytes::from(
+        serde_json::to_vec(&serde_json::json!({
+            "version": "v3",
+            "type": "scene",
+            "pointers": pointers,
+            "timestamp": timestamp,
+            "content": [],
+            "metadata": {}
+        }))
+        .unwrap(),
+    );
+    let id = hash_bytes_v1(&bytes);
+    let key: PrivateKeySigner = DEPLOYER_KEY.parse().unwrap();
+    let signature = key.sign_message(id.as_bytes()).await.unwrap().to_string();
+    let chain = serde_json::json!([
+        {"type": "SIGNER", "payload": format!("{:#x}", key.address())},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": signature}
+    ]);
+    (bytes, id, chain)
+}
+
+#[tokio::test]
+async fn a_deploy_whose_write_fails_does_not_hold_its_pointers() {
+    let (deployer, tmp) = deployer_over_temp_storage("persist-fails").await;
+    let pointers = vec!["4,4".to_string()];
+    let (bytes, id, chain) = signed_scene(&pointers, chrono::Utc::now().timestamp_millis()).await;
+    let err = deployer
+        .deploy_entity(vec![bytes], &id, chain, "LOCAL")
+        .await
+        .unwrap_err();
+    assert!(matches!(err, DeployFailure::Unavailable(_)), "{err:?}");
+    assert!(!deployer.is_rate_limited("scene", "4,4"));
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+/// The first deploy holds its pointer while its write is in flight (a database that accepts
+/// connections and never answers), so a concurrent deploy to that pointer is refused.
+#[tokio::test]
+async fn of_two_concurrent_deploys_to_one_pointer_only_one_passes_the_limit() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (connected_tx, connected_rx) = tokio::sync::oneshot::channel();
+    let silent = tokio::spawn(async move {
+        let (socket, _) = listener.accept().await.unwrap();
+        connected_tx.send(()).unwrap();
+        std::future::pending::<()>().await;
+        drop(socket);
+    });
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .acquire_timeout(Duration::from_secs(60))
+        .connect_lazy(&format!("postgres://nobody@{addr}/nowhere"))
+        .unwrap();
+    let (storage, tmp) = temp_storage("concurrent").await;
+    let deployer = Arc::new(WriteDeployer::new(pool, storage, Arc::new(NoEip1654)));
+    let pointers = vec!["5,5".to_string()];
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (first_bytes, first_id, first_chain) = signed_scene(&pointers, now_ms).await;
+    let (second_bytes, second_id, second_chain) = signed_scene(&pointers, now_ms + 1).await;
+
+    let first = {
+        let deployer = Arc::clone(&deployer);
+        tokio::spawn(async move {
+            deployer
+                .deploy_entity(vec![first_bytes], &first_id, first_chain, "LOCAL")
+                .await
+        })
+    };
+    connected_rx.await.unwrap();
+
+    let second = tokio::time::timeout(
+        Duration::from_secs(10),
+        deployer.deploy_entity(vec![second_bytes], &second_id, second_chain, "LOCAL"),
+    )
+    .await
+    .expect("the second deploy is refused, not queued behind the first")
+    .unwrap_err();
+    assert!(
+        second.errors()[0].starts_with("Entity rate limited"),
+        "{second:?}"
+    );
+
+    first.abort();
+    assert!(first.await.unwrap_err().is_cancelled());
+    assert!(
+        !deployer.is_rate_limited("scene", "5,5"),
+        "a cancelled deploy releases its pointers"
+    );
+    silent.abort();
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[test]
 fn has_newer_entity_timestamp_and_tiebreak() {
     assert!(stored_is_newer_or_equal(200, "bafy_a", 100, "bafy_z"));
     assert!(!stored_is_newer_or_equal(50, "bafy_z", 100, "bafy_a"));
@@ -672,8 +811,6 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
         return;
     };
     let (storage, tmp) = temp_storage("e2e").await;
-    // The rate limiter records the pointers before validation runs, so every attempt below
-    // gets its own deployer: a rejected attempt must not shadow the next one for 20 s.
     let fresh = || WriteDeployer::new(pool.clone(), storage.clone(), Arc::new(NoEip1654));
     let scope = Scope::new();
     let pointers = scope.pointers(&["7,7"]);
@@ -738,7 +875,22 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
         "{forged:?}"
     );
 
-    fresh()
+    let deployer = fresh();
+    deployer
+        .deploy_entity(
+            vec![entity_bytes.clone(), model.clone()],
+            &entity_id,
+            chain.clone(),
+            "LOCAL",
+        )
+        .await
+        .expect("a signed scene with every file at hand deploys");
+    assert!(
+        deployer.is_rate_limited("scene", &pointers[0]),
+        "an accepted deploy holds its pointer"
+    );
+    deployer.clear_rate_limits();
+    deployer
         .deploy_entity(
             vec![entity_bytes.clone(), model.clone()],
             &entity_id,
@@ -746,7 +898,11 @@ async fn deploy_entity_persists_a_signed_local_scene_end_to_end() {
             "LOCAL",
         )
         .await
-        .expect("a signed scene with every file at hand deploys");
+        .expect("a deploy of an already deployed entity succeeds");
+    assert!(
+        !deployer.is_rate_limited("scene", &pointers[0]),
+        "a deploy that inserted nothing does not hold the pointer"
+    );
 
     let row: (String, String, Vec<String>, Option<Value>) = sqlx::query_as(
         "SELECT deployer_address, entity_type, entity_pointers, entity_metadata

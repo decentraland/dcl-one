@@ -199,10 +199,72 @@ impl TtlBucket {
         ttl_hit || size_hit
     }
 
+    #[cfg(test)]
     fn record(&mut self, pointers: &[String]) {
         let now = tokio::time::Instant::now();
         for p in pointers {
             self.entries.insert(p.clone(), now);
+        }
+    }
+
+    /// The check and the record in one step: `None` when limited.
+    fn try_reserve(&mut self, pointers: &[String]) -> Option<Held> {
+        if self.is_limited(pointers) {
+            return None;
+        }
+        let at = tokio::time::Instant::now();
+        let mut prev = HashMap::with_capacity(pointers.len());
+        for p in pointers {
+            let old = self.entries.insert(p.clone(), at);
+            prev.entry(p.clone()).or_insert(old);
+        }
+        Some(Held { at, prev })
+    }
+
+    /// Restores each pointer's earlier entry, unless something re-recorded it since.
+    fn release(&mut self, held: Held) {
+        for (p, old) in held.prev {
+            if self.entries.get(&p) != Some(&held.at) {
+                continue;
+            }
+            match old {
+                Some(t) => self.entries.insert(p, t),
+                None => self.entries.remove(&p),
+            };
+        }
+    }
+}
+
+struct Held {
+    at: tokio::time::Instant,
+    prev: HashMap<String, Option<tokio::time::Instant>>,
+}
+
+/// Pointers held from a passed check until the deploy is accepted ([`Reservation::keep`]);
+/// dropping it releases them.
+struct Reservation<'a> {
+    limiter: &'a DeployRateLimiter,
+    etype: String,
+    held: Option<Held>,
+    unchanged: Option<Held>,
+}
+
+impl Reservation<'_> {
+    fn keep(mut self) {
+        self.held = None;
+        self.unchanged = None;
+    }
+}
+
+impl Drop for Reservation<'_> {
+    fn drop(&mut self) {
+        if let Some(held) = self.held.take()
+            && let Some(bk) = self.limiter.buckets.lock().get_mut(self.etype.as_str())
+        {
+            bk.release(held);
+        }
+        if let Some(held) = self.unchanged.take() {
+            self.limiter.unchanged_profile.lock().release(held);
         }
     }
 }
@@ -234,10 +296,35 @@ impl DeployRateLimiter {
             .unwrap_or(false)
     }
 
+    #[cfg(test)]
     fn record(&self, etype: &str, pointers: &[String]) {
         if let Some(bk) = self.buckets.lock().get_mut(etype) {
             bk.record(pointers);
         }
+    }
+
+    /// Checks and records the pointers atomically (and in the unchanged-profile bucket when
+    /// `unchanged`); `None` when either bucket is limited.
+    fn reserve(
+        &self,
+        etype: &str,
+        pointers: &[String],
+        unchanged: bool,
+    ) -> Option<Reservation<'_>> {
+        let held = match self.buckets.lock().get_mut(etype) {
+            Some(bk) => Some(bk.try_reserve(pointers)?),
+            None => None,
+        };
+        let mut reservation = Reservation {
+            limiter: self,
+            etype: etype.to_string(),
+            held,
+            unchanged: None,
+        };
+        if unchanged {
+            reservation.unchanged = Some(self.unchanged_profile.lock().try_reserve(pointers)?);
+        }
+        Some(reservation)
     }
 
     fn is_unchanged_limited(&self, pointers: &[String]) -> bool {
@@ -250,10 +337,6 @@ impl DeployRateLimiter {
             bucket.entries.clear();
         }
         self.unchanged_profile.lock().entries.clear();
-    }
-
-    fn record_unchanged(&self, pointers: &[String]) {
-        self.unchanged_profile.lock().record(pointers);
     }
 }
 
@@ -581,6 +664,7 @@ impl WriteDeployer {
                 entity.pointers.join(",")
             )]
         };
+        // An early refusal; the reservation after validation is the binding check.
         if self
             .rate_limiter
             .is_rate_limited(entity.entity_type.as_str(), &pointers_lc)
@@ -641,14 +725,18 @@ impl WriteDeployer {
 
         let validation_us = validation_started.elapsed().as_micros() as u64;
         let persist_started = Instant::now();
-        let creation_ts = self
+        // Dropped on any error below, so only an accepted deploy holds its pointers.
+        let Some(reservation) =
+            self.rate_limiter
+                .reserve(entity.entity_type.as_str(), &pointers_lc, content_unchanged)
+        else {
+            return Err(rate_limited_msg().into());
+        };
+        let persisted = self
             .persist(&entity, &entity_bytes, &uploads, &auth_chain, context)
             .await?;
-        // Only an accepted deploy counts, so rejected ones cannot hold a pointer.
-        self.rate_limiter
-            .record(entity.entity_type.as_str(), &pointers_lc);
-        if content_unchanged {
-            self.rate_limiter.record_unchanged(&pointers_lc);
+        if persisted.inserted {
+            reservation.keep();
         }
 
         let persist_us = persist_started.elapsed().as_micros() as u64;
@@ -656,8 +744,14 @@ impl WriteDeployer {
         drop(vfiles);
         drop(uploads);
         tracing::debug!(target: "catalyst_perf", phase="deploy", entity_id, hash_us, validation_us, persist_us, cleanup_us=cleanup_started.elapsed().as_micros() as u64, elapsed_us=started.elapsed().as_micros() as u64);
-        Ok(creation_ts)
+        Ok(persisted.creation_ts)
     }
+}
+
+struct Persisted {
+    creation_ts: i64,
+    /// `false` when the entity was already deployed.
+    inserted: bool,
 }
 
 const NEWER_ENTITY_MESSAGE: &str =
@@ -838,7 +932,7 @@ impl WriteDeployer {
         uploads: &[HashedUpload],
         auth_chain: &AuthChain,
         context: &str,
-    ) -> Result<i64, DeployFailure> {
+    ) -> Result<Persisted, DeployFailure> {
         let unavailable = |e: String| DeployFailure::Unavailable(vec![e]);
         let started = Instant::now();
         store_deployment_files(
@@ -923,7 +1017,10 @@ impl WriteDeployer {
         }
         let Some(dep_id) = outcome.dep_id else {
             info!(entity_id = %entity.id, "entity already deployed; treating as success");
-            return Ok(now_ms);
+            return Ok(Persisted {
+                creation_ts: now_ms,
+                inserted: false,
+            });
         };
         info!(
             entity_id = %entity.id,
@@ -936,7 +1033,10 @@ impl WriteDeployer {
         if let Some(forwarder) = forward {
             forwarder.kick();
         }
-        Ok(now_ms)
+        Ok(Persisted {
+            creation_ts: now_ms,
+            inserted: true,
+        })
     }
 }
 
