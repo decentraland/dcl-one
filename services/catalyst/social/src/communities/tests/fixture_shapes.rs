@@ -99,7 +99,7 @@ impl Seed<'_> {
             .as_ref()
             .unwrap()["data"];
         self.clear().await;
-        self.rig.state.profiles.clear();
+        self.rig.state.profiles.clear().await;
         self.community_row(
             COMMUNITY,
             data["name"].as_str().unwrap(),
@@ -164,6 +164,8 @@ impl Seed<'_> {
         .execute(&self.rig.pool)
         .await
         .unwrap();
+        sqlx::query("INSERT INTO content.active_pointers(pointer,entity_id,entity_type) VALUES($1,$2,'profile') ON CONFLICT(pointer) DO UPDATE SET entity_id=EXCLUDED.entity_id")
+            .bind(address).bind(entity_of(picture)).execute(&self.rig.pool).await.unwrap();
     }
 
     /// A member row of a members capture and its profile.

@@ -62,6 +62,20 @@ CREATE TABLE social.friendship_mutation_limits (
 CREATE INDEX friendship_mutation_limits_expiry_idx
     ON social.friendship_mutation_limits (expires_at_ms, key) WHERE expires_at_ms IS NOT NULL;
 
+-- Legacy registry minimal-profile cache. One shared fact per exact source
+-- cache key: single reads use the requested pointer; batch fills use public
+-- avatar.userId. Expiry is600s after last successful upsert; no negative entries
+-- or content-write invalidation. Bounded expiry work orders this index.
+CREATE TABLE social.registry_profile_cache (
+    profile_key text NOT NULL PRIMARY KEY,
+    profile jsonb NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    CONSTRAINT registry_profile_cache_object CHECK(jsonb_typeof(profile)='object')
+);
+CREATE INDEX registry_profile_cache_expiry_idx
+    ON social.registry_profile_cache(expires_at,profile_key);
+
+
 -- ── friendships ────────────────────────────────────────────────────────────
 
 -- One canonical row per unordered pair. last_action/last_actor/last_action_at

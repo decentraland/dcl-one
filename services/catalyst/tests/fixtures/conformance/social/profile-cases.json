@@ -25,6 +25,10 @@
         "sha256": "1bedbfccb17dd92391e43f06564bf2e4a2ff70e53b36c8cb1d5ff44bfb07458a"
       },
       {
+        "path": "src/logic/community/owners.ts",
+        "sha256": "6f17cd102f41bf183a2507f3cf9da100a67eade865b7472cdc89ff1abac8c293"
+      },
+      {
         "path": "src/controllers/handlers/rpc/get-friends.ts",
         "sha256": "83a5b62c091b7b5c4d4cc5dc4e81a87c8f54445575e5b289d4fffd37c90d6d5e"
       },
@@ -57,7 +61,7 @@
   "runtime": {
     "node": "v26.12.0"
   },
-  "scope": "Actual source registry component (injected HTTP/Redis) plus real RPC handlers/DTO parsers; friendship/block database dependencies are injected. Captures public profile aliases, source single-vs-list cache key behavior, cached+fetched duplicates and positive normal profiles. Does not alter/authenticate wallet identities.",
+  "scope": "Two actual source registry components share the injected Redis cache and alternate A/B/A lookups, plus real RPC handlers/DTO parsers; friendship/block database dependencies are injected. Captures public profile aliases, source single-vs-list cache key behavior, cached+fetched duplicates and positive normal profiles. Does not alter/authenticate wallet identities.",
   "caller": "0x9111111111111111111111111111111111111111",
   "owner": "0x9222222222222222222222222222222222222222",
   "alias": "0x9333333333333333333333333333333333333333",
@@ -84,6 +88,7 @@
       "steps": [
         {
           "operation": "getFriends",
+          "reader": "A",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -113,6 +118,7 @@
         },
         {
           "operation": "getFriends",
+          "reader": "B",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -145,6 +151,7 @@
         },
         {
           "operation": "getMutualFriends",
+          "reader": "A",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -179,7 +186,65 @@
           ]
         },
         {
+          "operation": "getOwnerName",
+          "reader": "B",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "expected_json": "Source profile",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222",
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        },
+        {
+          "operation": "getOwnerNames",
+          "reader": "A",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "expected_json": {
+            "0x9333333333333333333333333333333333333333": "Source profile"
+          },
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222",
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        },
+        {
           "operation": "blockUser",
+          "reader": "B",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -210,6 +275,9 @@
             ],
             [
               "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
             ]
           ],
           "cache_keys": [
@@ -219,6 +287,7 @@
         },
         {
           "operation": "getFriends",
+          "reader": "A",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -258,6 +327,9 @@
             ],
             [
               "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
             ]
           ],
           "cache_keys": [
@@ -267,6 +339,7 @@
         },
         {
           "operation": "getBlockedUsers",
+          "reader": "B",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -309,6 +382,9 @@
             ],
             [
               "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
             ]
           ],
           "cache_keys": [
@@ -318,6 +394,7 @@
         },
         {
           "operation": "getPendingFriendshipRequests",
+          "reader": "A",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -335,6 +412,9 @@
           },
           "expected_hex": "0a001a0408011001",
           "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
             [
               "0x9222222222222222222222222222222222222222"
             ],
@@ -364,6 +444,7 @@
         },
         {
           "operation": "getSentFriendshipRequests",
+          "reader": "B",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -381,6 +462,9 @@
           },
           "expected_hex": "0a001a0408011001",
           "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
             [
               "0x9222222222222222222222222222222222222222"
             ],
@@ -413,6 +497,7 @@
         },
         {
           "operation": "unblockUser",
+          "reader": "A",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -431,6 +516,9 @@
           },
           "expected_hex": "0a690a670a2a307839333333333333333333333333333333333333333333333333333333333333333333333333333333120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67",
           "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
             [
               "0x9222222222222222222222222222222222222222"
             ],
@@ -484,6 +572,7 @@
       "steps": [
         {
           "operation": "getFriends",
+          "reader": "A",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -512,7 +601,42 @@
           ]
         },
         {
+          "operation": "getOwnerName",
+          "reader": "B",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "expected_json": "Source profile",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222"
+          ]
+        },
+        {
+          "operation": "getOwnerNames",
+          "reader": "A",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "expected_json": {
+            "0x9222222222222222222222222222222222222222": "Source profile"
+          },
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222"
+          ]
+        },
+        {
           "operation": "blockUser",
+          "reader": "B",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -542,6 +666,7 @@
         },
         {
           "operation": "getBlockedUsers",
+          "reader": "A",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -572,6 +697,7 @@
         },
         {
           "operation": "getPendingFriendshipRequests",
+          "reader": "B",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -611,6 +737,7 @@
         },
         {
           "operation": "getSentFriendshipRequests",
+          "reader": "A",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -650,6 +777,7 @@
         },
         {
           "operation": "unblockUser",
+          "reader": "B",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -713,6 +841,7 @@
       "steps": [
         {
           "operation": "getFriends",
+          "reader": "A",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -742,6 +871,7 @@
         },
         {
           "operation": "getFriendsMixed",
+          "reader": "B",
           "targets": [
             "0x9444444444444444444444444444444444444444",
             "0x9222222222222222222222222222222222222222"
@@ -801,6 +931,7 @@
       "steps": [
         {
           "operation": "getFriends",
+          "reader": "A",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -821,6 +952,7 @@
         },
         {
           "operation": "blockUser",
+          "reader": "B",
           "targets": [
             "0x9222222222222222222222222222222222222222"
           ],
@@ -842,6 +974,196 @@
           "fetches": [
             [
               "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": []
+        },
+        {
+          "operation": "getOwnerName",
+          "reader": "A",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "expected_error": "Invalid profile received from registry: 0x9222222222222222222222222222222222222222",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": []
+        }
+      ]
+    },
+    {
+      "id": "missing-profile-owner",
+      "documents": {},
+      "steps": [
+        {
+          "operation": "getOwnerName",
+          "reader": "A",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "expected_error": "Profile not found: 0x9222222222222222222222222222222222222222",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": []
+        },
+        {
+          "operation": "getOwnerNames",
+          "reader": "B",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "expected_json": {},
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": []
+        }
+      ]
+    },
+    {
+      "id": "cache-write-failure",
+      "documents": {
+        "0x9222222222222222222222222222222222222222": {
+          "avatars": [
+            {
+              "userId": "0x9222222222222222222222222222222222222222",
+              "name": "Source profile",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        },
+        "0x9444444444444444444444444444444444444444": {
+          "avatars": [
+            {
+              "userId": "0x9444444444444444444444444444444444444444",
+              "name": "Source profile",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "operation": "getFriendsMixed",
+          "reader": "A",
+          "targets": [
+            "0x9444444444444444444444444444444444444444",
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "friends": [
+              {
+                "address": "0x9444444444444444444444444444444444444444",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              },
+              {
+                "address": "0x9222222222222222222222222222222222222222",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              }
+            ],
+            "paginationData": {
+              "total": 2,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a670a2a307839343434343434343434343434343434343434343434343434343434343434343434343434343434120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e670a670a2a307839323232323232323232323232323232323232323232323232323232323232323232323232323232120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67120408021001",
+          "fetches": [
+            [
+              "0x9444444444444444444444444444444444444444",
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": []
+        },
+        {
+          "operation": "getFriendsReverse",
+          "reader": "B",
+          "targets": [
+            "0x9222222222222222222222222222222222222222",
+            "0x9444444444444444444444444444444444444444"
+          ],
+          "response": {
+            "friends": [
+              {
+                "address": "0x9222222222222222222222222222222222222222",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              },
+              {
+                "address": "0x9444444444444444444444444444444444444444",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              }
+            ],
+            "paginationData": {
+              "total": 2,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a670a2a307839323232323232323232323232323232323232323232323232323232323232323232323232323232120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e670a670a2a307839343434343434343434343434343434343434343434343434343434343434343434343434343434120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67120408021001",
+          "fetches": [
+            [
+              "0x9444444444444444444444444444444444444444",
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222",
+              "0x9444444444444444444444444444444444444444"
+            ]
+          ],
+          "cache_keys": []
+        },
+        {
+          "operation": "getOwnerName",
+          "reader": "A",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "expected_json": "Source profile",
+          "fetches": [
+            [
+              "0x9444444444444444444444444444444444444444",
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222",
+              "0x9444444444444444444444444444444444444444"
             ],
             [
               "0x9222222222222222222222222222222222222222"

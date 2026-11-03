@@ -335,17 +335,20 @@ impl Rig {
             "avatar": { "snapshots": { "face256": "bafkface" } },
             "nameColor": { "r": 0.5, "g": 0.25, "b": 1.0 }
         }] } });
+        let entity_id = format!("bafkprofile{}", Uuid::new_v4().simple());
         sqlx::query(
             "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
                  entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
              VALUES ($1, 'v3', 'profile', $2, $3, timezone('UTC', now()), ARRAY[$1]::text[], timezone('UTC', now()), '[]'::json)",
         )
         .bind(&w.address)
-        .bind(format!("bafkprofile{}", Uuid::new_v4().simple()))
+        .bind(&entity_id)
         .bind(metadata)
         .execute(&self.pool)
         .await
         .unwrap();
+        sqlx::query("INSERT INTO content.active_pointers(pointer,entity_id,entity_type) VALUES($1,$2,'profile') ON CONFLICT(pointer) DO UPDATE SET entity_id=EXCLUDED.entity_id")
+            .bind(&w.address).bind(&entity_id).execute(&self.pool).await.unwrap();
     }
 
     fn name_owner(&self, wallet: &Wallet, name: &str) {

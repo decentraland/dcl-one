@@ -1,18 +1,18 @@
 //! Profile fields exposed by the social RPC, resolved from the active profile
 //! entity in the shared content database. The first avatar must have a userId,
 //! name (or unclaimedName) and face256; the stored face256 is returned verbatim.
-//! List procedures omit unavailable profiles, while block/unblock responses and
-//! connectivity may represent an unavailable profile with empty display fields.
+//! List procedures omit unavailable profiles; block/unblock keep address-only
+//! fallbacks. Connectivity subscriptions skip missing profiles. Public identity
+//! and source cache facts are shared with communities, separate from actor keys.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use sqlx::PgPool;
 
+use crate::communities::profiles::{RegistryError, RegistryProfile, RegistryReader};
 use crate::rpc::proto::common::Color3;
 use crate::rpc::proto::v2::{BlockedUserProfile, FriendProfile};
-use crate::shared::cache::TtlMap;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct NameColor {
@@ -41,50 +41,34 @@ pub struct ProfileInfo {
     pub name_color: Option<NameColor>,
 }
 
-const CACHE_TTL: Duration = Duration::from_secs(600);
-const CACHE_MAX_ENTRIES: usize = 100_000;
-
-/// Preserves first-seen order without a quadratic scan, so a 10^3-friend
-/// page stays linear.
+/// Preserves first-seen order without a quadratic scan.
+#[cfg(test)]
 fn dedup_lowercased(addresses: &[String]) -> Vec<String> {
-    crate::communities::profiles::first_seen(addresses.iter().map(|a| a.to_lowercase()))
+    crate::communities::profiles::first_seen(addresses.iter().map(|address| address.to_lowercase()))
 }
-
-/// `active_pointers` names the profile entity of each wallet (the pointer is
-/// the lowercase address); the metadata read is one `= ANY` over the
-/// `deployments_entity_id_key` probe of those ids. The column wraps the
-/// deployed metadata as `{"v": ...}` (content::queries).
-const PROFILE_SQL: &str = "\
-    SELECT ap.pointer, d.entity_metadata::jsonb #> '{v,avatars,0}' AS avatar \
-    FROM content.active_pointers ap \
-    JOIN content.deployments d ON d.entity_id = ap.entity_id \
-    WHERE ap.pointer = ANY($1::text[]) AND d.entity_type = 'profile' \
-    ORDER BY array_position($1::text[], ap.pointer)";
 
 #[derive(Clone)]
 pub struct Profiles {
-    pool: Option<PgPool>,
-    cache: Arc<TtlMap<String, Option<ProfileInfo>>>,
+    registry: Arc<RegistryReader>,
 }
-
 impl Profiles {
-    /// A `None` pool resolves no profiles.
     pub fn new(pool: Option<PgPool>) -> Self {
-        Self {
-            pool,
-            cache: Arc::new(TtlMap::bounded(CACHE_TTL, CACHE_MAX_ENTRIES)),
-        }
+        Self::from_registry(Arc::new(RegistryReader::new(pool)))
     }
-
+    pub fn from_registry(registry: Arc<RegistryReader>) -> Self {
+        Self { registry }
+    }
+    pub async fn cleanup_expired(&self) -> Result<u64, sqlx::Error> {
+        self.registry.cleanup_expired().await
+    }
     pub async fn get_profiles(&self, addresses: &[String]) -> HashMap<String, ProfileInfo> {
-        self.get_profiles_result(addresses).await.unwrap_or_else(|error| {
-            tracing::warn!(%error,"profile enrichment query failed; retaining fresh cached values");
-            addresses.iter().filter_map(|address| self.cache.get_fresh(&address.to_lowercase()).flatten().map(|profile|(profile.address.clone(),profile))).collect()
-        })
+        self.get_profiles_result(addresses)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error,"profile source unavailable");
+                HashMap::new()
+            })
     }
-
-    /// Registry batch reduction keys by avatar.userId. Callers matching a
-    /// friendship/request wallet must use this key, never the requested pointer.
     pub(crate) async fn get_profiles_result(
         &self,
         addresses: &[String],
@@ -96,10 +80,6 @@ impl Profiles {
             .map(|profile| (profile.address.clone(), profile))
             .collect())
     }
-
-    /// Source registry.getProfiles returns cached values first, followed by
-    /// fetched profiles. A historical pointer alias may therefore appear twice
-    /// after getProfile cached that profile under the requested pointer.
     pub(crate) async fn get_profiles_list_result(
         &self,
         addresses: &[String],
@@ -111,123 +91,29 @@ impl Profiles {
             .map(|(_, profile)| profile)
             .collect())
     }
-
-    /// Preserve the requested wallet separately from the public avatar identity
-    /// for topology/authorization guards. It is never substituted into the DTO.
+    /// Requested actor remains separate from the public profile for guards.
     pub(crate) async fn get_profiles_with_actors_result(
         &self,
         addresses: &[String],
     ) -> Result<Vec<(String, ProfileInfo)>, sqlx::Error> {
-        let wanted = dedup_lowercased(addresses);
-        let mut profiles = wanted
-            .iter()
-            .filter_map(|address| {
-                self.cache
-                    .get_fresh(address)
-                    .flatten()
-                    .map(|profile| (address.clone(), profile))
-            })
-            .collect::<Vec<_>>();
-        let cached_identities = profiles
-            .iter()
-            .map(|(_, profile)| profile.address.clone())
-            .collect::<HashSet<_>>();
-        let missing = wanted
+        Ok(self
+            .registry
+            .batch(addresses)
+            .await?
             .into_iter()
-            .filter(|address| !cached_identities.contains(address))
-            .collect::<Vec<_>>();
-        if !missing.is_empty() {
-            let fetched = self.load_profiles(&missing).await?;
-            for (_, profile) in &fetched {
-                self.cache
-                    .insert(profile.address.clone(), Some(profile.clone()));
-            }
-            profiles.extend(fetched);
-        }
-        Ok(profiles)
+            .map(|(actor, profile)| (actor, rpc_profile(profile)))
+            .collect())
     }
-
-    /// Strict registry.getProfile semantics for subscriptions and best-effort
-    /// block enrichment: cache under the requested pointer, return avatar.userId.
     pub(crate) async fn get_profile_result(
         &self,
         address: &str,
     ) -> Result<Option<ProfileInfo>, sqlx::Error> {
-        let address = address.to_lowercase();
-        if let Some(profile) = self.cache.get_fresh(&address).flatten() {
-            return Ok(Some(profile));
+        match self.registry.single(address).await {
+            Ok(profile) => Ok(Some(rpc_profile(profile))),
+            Err(RegistryError::Database(error)) => Err(error),
+            Err(RegistryError::NotFound(_) | RegistryError::Invalid(_)) => Ok(None),
         }
-        let profile = self
-            .load_profiles(std::slice::from_ref(&address))
-            .await?
-            .into_iter()
-            .next()
-            .map(|(_, profile)| profile);
-        if let Some(profile) = &profile {
-            self.cache.insert(address, Some(profile.clone()));
-        }
-        Ok(profile)
     }
-
-    async fn load_profiles(
-        &self,
-        addresses: &[String],
-    ) -> Result<Vec<(String, ProfileInfo)>, sqlx::Error> {
-        let Some(pool) = &self.pool else {
-            return Ok(Vec::new());
-        };
-        let rows = sqlx::query_as::<_, (String, Option<serde_json::Value>)>(PROFILE_SQL)
-            .bind(addresses)
-            .fetch_all(pool)
-            .await?;
-        let mut profiles = Vec::new();
-        for (actor, avatar) in rows {
-            let Some(avatar) = avatar else {
-                continue;
-            };
-            let nonempty = |key| {
-                avatar
-                    .get(key)
-                    .and_then(serde_json::Value::as_str)
-                    .filter(|value| !value.is_empty())
-            };
-            let Some(address) = nonempty("userId") else {
-                continue;
-            };
-            let Some(name) = nonempty("name").or_else(|| nonempty("unclaimedName")) else {
-                continue;
-            };
-            let Some(picture) = avatar
-                .pointer("/avatar/snapshots/face256")
-                .and_then(serde_json::Value::as_str)
-                .filter(|value| !value.is_empty())
-            else {
-                continue;
-            };
-            let name_color = avatar.get("nameColor").and_then(|color| {
-                Some(NameColor {
-                    r: color.get("r")?.as_f64()? as f32,
-                    g: color.get("g")?.as_f64()? as f32,
-                    b: color.get("b")?.as_f64()? as f32,
-                })
-            });
-            profiles.push((
-                actor,
-                ProfileInfo {
-                    address: address.to_lowercase(),
-                    name: name.into(),
-                    profile_picture_url: picture.into(),
-                    has_claimed_name: avatar
-                        .get("hasClaimedName")
-                        .and_then(serde_json::Value::as_bool)
-                        .unwrap_or(false),
-                    name_color,
-                },
-            ));
-        }
-        Ok(profiles)
-    }
-
     pub async fn get_profile(&self, address: &str) -> Option<ProfileInfo> {
         self.get_profile_result(address)
             .await
@@ -247,26 +133,7 @@ impl Profiles {
     /// fails a friendship upsert; without one (a node with no content, the
     /// tests' pool-less reader) every wallet is the placeholder.
     pub fn requires_profiles(&self) -> bool {
-        self.pool.is_some()
-    }
-
-    /// The profiles found, and whether a missing one means "no profile": a
-    /// failed read only says the source could not answer, so it leaves
-    /// nobody out (the cached profiles and placeholders, as [`Self::get_profiles`]).
-    pub async fn known_profiles(
-        &self,
-        addresses: &[String],
-    ) -> (HashMap<String, ProfileInfo>, bool) {
-        if !self.requires_profiles() {
-            return (self.get_profiles(addresses).await, false);
-        }
-        match self.get_profiles_result(addresses).await {
-            Ok(map) => (map, true),
-            Err(error) => {
-                tracing::warn!(%error, "profile query failed; keeping every wallet");
-                (self.get_profiles(addresses).await, false)
-            }
-        }
+        self.registry.attached()
     }
 
     /// `address`'s profile, or the placeholder; `None` only when a profile
@@ -281,20 +148,6 @@ impl Profiles {
                 Some(friend_profile(address, None))
             }
         }
-    }
-
-    /// [`Self::friend_profiles`] without the wallets
-    /// [`Self::existing_friend_profile`] would leave out, in input order
-    /// (upstream `parseProfilesToFriends` over the registry's answer).
-    pub async fn existing_friend_profiles(&self, addresses: &[String]) -> Vec<FriendProfile> {
-        let (map, strict) = self.known_profiles(addresses).await;
-        addresses
-            .iter()
-            .filter_map(|a| {
-                let info = map.get(&a.to_lowercase());
-                (info.is_some() || !strict).then(|| friend_profile(a, info))
-            })
-            .collect()
     }
 
     /// Resolved profiles in registry order: cached values before fresh values.
@@ -321,6 +174,23 @@ impl Profiles {
             self.get_profile(address).await.as_ref(),
             blocked_at_ms,
         )
+    }
+}
+
+fn rpc_profile(profile: RegistryProfile) -> ProfileInfo {
+    let name_color = profile.name_color.as_ref().and_then(|color| {
+        Some(NameColor {
+            r: color.get("r")?.as_f64()? as f32,
+            g: color.get("g")?.as_f64()? as f32,
+            b: color.get("b")?.as_f64()? as f32,
+        })
+    });
+    ProfileInfo {
+        address: profile.address,
+        name: profile.name,
+        profile_picture_url: profile.profile_picture_url,
+        has_claimed_name: profile.has_claimed_name,
+        name_color,
     }
 }
 
@@ -478,6 +348,13 @@ mod tests {
                 .bind(&address).bind(&entity).bind(metadata).execute(&pool).await.unwrap();
             sqlx::query("INSERT INTO content.active_pointers(pointer,entity_id,entity_type) VALUES($1,$2,'profile') ON CONFLICT(pointer) DO UPDATE SET entity_id=EXCLUDED.entity_id")
                 .bind(&address).bind(&entity).execute(&pool).await.unwrap();
+            // Each reducer case models a fresh source Redis cache; a separate
+            // regression covers shared retention across actual content updates.
+            sqlx::query("DELETE FROM social.registry_profile_cache WHERE profile_key=$1")
+                .bind(&address)
+                .execute(&pool)
+                .await
+                .unwrap();
             let profiles = Profiles::new(Some(pool.clone()));
             let result = profiles
                 .friend_profiles(&[address.to_uppercase()])

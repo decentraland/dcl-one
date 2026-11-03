@@ -2669,7 +2669,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
-          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
+          "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
         }
       ],
       "gaps": [],
@@ -2765,7 +2765,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
-          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
+          "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
         }
       ],
       "gaps": [],
@@ -2818,7 +2818,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
-          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
+          "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
         }
       ],
       "gaps": [],
@@ -2895,7 +2895,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
-          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
+          "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
         }
       ],
       "gaps": [],
@@ -2924,7 +2924,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
-          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
+          "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
         }
       ],
       "gaps": [],
@@ -2977,7 +2977,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
-          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
+          "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
         }
       ],
       "gaps": [],
@@ -3221,7 +3221,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
-          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
+          "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
         }
       ],
       "gaps": [],
@@ -3365,7 +3365,7 @@
       ],
       "gaps": [
         "WKC_METRICS_RESET_AT_NIGHT=true does not reset the social view; the shared global recorder is preserved.",
-        "The committed44-family inventory finds11 literal shapes and33 missing literal sites requiring source/runtime review; entire production files are scanned, so inline-test sites are possible. Family interpretation, series initialization and histogram semantics are not proven. Node/V8-specific defaults are not fabricated."
+        "The committed44-family inventory records literal names/type/labels and missing-site review candidates; entire production files are scanned, so inline-test sites are possible. Runtime event mapping,buckets,initialization and Node/V8 defaults remain outside that static evidence."
       ],
       "remaining_verification": "Provider-specific default collectors, night reset semantics, actual disconnected scrape, runtime label/event interpretation and arbitrary wildcard/custom-path collisions remain unverified. Global sample values across processes are not compared."
     },
@@ -5625,7 +5625,7 @@
         "rpc_unary:RPC:getSentFriendshipRequests",
         "rpc_unary:RPC:unblockUser"
       ],
-      "description": "RPC historical single/list profile semantics now pass executed-source cases, while community owner single lookups and the one registry cache shared across domains remain to be consolidated. New profile-write identity validation remains enforced; current local RPC and community caches are distinct."
+      "description": "RPC and community adapters now share one source registry reader and600-second SQL cache facts over the existing pool, preserving single/batch keys across independent replicas and content updates. Core alias/TTL/error/upgrade/cleanup regressions pass. Community single owner route callsites still need the strict API wiring; import or drain of existing Redis cache values and remaining TTL is unverified at cutover."
     },
     {
       "id": "community-dependency-error-boundaries",

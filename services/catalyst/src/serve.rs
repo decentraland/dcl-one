@@ -2143,6 +2143,7 @@ fn social_states(
             metrics_reset_at_night: config.social.wkc_metrics_reset_at_night.as_deref()
                 == Some("true"),
             metrics_handle: Some(metrics_handle),
+            profile_source: Some(communities.profiles.registry()),
         },
         eip1654,
         comms.clone(),

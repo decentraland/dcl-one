@@ -126,6 +126,7 @@ pub struct Settings {
     pub metrics_reset_at_night: bool,
     /// Existing process recorder; this route installs no exporter or listener.
     pub metrics_handle: Option<crate::comms::metrics::PrometheusHandle>,
+    pub profile_source: Option<Arc<crate::communities::profiles::RegistryReader>>,
 }
 
 impl Default for Settings {
@@ -153,6 +154,7 @@ impl Default for Settings {
             metrics_bearer_token: None,
             metrics_reset_at_night: false,
             metrics_handle: None,
+            profile_source: None,
         }
     }
 }
@@ -186,7 +188,11 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
         voice: Arc<dyn VoiceRooms>,
     ) -> Self {
-        let profiles = Profiles::new(Some(pool.clone()));
+        let profiles = settings
+            .profile_source
+            .as_ref()
+            .map(|source| Profiles::from_registry(source.clone()))
+            .unwrap_or_else(|| Profiles::new(Some(pool.clone())));
         let ctx = Context::new(
             VoiceSettings {
                 private_voice_chat_expiration_ms: settings.private_voice_chat_expiration_ms,
@@ -259,6 +265,7 @@ impl State {
                 let ctx = limiter_ctx.clone();
                 async move {
                     ctx.friendship_limiter().cleanup_expired().await?;
+                    ctx.profiles().cleanup_expired().await?;
                     Ok(())
                 }
             },

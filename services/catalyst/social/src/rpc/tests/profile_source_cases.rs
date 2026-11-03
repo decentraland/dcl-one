@@ -20,6 +20,21 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
     let second = fixture["second"].as_str().unwrap();
     let db = Db::new(pool.clone());
     for case in fixture["cases"].as_array().unwrap() {
+        // The source fixture creates a fresh injected Redis map per scenario.
+        // Reset only these fixture-owned keys, preserving cache within steps.
+        sqlx::query("DELETE FROM social.registry_profile_cache WHERE profile_key=ANY($1::text[])")
+            .bind(vec![me, owner, alias, second])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let fail_cache = if case["id"] == "cache-write-failure" {
+            let name = format!("registry_refuse_{}", Uuid::new_v4().simple());
+            sqlx::query(sqlx::AssertSqlSafe(format!("CREATE FUNCTION social.{name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.profile_key='{owner}' THEN RAISE EXCEPTION 'fixture cache write failure'; END IF; RETURN NEW; END $$"))).execute(&pool).await.unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {name} BEFORE INSERT OR UPDATE ON social.registry_profile_cache FOR EACH ROW EXECUTE FUNCTION social.{name}()"))).execute(&pool).await.unwrap();
+            Some(name)
+        } else {
+            None
+        };
         let mut deployed = Vec::new();
         for (pointer, document) in case["documents"].as_object().unwrap() {
             let entity = format!("bafkreihistorical{}", Uuid::new_v4().simple());
@@ -29,14 +44,45 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
                 .bind(pointer).bind(&entity).execute(&pool).await.unwrap();
             deployed.push((pointer.clone(), entity));
         }
-        // One context per source scenario preserves the registry's single/list
-        // cache interaction across steps; database reads use matching fixtures.
-        let ctx = test_ctx(db.clone(), Arc::new(FakeVoiceRooms::new(pool.clone())));
+        // Independent contexts alternate A/B/A against shared cache facts,
+        // as two actual source registries share injected Redis in the capture.
+        let ctx_a = test_ctx(db.clone(), Arc::new(FakeVoiceRooms::new(pool.clone())));
+        let ctx_b = test_ctx(db.clone(), Arc::new(FakeVoiceRooms::new(pool.clone())));
         for step in case["steps"].as_array().unwrap() {
+            let ctx = if step["reader"] == "B" {
+                &ctx_b
+            } else {
+                &ctx_a
+            };
             for (a, b) in [(me, owner), (me, second), (second, owner)] {
                 cleanup_pair(&db, a, b).await;
             }
             let operation = step["operation"].as_str().unwrap();
+            if matches!(operation, "getOwnerName" | "getOwnerNames") {
+                let community = crate::communities::profiles::ProfilesCache::new(
+                    pool.clone(),
+                    Default::default(),
+                );
+                if operation == "getOwnerName" {
+                    let result = community.get_owner_name(owner).await;
+                    if let Some(error) = step["expected_error"].as_str() {
+                        assert_eq!(result.unwrap_err().to_string(), error)
+                    } else {
+                        assert_eq!(
+                            serde_json::to_value(result.unwrap()).unwrap(),
+                            step["expected_json"]
+                        )
+                    }
+                } else {
+                    assert_eq!(
+                        serde_json::to_value(community.get_owner_names(&[owner.to_string()]).await)
+                            .unwrap(),
+                        step["expected_json"]
+                    )
+                }
+                assert_source_cache_keys(&pool, &fixture, step).await;
+                continue;
+            }
             let targets = step["targets"].as_array().unwrap();
             if operation.starts_with("getFriends") || operation == "getMutualFriends" {
                 for (index, target) in targets.iter().enumerate() {
@@ -88,7 +134,7 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
                 offset: 0,
             });
             let encoded = match operation {
-                "getFriends" | "getFriendsMixed" => SocialServiceImpl
+                "getFriends" | "getFriendsMixed" | "getFriendsReverse" => SocialServiceImpl
                     .get_friends(GetFriendsPayload { pagination }, pctx)
                     .await
                     .unwrap()
@@ -181,6 +227,7 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
                     );
                 }
             }
+            assert_source_cache_keys(&pool, &fixture, step).await;
             if operation == "blockUser" || operation == "unblockUser" {
                 assert_eq!(
                     db.is_blocked(me, owner).await.unwrap(),
@@ -195,6 +242,7 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
         }
         if case["id"] == "historical-alias-lists-and-single-cache" {
             cleanup_pair(&db, me, owner).await;
+            let ctx = &ctx_a;
             let mut raw = ctx.pubsub().subscribe(me);
             let _ = SocialServiceImpl
                 .upsert_friendship(
@@ -226,6 +274,31 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
                 "raw updates retain the actor; RPC delivery enriches the public alias"
             );
         }
+        if let Some(name) = fail_cache {
+            let count: i64 = sqlx::query_scalar(
+                "SELECT count(*) FROM social.registry_profile_cache WHERE profile_key=$1",
+            )
+            .bind(owner)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            assert_eq!(
+                count, 0,
+                "the best-effort cache failure must not block returning fresh source profiles"
+            );
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP TRIGGER {name} ON social.registry_profile_cache"
+            )))
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DROP FUNCTION social.{name}()"
+            )))
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
         for (pointer, entity) in deployed {
             drop_profile(&pool, &pointer, &entity).await;
         }
@@ -233,4 +306,28 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
     for (a, b) in [(me, owner), (me, second), (second, owner)] {
         cleanup_pair(&db, a, b).await;
     }
+}
+
+async fn assert_source_cache_keys(pool: &PgPool, fixture: &Value, step: &Value) {
+    let keys = ["caller", "owner", "alias", "second"]
+        .map(|field| fixture[field].as_str().unwrap().to_string())
+        .to_vec();
+    let actual:Vec<String>=sqlx::query_scalar("SELECT profile_key FROM social.registry_profile_cache WHERE profile_key=ANY($1::text[]) AND expires_at>timezone('UTC',clock_timestamp()) ORDER BY profile_key").bind(keys).fetch_all(pool).await.unwrap();
+    let expected = step["cache_keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|key| {
+            key.as_str()
+                .unwrap()
+                .strip_prefix("catalyst:minimal:profile:")
+                .unwrap()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual, expected,
+        "{} shared cache facts must match actual source Redis",
+        step["operation"]
+    );
 }
