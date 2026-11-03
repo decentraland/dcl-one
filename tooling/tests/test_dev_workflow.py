@@ -93,7 +93,8 @@ class DevelopmentWorkflowTest(unittest.TestCase):
             {'id': 5, 'ref': 'refs/pull/150/merge'},
             {'id': 'unsafe', 'ref': 'refs/pull/150/merge'},
         ]}]
-        with patch.dict(os.environ, {'PR_NUMBER': '150', 'GITHUB_REPOSITORY': 'decentraland/dcl-one'}), \
+        with patch.dict(os.environ, {'PR_NUMBER': '150', 'GITHUB_REPOSITORY': 'decentraland/dcl-one',
+                                     'GITHUB_EVENT_NAME': 'pull_request_target'}), \
                 patch('subprocess.check_output', return_value=json.dumps(pages)) as listing, \
                 patch('subprocess.run') as deletion, patch('builtins.print'):
             exec(compile(script, str(CLEANUP), 'exec'), {})
