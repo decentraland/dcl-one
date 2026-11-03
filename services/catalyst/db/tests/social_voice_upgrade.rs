@@ -20,10 +20,23 @@ const VOICE_FACTS: &str = include_str!(concat!(
     "/schemas/41_social_voice_notifications.sql"
 ));
 
+const PRIVATE_INDEXES: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/42_social_private_voice_indexes.sql"
+));
 fn release_v3() -> String {
-    let directive = "\\ir ../41_social_voice_notifications.sql";
-    assert_eq!(RELEASE_V3.matches(directive).count(), 1);
-    RELEASE_V3.replace(directive, VOICE_FACTS)
+    let mut release = RELEASE_V3.to_owned();
+    for (directive, canonical) in [
+        ("\\ir ../41_social_voice_notifications.sql", VOICE_FACTS),
+        (
+            "\\ir ../42_social_private_voice_indexes.sql",
+            PRIVATE_INDEXES,
+        ),
+    ] {
+        assert_eq!(release.matches(directive).count(), 1);
+        release = release.replace(directive, canonical);
+    }
+    release
 }
 
 struct Database {
@@ -33,6 +46,9 @@ struct Database {
 }
 impl Database {
     async fn new() -> Option<Self> {
+        Self::with_schema(PREPARED_V2).await
+    }
+    async fn with_schema(schema: &str) -> Option<Self> {
         let url = std::env::var("CATALYST_TEST_DATABASE_URL").ok()?;
         let options: PgConnectOptions = url.parse().unwrap();
         let admin = PgPoolOptions::new()
@@ -63,7 +79,10 @@ impl Database {
             hex::encode(Sha256::digest(PREPARED_V2.as_bytes())),
             "3242308447fdc6294c7c100d1265eaba911f56dfaf1c03a463dcfc542c6328c6"
         );
-        sqlx::raw_sql(PREPARED_V2).execute(&pool).await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(schema.to_owned()))
+            .execute(&pool)
+            .await
+            .unwrap();
         Some(Self { pool, admin, name })
     }
     async fn close(self) {
@@ -180,5 +199,218 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
         invalid.as_database_error().unwrap().code().as_deref(),
         Some("23514")
     );
+    db.close().await;
+}
+
+const MAIN_V2: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/services/catalyst/tests/fixtures/schema/v2-main-0fb63aa3f.sql"
+));
+
+async fn release_result(pool: &PgPool, release: &str) -> Result<(), sqlx::Error> {
+    let mut connection = pool.acquire().await?;
+    let result = sqlx::raw_sql(sqlx::AssertSqlSafe(release.to_owned()))
+        .execute(&mut *connection)
+        .await
+        .map(|_| ());
+    if result.is_err() {
+        sqlx::query("ROLLBACK").execute(&mut *connection).await?;
+    }
+    result
+}
+
+async fn assert_release_indexes(pool: &PgPool) {
+    let indexes: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid='social.private_voice_chats'::regclass AND c.relname IN ('private_voice_chats_caller_idx','private_voice_chats_callee_idx') AND NOT i.indisunique AND i.indisvalid")
+        .fetch_one(pool).await.unwrap();
+    assert_eq!(
+        indexes, 2,
+        "both replacement indexes exist at the release commit, before migrate"
+    );
+}
+
+#[tokio::test]
+async fn real_main_v2_release_rolls_back_at_each_boundary_then_migrates_without_fake_receipts() {
+    let release = release_v3();
+    for boundary in [
+        "-- Cutover boundary: destination created.",
+        "-- Cutover boundary: legacy facts verified.",
+        "-- Cutover boundary: replacement indexes created.",
+        "UPDATE meta.schema SET version = 3",
+    ] {
+        let Some(db) = Database::with_schema(MAIN_V2).await else {
+            return;
+        };
+        let pool = &db.pool;
+        sqlx::raw_sql("INSERT INTO social.communities(id,name,owner_address) VALUES ('a1111111-b111-4111-8111-e11111111111','main community','owner'); INSERT INTO social.community_members(community_id,member_address,role) VALUES ('a1111111-b111-4111-8111-e11111111111','owner','owner'); INSERT INTO social.private_voice_chats(id,caller_address,callee_address) VALUES ('11111111-1111-4111-8111-111111111111','pending-caller','pending-callee'),('22222222-2222-4222-8222-222222222222','media-caller','media-callee'); INSERT INTO social.private_voice_chat_participants(call_id,address,status) VALUES ('22222222-2222-4222-8222-222222222222','media-caller','connection_interrupted'),('22222222-2222-4222-8222-222222222222','media-callee','not_connected')")
+            .execute(pool).await.unwrap();
+        let snapshot = "SELECT jsonb_build_object('calls',(SELECT jsonb_agg(to_jsonb(c) ORDER BY id) FROM social.private_voice_chats c),'participants',(SELECT jsonb_agg(to_jsonb(p) ORDER BY call_id,address) FROM social.private_voice_chat_participants p),'members',(SELECT jsonb_agg(to_jsonb(m) ORDER BY community_id,member_address) FROM social.community_members m))::text";
+        let before: String = sqlx::query_scalar(snapshot).fetch_one(pool).await.unwrap();
+        let ledger_sql =
+            "SELECT step,sha256,created_fresh,applied_at FROM meta.schema_steps ORDER BY step";
+        let ledger: Vec<(String, String, bool, chrono::NaiveDateTime)> =
+            sqlx::query_as(ledger_sql).fetch_all(pool).await.unwrap();
+        assert!(!ledger.iter().any(|row| row.0 == STEP));
+        let mut interrupted = pool.acquire().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(
+            release[..release.find(boundary).unwrap()].to_owned(),
+        ))
+        .execute(&mut *interrupted)
+        .await
+        .unwrap();
+        interrupted.close().await.unwrap();
+        let (version,target,legacy,uniques): (i32,bool,i64,i64) = sqlx::query_as("SELECT (SELECT version FROM meta.schema WHERE id=1),to_regclass('social.community_voice_notifications') IS NOT NULL,(SELECT count(*) FROM pg_attribute WHERE attrelid='social.communities'::regclass AND NOT attisdropped AND attname LIKE 'voice_notification_%'),(SELECT count(*) FROM pg_constraint WHERE conrelid='social.private_voice_chats'::regclass AND conname IN ('private_voice_chats_caller_key','private_voice_chats_callee_key'))").fetch_one(pool).await.unwrap();
+        assert_eq!(
+            (version, target, legacy, uniques),
+            (2, false, 0, 2),
+            "{boundary}: interrupted cutover rolls back"
+        );
+        let after: Vec<(String, String, bool, chrono::NaiveDateTime)> =
+            sqlx::query_as(ledger_sql).fetch_all(pool).await.unwrap();
+        assert_eq!(ledger, after);
+        release_result(pool, &release).await.unwrap();
+        assert_release_indexes(pool).await;
+        assert!(release_result(pool, &release).await.is_err());
+        let initial = schema_migrate::status(pool, SCHEMA_SQL, MIGRATIONS_SQL)
+            .await
+            .unwrap();
+        assert!(!initial.pending_steps.iter().any(|step| step == STEP));
+        schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
+            .await
+            .unwrap();
+        catalyst_db::bootstrap(pool).await.unwrap();
+        assert_eq!(
+            schema_migrate::status(pool, SCHEMA_SQL, MIGRATIONS_SQL)
+                .await
+                .unwrap()
+                .exit_code(),
+            0
+        );
+        assert!(
+            schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let after: String = sqlx::query_scalar(snapshot).fetch_one(pool).await.unwrap();
+        assert_eq!(
+            before, after,
+            "every call, participant and membership value survives"
+        );
+        let after: Vec<(String, String, bool, chrono::NaiveDateTime)> =
+            sqlx::query_as(ledger_sql).fetch_all(pool).await.unwrap();
+        assert!(
+            !after.iter().any(|row| row.0 == STEP),
+            "no invented historical 0020 receipt"
+        );
+        for row in &ledger {
+            assert!(
+                after.contains(row),
+                "original ledger row survives unchanged"
+            );
+        }
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM social.community_voice_notifications"
+            )
+            .fetch_one(pool)
+            .await
+            .unwrap(),
+            0
+        );
+        db.close().await;
+    }
+}
+
+#[tokio::test]
+async fn v3_rejects_retired_column_constraint_and_index_drift_without_mutation() {
+    let Some(db) = Database::with_schema(MAIN_V2).await else {
+        return;
+    };
+    let pool = &db.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    sqlx::raw_sql("ALTER TABLE social.communities ADD COLUMN voice_notification_scope text, ADD COLUMN voice_notification_generation uuid, ADD COLUMN voice_notification_expires_at timestamp without time zone, ADD CONSTRAINT communities_voice_notification_scope_check CHECK (voice_notification_scope IS NULL); CREATE INDEX communities_voice_notifications_idx ON social.communities (voice_notification_expires_at)").execute(pool).await.unwrap();
+    let gaps = schema_migrate::gaps(pool, SCHEMA_SQL).await.unwrap();
+    assert_eq!(gaps.retired.len(), 5);
+    for column in [
+        "voice_notification_scope",
+        "voice_notification_generation",
+        "voice_notification_expires_at",
+    ] {
+        assert!(gaps.fatal().iter().any(|gap| gap.ends_with(column)));
+    }
+    assert_eq!(
+        schema_migrate::status(pool, SCHEMA_SQL, MIGRATIONS_SQL)
+            .await
+            .unwrap()
+            .exit_code(),
+        4
+    );
+    assert!(matches!(
+        schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL).await,
+        Err(schema_migrate::MigrateError::RetiredDrift(_))
+    ));
+    assert!(catalyst_db::bootstrap(pool).await.is_err());
+    assert_eq!(
+        schema_migrate::gaps(pool, SCHEMA_SQL)
+            .await
+            .unwrap()
+            .retired
+            .len(),
+        5
+    );
+    db.close().await;
+}
+
+#[tokio::test]
+async fn release_refuses_partial_or_unreceipted_legacy_layout_and_changed_hash() {
+    for corruption in [
+        "ALTER TABLE social.communities DROP COLUMN voice_notification_scope CASCADE",
+        "DELETE FROM meta.schema_steps WHERE step='0020_social_voice_notifications'",
+        "ALTER TABLE social.communities DROP CONSTRAINT communities_voice_notification_scope_check; ALTER TABLE social.communities ADD CONSTRAINT communities_voice_notification_scope_check CHECK (true); INSERT INTO social.communities(id,name,owner_address,voice_notification_scope) VALUES ('a1111111-b111-4111-8111-e11111111111','incomplete fact','owner','all')",
+        "UPDATE meta.schema_steps SET sha256=repeat('0',64) WHERE step='0020_social_voice_notifications'",
+    ] {
+        let Some(db) = Database::new().await else {
+            return;
+        };
+        let pool = &db.pool;
+        sqlx::raw_sql(sqlx::AssertSqlSafe(corruption.to_owned()))
+            .execute(pool)
+            .await
+            .unwrap();
+        assert!(release_result(pool, &release_v3()).await.is_err());
+        let (version,target,uniques): (i32,bool,i64) = sqlx::query_as("SELECT (SELECT version FROM meta.schema WHERE id=1),to_regclass('social.community_voice_notifications') IS NOT NULL,(SELECT count(*) FROM pg_constraint WHERE conrelid='social.private_voice_chats'::regclass AND conname IN ('private_voice_chats_caller_key','private_voice_chats_callee_key'))").fetch_one(pool).await.unwrap();
+        assert_eq!((version, target, uniques), (2, false, 2));
+        db.close().await;
+    }
+}
+
+#[tokio::test]
+async fn v3_retired_step_still_verifies_genuine_receipt_hash_in_all_entry_points() {
+    let Some(db) = Database::new().await else {
+        return;
+    };
+    let pool = &db.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE meta.schema_steps SET sha256=repeat('0',64) WHERE step=$1")
+        .bind(STEP)
+        .execute(pool)
+        .await
+        .unwrap();
+    let status = schema_migrate::status(pool, SCHEMA_SQL, MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    assert_eq!(status.exit_code(), 4);
+    assert_eq!(status.drifted_steps, [STEP]);
+    assert!(matches!(
+        schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL).await,
+        Err(schema_migrate::MigrateError::StepDrift { .. })
+    ));
+    assert!(catalyst_db::bootstrap(pool).await.is_err());
     db.close().await;
 }

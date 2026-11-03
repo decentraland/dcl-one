@@ -193,8 +193,6 @@ CREATE TABLE social.private_voice_chats (
 -- Pending creation serializes both normalized wallets with transaction advisory
 -- locks before probing rows without participants. A media row may coexist with
 -- a pending call; caller/callee UNIQUEs would incorrectly forbid that history.
-CREATE INDEX private_voice_chats_caller_idx ON social.private_voice_chats (caller_address);
-CREATE INDEX private_voice_chats_callee_idx ON social.private_voice_chats (callee_address);
 
 -- The expiry sweep and the admin "active calls" read.
 CREATE INDEX private_voice_chats_created_idx ON social.private_voice_chats (created_at);
@@ -268,6 +266,8 @@ CREATE TABLE social.community_ranking_events (
     PRIMARY KEY (kind, event_key, community_id),
     CHECK (kind IN ('photo', 'event', 'stream'))
 );
+-- Community deletion probes the referencing side of its cascading foreign key.
+CREATE INDEX community_ranking_events_community_idx ON social.community_ranking_events (community_id);
 
 -- Two-hour provider results, keyed exactly as the source Redis cache. Cached
 -- rejections carry their full issue lists; expiry uses a bounded indexed job.

@@ -14,3 +14,5 @@ CREATE TABLE social.community_voice_notifications (
     CONSTRAINT community_voice_notifications_scope_check
         CHECK (notification_scope IN ('all', 'members'))
 );
+-- Community deletion probes the referencing side of its cascading foreign key.
+CREATE INDEX community_voice_notifications_community_idx ON social.community_voice_notifications (community_id);

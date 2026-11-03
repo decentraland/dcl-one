@@ -19,13 +19,27 @@ const VOICE_FACTS: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
     "/schemas/41_social_voice_notifications.sql"
 ));
+const MAIN_V2: &str = include_str!("fixtures/schema/v2-main-0fb63aa3f.sql");
 const PREPARED_V2: &str = include_str!("fixtures/schema/v2-prepared-c1fab3991.sql");
 const UPGRADE_ROWS: &str = include_str!("fixtures/schema/v2-upgrade-rows-c1fab3991.sql");
 const ORIGIN_ROWS: &str = include_str!("fixtures/schema/v2-origin-rows-c1fab3991.sql");
+const PRIVATE_INDEXES: &str = include_str!(concat!(
+    env!("DCL_ONE_ROOT"),
+    "/schemas/42_social_private_voice_indexes.sql"
+));
 fn release_v3() -> String {
-    let directive = "\\ir ../41_social_voice_notifications.sql";
-    assert_eq!(RELEASE_V3.matches(directive).count(), 1);
-    RELEASE_V3.replace(directive, VOICE_FACTS)
+    let mut release = RELEASE_V3.to_owned();
+    for (directive, canonical) in [
+        ("\\ir ../41_social_voice_notifications.sql", VOICE_FACTS),
+        (
+            "\\ir ../42_social_private_voice_indexes.sql",
+            PRIVATE_INDEXES,
+        ),
+    ] {
+        assert_eq!(release.matches(directive).count(), 1);
+        release = release.replace(directive, canonical);
+    }
+    release
 }
 const RELEASE_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -255,6 +269,11 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
     );
     let (shop, marketplace, ledgers): (bool,bool,i64)=sqlx::query_as("SELECT to_regclass('shop.trades') IS NOT NULL,to_regnamespace('marketplace') IS NOT NULL,(SELECT count(*) FROM pg_tables WHERE schemaname='shop' AND tablename IN ('broker_purchases','escrow_actions','name_transfers','usage_grants'))").fetch_one(pool).await.unwrap();
     assert_eq!((shop, marketplace, ledgers), (true, false, 4));
+    let private_indexes: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid='social.private_voice_chats'::regclass AND c.relname IN ('private_voice_chats_caller_idx','private_voice_chats_callee_idx') AND NOT i.indisunique AND i.indisvalid").fetch_one(pool).await.unwrap();
+    assert_eq!(
+        private_indexes, 2,
+        "both address access paths exist before migrate"
+    );
     let done =
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
@@ -264,8 +283,10 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         "prepared historical steps are not replayed"
     );
     assert!(
-        done.created.len() >= 2,
-        "canonical private address indexes still need object pass"
+        !done.created.iter().any(|object| matches!(object,
+        schema_migrate::Object::Index(name) if name == "social.private_voice_chats_caller_idx"
+            || name == "social.private_voice_chats_callee_idx")),
+        "migrate preserves the address access paths already created by the release"
     );
     assert!(has_column(pool, "explore.place_reports", "upload_token_hash").await);
     assert!(has_column(pool, "social.notifications", "in_app").await);
@@ -651,7 +672,8 @@ async fn release_result(pool: &PgPool, sql: &str) -> Result<(), sqlx::Error> {
 }
 
 #[tokio::test]
-async fn private_voice_release_retains_rows_then_real_migrate_adds_indexes_and_replays_nothing() {
+async fn private_voice_release_retains_rows_and_indexes_before_stamp_then_migrate_replays_nothing()
+{
     let Some(old) = prepared_v2(None).await else {
         return;
     };
@@ -682,16 +704,14 @@ async fn private_voice_release_retains_rows_then_real_migrate_adds_indexes_and_r
     );
     let constraints: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_constraint WHERE conrelid='social.private_voice_chats'::regclass AND conname IN ('private_voice_chats_caller_key','private_voice_chats_callee_key')").fetch_one(pool).await.unwrap();
     assert_eq!(constraints, 0);
-    let applied =
-        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
-            .await
-            .unwrap();
-    assert!(!applied.is_empty());
     let indexes: i64 = sqlx::query_scalar("SELECT count(*) FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid WHERE i.indrelid='social.private_voice_chats'::regclass AND c.relname IN ('private_voice_chats_caller_idx','private_voice_chats_callee_idx') AND NOT i.indisunique AND i.indisvalid").fetch_one(pool).await.unwrap();
     assert_eq!(
         indexes, 2,
-        "canonical object pass creates both address access paths"
+        "atomic release already created both address access paths"
     );
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
     catalyst::db::bootstrap(pool).await.unwrap();
     assert!(
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
@@ -759,10 +779,10 @@ async fn composed_voice_release_rolls_back_connection_loss_at_each_boundary_then
     // The fixture is the actual v2 executor's output. These are prefixes of
     // the production release, with its include expanded from the same bytes.
     let release = release_v3();
-    assert!(!VOICE_FACTS.contains("CREATE INDEX"));
     for boundary in [
-        "INSERT INTO social.community_voice_notifications",
-        "DROP INDEX social.communities_voice_notifications_idx",
+        "-- Cutover boundary: destination created.",
+        "-- Cutover boundary: legacy facts verified.",
+        "-- Cutover boundary: replacement indexes created.",
         "UPDATE meta.schema SET version = 3",
     ] {
         let Some(old) = prepared_v2(None).await else {
@@ -902,4 +922,20 @@ fn prepared_v2_capture_bytes_match_the_pinned_provenance_manifest() {
             "{file}: capture drift"
         );
     }
+}
+
+#[test]
+fn shipped_main_v2_capture_matches_its_pinned_executor_provenance() {
+    use sha2::{Digest, Sha256};
+    let manifest: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/schema/v2-main-0fb63aa3f.json")).unwrap();
+    assert_eq!(
+        manifest["revision"],
+        "0fb63aa3ff0bf7e7cf515dab06e00263807a7fd6"
+    );
+    assert_eq!(
+        manifest["outputs"][0]["sha256"],
+        hex::encode(Sha256::digest(MAIN_V2.as_bytes()))
+    );
+    assert!(!MAIN_V2.contains("0020_social_voice_notifications"));
 }

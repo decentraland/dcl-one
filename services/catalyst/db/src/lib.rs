@@ -186,6 +186,9 @@ pub enum BootstrapError {
     #[error("reading the schema layout: {0}")]
     LayoutCheck(#[from] crate::schema_migrate::LayoutError),
 
+    #[error("reading schema migration policy: {0}")]
+    MigrationCheck(#[from] crate::schema_migrate::MigrateError),
+
     #[error("reading meta.schema: {0}")]
     Sqlx(#[from] sqlx::Error),
 }
@@ -208,7 +211,11 @@ pub async fn bootstrap(pool: &PgPool) -> Result<(), BootstrapError> {
                 applied_at = %stamp.applied_at,
                 "schema verified"
             );
-            let gaps = crate::schema_migrate::gaps(pool, SCHEMA_SQL).await?;
+            let status = crate::schema_migrate::status(pool, SCHEMA_SQL, MIGRATIONS_SQL).await?;
+            if !status.drifted_steps.is_empty() || status.refused_step.is_some() {
+                return Err(BootstrapError::Layout(status.lines().join("; ")));
+            }
+            let gaps = status.gaps;
             let fatal = gaps.fatal();
             if !fatal.is_empty() {
                 return Err(BootstrapError::Layout(fatal.join(", ")));
@@ -248,12 +255,15 @@ pub enum ApplySchemaError {
 
     #[error(transparent)]
     Sqlx(#[from] sqlx::Error),
+
+    #[error(transparent)]
+    MigrationPolicy(#[from] crate::schema_migrate::MigrateError),
 }
 
 /// Administrative only (`catalyst schema apply`): runs the rendered schema on
 /// an empty database and refuses when a schema is already there. The steps
-/// of `schemas/migrations/` are recorded as carried from birth (schema.sql
-/// already holds their effects), so `schema migrate` never re-runs them.
+/// of `schemas/migrations/` still active in this version are recorded as carried
+/// from birth. Retired steps gain no receipt; `schema migrate` never runs them.
 pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
     // One apply at a time per process: the DDL holds a lock per object it
     // creates until commit, and parallel applies (the test suites create a
@@ -269,7 +279,8 @@ pub async fn apply_schema(pool: &PgPool) -> Result<(), ApplySchemaError> {
     }
     let mut tx = pool.begin().await?;
     sqlx::raw_sql(SCHEMA_SQL).execute(&mut *tx).await?;
-    let steps = crate::schema_migrate::parse_steps(MIGRATIONS_SQL);
+    let steps =
+        crate::schema_migrate::fresh_steps(crate::schema_migrate::parse_steps(MIGRATIONS_SQL))?;
     crate::schema_migrate::record_steps(&mut *tx, &steps, true).await?;
     tx.commit().await?;
     tracing::info!(
@@ -601,7 +612,7 @@ mod tests {
     /// from birth: `schema migrate` on it applies nothing, and `status` says
     /// up to date.
     #[tokio::test]
-    async fn a_fresh_schema_records_every_step_as_carried_from_birth() {
+    async fn a_fresh_schema_records_only_active_steps_as_carried_from_birth() {
         let Ok(base) = std::env::var("CATALYST_TEST_DATABASE_URL") else {
             return;
         };
@@ -631,7 +642,9 @@ mod tests {
         .await
         .unwrap();
         apply_schema(&pool).await.unwrap();
-        let steps = crate::schema_migrate::parse_steps(MIGRATIONS_SQL);
+        let steps =
+            crate::schema_migrate::fresh_steps(crate::schema_migrate::parse_steps(MIGRATIONS_SQL))
+                .unwrap();
         let recorded: Vec<(String, String, bool)> =
             sqlx::query_as("SELECT step, sha256, created_fresh FROM meta.schema_steps WHERE step ~ '^[0-9]{4}_' ORDER BY step")
                 .fetch_all(&pool)

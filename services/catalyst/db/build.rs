@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::{env, fs};
 
 const HEADER: &str = "\
--- Catalyst v2: current-state DDL for an empty `catalyst` database.
+-- Catalyst: current-state DDL for an empty `catalyst` database.
 -- Design/review contract: DATABASE.md. The inherited indexes below are a
 -- baseline; query/layout changes require representative workload evidence.
 --
@@ -59,10 +59,11 @@ fn main() {
 }
 
 const MIGRATIONS_HEADER: &str = "\
--- Catalyst v2: the additive steps `catalyst schema migrate` applies, in name
+-- Catalyst: the additive steps `catalyst schema migrate` applies, in name
 -- order, to a database stamped before them (a column an existing table gained,
 -- a constraint, a backfill). schema.sql already holds every effect for a new
--- database; `schema apply` records the steps as carried from birth. Each step
+-- database; `schema apply` records active steps as carried from birth. Retired
+-- steps remain immutable but never execute or gain a new receipt. Each active step
 -- is recorded in meta.schema_steps with the sha256 of its text and never runs
 -- twice; a recorded step whose text changed is refused, and so is a step
 -- that drops, renames or retypes anything (src/schema_migrate.rs, the lint).
