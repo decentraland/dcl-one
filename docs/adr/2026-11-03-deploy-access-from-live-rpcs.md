@@ -22,10 +22,11 @@ remembers the blocks it read.
 
 - LAND is granted per parcel at either block. Names, and the items of each chain, must all pass
   at one block.
-- A check the RPC cannot answer, or that runs past its deadline, is undecided: the deploy gets
-  503 with `Retry-After`, never a grant. A call the chain reverts is a refusal.
-- Item ownership calls go out as JSON-RPC batches, with a cap on the distinct items asked per
-  check.
+- A check the RPC cannot answer, or an entity whose checks together run past 30 s, is undecided:
+  the deploy gets 503 with `Retry-After`, never a grant. A call the chain reverts is a refusal.
+- Item ownership calls and the probes of third-party NFT standards go out as JSON-RPC batches,
+  with caps on the distinct items (200) and third-party contracts (32) asked per check; a
+  contract of no known standard is not probed again for five minutes.
 - A node with `CONTENT_WRITES_ENABLED` refuses to start without both https RPCs and a known
   network, unless `IGNORE_BLOCKCHAIN_ACCESS_CHECKS` is set; an RPC answering another chain id is
   refused. The journey posture sets `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`, since it reads no chain.
@@ -37,5 +38,6 @@ remembers the blocks it read.
   outage or a pruned node turns deploys into 503s until it recovers. Operators should point
   both variables at archive-capable endpoints.
 - Each deploy costs a few RPC calls: two block searches per chain when the timestamp is new,
-  then one Checker multicall or one item batch per block.
+  then one Checker multicall or one item batch per block, plus two probe batches the first time
+  a third-party contract is seen.
 - The LAND index stays for worlds, comms and the unpublish route; it no longer decides deploys.
