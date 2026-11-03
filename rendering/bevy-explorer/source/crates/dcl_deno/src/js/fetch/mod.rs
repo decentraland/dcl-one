@@ -1,10 +1,7 @@
-use std::{
-    cell::{Cell, RefCell},
-    rc::Rc,
-    time::Duration,
-};
+use std::{cell::RefCell, rc::Rc, time::Duration};
 
 mod fetch_response_body_resource;
+mod request_budget;
 
 use bevy::{asset::AsyncReadExt, prelude::debug};
 use common::rpc::{RpcCall, RpcResultSender};
@@ -25,6 +22,7 @@ use http::{
 use serde::{Deserialize, Serialize};
 
 use fetch_response_body_resource::FetchResponseBodyResource;
+use request_budget::SceneRequestBudget;
 
 use dcl_types::{interface::crdt_context::CrdtContext, RpcCalls, SceneResourceCounters};
 
@@ -74,22 +72,11 @@ impl NetPermissions for NP {
 // DoS caps for the multi-tenant authoritative server, enforced only in is_server mode.
 const SERVER_MAX_BODY_BYTES: u64 = 10 * 1024 * 1024;
 const SERVER_MAX_ASSET_BYTES: u64 = 64 * 1024 * 1024;
-const SERVER_MAX_CONCURRENT_FETCHES: u32 = 32;
-const SERVER_FETCH_TIMEOUT: Duration = Duration::from_secs(15);
-
-struct SceneFetchInflight(Rc<Cell<u32>>);
 
 pub(super) fn in_flight(state: &OpState) -> u64 {
     state
-        .try_borrow::<SceneFetchInflight>()
-        .map_or(0, |v| u64::from(v.0.get()))
-}
-
-struct InflightGuard(Rc<Cell<u32>>);
-impl Drop for InflightGuard {
-    fn drop(&mut self) {
-        self.0.set(self.0.get().saturating_sub(1));
-    }
+        .try_borrow::<Rc<SceneRequestBudget>>()
+        .map_or(0, |budget| u64::from(budget.in_flight()))
 }
 
 // list of op declarations
@@ -103,9 +90,8 @@ pub fn ops() -> Vec<OpDecl> {
 }
 
 struct FetchRequestResource {
-    client: reqwest::Client,
     request: reqwest::RequestBuilder,
-    request_body_rid: Option<ResourceId>,
+    request_body: Option<ResourceToBodyAdapter>,
     body_bytes: Option<Vec<u8>>,
     url: String,
     /// URL host is the world-storage service (`storage.decentraland.*`).
@@ -158,6 +144,18 @@ where
         }
     }
 
+    // Deno transfers ownership of a streaming upload to op_fetch. Take its RID
+    // before any fallible setup so rejection and cancellation close the JS producer.
+    let (body_bytes, request_body) = match (has_body, data, resource) {
+        (false, _, _) => (None, None),
+        (true, Some(data), _) => (Some(data.to_vec()), None),
+        (true, None, Some(rid)) => {
+            let body = state.resource_table.take_any(rid)?;
+            (None, Some(ResourceToBodyAdapter::new(body)))
+        }
+        (true, None, None) => return Err(type_error("missing fetch body")),
+    };
+
     // On the authoritative server redirects are never auto-followed, so a 3xx onto a private
     // host can't bypass the per-request SSRF check or leak signed headers. The desktop/web
     // client still follows them, but under the public-only redirect policy (see
@@ -191,30 +189,14 @@ where
     let method = Method::from_bytes(method.as_bytes())?;
     let mut request = client.request(method.clone(), &url);
 
-    let (request_body_rid, body_bytes) = if has_body {
-        match (data, resource) {
-            (None, None) => unreachable!(),
-            (Some(data), _) => (None, Some(data.to_vec())),
-            (_, Some(resource_id)) => {
-                let resource = state.resource_table.get_any(resource_id)?;
-                match resource.size_hint() {
-                    (body_size, Some(n)) if body_size == n && body_size > 0 => {
-                        request = request.header(CONTENT_LENGTH, HeaderValue::from(body_size));
-                    }
-                    _ => {}
-                }
-
-                (Some(resource_id), None)
-            }
+    if let Some(body) = &request_body {
+        let (size, upper) = body.0.size_hint();
+        if size > 0 && upper == Some(size) {
+            request = request.header(CONTENT_LENGTH, HeaderValue::from(size));
         }
-    } else {
-        // POST and PUT requests should always have a 0 length content-length,
-        // if there is no body. https://fetch.spec.whatwg.org/#http-network-or-cache-fetch
-        if matches!(method, Method::POST | Method::PUT) {
-            request = request.header(CONTENT_LENGTH, HeaderValue::from(0));
-        }
-        (None, None)
-    };
+    } else if !has_body && matches!(method, Method::POST | Method::PUT) {
+        request = request.header(CONTENT_LENGTH, HeaderValue::from(0));
+    }
 
     let mut range_request = false;
     for (key, value) in headers {
@@ -239,8 +221,7 @@ where
     debug!("request {url}");
     let request_rid = state.resource_table.add(FetchRequestResource {
         body_bytes,
-        client,
-        request_body_rid,
+        request_body,
         request,
         url,
         is_storage,
@@ -274,7 +255,7 @@ pub async fn op_fetch_send(
     state: Rc<RefCell<OpState>>,
     #[smi] rid: ResourceId,
 ) -> Result<FetchResponse, AnyError> {
-    // copy the flag out before fetch_send_inner takes (and try_unwraps) the resource
+    // Copy the flag before taking the resource so failed storage requests count too.
     let is_storage = state
         .borrow()
         .resource_table
@@ -323,17 +304,27 @@ async fn fetch_send_inner(
         .resource_table
         .take::<FetchRequestResource>(rid)?;
 
-    let FetchRequestResource {
-        client,
-        request,
-        body_bytes,
-        request_body_rid,
-        url,
-        is_storage: _,
-        range_request,
-    } = Rc::try_unwrap(request)
+    let request = Rc::try_unwrap(request)
         .ok()
         .expect("multiple op_fetch_send ongoing");
+
+    let (budget, is_server, preview) = {
+        let mut op_state = state.borrow_mut();
+        let ctx = op_state.borrow::<CrdtContext>();
+        let (is_server, preview) = (ctx.is_server, ctx.preview);
+        if op_state.try_borrow::<Rc<SceneRequestBudget>>().is_none() {
+            op_state.put(Rc::new(SceneRequestBudget::for_scene(is_server)));
+        }
+        (
+            op_state.borrow::<Rc<SceneRequestBudget>>().clone(),
+            is_server,
+            preview,
+        )
+    };
+    // Bound outstanding operations, including permission prompts and queued uploads.
+    let _inflight = budget
+        .try_start()
+        .ok_or_else(|| anyhow::anyhow!("fetch: too many concurrent requests"))?;
 
     let (sx, rx) = RpcResultSender::channel();
     state
@@ -341,7 +332,7 @@ async fn fetch_send_inner(
         .borrow_mut::<RpcCalls>()
         .push(RpcCall::RequestGenericPermission {
             ty: common::structs::PermissionType::Fetch,
-            message: Some(url.clone()),
+            message: Some(request.url.clone()),
             response: sx,
         })?;
     let permit = rx.await?;
@@ -349,62 +340,49 @@ async fn fetch_send_inner(
         anyhow::bail!("User denied fetch request");
     }
 
+    // Human interaction has no deadline. Once granted, one clock covers DNS, upload
+    // preparation, admission, request headers and the entire response body.
+    budget
+        .run(send_request(state, request, is_server, preview))
+        .await
+        .map_err(|_| type_error("fetch request timed out"))?
+}
+
+async fn send_request(
+    state: Rc<RefCell<OpState>>,
+    resource: FetchRequestResource,
+    is_server: bool,
+    preview: bool,
+) -> Result<FetchResponse, AnyError> {
+    let FetchRequestResource {
+        request,
+        body_bytes,
+        request_body,
+        url,
+        range_request,
+        ..
+    } = resource;
+
     // SSRF guard — every scene, every mode. No deployed scene may reach cloud metadata /
     // loopback / private ranges, on the shared server OR the desktop client (a scene is
     // untrusted code with the user's network position — the web build is already held to
     // this by the browser's Private Network Access rules). `preview` widens the allowance
     // to the local network for local development, but never to link-local / metadata.
-    let (is_server, preview) = {
-        let op_state = state.borrow();
-        let ctx = op_state.borrow::<CrdtContext>();
-        (ctx.is_server, ctx.preview)
-    };
     common::util::assert_public_url(&url, preview).await?;
 
-    let _inflight_guard = if is_server {
-        let counter = {
-            let mut op_state = state.borrow_mut();
-            if op_state.try_borrow::<SceneFetchInflight>().is_none() {
-                op_state.put(SceneFetchInflight(Rc::new(Cell::new(0))));
-            }
-            op_state.borrow::<SceneFetchInflight>().0.clone()
-        };
-        if counter.get() >= SERVER_MAX_CONCURRENT_FETCHES {
-            anyhow::bail!("fetch: too many concurrent requests");
-        }
-        counter.set(counter.get() + 1);
-        Some(InflightGuard(counter))
-    } else {
-        None
-    };
-
-    let request = if is_server {
-        request.timeout(SERVER_FETCH_TIMEOUT)
+    let request = if let Some(body) = request_body {
+        let mut buf = Vec::new();
+        body.into_async_read().read_to_end(&mut buf).await?;
+        request.body(buf)
+    } else if let Some(body) = body_bytes {
+        request.body(body)
     } else {
         request
     };
-
-    let async_req = if let Some(body_id) = request_body_rid {
-        let body = state.borrow_mut().resource_table.take_any(body_id)?;
-        let mut buf = Vec::new();
-        ResourceToBodyAdapter::new(body)
-            .into_async_read()
-            .read_to_end(&mut buf)
-            .await?;
-        let request = request.body(buf).build()?;
-        client.execute(request).await
-    } else if let Some(body) = body_bytes {
-        let request = request.body(body).build()?;
-        client.execute(request).await
-    } else {
-        let request = request.build()?;
-        client.execute(request).await
-    };
-
-    let mut res = match async_req {
-        Ok(res) => res,
-        Err(err) => return Err(type_error(err.to_string())),
-    };
+    let mut res = request
+        .send()
+        .await
+        .map_err(|err| type_error(err.to_string()))?;
 
     let status = res.status();
     let mut headers = Vec::new();
@@ -718,6 +696,12 @@ impl ResourceToBodyAdapter {
     }
 }
 
+impl Drop for ResourceToBodyAdapter {
+    fn drop(&mut self) {
+        self.0.clone().close();
+    }
+}
+
 // SAFETY: we only use this on a single-threaded executor
 unsafe impl Send for ResourceToBodyAdapter {}
 // SAFETY: we only use this on a single-threaded executor
@@ -752,5 +736,80 @@ impl deno_core::futures::Stream for ResourceToBodyAdapter {
         } else {
             Poll::Ready(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod upload_tests {
+    use super::*;
+    use dcl_types::SceneId;
+
+    #[tokio::test]
+    async fn rejected_upload_closes_its_resource_and_cancels_the_stream() {
+        let (mut runtime, _) = crate::js::create_runtime(
+            false,
+            false,
+            "test-rejected-upload",
+            false,
+            Default::default(),
+        );
+        let state = runtime.op_state();
+        let budget = Rc::new(SceneRequestBudget::for_scene(true));
+        let _held: Vec<_> = (0..32).map(|_| budget.try_start().unwrap()).collect();
+        {
+            let mut state = state.borrow_mut();
+            state.put(budget.clone());
+            state.put(CrdtContext::new(
+                SceneId(bevy::prelude::Entity::from_raw(0)),
+                "hash".into(),
+                "title".into(),
+                false,
+                false,
+                true,
+            ));
+            state.put(SceneResourceCounters::default());
+            state.put(RpcCalls::default());
+        }
+        let script = runtime
+            .load_side_es_module_from_code(
+                &deno_core::ModuleSpecifier::parse("ext:test/upload.js").unwrap(),
+                r#"
+                import { ReadableStream } from "ext:deno_web/06_streams.js";
+                globalThis.cancelled = false;
+                globalThis.failure = "";
+                const body = new ReadableStream({ cancel() { globalThis.cancelled = true; } });
+                fetch("https://example.org/upload", {method: "POST", body})
+                    .catch(e => { globalThis.failure = String(e); });
+            "#,
+            )
+            .await
+            .unwrap();
+        let evaluated = runtime.mod_evaluate(script);
+        let settled = tokio::time::timeout(
+            Duration::from_secs(2),
+            runtime.run_event_loop(Default::default()),
+        )
+        .await;
+        assert!(
+            !state
+                .borrow()
+                .resource_table
+                .names()
+                .any(|(_, name)| name == "readableStream"),
+            "rejected fetch leaked its upload RID"
+        );
+        settled.expect("upload stream did not close").unwrap();
+        evaluated.await.unwrap();
+        runtime
+            .execute_script(
+                "<test>",
+                deno_core::ascii_str!(
+                    r#"
+            if (!failure.includes("too many concurrent requests")) throw new Error(failure);
+            if (!cancelled) throw new Error("upload producer was not cancelled");
+        "#
+                ),
+            )
+            .unwrap();
     }
 }

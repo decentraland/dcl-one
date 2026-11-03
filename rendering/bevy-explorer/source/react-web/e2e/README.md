@@ -7,6 +7,11 @@
 > running a tier; a package script alone does not prove its suite is present.
 > Report unavailable tiers as **not run** and keep their evidence in the task report.
 
+The standalone scene Fetch regression runs with `npm run test:scene-fetch` from
+`react-web/`. It starts local HTTP fixtures and Chromium workers with the
+production sandbox scripts. Install Chromium with `npx playwright install chromium`
+or set `CHROME_BIN` to an installed Chromium executable.
+
 Per-domain tests that drive the **live** app — the React HUD, the bevy engine (in a
 same-origin iframe), and the super-user bridge scene — and assert each API call
 round-trips over the bridge. The player is driven with **bevy console commands**

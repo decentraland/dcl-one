@@ -4,6 +4,7 @@
 // of the relay uses (relayStart below). The engine's own glue is never loaded here.
 import initSceneRuntime, * as sceneRuntimeExports from "./pkg-scene/dcl_scene_wasm.js";
 import { relayCopyWasm } from "./relay_copy.js";
+import { installSceneFetch } from "./scene_fetch.js";
 
 // The capability the trusted super-user scene is given below. Captured before the scrub so the
 // constructor survives while the global does not.
@@ -12,6 +13,7 @@ const RealBroadcastChannel = self.BroadcastChannel;
 // postMessage carries killToken.
 const workerPostMessage = self.postMessage.bind(self);
 const workerClose = self.close.bind(self);
+const sceneHttp = installSceneFetch(self, self.location.search === "?server", tearDown);
 // Stack traces are only ever formatted the default way: scene code can't install a formatter.
 Object.defineProperty(Error, "prepareStackTrace", {
   get: () => undefined,
@@ -413,6 +415,7 @@ var toreDown = false;
 function tearDown() {
   if (toreDown) return;
   toreDown = true;
+  sceneHttp.close();
   relayFinish?.();
   if (!relayFinish || wasmContext === undefined) {
     finishTearDown(true);

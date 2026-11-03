@@ -132,6 +132,13 @@ uniforms, and one extra render-graph node: the stars pass, between `DepthOfField
 `Tonemapping` in `Core3d` (`crates/visuals/src/stars.rs`). Render-world ordering follows bevy's
 conventions, not ours.
 
+## Scene Fetch
+
+Scene-script HTTP requests are scheduled per scene. Each client scene can send
+five at a time, and each hosted scene can send 32. See the
+[scene Fetch limits ADR](../../../../docs/adr/2026-11-03-explorer-scene-fetch-limits.md)
+for queue limits, deadlines and response streaming.
+
 ## Headless
 
 The headless server uses the same `ScenePlugin`, so the `SceneSets` chain and the scene loop
