@@ -537,3 +537,162 @@ async fn missing_profile_source_sequence_keeps_json_request_and_later_rpc_cancel
     drop_profile(&pool, actor, &actor_profile).await;
     drop_profile(&pool, me, &barrier_profile).await;
 }
+
+/// HTTP twins execute their own schema/path/error middleware. Domain outcomes
+/// are shared, but transport error mapping and address-only responses are tested
+/// against actual upstream controllers rather than inferred from RPC answers.
+#[tokio::test]
+async fn voice_http_answers_match_executed_upstream_controllers_and_middlewares() {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/voice-http-source-cases.json"
+    )))
+    .unwrap();
+    let a = fixture["caller"].as_str().unwrap();
+    let b = fixture["target"].as_str().unwrap();
+    let first = PrivateKeySigner::random();
+    let second = PrivateKeySigner::random();
+    let address_a = format!("{:#x}", first.address());
+    let address_b = format!("{:#x}", second.address());
+    let community: Uuid = fixture["community"].as_str().unwrap().parse().unwrap();
+    let call: Uuid = fixture["call"].as_str().unwrap().parse().unwrap();
+    let mut mismatches = Vec::new();
+    assert_eq!(fixture["cases"].as_array().unwrap().len(), 61);
+    for source in fixture["cases"].as_array().unwrap() {
+        let encoded = serde_json::to_string(source)
+            .unwrap()
+            .replace(a, &address_a)
+            .replace(b, &address_b);
+        let case: Value = serde_json::from_str(&encoded).unwrap();
+        let label = case["id"].as_str().unwrap();
+        let operation = case["operation"].as_str().unwrap();
+        let scenario = case["scenario"].as_str().unwrap();
+        drop_community(&pool, community).await;
+        sqlx::query("DELETE FROM social.private_voice_chats WHERE caller_address=ANY($1) OR callee_address=ANY($1)")
+            .bind(vec![&address_a,&address_b]).execute(&pool).await.unwrap();
+        cleanup_pair(&Db::new(pool.clone()), &address_a, &address_b).await;
+        let working_pool = if operation == "private-incoming" && scenario == "runtime-failure" {
+            sqlx::postgres::PgPoolOptions::new()
+                .acquire_timeout(Duration::from_millis(20))
+                .connect_lazy("postgres://postgres@127.0.0.1:1/unreachable")
+                .unwrap()
+        } else {
+            pool.clone()
+        };
+        let voice = Arc::new(FixtureVoice {
+            inner: FakeVoiceRooms::new(working_pool.clone()),
+            missing: scenario == "runtime-not-found",
+        });
+        if operation.starts_with("community-") {
+            sqlx::query(
+                "INSERT INTO social.communities(id,name,owner_address) VALUES($1,'Community',$2)",
+            )
+            .bind(community)
+            .bind(&address_a)
+            .execute(&pool)
+            .await
+            .unwrap();
+            for (actor, role) in [(&address_a, "owner"), (&address_b, "member")] {
+                sqlx::query("INSERT INTO social.community_members(community_id,member_address,role) VALUES($1,$2,$3)")
+                    .bind(community).bind(actor).bind(role).execute(&pool).await.unwrap();
+            }
+            if operation != "community-start" {
+                voice.inner.live.lock().insert(community);
+            }
+        } else if operation != "private-start" && ["success", "runtime-failure"].contains(&scenario)
+        {
+            let (from, to) = if operation == "private-incoming" {
+                (&address_b, &address_a)
+            } else {
+                (&address_a, &address_b)
+            };
+            sqlx::query("INSERT INTO social.private_voice_chats(id,caller_address,callee_address) VALUES($1,$2,$3)")
+                .bind(call).bind(from).bind(to).execute(&pool).await.unwrap();
+        }
+        let runtime: Arc<dyn VoiceRooms> = if scenario == "runtime-failure" {
+            Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime)
+        } else {
+            voice.clone()
+        };
+        let ctx = test_ctx(Db::new(working_pool), runtime);
+        let app = crate::rpc::http::router(Arc::new(State::with_context(
+            Settings::default(),
+            ctx,
+            None,
+        )));
+        let path = case["path"].as_str().unwrap();
+        let method = case["method"].as_str().unwrap();
+        let key = if case["caller"] == address_a {
+            &first
+        } else {
+            &second
+        };
+        let timestamp = chrono::Utc::now().timestamp_millis();
+        let payload = crate::shared::signed_fetch::build_payload_v6(
+            &method.to_lowercase(),
+            path,
+            &timestamp.to_string(),
+            "{}",
+        );
+        let (_, signed) = frame_signed(
+            key,
+            &PrivateKeySigner::random(),
+            FAR_EXPIRATION,
+            timestamp,
+            &payload,
+            "{}",
+        )
+        .await;
+        let mut request = Request::builder().method(method).uri(path);
+        for (name, value) in
+            serde_json::from_str::<serde_json::Map<String, Value>>(&signed).unwrap()
+        {
+            request = request.header(name, value.as_str().unwrap());
+        }
+        let body = if case["body"].is_null() {
+            Body::empty()
+        } else {
+            request = request.header("content-type", "application/json");
+            Body::from(case["body"].to_string())
+        };
+        let response = app.oneshot(request.body(body).unwrap()).await.unwrap();
+        let status = response.status().as_u16();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        let mut body: Value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+        if operation == "private-start" && scenario == "success" {
+            assert!(Uuid::parse_str(body["data"]["callId"].as_str().unwrap()).is_ok());
+            body["data"]["callId"] = Value::String(call.to_string());
+        }
+        if status != case["response"]["status"].as_u64().unwrap() as u16
+            || body != case["response"]["body"]
+        {
+            mismatches.push(format!(
+                "{label}: actual {status} {body}; source {} {}",
+                case["response"]["status"], case["response"]["body"]
+            ));
+        }
+        if ["community-start", "community-join"].contains(&operation) && scenario == "success" {
+            assert!(
+                voice
+                    .inner
+                    .profiles
+                    .lock()
+                    .get(&address_a)
+                    .is_some_and(Option::is_none),
+                "{label}: HTTP must omit profile metadata"
+            );
+        }
+    }
+    drop_community(&pool, community).await;
+    sqlx::query("DELETE FROM social.private_voice_chats WHERE caller_address=ANY($1) OR callee_address=ANY($1)")
+        .bind(vec![&address_a,&address_b]).execute(&pool).await.unwrap();
+    assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
