@@ -182,7 +182,7 @@
       "id": "api_http:DELETE:/v1/communities/:id",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -231,6 +231,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -240,7 +245,7 @@
       "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -279,6 +284,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [
@@ -290,7 +300,7 @@
       "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress/bans",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -314,6 +324,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -323,7 +338,7 @@
       "id": "api_http:DELETE:/v1/communities/:id/places/:placeId",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/places.rs",
@@ -347,6 +362,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -356,7 +376,7 @@
       "id": "api_http:DELETE:/v1/communities/:id/posts/:postId",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -380,6 +400,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -389,7 +414,7 @@
       "id": "api_http:DELETE:/v1/communities/:id/posts/:postId/like",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -413,6 +438,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -693,7 +723,7 @@
       "id": "api_http:GET:/v1/communities",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -722,10 +752,15 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [
-        "Pinned listing handlers catch unexpected dependency failures as 500 {message}; the target core listing SQL still uses the generic CommError envelope. Dedicated injected failure comparisons remain to be completed."
+        "Registry batch read failures are swallowed by the profile enrichment wrapper; see community-registry-read-failure-propagation."
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
@@ -733,7 +768,7 @@
       "id": "api_http:GET:/v1/communities/:address/managed",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -753,6 +788,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -762,7 +802,7 @@
       "id": "api_http:GET:/v1/communities/:id",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Single-owner resolution now uses the shared strict registry API: historical alias names retain authenticated/stored ownerAddress; missing/invalid profiles return source 500{message} and failed creates write no community.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Single-owner resolution now uses the shared strict registry API: historical alias names retain authenticated/stored ownerAddress; missing/invalid profiles return source 500{message} and failed creates write no community. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -802,6 +842,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -810,8 +855,8 @@
     {
       "id": "api_http:GET:/v1/communities/:id/bans",
       "owner": "community-http",
-      "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -831,16 +876,23 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Registry batch read failures are swallowed by the profile enrichment wrapper; see community-registry-read-failure-propagation."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id/members",
       "owner": "community-http",
-      "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -860,16 +912,23 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Registry batch read failures are swallowed by the profile enrichment wrapper; see community-registry-read-failure-propagation."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id/places",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/places.rs",
@@ -889,6 +948,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -897,8 +961,8 @@
     {
       "id": "api_http:GET:/v1/communities/:id/posts",
       "owner": "community-http",
-      "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -918,16 +982,23 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Registry batch read failures are swallowed by the profile enrichment wrapper; see community-registry-read-failure-propagation."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id/requests",
       "owner": "community-http",
-      "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -951,9 +1022,16 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Registry batch read failures are swallowed by the profile enrichment wrapper; see community-registry-read-failure-propagation."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -999,7 +1077,7 @@
       "id": "api_http:GET:/v1/members/:address/communities",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1019,6 +1097,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1028,7 +1111,7 @@
       "id": "api_http:GET:/v1/members/:address/invites",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1052,6 +1135,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1060,8 +1148,8 @@
     {
       "id": "api_http:GET:/v1/members/:address/requests",
       "owner": "community-http",
-      "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1090,16 +1178,23 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Registry batch read failures are swallowed by the profile enrichment wrapper; see community-registry-read-failure-propagation."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/moderation/communities",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/admin.rs",
@@ -1124,6 +1219,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1351,8 +1451,8 @@
     {
       "id": "api_http:GET:/v2/communities",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -1381,18 +1481,21 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
-      "gaps": [
-        "Pinned listing handlers catch unexpected dependency failures as 500 {message}; the target core listing SQL still uses the generic CommError envelope. Dedicated injected failure comparisons remain to be completed."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
       "id": "api_http:GET:/v2/communities/:id",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -1422,6 +1525,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1431,7 +1539,7 @@
       "id": "api_http:GET:/v2/communities/:id/bans",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1451,6 +1559,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1460,7 +1573,7 @@
       "id": "api_http:GET:/v2/communities/:id/members",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1480,6 +1593,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1489,7 +1607,7 @@
       "id": "api_http:GET:/v2/communities/:id/posts",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -1509,6 +1627,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1518,7 +1641,7 @@
       "id": "api_http:GET:/v2/communities/:id/requests",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1542,6 +1665,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1609,7 +1737,7 @@
       "id": "api_http:GET:/v2/members/:address/requests",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1638,6 +1766,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1676,7 +1809,7 @@
       "id": "api_http:PATCH:/v1/communities/:id",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -1710,6 +1843,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1719,7 +1857,7 @@
       "id": "api_http:PATCH:/v1/communities/:id/members/:address",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1758,6 +1896,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -1767,7 +1910,7 @@
       "id": "api_http:PATCH:/v1/communities/:id/requests/:requestId",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1810,6 +1953,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [
@@ -2055,7 +2203,7 @@
       "id": "api_http:POST:/v1/communities",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Single-owner resolution now uses the shared strict registry API: historical alias names retain authenticated/stored ownerAddress; missing/invalid profiles return source 500{message} and failed creates write no community.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Single-owner resolution now uses the shared strict registry API: historical alias names retain authenticated/stored ownerAddress; missing/invalid profiles return source 500{message} and failed creates write no community. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -2109,6 +2257,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [
@@ -2120,7 +2273,7 @@
       "id": "api_http:POST:/v1/communities/:id/members",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -2144,6 +2297,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [
@@ -2155,7 +2313,7 @@
       "id": "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -2194,6 +2352,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [
@@ -2205,7 +2368,7 @@
       "id": "api_http:POST:/v1/communities/:id/places",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/places.rs",
@@ -2229,6 +2392,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -2238,7 +2406,7 @@
       "id": "api_http:POST:/v1/communities/:id/posts",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Source-reviewed post insertion, strict single author resolution and background notification order. Regular/alias authors retain source DTO fields; missing/invalid author profiles return message-only 500 after persistence and emit no event.",
+      "result": "Source-reviewed post insertion, strict single author resolution and background notification order. Regular/alias authors retain source DTO fields; missing/invalid author profiles return message-only 500 after persistence and emit no event. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -2282,6 +2450,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -2291,7 +2464,7 @@
       "id": "api_http:POST:/v1/communities/:id/posts/:postId/like",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/posts.rs",
@@ -2315,6 +2488,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -2324,7 +2502,7 @@
       "id": "api_http:POST:/v1/communities/:id/requests",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -2367,6 +2545,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [
@@ -2548,7 +2731,7 @@
       "id": "api_http:POST:/v1/members/:address/communities",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -2572,6 +2755,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [],
@@ -2754,7 +2942,7 @@
       "id": "api_http:PUT:/v1/communities/:id",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -2813,6 +3001,11 @@
           "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
           "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
           "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
+          "test": "every_community_http_database_failure_uses_the_source_message_boundary",
+          "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
         }
       ],
       "gaps": [
@@ -7180,7 +7373,7 @@
         "api_http:PUT:/v1/communities/:id",
         "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address"
       ],
-      "description": "Configured HTTP_MAX_REQUEST_BODY_BYTES now uses source prefix parsing and integer 1..16MiB admission. Declared oversize returns 413 before routing/auth; deferred handler reads preserve schema400 versus raw/multipart500 and independent multipart1MiB/thumbnail1..500KiB limits. Eighteen boot and 44 real HTTP cases replay with the actual outer drain and path normalizer. Unread chunked bodies still use the shared drain upload budget; source close timing for fast versus delayed uploads remains under comparison. Raw parser/framing equivalence and concurrent resource use remain unverified."
+      "description": "Configured HTTP_MAX_REQUEST_BODY_BYTES now uses source prefix parsing and integer 1..16MiB admission. Declared oversize returns 413 before routing/auth; deferred handler reads preserve schema400 versus raw/multipart500 and independent multipart1MiB/thumbnail1..500KiB limits. Eighteen boot and 44 real HTTP cases replay with the actual outer drain and path normalizer. Unread chunked bodies still use the shared drain upload budget; source close timing for fast versus delayed uploads remains under comparison. Raw parser/framing equivalence and concurrent resource use remain unverified. This boundary applies to /social-api. Root aliases retain native contracts and DeferredBody fallback 1MiB. On overlapping JSON federation routes, sniffing still consumes up to a fixed 512KiB before authentication, which can delay unsigned header-only requests or reject non-envelope bodies within a larger configured gateway cap. After authentication, source body-ignoring handlers can answer before uploads while compatible envelope classification needs the body; that ambiguity remains unresolved."
     },
     {
       "id": "shared-social-profile-cache",
@@ -7200,12 +7393,47 @@
     },
     {
       "id": "community-dependency-error-boundaries",
-      "status": "known_gap",
+      "status": "unverified",
       "operations": [
+        "api_http:DELETE:/v1/communities/:id",
+        "api_http:DELETE:/v1/communities/:id/members/:memberAddress",
+        "api_http:DELETE:/v1/communities/:id/members/:memberAddress/bans",
+        "api_http:DELETE:/v1/communities/:id/places/:placeId",
+        "api_http:DELETE:/v1/communities/:id/posts/:postId",
+        "api_http:DELETE:/v1/communities/:id/posts/:postId/like",
         "api_http:GET:/v1/communities",
-        "api_http:GET:/v2/communities"
+        "api_http:GET:/v1/communities/:address/managed",
+        "api_http:GET:/v1/communities/:id",
+        "api_http:GET:/v1/communities/:id/bans",
+        "api_http:GET:/v1/communities/:id/members",
+        "api_http:GET:/v1/communities/:id/places",
+        "api_http:GET:/v1/communities/:id/posts",
+        "api_http:GET:/v1/communities/:id/requests",
+        "api_http:GET:/v1/members/:address/communities",
+        "api_http:GET:/v1/members/:address/invites",
+        "api_http:GET:/v1/members/:address/requests",
+        "api_http:GET:/v1/moderation/communities",
+        "api_http:GET:/v2/communities",
+        "api_http:GET:/v2/communities/:id",
+        "api_http:GET:/v2/communities/:id/bans",
+        "api_http:GET:/v2/communities/:id/members",
+        "api_http:GET:/v2/communities/:id/posts",
+        "api_http:GET:/v2/communities/:id/requests",
+        "api_http:GET:/v2/members/:address/requests",
+        "api_http:PATCH:/v1/communities/:id",
+        "api_http:PATCH:/v1/communities/:id/members/:address",
+        "api_http:PATCH:/v1/communities/:id/requests/:requestId",
+        "api_http:POST:/v1/communities",
+        "api_http:POST:/v1/communities/:id/members",
+        "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
+        "api_http:POST:/v1/communities/:id/places",
+        "api_http:POST:/v1/communities/:id/posts",
+        "api_http:POST:/v1/communities/:id/posts/:postId/like",
+        "api_http:POST:/v1/communities/:id/requests",
+        "api_http:POST:/v1/members/:address/communities",
+        "api_http:PUT:/v1/communities/:id"
       ],
-      "description": "Core v1/v2 detail SQL failures now preserve source message-only 500 with executed-source/local regressions. Static comparison still confirms listing handlers catch unexpected dependency failures as 500 {message} while the candidate core listing SQL uses the generic envelope. Other community CRUD/list catches require individual failure injection; voice mutation error middleware remains separate."
+      "description": "All 37 community handlers now preserve source message-only 500 for unexpected core SQL errors. Independently recaptured actual Node handlers receive a real node-pg exception through injected domain dependencies; candidate requests exercise restricted-role PostgreSQL faults and paired standing failures. Author community suite passes 184 cases, including unchanged federation error envelopes. Registry-read/provider/voice failure phases remain separate requirements; arbitrary driver error wording and deployed outages are not proven equivalent."
     },
     {
       "id": "rpc-ordinary-transport-backpressure",
@@ -7368,7 +7596,7 @@
         "api_http:POST:/v1/community-voice-chats",
         "api_http:DELETE:/v1/community-voice-chats/:communityId"
       ],
-      "description": "Pinned logic/updates.ts gathers every membership page before delivery. Candidate now snapshots eligible subscribers, completes all bounded 256-address probes before emitting, aborts all member-scoped delivery on any failed page and clears all isMember annotations on a failed public STARTED; public ENDED skips membership reads. Six independently recaptured actual-source cases and the owned-SQL second-page failure regression pass, including 513 eligible recipients and zero partial emissions. All seven fanout tests pass, including actual NATS. Final independent review and deployed failure behavior remain unverified."
+      "description": "Pinned logic/updates.ts gathers every membership page before delivery. Candidate now snapshots eligible subscribers, completes all bounded 256-address probes before emitting, aborts all member-scoped delivery on any failed page and clears all isMember annotations on a failed public STARTED; public ENDED skips membership reads. Six independently recaptured actual-source cases and the owned-SQL second-page failure regression pass, including 513 eligible recipients and zero partial emissions. All seven fanout tests pass, including actual NATS. Fresh independent static review confirms the whole-audience fix; deployed failure behavior and final aggregate review remain unverified."
     },
     {
       "id": "configured-social-analytics-effects",
@@ -7396,7 +7624,7 @@
         "api_http:POST:/v1/communities/:id/requests",
         "api_http:PATCH:/v1/communities/:id/requests/:requestId"
       ],
-      "description": "Pinned Social uses 16 analytics event kinds across 17 voice/community call sites. Installed @dcl/analytics-component posts event/body-with-env/context to ANALYTICS_API_URL with x-token, configured/default header timeout, immediate response cancellation and fire-and-forget failure isolation. Candidate Social currently emits none of these events. Adapter reuse of the existing Outbound and exact producer metadata/order are under implementation; deployed analytics configuration/routing and provider timing remain unverified."
+      "description": "Pinned Social uses 16 analytics event kinds across 17 voice/community call sites. Installed @dcl/analytics-component posts event/body-with-env/context to ANALYTICS_API_URL with x-token, a configured/default header deadline, immediate response cancellation and fire-and-forget failure isolation. Candidate has one concrete adapter over existing Outbound, source-shaped configuration, guarded Fetch redirects and SDK fixture regressions; producer hooks are not yet connected at this revision. Shared connect timeout8s/read timeout25s and host guarding can terminate requests earlier than a longer source analytics timeout. Entirely absent analytics configuration disables the monolith adapter while source requires all four strings. These are explicit, unaccepted operating differences; deployed routing and provider timing remain unverified."
     },
     {
       "id": "private-call-pending-expiry-start-order",
@@ -7415,6 +7643,19 @@
         "websocket:UPGRADE:/v1/stream"
       ],
       "description": "Pinned logic/voice/voice.ts endIncomingOrOutgoingPrivateVoiceChatForUser looks only in the pending-call relation; accepted calls have already left it. Candidate end_private_voice_chat_on_disconnect first terminates an accepted media call. Closing a Social socket can therefore end an ongoing media call that the source leaves running. The difference has no recorded acceptance; actual pending/accepted disconnect captures and a focused correction are pending."
+    },
+    {
+      "id": "community-registry-read-failure-propagation",
+      "status": "known_gap",
+      "operations": [
+        "api_http:GET:/v1/communities",
+        "api_http:GET:/v1/communities/:id/members",
+        "api_http:GET:/v1/communities/:id/bans",
+        "api_http:GET:/v1/communities/:id/requests",
+        "api_http:GET:/v1/members/:address/requests",
+        "api_http:GET:/v1/communities/:id/posts"
+      ],
+      "description": "Pinned registry.getProfiles propagates Redis mGet and provider read failures; owners.getOwnersNames skips malformed profiles but does not swallow those read failures. Six candidate v1 list/enrichment operations use the best-effort ProfilesCache.get_profiles wrapper, which can answer 200 with empty profile fields instead of the handler source 500 {message}. An existing-reader Result path and source read-versus-write failure regressions are pending; cache write failures remain best-effort."
     }
   ]
 }
