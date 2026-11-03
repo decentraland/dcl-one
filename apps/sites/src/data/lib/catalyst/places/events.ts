@@ -86,6 +86,8 @@ function toEventCategory(c: z.infer<typeof EventCategoryRecordSchema>): EventCat
   };
 }
 
+export const EVENT_CALENDAR_LIMIT = 500;
+
 type FetchEventsParams = {
   list?: "live" | "active" | "highlight" | "trending";
   search?: string;

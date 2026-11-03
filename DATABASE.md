@@ -397,15 +397,17 @@ stored client-supplied sale category never establishes eligibility.
   required offset APIs. Define tie-breaking, replay windows and deletion
   handling; a cursor alone does not give snapshot consistency.
 
-The public What's On calendar caches only completed, valid catalogue responses
+The public What's On calendar caches completed, parsed catalogue responses
 for 30 seconds in each Sites process. Its key is the catalogue base, search,
 recurrence selector and exact date window; catalogue page offsets and accounts
 are not inputs. At most eight entries of up to 500 records are retained, with
-expired and least-recently-used entries evicted on reads. Request cancellation
-stays independent, failures and malformed results are not retained, and process
-restart rebuilds from the events API. Sequential page views therefore reuse the
-same calendar read within the freshness budget while live/catalogue reads stay
-uncached.
+expired and least-recently-used entries evicted on reads. Parsed responses
+retain malformed-row counts so a damaged record does not bypass the cache. Concurrent reads of one key share one upstream request with
+an independent five-second budget; each request can cancel only its own wait.
+At most eight shared reads run at once; a new key at capacity fails retryably.
+Failed or timed-out reads are not retained, and process restart rebuilds from
+the events API. Page views reuse the same calendar read within the freshness
+budget while live/catalogue reads stay uncached.
 
 ## Measurement and acceptance
 
