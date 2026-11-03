@@ -332,3 +332,149 @@ describe("the seed a card passes", () => {
     expect(document.querySelector<HTMLElement>(".shop-pdp[data-route]")!.dataset.route).toBe("item");
   });
 });
+
+describe("latest sales and owners", () => {
+  const BUYER = "0x00000000000000000000000000000000000000b1";
+  const sale = (n: number) => ({
+    id: `sale-${n}`,
+    itemId: ITEM_ID,
+    contractAddress: COLLECTION,
+    buyer: BUYER,
+    chainId: 137,
+    network: "MATIC",
+    price: "2500000000000000000",
+    seller: RESELLER,
+    timestamp: Date.now() - 30 * 86_400_000,
+    tokenId: TOKEN_ID,
+    txHash: `0x${n}`,
+    type: n === 0 ? "mint" : "order",
+  });
+  const owner = (n: number) => ({ issuedId: String(n + 1), ownerId: BUYER, tokenId: String(1000 + n) });
+
+  function answers(seen: { sales: URL[]; owners: URL[] }, totals = { sales: 2, owners: 2 }): CatalogAnswers {
+    return {
+      "/v1/sales": (url: URL) => {
+        seen.sales.push(url);
+        const skip = Number(url.searchParams.get("skip") ?? 0);
+        const rows = Array.from({ length: Math.max(0, Math.min(5, totals.sales - skip)) }, (_, i) => sale(skip + i));
+        return { data: rows, total: totals.sales };
+      },
+      "/v1/owners": (url: URL) => {
+        seen.owners.push(url);
+        return { data: Array.from({ length: Math.min(5, totals.owners) }, (_, i) => owner(i)), total: totals.owners };
+      },
+    };
+  }
+
+  it("the item route lists the item's owners by issue number and the sales of all its tokens", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    itemPage({ overrides: answers(seen) });
+    const owners = await screen.findByTestId("item-owners");
+    expect(within(owners).getAllByTestId("owner-row")).toHaveLength(2);
+    expect(within(owners).getByText("2 copies")).toBeTruthy();
+    expect(within(owners).getAllByText("View")[0]!.getAttribute("href")).toBe(`/shop/token/${COLLECTION}/1000`);
+    expect(seen.owners[0]!.searchParams.get("itemId")).toBe(ITEM_ID);
+    expect(seen.owners[0]!.searchParams.get("sortBy")).toBe("issuedId");
+    expect(seen.owners[0]!.searchParams.get("orderDirection")).toBe("asc");
+
+    const sales = await screen.findByTestId("latest-sales");
+    const rows = within(sales).getAllByTestId("sale-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("Mint");
+    expect(rows[1]).toHaveTextContent("Listing");
+    expect(rows[1]).toHaveTextContent("2.5");
+    expect(within(rows[1]!).getAllByRole("link")[1]!.getAttribute("href")).toBe(`/shop/accounts/${BUYER}`);
+    expect(seen.sales[0]!.searchParams.get("itemId")).toBe(ITEM_ID);
+    expect(seen.sales[0]!.searchParams.get("tokenId")).toBeNull();
+  });
+
+  it("the token route lists that token's sales only, and no owners table", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    tokenPage({ client: catalogClient("ok", answers(seen)) });
+    expect(await screen.findByTestId("latest-sales")).toBeTruthy();
+    expect(seen.sales[0]!.searchParams.get("tokenId")).toBe(TOKEN_ID);
+    expect(seen.sales[0]!.searchParams.get("itemId")).toBeNull();
+    expect(screen.queryByTestId("item-owners")).toBeNull();
+    expect(seen.owners).toHaveLength(0);
+  });
+
+  it("pages the sales five at a time", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    itemPage({ overrides: answers(seen, { sales: 7, owners: 1 }) });
+    const sales = await screen.findByTestId("latest-sales");
+    expect(within(sales).getAllByTestId("sale-row")).toHaveLength(5);
+    expect(within(sales).getByText("1 / 2")).toBeTruthy();
+    fireEvent.click(within(sales).getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(within(screen.getByTestId("latest-sales")).getAllByTestId("sale-row")).toHaveLength(2));
+    expect(seen.sales.at(-1)!.searchParams.get("skip")).toBe("5");
+    expect(seen.sales.at(-1)!.searchParams.get("first")).toBe("5");
+  });
+
+  it("the token route shows no sales until its token is known (LAND and the chain come from it)", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    const client = catalogClient("ok", { ...answers(seen), "/v1/nfts": { data: [], total: 0 } });
+    tokenPage({ client });
+    await waitFor(() => expect(client.calls.some((c) => c.url.includes("/v1/nfts"))).toBe(true));
+    await act(async () => {});
+    expect(screen.queryByTestId("latest-sales")).toBeNull();
+    expect(seen.sales).toHaveLength(0);
+  });
+
+  it("pages the owners and goes back with Previous", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    itemPage({ overrides: answers(seen, { sales: 0, owners: 7 }) });
+    const owners = await screen.findByTestId("item-owners");
+    fireEvent.click(within(owners).getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(seen.owners.at(-1)!.searchParams.get("skip")).toBe("5"));
+    fireEvent.click(within(screen.getByTestId("item-owners")).getByRole("button", { name: "Previous" }));
+    await waitFor(() => expect(within(screen.getByTestId("item-owners")).getByText("1 / 2")).toBeTruthy());
+  });
+
+  it("keeps the pager when a later page comes back empty, so the first page is still reachable", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    const overrides = answers(seen, { sales: 7, owners: 0 });
+    const real = overrides["/v1/sales"] as (url: URL) => { data: unknown[]; total: number };
+    overrides["/v1/sales"] = (url: URL) => (url.searchParams.get("skip") === "5" ? { data: [], total: 7 } : real(url));
+    itemPage({ overrides });
+    const sales = await screen.findByTestId("latest-sales");
+    fireEvent.click(within(sales).getByRole("button", { name: "Next" }));
+    await waitFor(() => expect(within(screen.getByTestId("latest-sales")).queryAllByTestId("sale-row")).toHaveLength(0));
+    fireEvent.click(within(screen.getByTestId("latest-sales")).getByRole("button", { name: "Previous" }));
+    await waitFor(() => expect(within(screen.getByTestId("latest-sales")).getAllByTestId("sale-row")).toHaveLength(5));
+  });
+
+  it("prices each sale in its own chain's MANA", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    itemPage({ overrides: { ...answers(seen), "/v1/sales": () => ({ data: [{ ...sale(1), chainId: 1, network: "ETHEREUM" }, sale(2)], total: 2 }) } });
+    const rows = within(await screen.findByTestId("latest-sales")).getAllByTestId("sale-row");
+    expect(rows[0]!.querySelector("svg")!.getAttribute("viewBox")).toBe("0 0 13 14");
+    expect(rows[1]!.querySelector("svg")!.getAttribute("viewBox")).toBe("0 0 24 24");
+  });
+
+  it("says a later page failed, with a retry, instead of an empty table", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    const overrides = answers(seen, { sales: 7, owners: 0 });
+    const real = overrides["/v1/sales"] as (url: URL) => unknown;
+    let fail = true;
+    overrides["/v1/sales"] = (url: URL) => {
+      if (url.searchParams.get("skip") === "5" && fail) throw new Error("upstream down");
+      return real(url);
+    };
+    itemPage({ overrides });
+    fireEvent.click(within(await screen.findByTestId("latest-sales")).getByRole("button", { name: "Next" }));
+    const error = await screen.findByTestId("history-error");
+    fail = false;
+    fireEvent.click(within(error).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(within(screen.getByTestId("latest-sales")).getAllByTestId("sale-row")).toHaveLength(2));
+    expect(screen.queryByTestId("history-error")).toBeNull();
+  });
+
+  it("shows neither section while there are no sales and no owners", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    itemPage({ overrides: answers(seen, { sales: 0, owners: 0 }) });
+    expect(await screen.findByRole("heading", { level: 1, name: "Nacho Hat" })).toBeTruthy();
+    await waitFor(() => expect(seen.sales.length).toBeGreaterThan(0));
+    expect(screen.queryByTestId("latest-sales")).toBeNull();
+    expect(screen.queryByTestId("item-owners")).toBeNull();
+  });
+});

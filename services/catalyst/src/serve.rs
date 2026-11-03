@@ -336,6 +336,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             config.node.public_url.as_deref(),
         ),
         events_admin_token: config.explore.catalyrst_events_admin_token.clone(),
+        events_slack_webhook: config.explore.events_slack_webhook.clone(),
         places_upstream: source(
             config.explore.places_mirror_upstream,
             &config.explore.places_upstream_url,

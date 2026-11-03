@@ -94,6 +94,7 @@ async function fetchText(
     );
   }
   if (!res.ok) {
+    await res.body?.cancel().catch(() => {});
     throw new CatalystError(
       `Catalyst returned ${res.status} ${res.statusText}`,
       url,
