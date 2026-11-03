@@ -1439,6 +1439,7 @@ dependencies = [
  "social",
  "system_bridge",
  "texture_camera",
+ "tokio",
  "ui_core",
  "world_ui",
 ]
