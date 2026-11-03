@@ -543,3 +543,14 @@ case and resolves one document per normalized pointer. Batch cache-hit matching
 compares the normalized public user ID to each requested key lowercased, while
 single-read errors retain the original requested key. This keeps mixed-case cache
 facts separate from authenticated wallet normalization and from the public ID.
+
+Community analytics reuses the configured Social analytics adapter and Outbound
+client. It adds no SQL storage, delivery receipt, retry queue or transaction that
+waits for HTTP. Join and opposite-request acceptance report the removed request
+ID when one exists; no ID property is sent when none exists. Making a community
+public reports the IDs of removed non-banned `request_to_join` rows, including
+historical status values, as the pinned source adapter's acceptance query does.
+That write can return one ID per matching request, so its returned data and
+analytics payload grow with that community's matching requests. The regression
+covers two accepted rows and one retained banned row; sustained large-community
+load is unmeasured. Analytics fetch failures do not change the mutation response.

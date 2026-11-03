@@ -930,27 +930,30 @@ pub async fn update_community(
             .await
         ));
     }
-    if becomes_public {
-        // upstream `acceptAllRequestsToJoin`: every pending request to join
-        // of a wallet the community does not ban becomes a membership
+    let accepted_request_ids: Vec<uuid::Uuid> = if becomes_public {
+        // The source adapter returns every removed, non-banned join request
+        // id, including rows retained from older request-status projections.
         try_resp!(map_db(
-            sqlx::query(
+            sqlx::query_scalar(
                 "WITH accepted AS ( \
                    DELETE FROM social.community_requests r \
-                    WHERE r.community_id = $1 AND r.type = 'request_to_join' AND r.status = 'pending' \
+                    WHERE r.community_id = $1 AND r.type = 'request_to_join' \
                       AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
                                       WHERE b.community_id = r.community_id \
                                         AND b.banned_address = r.member_address AND b.active) \
-                   RETURNING r.member_address) \
+                   RETURNING r.id,r.member_address), inserted AS ( \
                  INSERT INTO social.community_members (community_id, member_address, role) \
                  SELECT $1, member_address, 'member' FROM accepted \
-                 ON CONFLICT (community_id, member_address) DO NOTHING",
+                 ON CONFLICT (community_id, member_address) DO NOTHING RETURNING community_id) \
+                 SELECT id FROM accepted",
             )
             .bind(uuid)
-            .execute(&mut *tx)
+            .fetch_all(&mut *tx)
             .await
-        ));
-    }
+        ))
+    } else {
+        Vec::new()
+    };
     try_resp!(map_db(tx.commit().await));
     if let Some(bytes) = thumbnail.as_deref()
         && let Err(e) = store_thumbnail(&state.pool, &state.storage, uuid, bytes).await
@@ -959,6 +962,12 @@ pub async fn update_community(
         return err_json(
             StatusCode::INTERNAL_SERVER_ERROR,
             "failed to store thumbnail",
+        );
+    }
+    if !accepted_request_ids.is_empty() {
+        state.fire_analytics(
+            "ACCEPT_ALL_REQUESTS_TO_JOIN",
+            json!({"community_id":id,"requests_ids":accepted_request_ids}),
         );
     }
     let detail = match queries::get_by_id(

@@ -591,7 +591,7 @@ pub async fn add_member(
             .execute(&mut *tx)
             .await
     ));
-    let gate: Option<(bool, bool, bool, bool)> = try_resp!(map_db(
+    let gate: Option<(bool, bool, bool, bool, Option<uuid::Uuid>)> = try_resp!(map_db(
         sqlx::query_as(
             "WITH c AS (SELECT active, private FROM social.communities WHERE id = $1), \
                   b AS (SELECT COALESCE(bool_or(active), FALSE) AS banned FROM social.community_bans \
@@ -602,15 +602,15 @@ pub async fn add_member(
                           ON CONFLICT (community_id, member_address) DO NOTHING RETURNING community_id), \
                   requests AS (DELETE FROM social.community_requests \
                                WHERE community_id = $1 AND member_address = $2 \
-                                 AND EXISTS (SELECT 1 FROM ins)) \
-             SELECT c.active, c.private, b.banned, EXISTS (SELECT 1 FROM ins) FROM c, b",
+                                 AND EXISTS (SELECT 1 FROM ins) RETURNING id) \
+             SELECT c.active, c.private, b.banned, EXISTS (SELECT 1 FROM ins), (SELECT id FROM requests LIMIT 1) FROM c, b",
         )
         .bind(uuid)
         .bind(&signer)
         .fetch_optional(&mut *tx)
         .await
     ));
-    let Some((active, private, banned, inserted)) = gate else {
+    let Some((active, private, banned, inserted, request_id)) = gate else {
         return err_json(
             StatusCode::NOT_FOUND,
             format!("Community not found: {uuid}"),
@@ -635,6 +635,11 @@ pub async fn add_member(
     }
     try_resp!(map_db(tx.commit().await));
     if inserted {
+        let mut properties = json!({"community_id":id,"user_id":signer.as_str()});
+        if let Some(request_id) = request_id {
+            properties["request_id"] = json!(request_id);
+        }
+        state.fire_analytics("JOIN_COMMUNITY", properties);
         // The new membership is visible before the shared fan-out reads its audience.
         state.member_status_changed(uuid, &signer, true).await;
     }
@@ -719,6 +724,14 @@ pub async fn remove_member(
     ))
     .len() > 0;
     if removed {
+        if target == signer {
+            state.fire_analytics(
+                "LEAVE_COMMUNITY",
+                json!({"community_id":id,"user_id":target.as_str()}),
+            );
+        } else {
+            state.fire_analytics("KICK_MEMBER_FROM_COMMUNITY",json!({"community_id":id,"kicker_user_id":signer.as_str(),"target_user_id":target.as_str()}));
+        }
         tracing::info!(community_id = %uuid, member = %target, "community member left");
         state.member_removed_from_worlds(uuid, &target);
         // upstream `leaveCommunity` / `kickMember`: OFFLINE to the members
@@ -1027,6 +1040,10 @@ pub async fn ban_member(
         .await
     ));
     try_resp!(map_db(tx.commit().await));
+    if removed {
+        state.fire_analytics("BAN_MEMBER_FROM_COMMUNITY",json!({"community_id":id,"banner_user_id":signer.as_str(),"target_user_id":target.as_str()}));
+    }
+
     state
         .evict_from_private_community_voice(uuid, &target)
         .await;

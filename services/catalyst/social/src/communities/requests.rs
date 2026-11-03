@@ -434,6 +434,10 @@ pub async fn create_request(
             )
             .await
         );
+        state.fire_analytics(
+            "JOIN_COMMUNITY",
+            json!({"community_id":id,"user_id":member_address.as_str(),"request_id":opp_id}),
+        );
         // upstream `createCommunityRequest`: the member joined, ONLINE to
         // the members
         state
@@ -666,6 +670,15 @@ pub async fn update_request_status(
         }
     }
     try_resp!(transition_request(&state.pool, uuid, req_uuid, &member_address, status).await);
+    if status == "rejected" || status == "cancelled" {
+        let event = if status == "rejected" {
+            "REJECT_COMMUNITY_REQUEST"
+        } else {
+            "CANCEL_COMMUNITY_REQUEST"
+        };
+        state.fire_analytics(event,json!({"request_id":request_id,"community_id":uuid.as_uuid(),"type":kind,"member_address":member_address.as_str(),"caller_address":signer.as_str()}));
+    }
+
     if status == "accepted" {
         // upstream `updateRequestStatus`: the member joined, ONLINE to the
         // members
