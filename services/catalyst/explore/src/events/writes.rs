@@ -490,6 +490,7 @@ pub async fn create_event(
             .edit_any
     {
         body.schedules = None;
+        body.url = None;
     }
     let id = moderation::create_as(&state.pool, &body, &signer, &signer, &state.settings).await?;
     answer(&state, &id, Some(&signer)).await
@@ -2590,6 +2591,34 @@ mod tests {
             .await
             .unwrap();
         (status, serde_json::from_slice(&bytes).unwrap())
+    }
+
+    #[tokio::test]
+    async fn custom_create_links_require_the_same_editor_grant_as_patch() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let owner = alloy::signers::local::PrivateKeySigner::random();
+        let address = format!("{:#x}", owner.address());
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let mut body = new_event();
+        body["url"] = json!("https://example.org/custom-join");
+        let (status, ordinary) = call_as(&app, "POST", "/api/events", &owner, body.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{ordinary}");
+        assert_ne!(ordinary["data"]["url"], body["url"]);
+        sqlx::query("INSERT INTO explore.event_profile_settings(\"user\",permissions_granted,permissions) VALUES($1,true,'[\"edit_any_event\"]')")
+            .bind(&address).execute(&pool).await.unwrap();
+        let (status, privileged) = call_as(&app, "POST", "/api/events", &owner, body.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{privileged}");
+        assert_eq!(privileged["data"]["url"], body["url"]);
     }
 
     #[tokio::test]
