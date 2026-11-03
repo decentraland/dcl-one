@@ -28,14 +28,14 @@ fn address(n: usize) -> String {
     format!("0x{n:040x}")
 }
 
-struct Sns {
-    publisher: Arc<crate::legacy_events::LegacyEvents>,
+pub(super) struct Sns {
+    pub(super) publisher: Arc<crate::legacy_events::LegacyEvents>,
     requests: Arc<parking_lot::Mutex<Vec<Value>>>,
     mode: Arc<AtomicUsize>,
     server: tokio::task::JoinHandle<()>,
 }
 impl Sns {
-    async fn new() -> Self {
+    pub(super) async fn new() -> Self {
         let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
         let mode = Arc::new(AtomicUsize::new(0));
         let (captured, response_mode) = (requests.clone(), mode.clone());
@@ -107,7 +107,7 @@ impl Sns {
         .await
         .unwrap();
     }
-    fn events(&self) -> Vec<Value> {
+    pub(super) fn events(&self) -> Vec<Value> {
         self.requests
             .lock()
             .iter()

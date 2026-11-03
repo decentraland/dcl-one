@@ -48,6 +48,7 @@ mod upstream_rules;
 mod upstream_writes;
 mod voice_parity;
 pub(super) mod world_access;
+mod write_failures;
 
 const ADMIN_TOKEN: &str = "cg-social-admin";
 const FORGED: &str = "/v1/forged/not-a-route";

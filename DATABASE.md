@@ -554,3 +554,18 @@ That write can return one ID per matching request, so its returned data and
 analytics payload grow with that community's matching requests. The regression
 covers two accepted rows and one retained banned row; sustained large-community
 load is unmeasured. Analytics fetch failures do not change the mutation response.
+
+Client community writes retain the pinned Social source's commit boundaries.
+BAN commits membership removal, then removal of that wallet's likes, emits
+analytics, commits the ban, and removes its requests. A later failure preserves
+completed stages; voice eviction, member-status publication and the ban
+notification follow successful request removal. These are separate statements
+on the existing pool, with no transaction around external delivery. Updating a
+community commits its fields before thumbnail and place changes. Place removal
+and insertion commit separately. Changing privacy to public then accepts
+non-banned join requests in its own transaction: membership insertion and request
+deletion roll back together on failure, while the earlier privacy change stays.
+The atomic join-and-remove-requests operation remains separate from these
+workflows. Trigger-injected regressions cover one affected member, like and
+request, plus place replacement; they do not measure concurrent cutover or
+large-community workloads.

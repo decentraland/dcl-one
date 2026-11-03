@@ -888,7 +888,6 @@ pub async fn update_community(
         }
     }
     let becomes_public = privacy == Some(false) && current.is_some_and(|c| c.1);
-    let mut tx = try_resp!(map_db(state.pool.begin().await));
     try_resp!(map_db(
         sqlx::query(
             "UPDATE social.communities SET \
@@ -904,9 +903,48 @@ pub async fn update_community(
         .bind(description.as_deref())
         .bind(privacy)
         .bind(visibility)
-        .execute(&mut *tx)
+        .execute(&state.pool)
         .await
     ));
+    // A rename broadcast starts after the first committed UPDATE, before the
+    // separately fallible thumbnail, places and request-acceptance stages.
+    if let (Some(new_name), Some((old_name, _, _, _))) = (name.as_deref(), current)
+        && new_name.trim() != old_name.trim()
+    {
+        let (state, old_name, new_name) = (state.clone(), old_name.clone(), new_name.to_owned());
+        tokio::spawn(async move {
+            let Ok(has_thumbnail) = sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM social.community_thumbnails WHERE community_id=$1)",
+            )
+            .bind(uuid)
+            .fetch_one(&state.pool)
+            .await
+            else {
+                return;
+            };
+            let slug = |n: &str| n.trim().to_lowercase().replace(' ', "-");
+            let event = CommunityEvent {
+                kind: "community_renamed",
+                key: format!("{uuid}-{}-{}", slug(&new_name), slug(&old_name)),
+                community_id: uuid,
+                metadata: json!({"communityId":uuid.as_uuid(), "oldName":old_name,
+                    "newName":new_name, "thumbnailUrl":stored_thumbnail_or_na(&state,has_thumbnail,uuid)}),
+            };
+            state
+                .publish_community_event(&event, &Audience::Members)
+                .await;
+            notify(&state.pool, event, Audience::Members).await;
+        });
+    }
+    if let Some(bytes) = thumbnail.as_deref()
+        && let Err(e) = store_thumbnail(&state.pool, &state.storage, uuid, bytes).await
+    {
+        tracing::error!(error = %e, "failed to store community thumbnail");
+        return err_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "failed to store thumbnail",
+        );
+    }
     if let Some(ids) = &place_ids {
         try_resp!(map_db(
             sqlx::query(
@@ -914,7 +952,7 @@ pub async fn update_community(
             )
             .bind(uuid)
             .bind(ids)
-            .execute(&mut *tx)
+            .execute(&state.pool)
             .await
         ));
         try_resp!(map_db(
@@ -926,44 +964,33 @@ pub async fn update_community(
             .bind(ids)
             .bind(uuid)
             .bind(&signer)
-            .execute(&mut *tx)
+            .execute(&state.pool)
             .await
         ));
     }
     let accepted_request_ids: Vec<uuid::Uuid> = if becomes_public {
-        // The source adapter returns every removed, non-banned join request
-        // id, including rows retained from older request-status projections.
-        try_resp!(map_db(
-            sqlx::query_scalar(
-                "WITH accepted AS ( \
-                   DELETE FROM social.community_requests r \
-                    WHERE r.community_id = $1 AND r.type = 'request_to_join' \
-                      AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
-                                      WHERE b.community_id = r.community_id \
-                                        AND b.banned_address = r.member_address AND b.active) \
-                   RETURNING r.id,r.member_address), inserted AS ( \
-                 INSERT INTO social.community_members (community_id, member_address, role) \
-                 SELECT $1, member_address, 'member' FROM accepted \
-                 ON CONFLICT (community_id, member_address) DO NOTHING RETURNING community_id) \
-                 SELECT id FROM accepted",
-            )
-            .bind(uuid)
-            .fetch_all(&mut *tx)
-            .await
-        ))
+        // The source bulk acceptance owns its transaction. Failure rolls back
+        // its membership/request changes, preserving the preceding UPDATE.
+        let mut tx = try_resp!(map_db(state.pool.begin().await));
+        try_resp!(map_db(sqlx::query(
+            "INSERT INTO social.community_members (community_id,member_address,role) \
+             SELECT $1,r.member_address,'member' FROM social.community_requests r \
+              WHERE r.community_id=$1 AND r.type='request_to_join' \
+                AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
+                    WHERE b.community_id=r.community_id AND b.banned_address=r.member_address AND b.active) \
+             ON CONFLICT (community_id,member_address) DO NOTHING"
+        ).bind(uuid).execute(&mut *tx).await));
+        let ids = try_resp!(map_db(sqlx::query_scalar(
+            "DELETE FROM social.community_requests r WHERE r.community_id=$1 AND r.type='request_to_join' \
+                AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
+                    WHERE b.community_id=r.community_id AND b.banned_address=r.member_address AND b.active) \
+             RETURNING r.id"
+        ).bind(uuid).fetch_all(&mut *tx).await));
+        try_resp!(map_db(tx.commit().await));
+        ids
     } else {
         Vec::new()
     };
-    try_resp!(map_db(tx.commit().await));
-    if let Some(bytes) = thumbnail.as_deref()
-        && let Err(e) = store_thumbnail(&state.pool, &state.storage, uuid, bytes).await
-    {
-        tracing::error!(error = %e, "failed to store community thumbnail");
-        return err_json(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "failed to store thumbnail",
-        );
-    }
     if !accepted_request_ids.is_empty() {
         state.fire_analytics(
             "ACCEPT_ALL_REQUESTS_TO_JOIN",
@@ -987,24 +1014,6 @@ pub async fn update_community(
         Ok(None) => return err_json(StatusCode::NOT_FOUND, "Community not found"),
         Err(e) => return *map_db::<()>(Err(e)).unwrap_err(),
     };
-    if let (Some(new_name), Some((old_name, _, _, _))) = (name.as_deref(), current)
-        && new_name.trim() != old_name.trim()
-    {
-        let slug = |n: &str| n.trim().to_lowercase().replace(' ', "-");
-        let event = CommunityEvent {
-            kind: "community_renamed",
-            key: format!("{uuid}-{}-{}", slug(new_name), slug(old_name)),
-            community_id: uuid,
-            metadata: json!({
-                "communityId": uuid.as_uuid(),
-                "oldName": old_name,
-                "newName": new_name,
-                "thumbnailUrl": stored_thumbnail_or_na(&state, detail.has_thumbnail, uuid),
-            }),
-        };
-        tokio::spawn(state.publish_community_event(&event, &Audience::Members));
-        notify(&state.pool, event, Audience::Members).await;
-    }
     let mut data = json!({
         "id": detail.id, "name": detail.name, "description": detail.description,
         "ownerAddress": detail.owner_address, "privacy": detail.privacy,

@@ -987,25 +987,22 @@ pub async fn ban_member(
             )
         });
     }
-    let mut tx = try_resp!(map_db(state.pool.begin().await));
-    try_resp!(map_db(
-        sqlx::query("SELECT id FROM social.communities WHERE id = $1 FOR UPDATE")
-            .bind(uuid)
-            .execute(&mut *tx)
-            .await
+    // The source commits each stage independently: a later ban/request failure
+    // must retain an earlier kick and unlike, including the analytics event.
+    let removed: bool = try_resp!(map_db(
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.community_members WHERE community_id=$1 AND member_address=$2)")
+            .bind(uuid).bind(&target).fetch_one(&state.pool).await
     ));
-    let removed = try_resp!(map_db(
-        sqlx::query(
-            "DELETE FROM social.community_members WHERE community_id = $1 AND member_address = $2"
-        )
-        .bind(uuid)
-        .bind(&target)
-        .execute(&mut *tx)
-        .await
-    ))
-    .rows_affected()
-        > 0;
     if removed {
+        try_resp!(map_db(
+            sqlx::query(
+                "DELETE FROM social.community_members WHERE community_id=$1 AND member_address=$2"
+            )
+            .bind(uuid)
+            .bind(&target)
+            .execute(&state.pool)
+            .await
+        ));
         try_resp!(map_db(
             sqlx::query(
                 "DELETE FROM social.community_post_likes l USING social.community_posts p \
@@ -1013,19 +1010,11 @@ pub async fn ban_member(
             )
             .bind(uuid)
             .bind(&target)
-            .execute(&mut *tx)
+            .execute(&state.pool)
             .await
         ));
+        state.fire_analytics("BAN_MEMBER_FROM_COMMUNITY",json!({"community_id":id,"banner_user_id":signer.as_str(),"target_user_id":target.as_str()}));
     }
-    try_resp!(map_db(
-        sqlx::query(
-            "DELETE FROM social.community_requests WHERE community_id = $1 AND member_address = $2"
-        )
-        .bind(uuid)
-        .bind(&target)
-        .execute(&mut *tx)
-        .await
-    ));
     try_resp!(map_db(
         sqlx::query(
             "INSERT INTO social.community_bans (community_id, banned_address, banned_by, active, banned_at) \
@@ -1036,13 +1025,18 @@ pub async fn ban_member(
         .bind(uuid)
         .bind(&target)
         .bind(&signer)
-        .execute(&mut *tx)
+        .execute(&state.pool)
         .await
     ));
-    try_resp!(map_db(tx.commit().await));
-    if removed {
-        state.fire_analytics("BAN_MEMBER_FROM_COMMUNITY",json!({"community_id":id,"banner_user_id":signer.as_str(),"target_user_id":target.as_str()}));
-    }
+    try_resp!(map_db(
+        sqlx::query(
+            "DELETE FROM social.community_requests WHERE community_id=$1 AND member_address=$2"
+        )
+        .bind(uuid)
+        .bind(&target)
+        .execute(&state.pool)
+        .await
+    ));
 
     state
         .evict_from_private_community_voice(uuid, &target)
