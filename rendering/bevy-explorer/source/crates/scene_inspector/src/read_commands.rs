@@ -39,6 +39,7 @@ pub fn add_read_commands(app: &mut App) {
     app.add_console_command::<ComponentNamesCommand, _>(component_names_cmd);
     app.add_console_command::<ComponentDefaultCommand, _>(component_default_cmd);
     app.add_console_command::<ComponentSchemaCommand, _>(component_schema_cmd);
+    crate::screen_position::add_screen_position_command(app);
 }
 
 // --- /set_scene ---

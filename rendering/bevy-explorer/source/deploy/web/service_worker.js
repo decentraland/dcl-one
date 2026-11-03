@@ -209,17 +209,10 @@ function stripCustomHeader(request) {
     const newHeaders = new Headers(request.headers);
     newHeaders.delete(CUSTOM_HEADER);
     
-    const newRequest = new Request(request.url, {
-        method: request.method,
+    // A headers override resets referrer fields unless the forward carries them too.
+    return new Request(request, {
         headers: newHeaders,
-        body: request.body,
-        mode: request.mode,
-        credentials: request.credentials,
-        cache: request.cache,
-        redirect: request.redirect,
         referrer: request.referrer,
-        integrity: request.integrity
+        referrerPolicy: request.referrerPolicy,
     });
-
-    return newRequest;
 }

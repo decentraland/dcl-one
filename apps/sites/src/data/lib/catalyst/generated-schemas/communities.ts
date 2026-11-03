@@ -58,6 +58,7 @@ export const CommunityDetailSchema = z.object({
   isBanned: z.boolean().optional(),
   thumbnailUrl: z.string().optional(),
   ownerName: z.string().optional(),
+  isHostingLiveEvent: z.boolean().optional(),
 });
 
 export const CommunityListItemSchema = z.object({

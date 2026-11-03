@@ -111,6 +111,25 @@ describe("the catalogue and collections", () => {
     expect(url.searchParams.get("isOnSale")).toBe("false");
   });
 
+  it("asks the catalog-items route for a sub-category in the parameters it reads", async () => {
+    const asked = async (wearableCategories: string[], category = "wearable") => {
+      const client = catalogClient();
+      await fetchCatalogItems({ category, wearableCategories }, { client });
+      const p = new URL(client.calls[0]!.url).searchParams;
+      return Object.fromEntries(["wearableCategory", "emoteCategory", "isWearableHead", "isWearableAccessory"].filter((k) => p.has(k)).map((k) => [k, p.getAll(k)]));
+    };
+    // The route reads one wearableCategory: a group goes through its flag, never as a list it would cut to one.
+    expect(await asked(["head", "hair", "facial_hair", "eyes", "eyebrows", "mouth"])).toEqual({ isWearableHead: ["true"] });
+    expect(await asked(["earring", "eyewear", "hat", "helmet", "mask", "tiara", "top_head"])).toEqual({ isWearableAccessory: ["true"] });
+    // The Account page's Head section: the server's head list, without "head".
+    expect(await asked(["eyebrows", "eyes", "facial_hair", "hair", "mouth"])).toEqual({ isWearableHead: ["true"] });
+    // A list no group covers keeps its first value, never no filter at all.
+    expect(await asked(["hat", "upper_body"])).toEqual({ wearableCategory: ["hat"] });
+    expect(await asked(["hat"])).toEqual({ wearableCategory: ["hat"] });
+    // An emote sub-category is emoteCategory: as wearableCategory the route would exclude every emote.
+    expect(await asked(["dance"], "emote")).toEqual({ emoteCategory: ["dance"] });
+  });
+
   it("returns catalogue rows by id in the ids' order, dropping unknown ones", async () => {
     const client = catalogClient();
     const items = await fetchCatalogByIds([`${COLLECTION}-3`, "0xdead-1", `${COLLECTION}-7`], { client });

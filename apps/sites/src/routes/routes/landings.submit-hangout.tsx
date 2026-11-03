@@ -3,11 +3,11 @@ import { Link, useNavigate } from "react-router";
 import LdSubmitHangoutView from "@ui/landings/pages/LdSubmitHangoutView";
 
 import { fetchEventCategories, type EventCategory } from "@/data/lib/catalyst/places/events";
-import { buildHangoutSubmit, emptyDraft, eventToDraft, loadEditableHangout, uploadHangoutPoster, type EditableHangout } from "@/data/lib/catalyst/landings/submit-hangout";
+import { buildHangoutSubmit, deleteHangout, emptyDraft, eventToDraft, loadEditableHangout, uploadHangoutPoster, type EditableHangout } from "@/data/lib/catalyst/landings/submit-hangout";
 import { loadHangoutOptions, type HangoutOptions } from "@/data/lib/catalyst/landings/hangout-options";
 import { useAuth } from "@/data/lib/auth/context";
 import { getIdentity } from "@/data/lib/auth/session";
-import { postJSON } from "@/data/lib/catalyst/client";
+import { SitesChromeMaybe } from "@ui/web/frames/SitesChrome";
 import { openSignIn } from "@/features/components/auth/signin-store";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
@@ -117,7 +117,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
     ? optionsResult.error || options?.profileError || (!canEditAny ? "You don't have permission to edit this hangout." : null)
     : null;
   const error = d.mode === "edit" && !d.eventId ? "Choose a hangout to edit using its event link." : current?.error || accessError;
-  const canChangeCommunity = d.mode === "create" || (owner && (!original?.community_id || Boolean(options?.communities.some((community) => community.id === original.community_id))));
+  const canChangeCommunity = d.mode === "create" || owner;
 
   async function removeHangout() {
     const identity = getIdentity();
@@ -125,7 +125,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
     setDeleting(true);
     setDeleteError(null);
     try {
-      await postJSON(`/events/api/events/${encodeURIComponent(original.id)}`, undefined, { identity, method: "DELETE" });
+      await deleteHangout(identity, original.id);
       navigate("/whats-on");
     } catch (err) {
       setDeleteError(err instanceof Error ? err.message : "Could not delete this hangout.");
@@ -135,6 +135,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
   }
 
   return (
+    <SitesChromeMaybe active="whatson">
     <LdSubmitHangoutView>
       {waiting ? <p role="status">Loading your hangout…</p> : error ? <div><p role="alert">{error}</p><Link to="/whats-on?tab=my">Back to My Hangouts</Link><button type="button" onClick={() => setOptionsAttempt((previous) => previous + 1)}>Check access again</button></div> : <SubmitHangout
         key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}
@@ -154,14 +155,15 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
         canEditAny={canEditAny}
         privateFieldsEditable={d.mode === "create" || owner}
         canChangeCommunity={canChangeCommunity}
-        upload={(file, vertical) => {
+        upload={(file, vertical, signal) => {
           const identity = getIdentity();
           if (!identity) return Promise.reject(new Error("Sign in to upload an image."));
-          return uploadHangoutPoster(identity, file, vertical);
+          return uploadHangoutPoster(identity, file, vertical, signal);
         }}
       />}
       {original && canEdit && !waiting && !error && <button type="button" disabled={deleting} onClick={() => { void removeHangout(); }}>{deleting ? "Deleting…" : "Delete hangout"}</button>}
       {deleteError && <p role="alert">{deleteError}</p>}
     </LdSubmitHangoutView>
+    </SitesChromeMaybe>
   );
 }

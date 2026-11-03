@@ -47,9 +47,16 @@ describe("when the actual Places page renders unified discovery", () => {
     expect(html).toContain("featured.dcl.eth");
   });
 
-  it("should read the live rail using activity order on the server", async () => {
+  it("should reuse the activity-ordered first page for live places", async () => {
     await loader({ request: new Request("https://example.test/places"), params: {}, context: {} } as never);
-    expect(fetchDestinations).toHaveBeenCalledWith({ limit: 40, order_by: "most_active" }, expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(fetchDestinations).toHaveBeenCalledTimes(2);
+    expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ limit: 60 }), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it("should only load the main feed on subsequent public pages", async () => {
+    await loader({ request: new Request("https://example.test/places?offset=60"), params: {}, context: {} } as never);
+    expect(fetchDestinations).toHaveBeenCalledTimes(1);
+    expect(fetchDestinations).toHaveBeenCalledWith(expect.objectContaining({ offset: 60, limit: 60 }), expect.anything());
   });
 
   it("should defer personal reads until the browser has the signed identity", async () => {
@@ -59,9 +66,10 @@ describe("when the actual Places page renders unified discovery", () => {
 
   describe("and the favourites tab is signed out", () => {
     beforeEach(() => { data.section = "favourites"; });
-    it("should show a sign-in action without rendering public rows as favourites", () => {
+    it("should defer the sign-in decision until hydration without rendering public rows as favourites", () => {
       html = renderPage();
-      expect(html).toContain("Sign in to see your favourites");
+      expect(html).toContain("Checking sign-in");
+      expect(html).not.toContain("Sign in to see your favourites");
       expect(html).not.toContain('href="/places/busy"');
     });
   });

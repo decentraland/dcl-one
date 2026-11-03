@@ -1685,6 +1685,16 @@ mod tests {
         )
         .await;
         assert_eq!((status, body), (StatusCode::OK, json!({ "ok": true })));
+        // The reporter can still use signed fetch without a capability.
+        let (status, body) = call(
+            &app,
+            "PUT",
+            &without_token,
+            Some("signed"),
+            Some(json!({ "reason": "scam_or_spam", "signed": true })),
+        )
+        .await;
+        assert_eq!((status, body), (StatusCode::OK, json!({ "ok": true })));
         let (status, body) = call(
             &app,
             "GET",
@@ -1696,7 +1706,7 @@ mod tests {
         assert_eq!((status, body["total"].clone()), (StatusCode::OK, json!(1)));
         assert_eq!(
             body["data"][0]["payload"],
-            json!({ "reason": "scam_or_spam" })
+            json!({ "reason": "scam_or_spam", "signed": true })
         );
         let id = body["data"][0]["id"].as_i64().unwrap();
         let (status, body) = call(

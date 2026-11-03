@@ -136,6 +136,7 @@ def render(table, cfg, mime):
         # The query-based places social cards own only their exact endpoints;
         # /places/place/<position> and /places/world/<name> are Sites pages.
         locations += (location("= " + row["path"], proxy("apis"))
+                      + location("= " + row["path"] + "/", proxy("apis"))
                       if row.get("exact") else pair(row["path"], "apis", True))
     for row in table["aliases"]:
         rewrite = row.get("rewrite") or "^(.*)$ " + row["to"].replace("$uri", "$1")

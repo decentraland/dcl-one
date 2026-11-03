@@ -8,6 +8,8 @@ on:
       - rendering/bevy-explorer/**
       - library/protocol/proto/**
       - apps/bevy-explorer/**
+      - library/vendor/rusty_enet/**
+      - tooling/dev-regressions*
       - tooling/bevy-ci.py
       - tooling/tests/test_bevy_*.py
       - .github/workflows/bevy-explorer-scenes.yml

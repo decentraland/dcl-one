@@ -21,23 +21,29 @@
 //! `.merge(social::rpc::router(social_rpc))`. Routes: `GET /social-rpc`
 //! (the upgrade; the handshake accepts a signature over `/` or `/social-rpc`,
 //! the only `x-original-path` a proxy may forward), `GET /social-rpc/info`,
-//! `GET /social-rpc/health` (local), and the upstream uWS host's HTTP routes
+//! `GET /social-rpc/health` (local), the plain JSON stream
+//! `GET /social-rpc/v1/stream` (`stream`, upstream's `/v1/stream`), and the
+//! upstream uWS host's HTTP routes
 //! (`src/controllers/routes/uws.routes.ts`): `GET /social-rpc/status`, any
 //! method on `/social-rpc/health/live`,
 //! `GET /social-rpc/v1/users/{address}/privacy-settings` and a 404
 //! `{"error":"Not Found"}` for every other `/social-rpc/*` path or method,
 //! all with `Access-Control-Allow-Origin: *`; then the bearer-gated
-//! `/admin/social/*` (`admin`).
+//! `/admin/social/*` (`admin`). The procedures' HTTP twins on the social-api
+//! host are `http::router`, which `social::router` mounts beside the
+//! communities routes.
 
 pub mod admin;
 pub mod context;
 pub mod db;
+pub mod http;
 pub use crate::shared::rpc::{drpc, handshake};
 pub mod limits;
 pub mod profiles;
 pub mod proto;
 pub mod pubsub;
 pub mod service;
+pub mod stream;
 mod topology;
 pub mod voice;
 pub mod ws;
@@ -85,6 +91,15 @@ pub struct Settings {
     pub ws_max_concurrent_connections: Option<usize>,
     /// `WS_MAX_PAYLOAD_LENGTH`: the largest inbound frame.
     pub ws_max_payload_bytes: usize,
+    /// `WS_MAX_BACKPRESSURE`: bytes a `/v1/stream` socket may have waiting to
+    /// be written when another is sent; past it the send closes the socket
+    /// 1008 `Slow consumer`.
+    pub ws_max_backpressure_bytes: usize,
+    /// The per-address limits both sockets share (`WS_MAX_CONNECTIONS_PER_ADDRESS`,
+    /// `WS_SUBSCRIPTIONS_PER_SECOND`, `WS_SUBSCRIPTION_BURST`, `WS_ADDRESS_BUDGET_CAPACITY`).
+    pub admission: limits::AdmissionLimits,
+    /// `/v1/stream`'s own (`STREAM_WS_*`).
+    pub stream: stream::StreamLimits,
     /// `CATALYRST_SOCIAL_RPC_ADMIN_TOKEN`: the `/admin/social` bearer; unset refuses.
     pub admin_token: Option<String>,
     /// Where profile pictures are served.
@@ -105,6 +120,9 @@ impl Default for Settings {
             private_voice_chat_expiration_batch_size: 20,
             ws_max_concurrent_connections: None,
             ws_max_payload_bytes: 1024 * 1024,
+            ws_max_backpressure_bytes: 128 * 1024,
+            admission: Default::default(),
+            stream: Default::default(),
             admin_token: None,
             faces: Default::default(),
             writes_enabled: true,
@@ -151,6 +169,7 @@ impl State {
         ctx: Context,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
+        ctx.admission().configure(settings.admission);
         let (sender, server) = build_rpc_server(ctx.clone());
         let rpc_events = OnceCell::new();
         rpc_events.set(sender).ok();
@@ -169,15 +188,20 @@ impl State {
         self.rpc_events.get()
     }
 
-    /// The RPC server loop (one job; it ends at shutdown) and the private-
-    /// voice expiry sweep (a periodic job on the configured tick).
+    /// The RPC server loop (one job; at shutdown it ends every socket of
+    /// both protocols with 1001 "Server shutting down", as upstream's
+    /// `ws-pool` stop) and the private-voice expiry sweep (a periodic job on
+    /// the configured tick).
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         if let Some(mut server) = self.server.lock().take() {
+            let sockets = self.ctx.clone();
             jobs.spawn("social-rpc-server", move |ctx| async move {
                 tokio::select! {
                     _ = ctx.cancel.cancelled() => {}
                     _ = server.run() => {}
                 }
+                let (code, reason) = SHUTTING_DOWN;
+                sockets.end_sockets(code, reason, SHUTDOWN_BUDGET).await;
                 Ok(())
             });
         }
@@ -201,10 +225,16 @@ impl State {
     }
 }
 
+/// The close every socket gets at shutdown (upstream `src/logic/ws-pool/component.ts:85`).
+pub const SHUTTING_DOWN: (u16, &str) = (1001, "Server shutting down");
+/// How long shutdown waits for the sockets to close.
+const SHUTDOWN_BUDGET: Duration = Duration::from_secs(2);
+
 /// The server with its transport handlers: a connected socket registers its
-/// identity and announces the address online (once per address, across its
-/// sockets); a closed one forgets it, announces offline and ends the call it
-/// was on (#479).
+/// identity, takes its address's socket slot (displacing the oldest past the
+/// cap, `limits::Admission`) and counts the address present (across its
+/// sockets of both protocols); a closed one forgets it, frees the slot and,
+/// when it was the address's last, ends the call it was on (#479).
 fn build_rpc_server(
     ctx: Context,
 ) -> (
@@ -216,17 +246,21 @@ fn build_rpc_server(
 
     let bind_ctx = ctx.clone();
     server.set_on_transport_connected_handler(move |transport, transport_id| {
-        bind_ctx.connection_opened();
         let address = transport.address().to_string();
         bind_ctx.register_identity(transport_id, address.clone());
-        bind_ctx.register_kill_handle(transport_id, transport.kill_handle());
+        bind_ctx.register_kill_handle(transport_id, transport.close_handle());
+        bind_ctx
+            .admission()
+            .claim(&address, transport.close_handle(), limits::Protocol::Rpc);
         bind_ctx.mark_online(&address);
     });
     let forget_ctx = ctx.clone();
     server.set_on_transport_closes_handler(move |transport, transport_id| {
-        forget_ctx.connection_closed();
         forget_ctx.forget_identity(transport_id);
         let address = transport.address().to_string();
+        forget_ctx
+            .admission()
+            .release(&address, &transport.close_handle());
         if forget_ctx.mark_offline(&address) {
             let voice_ctx = forget_ctx.clone();
             tokio::spawn(async move {
@@ -246,6 +280,10 @@ fn build_rpc_server(
 pub fn router(state: Arc<State>) -> Router {
     Router::new()
         .route("/social-rpc", get(ws::ws_upgrade).fallback(not_found))
+        .route(
+            "/social-rpc/v1/stream",
+            get(stream::ws_upgrade).fallback(not_found),
+        )
         .route("/social-rpc/info", get(info))
         .route("/social-rpc/health", get(health))
         .route("/social-rpc/health/live", any(health_live))
@@ -258,7 +296,6 @@ pub fn router(state: Arc<State>) -> Router {
             "/social-rpc/v1/users/{address}/privacy-settings",
             get(privacy_settings).head(not_found).fallback(not_found),
         )
-        .route("/social-rpc/", any(not_found))
         .route("/social-rpc/{*rest}", any(not_found))
         .layer(axum::middleware::map_response(allow_any_origin))
         .nest("/admin/social", admin::router())
@@ -298,18 +335,14 @@ async fn privacy_settings(
     AxumState(state): AxumState<Arc<State>>,
     Path(address): Path<String>,
 ) -> Response {
-    let address = address.to_lowercase();
-    let valid = address.len() == 42
-        && address.starts_with("0x")
-        && address[2..].bytes().all(|b| b.is_ascii_hexdigit());
-    if !valid {
+    let Ok(address) = crate::shared::identity::Address::parse_untrimmed(&address) else {
         return (
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": "Invalid address" })),
         )
             .into_response();
-    }
-    match state.ctx.db().get_social_settings(&address).await {
+    };
+    match state.ctx.db().get_social_settings(address.as_str()).await {
         Ok(row) => Json(json!({
             "private_messages_privacy": row.unwrap_or_default().private_messages_privacy,
         }))
