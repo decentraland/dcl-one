@@ -48,6 +48,9 @@ pub mod point_at_ik;
 pub mod point_at_marker;
 mod two_bone_ik;
 
+#[cfg(test)]
+mod tests;
+
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
     sets::SetupSets,
@@ -586,6 +589,8 @@ fn update_render_avatar(
 ) {
     // remove renderable entities when avatar selection is removed
     for entity in removed_selections.read() {
+        // the outfit's hashes leave the request-slot queue with the component
+        commands.entity(entity).try_remove::<PartitionedDownloads>();
         if let Ok((children, attach_points)) = children.get(entity) {
             // reparent attach points
             commands

@@ -94,7 +94,9 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   the live scenes; departed is last.** `SceneHash` and `PartitionedDownloads` carry component
   hooks: inserting them registers their hashes with the request slots
   (`IpfsIo::register_download_priority`), and replacing or removing them, on a despawn, an
-  outfit change or a hash replaced, releases them (`release_download_priority`). The gate counts
+  outfit change, a hash replaced or an avatar selection removed (a scene drops an entity's
+  `AvatarShape` but keeps the entity; `update_render_avatar` drops the component with it),
+  releases them (`release_download_priority`). The gate counts
   a hash's holders, so a wearable two avatars share stays while one of them leaves, and a key
   goes only with its last holder. A scene's hash is registered at spawn, at the bottom of the
   scene tier, and the player's scene is raised to the top by the first publish with a download
@@ -241,6 +243,13 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
 - Emotes load under their own entity hashes like wearables; filing them under the avatar's
   partition is the same mechanism (list them in the avatar's `PartitionedDownloads`), not done
   here; until then an avatar's emote ranks in `Other`.
+- Spawn the render avatar from the start of loading, so one entity owns an outfit from the
+  first pointer lookup to despawn and `PartitionedDownloads` lives on it, cleaned up for free on
+  an outfit change or a selection removed (robtfm's review suggestion). Not done here: the
+  render child only spawns once every wearable has resolved, so spawning it earlier means a
+  "still resolving" state through the unchanged-definition check, the `PreviousAvatar` swap and
+  the processing systems. Until then the component stays on the avatar root, and
+  `update_render_avatar` drops it when the selection goes.
 - Loading waves (W1) sort the newly required scenes by their partition and take the first N;
   until then spawn order is hash-map order.
 - `scene_timing` (`scene_runner::load_timing`) logs, per scene, the time from spawn to its fifth

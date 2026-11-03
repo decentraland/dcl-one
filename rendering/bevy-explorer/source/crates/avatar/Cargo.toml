@@ -32,3 +32,6 @@ bevy_console = { workspace = true }
 rapier3d-f64 = { workspace = true }
 bevy_dui = { workspace = true }
 alloy-core = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }
