@@ -225,11 +225,11 @@ fn sequence_gap_requests_resync_without_applying() {
     let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
     decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
 
-    // baseline_seq 4 ≠ our last_seq 5 → we missed an intermediate delta.
+    // baseline_seq 6 is ahead of our last_seq 5 → we missed an intermediate delta.
     let delta = pulse::PlayerStateDeltaTier0 {
         subject_id: SUBJECT,
-        baseline_seq: 4,
-        new_seq: 6,
+        baseline_seq: 6,
+        new_seq: 7,
         position_x: Some(200),
         ..Default::default()
     };
@@ -554,4 +554,332 @@ fn teleport_into_another_realm_emits_join_first() {
 
     let events = decoder.handle(teleported(3, 1600, "home"));
     assert!(matches!(events.as_slice(), [PulseEvent::Movement { .. }]));
+}
+
+fn player_state_full(sequence: u32, tick: u32, x: f32) -> pulse::ServerMessage {
+    server_msg(pulse::server_message::Message::PlayerStateFull(
+        pulse::PlayerStateFull {
+            subject_id: SUBJECT,
+            sequence,
+            server_tick: tick,
+            state: Some(player_state((x, 2.0, 3.0), 0)),
+        },
+    ))
+}
+
+fn emote_started(sequence: u32, tick: u32, urn: &str, x: f32) -> pulse::ServerMessage {
+    server_msg(pulse::server_message::Message::EmoteStarted(
+        pulse::EmoteStarted {
+            subject_id: SUBJECT,
+            sequence,
+            server_tick: tick,
+            emote_id: urn.to_string(),
+            player_state: Some(player_state((x, 2.0, 3.0), 0)),
+            mask: None,
+        },
+    ))
+}
+
+fn emote_stopped(sequence: u32, tick: u32, x: f32) -> pulse::ServerMessage {
+    server_msg(pulse::server_message::Message::EmoteStopped(
+        pulse::EmoteStopped {
+            subject_id: SUBJECT,
+            server_tick: tick,
+            reason: pulse::EmoteStopReason::Completed as i32,
+            sequence,
+            player_state: Some(player_state((x, 2.0, 3.0), 0)),
+        },
+    ))
+}
+
+/// A delta that carries no field: the subject stays wherever its baseline has it.
+fn bare_delta(baseline_seq: u32, new_seq: u32, tick: u32) -> pulse::ServerMessage {
+    server_msg(pulse::server_message::Message::PlayerStateDelta(
+        pulse::PlayerStateDeltaTier0 {
+            subject_id: SUBJECT,
+            baseline_seq,
+            new_seq,
+            server_tick: tick,
+            ..Default::default()
+        },
+    ))
+}
+
+/// Whether `events` is exactly one `Resync`, for `subject_id` from `known_seq`.
+fn is_one_resync(events: &[PulseEvent], subject_id: u32, known_seq: u32) -> bool {
+    matches!(
+        events,
+        [PulseEvent::Resync(request)]
+            if (request.subject_id, request.known_seq) == (subject_id, known_seq)
+    )
+}
+
+fn emits_emote_start(events: &[PulseEvent]) -> bool {
+    events
+        .iter()
+        .any(|event| matches!(event, PulseEvent::EmoteStart { .. }))
+}
+
+/// The reply to a resync and the regular deltas travel on different channels, so one can arrive
+/// leading on from a state we have already passed. That is nothing to ask the server about.
+#[test]
+fn a_delta_behind_the_baseline_is_dropped_without_a_resync() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    // new_seq 6 is ahead of our last_seq 5, but baseline_seq 4 is behind it.
+    let events = decoder.handle(delta(SUBJECT, 4, 6, 1500, 5.0));
+    assert!(events.is_empty(), "{events:?}");
+}
+
+/// A gap shows in every delta after it, so one resync stays in flight per subject until something
+/// answers it.
+#[test]
+fn a_burst_of_gaps_sends_one_resync() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events: Vec<PulseEvent> = [(7, 8), (8, 9), (9, 10)]
+        .into_iter()
+        .flat_map(|(baseline, new)| decoder.handle(delta(SUBJECT, baseline, new, 1500, 5.0)))
+        .collect();
+
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+}
+
+#[test]
+fn a_consecutive_delta_clears_the_pending_resync() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+
+    // the stream is back on track, whether this is the resync's reply or just the next in line
+    let events = decoder.handle(delta(SUBJECT, 5, 6, 1600, 5.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { .. }]),
+        "{events:?}"
+    );
+
+    // so a gap now is a new one, asked for from where we are now
+    let events = decoder.handle(delta(SUBJECT, 8, 9, 1700, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 6), "{events:?}");
+}
+
+#[test]
+fn a_full_state_clears_the_pending_resync() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+
+    let events = decoder.handle(player_state_full(9, 1600, 5.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { .. }]),
+        "{events:?}"
+    );
+
+    let events = decoder.handle(delta(SUBJECT, 11, 12, 1700, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 9), "{events:?}");
+}
+
+#[test]
+fn an_unknown_subject_is_asked_for_once() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+
+    let events: Vec<PulseEvent> = [(0, 1), (1, 2)]
+        .into_iter()
+        .flat_map(|(baseline, new)| decoder.handle(delta(99, baseline, new, 1500, 5.0)))
+        .collect();
+
+    assert!(is_one_resync(&events, 99, 0), "{events:?}");
+}
+
+/// A full state travels reliably, so it can arrive behind a delta sent after it, and then describes
+/// a place the subject has already left.
+#[test]
+fn an_older_full_state_does_not_move_the_peer_back() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 5, 6, 1500, 5.0));
+
+    let events = decoder.handle(player_state_full(5, 1400, 1.0));
+    assert!(events.is_empty(), "{events:?}");
+
+    // the next delta applies without a resync, onto the position the first delta left
+    let events = decoder.handle(bare_delta(6, 7, 1600));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { .. }]),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 165.0); // 10*16 + 5 from the delta, not 161
+}
+
+#[test]
+fn an_emote_stop_overtaken_by_a_delta_stops_without_moving_back() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(emote_started(6, 1500, "wave", 1.0));
+    decoder.handle(delta(SUBJECT, 6, 7, 1600, 5.0));
+
+    // the stop carries the state at sequence 6, which the delta has since moved on from
+    let events = decoder.handle(emote_stopped(6, 1700, 1.0));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::EmoteStop { .. }]),
+        "{events:?}"
+    );
+
+    let events = decoder.handle(bare_delta(7, 8, 1800));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { .. }]),
+        "{events:?}"
+    );
+    approx(only_movement(events).position_x, 165.0);
+}
+
+/// A stop at a sequence is terminal for it: an emote needs a higher sequence to play again.
+#[test]
+fn a_stop_wins_over_a_start_at_the_same_sequence() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    decoder.handle(emote_stopped(8, 1500, 1.0));
+    let events = decoder.handle(emote_started(8, 1600, "wave", 1.0));
+    assert!(!emits_emote_start(&events), "{events:?}");
+
+    let events = decoder.handle(emote_started(9, 1700, "wave", 1.0));
+    assert!(emits_emote_start(&events), "{events:?}");
+}
+
+#[test]
+fn a_stale_teleport_keeps_the_realm() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined_in_realm(
+        SUBJECT,
+        WALLET,
+        "home",
+        (1.0, 2.0, 3.0),
+    )));
+    decoder.handle(teleported(3, 1500, "home"));
+
+    // an older teleport, into a realm they have since left, arriving behind the newer one
+    let events = decoder.handle(teleported(2, 1400, "away"));
+    assert!(events.is_empty(), "{events:?}");
+
+    let events = decoder.handle(delta(SUBJECT, 3, 4, 1600, 5.0));
+    let [PulseEvent::Movement { realm, .. }] = events.as_slice() else {
+        panic!("expected one Movement, got {events:?}");
+    };
+    assert_eq!(&**realm, "home");
+}
+
+/// Any full state completes a resync, whether or not it is newer than what is held.
+#[test]
+fn an_older_full_state_still_clears_the_pending_resync() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 5, 6, 1500, 5.0));
+
+    let events = decoder.handle(delta(SUBJECT, 8, 9, 1600, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 6), "{events:?}");
+
+    let events = decoder.handle(player_state_full(5, 1400, 1.0));
+    assert!(events.is_empty(), "{events:?}");
+
+    let events = decoder.handle(delta(SUBJECT, 8, 9, 1700, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 6), "{events:?}");
+}
+
+#[test]
+fn a_join_clears_the_pending_resync() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+
+    // announced afresh: whatever the resync was for, this supersedes it
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1600, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+}
+
+#[test]
+fn a_leave_clears_the_pending_resync() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+
+    decoder.handle(server_msg(pulse::server_message::Message::PlayerLeft(
+        pulse::PlayerLeft {
+            subject_id: SUBJECT,
+        },
+    )));
+
+    // a stranger again, and asked for as one
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1600, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 0), "{events:?}");
+}
+
+#[test]
+fn reset_clears_the_pending_resyncs() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1500, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 5), "{events:?}");
+
+    // the request went with the connection that is gone; the next one must be able to ask
+    decoder.reset();
+
+    let events = decoder.handle(delta(SUBJECT, 7, 8, 1600, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 0), "{events:?}");
+}
+
+#[test]
+fn an_emote_event_older_than_the_last_is_ignored() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+
+    let events = decoder.handle(emote_started(8, 1500, "wave", 1.0));
+    assert!(emits_emote_start(&events), "{events:?}");
+
+    // an earlier emote's start and stop, arriving behind it
+    let events = decoder.handle(emote_started(7, 1400, "dance", 1.0));
+    assert!(events.is_empty(), "{events:?}");
+    let events = decoder.handle(emote_stopped(7, 1450, 1.0));
+    assert!(events.is_empty(), "{events:?}");
+
+    // the one playing still ends with its own stop
+    let events = decoder.handle(emote_stopped(8, 1600, 1.0));
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, PulseEvent::EmoteStop { .. })),
+        "{events:?}"
+    );
+}
+
+/// When the server has evicted the snapshot for a sequence a delta already carried, the emote event
+/// reuses that sequence with a state of its own, and that one is authoritative. Nothing else may.
+#[test]
+fn only_an_emote_event_replaces_the_state_at_the_held_sequence() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(server_msg(joined(5, (1.0, 2.0, 3.0), 0)));
+    decoder.handle(delta(SUBJECT, 5, 6, 1500, 5.0));
+
+    let events = decoder.handle(player_state_full(6, 1600, 1.0));
+    assert!(events.is_empty(), "{events:?}");
+
+    let events = decoder.handle(emote_started(6, 1700, "wave", 1.0));
+    let [PulseEvent::Movement { movement, .. }, PulseEvent::EmoteStart { .. }] = events.as_slice()
+    else {
+        panic!("expected Movement then EmoteStart, got {events:?}");
+    };
+    approx(movement.position_x, 161.0); // 10*16 + 1 from the emote event, not 165 from the delta
 }
