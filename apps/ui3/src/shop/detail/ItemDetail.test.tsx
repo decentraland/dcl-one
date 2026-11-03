@@ -371,7 +371,7 @@ describe("latest sales and owners", () => {
     itemPage({ overrides: answers(seen) });
     const owners = await screen.findByTestId("item-owners");
     expect(within(owners).getAllByTestId("owner-row")).toHaveLength(2);
-    expect(within(owners).getByText("2 owners")).toBeTruthy();
+    expect(within(owners).getByText("2 copies")).toBeTruthy();
     expect(within(owners).getAllByText("View")[0]!.getAttribute("href")).toBe(`/shop/token/${COLLECTION}/1000`);
     expect(seen.owners[0]!.searchParams.get("itemId")).toBe(ITEM_ID);
     expect(seen.owners[0]!.searchParams.get("sortBy")).toBe("issuedId");
@@ -441,6 +441,32 @@ describe("latest sales and owners", () => {
     await waitFor(() => expect(within(screen.getByTestId("latest-sales")).queryAllByTestId("sale-row")).toHaveLength(0));
     fireEvent.click(within(screen.getByTestId("latest-sales")).getByRole("button", { name: "Previous" }));
     await waitFor(() => expect(within(screen.getByTestId("latest-sales")).getAllByTestId("sale-row")).toHaveLength(5));
+  });
+
+  it("prices each sale in its own chain's MANA", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    itemPage({ overrides: { ...answers(seen), "/v1/sales": () => ({ data: [{ ...sale(1), chainId: 1, network: "ETHEREUM" }, sale(2)], total: 2 }) } });
+    const rows = within(await screen.findByTestId("latest-sales")).getAllByTestId("sale-row");
+    expect(rows[0]!.querySelector("svg")!.getAttribute("viewBox")).toBe("0 0 13 14");
+    expect(rows[1]!.querySelector("svg")!.getAttribute("viewBox")).toBe("0 0 24 24");
+  });
+
+  it("says a later page failed, with a retry, instead of an empty table", async () => {
+    const seen = { sales: [] as URL[], owners: [] as URL[] };
+    const overrides = answers(seen, { sales: 7, owners: 0 });
+    const real = overrides["/v1/sales"] as (url: URL) => unknown;
+    let fail = true;
+    overrides["/v1/sales"] = (url: URL) => {
+      if (url.searchParams.get("skip") === "5" && fail) throw new Error("upstream down");
+      return real(url);
+    };
+    itemPage({ overrides });
+    fireEvent.click(within(await screen.findByTestId("latest-sales")).getByRole("button", { name: "Next" }));
+    const error = await screen.findByTestId("history-error");
+    fail = false;
+    fireEvent.click(within(error).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(within(screen.getByTestId("latest-sales")).getAllByTestId("sale-row")).toHaveLength(2));
+    expect(screen.queryByTestId("history-error")).toBeNull();
   });
 
   it("shows neither section while there are no sales and no owners", async () => {

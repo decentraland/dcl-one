@@ -842,11 +842,11 @@ export default function ItemDetail() {
         <ResaleOffers contractAddress={contractAddress} resales={resales} classic={classicQ.data ?? []} network={network} currentTokenId={routeTokenId ?? undefined} viewer={account} />
       ) : null}
 
-      {/* A token route waits for its token: until then the category (LAND has its own sales table) and the
-          chain are the placeholder's. */}
+      {/* A token route waits for its token: until then the category is the placeholder's, and LAND has its
+          own sales table. */}
       {validContract && !isTokenRoute && !isLand && pageItemId ? <ItemOwners contractAddress={contractAddress} itemId={pageItemId} /> : null}
       {validContract && !isLand && (isTokenRoute ? routeTokenId && token : pageItemId) ? (
-        <LatestSales contractAddress={contractAddress} tokenId={isTokenRoute ? routeTokenId! : undefined} itemId={isTokenRoute ? undefined : pageItemId!} network={network} />
+        <LatestSales contractAddress={contractAddress} tokenId={isTokenRoute ? routeTokenId! : undefined} itemId={isTokenRoute ? undefined : pageItemId!} />
       ) : null}
 
       <SuggestedForYouRow exclude={personalExclude} title={pdpText("itemDetail.becauseYouOwn")} first={PERSONAL_RAIL_SIZE} />

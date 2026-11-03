@@ -1,5 +1,7 @@
-// from: marketplace webapp/src/components/AssetPage/{TransactionHistory,OwnersTable}/ (an asset's latest sales,
-//       five a page, and an item's owners by issue number; both hidden while there is nothing to list)
+// from: marketplace@3bf3662f:webapp/src/components/AssetPage/{TransactionHistory/{TransactionHistory,utils}.tsx,
+// OwnersTable/{OwnersTable,utils}.tsx} (an asset's latest sales, five a page, and an item's tokens by issue number;
+// both hidden while there is nothing to list), in the Shop's resale-panel styling.
+// Copyright 2020 Metaverse Holdings Ltd. (marketplace), Apache-2.0.
 
 import { useState } from "react";
 import { Link } from "react-router";
@@ -10,7 +12,7 @@ import { t } from "../../discovery/intl";
 import { tokenRoute } from "../../discovery/lib/routes";
 import { useShopQuery } from "../../discovery/query";
 import { useProfiles, type CreatorProfile } from "../../discovery/hooks";
-import { epochMs } from "../../land/format";
+import { dateText, epochMs, relativeText } from "../../land/format";
 import { fetchOwners, fetchSales } from "../../market/lib/api";
 import { shopPath } from "../../routes";
 import "./resaleoffers.css";
@@ -19,19 +21,16 @@ import styles from "./TradeHistory.module.css";
 export const HISTORY_PAGE = 5;
 
 const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
-const DATE = new Intl.DateTimeFormat("en-US", { year: "numeric", month: "long", day: "numeric" });
-const RELATIVE = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
 
 /** The marketplace's "When": relative within a week, the date after. */
 export function saleWhen(timestamp: number, now: number = Date.now()): string {
   const ms = epochMs(timestamp);
-  const ago = now - ms;
-  if (ago > WEEK_MS) return DATE.format(new Date(ms));
-  const minutes = Math.round(ago / 60_000);
-  if (minutes < 60) return RELATIVE.format(-Math.max(minutes, 0), "minute");
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return RELATIVE.format(-hours, "hour");
-  return RELATIVE.format(-Math.round(hours / 24), "day");
+  return now - ms > WEEK_MS ? dateText(ms) : relativeText(ms, now);
+}
+
+/** The MANA a sale settled in: Ethereum's (mainnet, Sepolia) or Polygon's. */
+function saleNetwork(chainId: number): "polygon" | "ethereum" {
+  return chainId === 1 || chainId === 11_155_111 ? "ethereum" : "polygon";
 }
 
 function saleType(type: string): string {
@@ -46,6 +45,18 @@ function Account({ address, profiles }: { address: string; profiles: Record<stri
     <Link className={styles.account} to={shopPath("account", { address })} title={address}>
       {profiles[address.toLowerCase()]?.name || shortAddress(address)}
     </Link>
+  );
+}
+
+/** A later page that failed: says so, with a retry, instead of an empty table that reads as "no more". */
+function PageError({ onRetry }: { onRetry: () => void }) {
+  return (
+    <p className="shop-resales__empty" role="alert" data-testid="history-error">
+      {t("history.loadError")}{" "}
+      <button type="button" className={styles.retry} onClick={onRetry}>
+        {t("loadMore.retry")}
+      </button>
+    </p>
   );
 }
 
@@ -67,7 +78,7 @@ function Pager({ page, pages, label, onPage }: { page: number; pages: number; la
 }
 
 /** Latest sales of one token (`tokenId`) or of every token of an item (`itemId`). */
-export function LatestSales({ contractAddress, tokenId, itemId, network }: { contractAddress: string; tokenId?: string; itemId?: string; network: "polygon" | "ethereum" }) {
+export function LatestSales({ contractAddress, tokenId, itemId }: { contractAddress: string; tokenId?: string; itemId?: string }) {
   const [page, setPage] = useState(0);
   const target = tokenId ? { tokenId } : itemId ? { itemId } : null;
   const q = useShopQuery(
@@ -108,19 +119,20 @@ export function LatestSales({ contractAddress, tokenId, itemId, network }: { con
                 <td>{saleType(s.type)}</td>
                 <td>{saleWhen(s.createdAt)}</td>
                 <td>
-                  <ManaAmount wei={s.manaWei} network={network} />
+                  <ManaAmount wei={s.manaWei} network={saleNetwork(s.chainId)} />
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {q.error && rows.length === 0 ? <PageError onRetry={q.refetch} /> : null}
       <Pager page={page} pages={pages} label={t("history.latestSales")} onPage={setPage} />
     </section>
   );
 }
 
-/** Who holds the tokens of an item, by issue number. */
+/** Who holds each token of an item, by issue number. `total` counts tokens, not distinct holders. */
 export function ItemOwners({ contractAddress, itemId }: { contractAddress: string; itemId: string }) {
   const [page, setPage] = useState(0);
   const q = useShopQuery(
@@ -137,7 +149,7 @@ export function ItemOwners({ contractAddress, itemId }: { contractAddress: strin
     <section className="shop-resales" data-testid="item-owners" aria-labelledby="shop-owners-title">
       <header className="shop-resales__head">
         <h2 id="shop-owners-title">{t("history.owners")}</h2>
-        <span>{t("history.ownerCount", { count: total })}</span>
+        <span>{t("history.copyCount", { count: total })}</span>
       </header>
       <ul className="shop-resales__list">
         {rows.map((o) => (
@@ -153,6 +165,7 @@ export function ItemOwners({ contractAddress, itemId }: { contractAddress: strin
           </li>
         ))}
       </ul>
+      {q.error && rows.length === 0 ? <PageError onRetry={q.refetch} /> : null}
       <Pager page={page} pages={pages} label={t("history.owners")} onPage={setPage} />
     </section>
   );

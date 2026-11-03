@@ -39,3 +39,12 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.retry {
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--ui-accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
