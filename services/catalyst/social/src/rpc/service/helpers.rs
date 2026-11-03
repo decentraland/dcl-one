@@ -13,10 +13,10 @@ const BLOCKED_USERS_DEFAULT_LIMIT: i64 = 200;
 const BLOCKED_USERS_MAX_LIMIT: i64 = 200;
 const MAX_PAGINATION_OFFSET: i64 = 100_000;
 
-pub(super) const FRIENDSHIP_RATE_LIMIT_MESSAGE: &str =
+pub(crate) const FRIENDSHIP_RATE_LIMIT_MESSAGE: &str =
     "Too many friendship or block actions. Please try again later";
 /// Characters (code points) a friendship request message may carry.
-pub(super) const FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH: usize = 256;
+pub(crate) const FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH: usize = 256;
 
 /// The errors that reach the client as a `RemoteError` (a transport-level
 /// refusal); every application outcome travels inside the response `oneof`.
@@ -29,6 +29,59 @@ pub enum SocialError {
     /// `SOCIAL_WRITES_ENABLED` is off, or the restore stamps hold it.
     #[error("{0}")]
     WritesDisabled(std::borrow::Cow<'static, str>),
+}
+
+/// Why an operation the RPC procedure and its HTTP route share (upstream's
+/// one logic component behind both transports) did not happen. The kind is
+/// the status upstream's HTTP error middlewares answer (`friends-errors.ts`,
+/// `voice-chats-errors.ts`: 400, 403, 404, 409, 429); each procedure maps it
+/// onto its own response `oneof`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Refusal {
+    Invalid(String),
+    Forbidden(String),
+    NotFound(String),
+    Conflict(String),
+    RateLimited(String),
+    /// A failure the procedure answers inside its `oneof`; the detail is
+    /// logged, never sent.
+    Internal(String),
+    /// A database or voice-runtime error raised with `?`: the procedure
+    /// answers it as a dcl-rpc remote error (`SocialError::Internal`).
+    Failed(String),
+}
+
+impl Refusal {
+    pub fn message(&self) -> &str {
+        match self {
+            Refusal::Invalid(m)
+            | Refusal::Forbidden(m)
+            | Refusal::NotFound(m)
+            | Refusal::Conflict(m)
+            | Refusal::RateLimited(m)
+            | Refusal::Internal(m)
+            | Refusal::Failed(m) => m,
+        }
+    }
+}
+
+/// The domain gates' `?` (a database error inside them).
+impl From<SocialError> for Refusal {
+    fn from(e: SocialError) -> Self {
+        Refusal::Failed(e.to_string())
+    }
+}
+
+impl From<crate::rpc::db::DbError> for Refusal {
+    fn from(e: crate::rpc::db::DbError) -> Self {
+        Refusal::Failed(e.to_string())
+    }
+}
+
+impl From<crate::comms::gatekeeper::voice::rooms::VoiceUnavailable> for Refusal {
+    fn from(e: crate::comms::gatekeeper::voice::rooms::VoiceUnavailable) -> Self {
+        Refusal::Failed(e.to_string())
+    }
 }
 
 /// What every `Internal` refusal says on the wire, whichever procedure failed.
@@ -66,7 +119,7 @@ impl From<crate::comms::gatekeeper::voice::rooms::VoiceUnavailable> for SocialEr
     }
 }
 
-pub(super) fn normalize(addr: &str) -> String {
+pub(crate) fn normalize(addr: &str) -> String {
     addr.trim().to_lowercase()
 }
 
@@ -200,7 +253,12 @@ pub(super) fn start_voice_internal(msg: impl Into<String>) -> StartPrivateVoiceC
 
 /// A subscription stream: the address's channel filtered by `pick`; a lagged
 /// receiver logs and continues (the client is told nothing, as upstream).
-pub(super) fn stream_for<T, F>(pubsub: &PubSub, address: &str, pick: F) -> Generator<T>
+pub(super) fn stream_for<T, F>(
+    pubsub: &PubSub,
+    address: &str,
+    pick: F,
+    cancellation: tokio_util::sync::CancellationToken,
+) -> Generator<T>
 where
     T: Send + Sync + 'static,
     F: Fn(&SocialEvent) -> Option<T> + Send + 'static,
@@ -209,7 +267,12 @@ where
     let mut rx = pubsub.subscribe(address);
     tokio::spawn(async move {
         loop {
-            match rx.recv().await {
+            let event = tokio::select! {
+                _ = cancellation.cancelled() => break,
+                _ = yielder.closed() => break,
+                event = rx.recv() => event,
+            };
+            match event {
                 Ok(event) => {
                     if let Some(item) = pick(&event)
                         && yielder.r#yield(item).await.is_err()
@@ -239,31 +302,57 @@ mod pubsub_routing_tests {
     async fn one_publish_reaches_only_the_matching_stream_in_order() {
         let ps = PubSub::new();
 
-        let mut cm = stream_for(&ps, "0xme", |e| match e {
-            SocialEvent::CommunityMember(u) => Some(u.clone()),
-            _ => None,
-        });
-        let mut fr = stream_for(&ps, "0xme", |e| match e {
-            SocialEvent::Friendship(u) => Some(u.clone()),
-            _ => None,
-        });
-        let mut blk = stream_for(&ps, "0xme", |e| match e {
-            SocialEvent::Block(u) => Some(u.clone()),
-            _ => None,
-        });
-        let mut pv = stream_for(&ps, "0xme", |e| match e {
-            SocialEvent::PrivateVoice(u) => Some(u.clone()),
-            _ => None,
-        });
-        let mut cv = stream_for(&ps, "0xme", |e| match e {
-            SocialEvent::CommunityVoice(u) => Some(u.clone()),
-            _ => None,
-        });
+        let mut cm = stream_for(
+            &ps,
+            "0xme",
+            |e| match e {
+                SocialEvent::CommunityMember(u) => Some(u.clone()),
+                _ => None,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let mut fr = stream_for(
+            &ps,
+            "0xme",
+            |e| match e {
+                SocialEvent::Friendship(u) => Some(u.clone()),
+                _ => None,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let mut blk = stream_for(
+            &ps,
+            "0xme",
+            |e| match e {
+                SocialEvent::Block(u) => Some(u.clone()),
+                _ => None,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let mut pv = stream_for(
+            &ps,
+            "0xme",
+            |e| match e {
+                SocialEvent::PrivateVoice(u) => Some(u.clone()),
+                _ => None,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let mut cv = stream_for(
+            &ps,
+            "0xme",
+            |e| match e {
+                SocialEvent::CommunityVoice(u) => Some(u.clone()),
+                _ => None,
+            },
+            tokio_util::sync::CancellationToken::new(),
+        );
         let mut fc_rx = ps.subscribe("0xme");
 
         ps.publish(
             "0xme",
             SocialEvent::CommunityMember(CommunityMemberConnectivityUpdate {
+                stream_closed: None,
                 community_id: "a".into(),
                 member: None,
                 status: 0,
@@ -272,6 +361,7 @@ mod pubsub_routing_tests {
         ps.publish(
             "0xme",
             SocialEvent::CommunityMember(CommunityMemberConnectivityUpdate {
+                stream_closed: None,
                 community_id: "b".into(),
                 member: None,
                 status: 0,

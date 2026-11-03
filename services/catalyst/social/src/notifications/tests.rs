@@ -818,3 +818,143 @@ async fn set_email_and_confirm_email_validate_before_touching_the_mailer() {
         "no pending row"
     );
 }
+
+#[tokio::test]
+async fn opaque_and_uuid_opt_out_ids_work_with_custom_and_generic_plans_on_one_connection() {
+    let Some(pool) = crate::db::scratch::pool(1).await else {
+        return;
+    };
+    let store = super::NotificationsStore::new(pool.clone());
+    let address = fresh_address();
+    let scope_id = format!("legacy-{}", Uuid::new_v4());
+    let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    for setting in [
+        "SET plan_cache_mode=force_custom_plan",
+        "SET plan_cache_mode=force_generic_plan",
+    ] {
+        sqlx::query(setting).execute(&pool).await.unwrap();
+        for _ in 0..8 {
+            store
+                .create_opt_out(&address, "community", &scope_id)
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .is_opted_out(&address, "community", &scope_id)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                store
+                    .delete_opt_out(&address, "community", &scope_id)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                !store
+                    .is_opted_out(&address, "community", &scope_id)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                !store
+                    .delete_opt_out(&address, "community", &scope_id)
+                    .await
+                    .unwrap()
+            );
+        }
+        let community = Uuid::new_v4();
+        let upper = community.to_string().to_uppercase();
+        let canonical = community.to_string();
+        let other = fresh_address();
+        store
+            .create_opt_out(&other, "community", &canonical)
+            .await
+            .unwrap();
+        for _ in 0..8 {
+            store
+                .create_opt_out(&address, "community", &upper)
+                .await
+                .unwrap();
+            assert!(
+                store
+                    .is_opted_out(&address, "community", &canonical)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                store
+                    .is_opted_out(&address, "community", &upper)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                store
+                    .delete_opt_out(&address, "community", &upper)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                !store
+                    .is_opted_out(&address, "community", &canonical)
+                    .await
+                    .unwrap()
+            );
+            assert!(
+                store
+                    .is_opted_out(&other, "community", &canonical)
+                    .await
+                    .unwrap()
+            );
+        }
+        let current: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            current, pid,
+            "all executions use the same PostgreSQL prepared-statement cache"
+        );
+    }
+    sqlx::query("RESET plan_cache_mode")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn direct_community_notices_honor_legacy_uppercase_opt_outs() {
+    let Some(pool) = crate::db::scratch::pool(1).await else {
+        return;
+    };
+    let address = fresh_address();
+    let community = crate::CommunityId::new();
+    sqlx::query("INSERT INTO social.subscription_opt_outs(address,scope,scope_id) VALUES($1,'community',$2)")
+        .bind(&address).bind(community.to_string().to_uppercase()).execute(&pool).await.unwrap();
+    let event = super::community::CommunityEvent {
+        kind: "community_renamed",
+        key: Uuid::new_v4().to_string(),
+        community_id: community,
+        metadata: json!({"communityId":community.to_string()}),
+    };
+    assert_eq!(
+        super::community::publish(&pool, &event, super::community::Audience::One(&address))
+            .await
+            .unwrap(),
+        0
+    );
+    super::NotificationsStore::new(pool.clone())
+        .delete_opt_out(&address, "community", &community.to_string())
+        .await
+        .unwrap();
+    assert_eq!(
+        super::community::publish(&pool, &event, super::community::Audience::One(&address))
+            .await
+            .unwrap(),
+        1
+    );
+}

@@ -1,10 +1,71 @@
 //! Social settings through the RPC handlers, the cases of upstream's
 //! `get-social-settings`, `upsert-social-settings`,
 //! `get-private-messages-settings` and `logic/settings` specs
-//! (`decentraland/social-service-ea` at `fb3dcb8`): the defaults of a wallet
+//! (`decentraland/social-service-ea` at `b6b2cefefdf727b2ed47ddb887e77d226a41eea6`): the defaults of a wallet
 //! without a row, the round trip of every value, and the per-address reads.
 
 use super::*;
+
+/// Wire values must be checked before prost's enum getters can replace an unknown
+/// number with the default. A closed pool proves invalid requests never reach SQL.
+#[tokio::test]
+async fn settings_reject_empty_and_unknown_wire_values_before_storage() {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .connect_lazy("postgres://localhost/unused")
+        .unwrap();
+    pool.close().await;
+    let ctx = test_ctx(
+        Db::new(pool),
+        Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
+    );
+    let me = addr("invalid");
+    let mut cases = vec![(
+        UpsertSocialSettingsPayload::default(),
+        "At least one setting to update must be provided",
+    )];
+    for value in [-1, 2, i32::MAX] {
+        cases.extend([
+            (
+                UpsertSocialSettingsPayload {
+                    private_messages_privacy: Some(value),
+                    show_situation_reactions: Some(SituationReactionsVisibility::Hide as i32),
+                    ..Default::default()
+                },
+                "Unknown private messages privacy setting",
+            ),
+            (
+                UpsertSocialSettingsPayload {
+                    blocked_users_messages_visibility: Some(value),
+                    ..Default::default()
+                },
+                "Unknown blocked users messages visibility setting",
+            ),
+            (
+                UpsertSocialSettingsPayload {
+                    show_situation_reactions: Some(value),
+                    ..Default::default()
+                },
+                "Unknown situation reactions visibility setting",
+            ),
+        ]);
+    }
+    for (request, message) in cases {
+        let request =
+            UpsertSocialSettingsPayload::decode(request.encode_to_vec().as_slice()).unwrap();
+        let response = SocialServiceImpl
+            .upsert_social_settings(request, procedure_ctx(&ctx, &me, 42))
+            .await
+            .unwrap();
+        let response =
+            UpsertSocialSettingsResponse::decode(response.encode_to_vec().as_slice()).unwrap();
+        match response.response {
+            Some(upsert_social_settings_response::Response::InvalidRequest(error)) => {
+                assert_eq!(error.message.as_deref(), Some(message));
+            }
+            other => panic!("{message}: {other:?}"),
+        }
+    }
+}
 
 fn settings(
     pmp: PrivateMessagePrivacySetting,

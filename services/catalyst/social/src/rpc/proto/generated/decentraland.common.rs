@@ -19,6 +19,7 @@ pub struct Color4 {
     #[prost(float, tag = "4")]
     pub a: f32,
 }
+/// A range of Color4 values. Randomized or lerped between start and end.
 #[derive(Clone, Copy, PartialEq, ::prost::Message)]
 pub struct ColorRange {
     #[prost(message, optional, tag = "1")]

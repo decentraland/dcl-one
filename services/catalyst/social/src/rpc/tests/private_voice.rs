@@ -479,6 +479,60 @@ async fn either_party_already_in_a_voice_room_is_a_conflict_naming_it() {
     rig.forget(&[&caller, &callee, &third]).await;
 }
 
+/// Block and privacy authorization precede presence disclosure (upstream
+/// social-service-ea@b6b2cef voice.ts:48-68), whichever party is in a room.
+#[tokio::test]
+async fn privacy_denial_hides_either_partys_community_call_presence() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let (caller, callee, owner) = (addr("pvpr1"), addr("pvpr2"), addr("pvpr3"));
+    let community = seed_community(rig.db.pool(), true, &owner, "owner").await;
+    let mut updates = rig.ctx.pubsub().subscribe(&callee);
+    for occupant in [&caller, &callee] {
+        sqlx::query("INSERT INTO social.community_voice_chat_users (community_id, address, status) VALUES ($1, $2, 'connected')")
+            .bind(community).bind(occupant).execute(rig.db.pool()).await.unwrap();
+        for restricted in [&caller, &callee] {
+            for who in [&caller, &callee] {
+                rig.db
+                    .upsert_social_settings(
+                        who,
+                        Some(if who == restricted {
+                            "only_friends"
+                        } else {
+                            "all"
+                        }),
+                        None,
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+            match rig.start(&caller, &callee).await {
+                start_private_voice_chat_response::Response::ForbiddenError(error) => {
+                    assert_eq!(
+                        error.message.as_deref(),
+                        Some(
+                            "The callee or the caller are not accepting voice calls from users that are not friends"
+                        )
+                    );
+                }
+                other => panic!("{other:?}"),
+            }
+            assert_eq!(rig.calls_between(&caller, &callee).await, 0);
+            assert!(updates.try_recv().is_err());
+        }
+        sqlx::query("DELETE FROM social.community_voice_chat_users WHERE community_id = $1")
+            .bind(community)
+            .execute(rig.db.pool())
+            .await
+            .unwrap();
+    }
+    drop_community(rig.db.pool(), community).await;
+    rig.forget(&[&caller, &callee]).await;
+}
+
 /// The start's refusal messages. Recorded difference (RPC.md, private voice,
 /// "start-private-voice-chat (7)"): upstream answers a self-call and a blocked
 /// pair with the not-friends message (`VoiceChatNotAllowedError`,

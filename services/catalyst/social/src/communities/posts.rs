@@ -23,6 +23,7 @@ use super::write_support::{
     validate_like_unlike_access,
 };
 use super::{SharedState, queries, signed_path};
+use crate::notifications::community::Audience;
 
 macro_rules! try_resp {
     ($e:expr) => {
@@ -252,6 +253,17 @@ pub async fn create_post(
             }
         },
     };
+    // upstream `createPost`: POST_ADDED to every member but the author (a
+    // replayed key is the same post, so the same notification rows)
+    state
+        .notify_community_event(
+            "community_post_added",
+            post_id.to_string(),
+            uuid,
+            json!({ "postId": post_id, "authorAddress": signer.as_str() }),
+            Audience::MembersExcept(&signer),
+        )
+        .await;
     let data = json!({
         "id": post_id,
         "communityId": uuid.as_uuid(),

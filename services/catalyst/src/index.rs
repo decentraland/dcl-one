@@ -104,7 +104,7 @@ pub(crate) fn market_settings(
             self_hosts,
         )
         .context("MARKETPLACE_* / TRADE_RPC_URLS configuration")?
-        .with_indexes(shop::market::chain_walk::IndexSettings {
+        .with_indexes(checked_indexes(shop::market::chain_walk::IndexSettings {
             nft_enabled: config.marketplace.marketplace_nft_index_enabled,
             mana_transfers_enabled: config.marketplace.marketplace_mana_transfers_index_enabled,
             trade_events_enabled: config.marketplace.marketplace_trade_events_index_enabled,
@@ -127,8 +127,17 @@ pub(crate) fn market_settings(
             coupon_refresh_interval: Duration::from_secs(
                 config.marketplace.marketplace_coupon_refresh_interval_secs,
             ),
-        }),
+            chain_id_ethereum: config.marketplace.marketplace_index_chain_id_ethereum,
+            chain_id_matic: config.marketplace.marketplace_index_chain_id_matic,
+        })?),
     ))
+}
+
+fn checked_indexes(
+    indexes: shop::market::chain_walk::IndexSettings,
+) -> anyhow::Result<shop::market::chain_walk::IndexSettings> {
+    indexes.check_chains().map_err(anyhow::Error::msg)?;
+    Ok(indexes)
 }
 
 pub(crate) fn land_settings(config: &Config) -> anyhow::Result<land_authz::Settings> {

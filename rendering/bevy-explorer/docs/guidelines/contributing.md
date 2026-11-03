@@ -39,6 +39,10 @@ understand the change in one sitting.
   when the code is refactored without a behaviour change is a cost, not an asset.
 - Parse structured output; never string-compare it. Serialisation order is not stable across
   feature unification.
+- For anything animated or staged, test what lands mid-way, not only the happy path. Enumerate
+  the events that can arrive while the transition runs: the thing it replaces is rebuilt,
+  despawned, hidden, or toggled by its setting, or it loads late or fails. Decide the behaviour
+  for each and give each a test.
 
 ## The PR description is the record
 
@@ -49,6 +53,8 @@ understand the change in one sitting.
   diff in an hour.
 - Screenshots before and after for rendering changes. There is no visual regression suite for
   the 3D side.
+- A port from Unity names the Unity files it follows, the constants carried over, and every
+  divergence with its reason. See [porting from Unity](porting-from-unity.md).
 - Follow the repository PR template, including its test instructions and checks run; omit a chronological work narrative.
 
 ## Before pushing

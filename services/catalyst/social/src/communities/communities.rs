@@ -30,6 +30,7 @@ use super::write_support::{
     parse_community_id, parse_multipart, refuse,
 };
 use super::{SharedState, queries, signed_path, validate};
+use crate::notifications::community::{Audience, CommunityEvent, notify};
 
 const MIN_SEARCH_LENGTH_FOR_MINIMAL_RESPONSE: usize = 3;
 const MAX_LIMIT_FOR_MINIMAL_RESPONSE: i64 = 50;
@@ -364,6 +365,9 @@ pub async fn get_community(
         .profiles
         .get_owner_names(&[detail.owner_address.to_lowercase()])
         .await;
+    if signer.is_some() {
+        detail.is_hosting_live_event = Some(is_hosting_live_event(&state, id).await);
+    }
     set_thumbnail_detail(&state.settings.cdn_url, &mut detail);
     detail.owner_name = Some(
         owner_names
@@ -450,8 +454,31 @@ pub async fn get_community_v2(
             "Community not found: {id_str}"
         )));
     };
+    if signer.is_some() {
+        detail.is_hosting_live_event = Some(is_hosting_live_event(&state, id).await);
+    }
     set_thumbnail_detail(&state.settings.cdn_url, &mut detail);
     Ok(Json(EnvelopeData { data: detail }))
+}
+
+/// Upstream `isCurrentlyHostingEvents` (`logic/community/events.ts`): the
+/// events API's `?community_id=&list=live` has a row. Read here from
+/// explore's events in process; a failed read is `false`, as upstream's.
+async fn is_hosting_live_event(state: &SharedState, id: CommunityId) -> bool {
+    use crate::explore::events::{EventListFilters, EventListType};
+    let filters = EventListFilters {
+        limit: 1,
+        list: EventListType::Live,
+        community_id: Some(id.to_string()),
+        ..Default::default()
+    };
+    match state.explore.events.query(&filters, false).await {
+        Ok((events, _)) => !events.is_empty(),
+        Err(error) => {
+            tracing::warn!(?error, community_id = %id, "live events lookup failed");
+            false
+        }
+    }
 }
 
 fn parse_enum_field(value: String, allowed: [&str; 2], field: &str) -> Result<String, Refusal> {
@@ -534,7 +561,7 @@ pub async fn create_community(
         Some(v) => try_resp!(parse_visibility(v)),
         None => "all".to_string(),
     };
-    let place_ids = fields.place_ids;
+    let place_ids = fields.place_ids.unwrap_or_default();
     let thumbnail = fields.thumbnail;
     if let Some(bytes) = thumbnail.as_deref()
         && let Err(e) = validate_thumbnail(bytes)
@@ -623,6 +650,7 @@ pub async fn create_community(
         "active": true,
         "role": "owner",
         "membersCount": 1,
+        "isHostingLiveEvent": false,
     });
     if thumbnail.is_some()
         && let Some(m) = data.as_object_mut()
@@ -718,6 +746,39 @@ pub async fn update_community(
             .await
         );
     }
+    // Upstream `updateCommunity`: a `placeIds` field replaces the places; the
+    // ones the community already holds keep their standing, every new one
+    // must be the caller's (`validateOwnership` of the rest). Its
+    // `validatePermissionToUpdatePlaces` (add + remove places) names the same
+    // owner/moderator tiers as the edit check above.
+    let place_ids: Option<Vec<String>> = match fields.place_ids {
+        Some(ids) => {
+            let mut unique: Vec<String> = Vec::new();
+            for id in ids {
+                if !unique.contains(&id) {
+                    unique.push(id);
+                }
+            }
+            let held: Vec<String> = try_resp!(map_db(
+                sqlx::query_scalar(
+                    "SELECT place_id FROM social.community_places WHERE community_id = $1"
+                )
+                .bind(uuid)
+                .fetch_all(&state.pool)
+                .await
+            ));
+            let new: Vec<String> = unique
+                .iter()
+                .filter(|id| !held.contains(id))
+                .cloned()
+                .collect();
+            if let Err(e) = state.validate_places_ownership(&new, &signer).await {
+                return e.into_response();
+            }
+            Some(unique)
+        }
+        None => None,
+    };
     if privacy.is_some_and(|p| current.map(|c| c.1) != Some(p))
         || visibility.is_some_and(|v| current.map(|c| c.2) != Some(v))
     {
@@ -738,6 +799,8 @@ pub async fn update_community(
     {
         return err_json(StatusCode::BAD_REQUEST, e.message());
     }
+    let becomes_public = privacy == Some(false) && current.is_some_and(|c| c.1);
+    let mut tx = try_resp!(map_db(state.pool.begin().await));
     try_resp!(map_db(
         sqlx::query(
             "UPDATE social.communities SET \
@@ -753,9 +816,55 @@ pub async fn update_community(
         .bind(description.as_deref())
         .bind(privacy)
         .bind(visibility)
-        .execute(&state.pool)
+        .execute(&mut *tx)
         .await
     ));
+    if let Some(ids) = &place_ids {
+        try_resp!(map_db(
+            sqlx::query(
+                "DELETE FROM social.community_places WHERE community_id = $1 AND place_id <> ALL($2)"
+            )
+            .bind(uuid)
+            .bind(ids)
+            .execute(&mut *tx)
+            .await
+        ));
+        try_resp!(map_db(
+            sqlx::query(
+                "INSERT INTO social.community_places (place_id, community_id, added_by) \
+                 SELECT p, $2, $3 FROM unnest($1::text[]) AS p \
+                 ON CONFLICT (place_id, community_id) DO NOTHING",
+            )
+            .bind(ids)
+            .bind(uuid)
+            .bind(&signer)
+            .execute(&mut *tx)
+            .await
+        ));
+    }
+    if becomes_public {
+        // upstream `acceptAllRequestsToJoin`: every pending request to join
+        // of a wallet the community does not ban becomes a membership
+        try_resp!(map_db(
+            sqlx::query(
+                "WITH accepted AS ( \
+                   UPDATE social.community_requests r \
+                      SET status = 'accepted', updated_at = timezone('UTC', now()) \
+                    WHERE r.community_id = $1 AND r.type = 'request_to_join' AND r.status = 'pending' \
+                      AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
+                                      WHERE b.community_id = r.community_id \
+                                        AND b.banned_address = r.member_address AND b.active) \
+                   RETURNING r.member_address) \
+                 INSERT INTO social.community_members (community_id, member_address, role) \
+                 SELECT $1, member_address, 'member' FROM accepted \
+                 ON CONFLICT (community_id, member_address) DO NOTHING",
+            )
+            .bind(uuid)
+            .execute(&mut *tx)
+            .await
+        ));
+    }
+    try_resp!(map_db(tx.commit().await));
     if let Some(bytes) = thumbnail.as_deref()
         && let Err(e) = store_thumbnail(&state.pool, &state.storage, uuid, bytes).await
     {
@@ -775,7 +884,42 @@ pub async fn update_community(
         Ok(None) => return err_json(StatusCode::NOT_FOUND, "Community not found"),
         Err(e) => return *map_db::<()>(Err(e)).unwrap_err(),
     };
-    (StatusCode::OK, Json(json!({ "data": data }))).into_response()
+    if let (Some(new_name), Some((old_name, _, _))) = (name.as_deref(), current)
+        && new_name.trim() != old_name.trim()
+    {
+        let slug = |n: &str| n.trim().to_lowercase().replace(' ', "-");
+        notify(
+            &state.pool,
+            CommunityEvent {
+                kind: "community_renamed",
+                key: format!("{uuid}-{}-{}", slug(new_name), slug(old_name)),
+                community_id: uuid,
+                metadata: json!({
+                    "communityId": uuid.as_uuid(),
+                    "oldName": old_name,
+                    "newName": new_name,
+                    "thumbnailUrl": stored_thumbnail_or_na(&state, data.has_thumbnail, uuid),
+                }),
+            },
+            Audience::Members,
+        )
+        .await;
+    }
+    (
+        StatusCode::OK,
+        Json(json!({ "message": "Community updated successfully", "data": data })),
+    )
+        .into_response()
+}
+
+/// Upstream's `communityThumbnail.getThumbnail(id) || 'N/A'` (the renamed and
+/// deleted events).
+fn stored_thumbnail_or_na(state: &SharedState, has_thumbnail: bool, id: CommunityId) -> String {
+    if has_thumbnail {
+        state.thumbnail_url(id)
+    } else {
+        "N/A".to_string()
+    }
 }
 
 /// Upstream's `UpdateCommunityPartiallySchema`: exactly `{ editorsChoice: bool }`.
@@ -863,22 +1007,57 @@ pub async fn delete_community(
     if !try_resp!(active_community_exists(&state, uuid).await) {
         return CommError::not_found(format!("Community not found: {id}")).into_response();
     }
-    if !state.is_global_moderator(&signer)
-        && !try_resp!(load_client_standing(&state, uuid, &signer).await)
-            .has(CommunityPermission::DeleteCommunity)
-    {
+    let owner_deleting = try_resp!(load_client_standing(&state, uuid, &signer).await)
+        .has(CommunityPermission::DeleteCommunity);
+    if !owner_deleting && !state.is_global_moderator(&signer) {
         return CommError::not_authorized(
             "The user doesn't have permission to delete this community",
         )
         .into_response();
     }
-    try_resp!(map_db(
-        sqlx::query("UPDATE social.communities SET active = FALSE, updated_at = timezone('UTC', now()) WHERE id = $1")
-            .bind(uuid)
-            .execute(&state.pool)
-            .await
+    let (name, owner, has_thumbnail): (String, Address, bool) = try_resp!(map_db(
+        sqlx::query_as(
+            "UPDATE social.communities c SET active = FALSE, updated_at = timezone('UTC', now()) \
+             WHERE c.id = $1 \
+             RETURNING c.name, c.owner_address, \
+                       EXISTS (SELECT 1 FROM social.community_thumbnails t WHERE t.community_id = c.id)"
+        )
+        .bind(uuid)
+        .fetch_one(&state.pool)
+        .await
     ));
     state.community_closed_to_worlds(uuid);
+    // upstream `broadcastCommunityDeleted`: the owner hears of a moderator's
+    // removal, every other member of the deletion
+    let metadata = json!({
+        "communityId": uuid.as_uuid(),
+        "communityName": name,
+        "thumbnailUrl": stored_thumbnail_or_na(&state, has_thumbnail, uuid),
+    });
+    if !owner_deleting {
+        notify(
+            &state.pool,
+            CommunityEvent {
+                kind: "community_deleted_content_violation",
+                key: uuid.to_string(),
+                community_id: uuid,
+                metadata: metadata.clone(),
+            },
+            Audience::One(&owner),
+        )
+        .await;
+    }
+    notify(
+        &state.pool,
+        CommunityEvent {
+            kind: "community_deleted",
+            key: uuid.to_string(),
+            community_id: uuid,
+            metadata,
+        },
+        Audience::MembersButOwner,
+    )
+    .await;
     StatusCode::NO_CONTENT.into_response()
 }
 
