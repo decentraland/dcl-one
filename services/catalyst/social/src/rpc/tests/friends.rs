@@ -761,7 +761,7 @@ async fn upsert_friendship_validates_and_reads_messages_as_upstream() {
             "You cannot send a friendship request to yourself".into()
         )
     );
-    for target in [Some("0x12"), Some(""), Some("not an address"), None] {
+    for target in [Some("0x12"), Some(""), Some("not an address")] {
         assert_eq!(
             refusal(rig.upsert(&a, request_with(target, None)).await),
             (
@@ -771,6 +771,15 @@ async fn upsert_friendship_validates_and_reads_messages_as_upstream() {
             "{target:?}"
         );
     }
+    let missing_user = rig.upsert(&a, request_with(None, None)).await;
+    assert!(
+        matches!(
+            missing_user,
+            upsert_friendship_response::Response::InternalServerError(ref error)
+                if error.message.as_deref() == Some("Cannot read properties of undefined (reading 'address')")
+        ),
+        "{missing_user:?}"
+    );
     assert_eq!(
         refusal(rig.upsert(&a, accept(&a)).await),
         (
@@ -944,8 +953,9 @@ async fn a_block_whose_friendship_write_fails_is_rolled_back() {
 
 /// With a profile source, a wallet without a profile is left out where
 /// upstream's registry drops it: a listed friend or request (the total
-/// stays the row count), a friendship update it sends; an upsert naming it
-/// answers `internalServerError` after the write
+/// stays the row count). RPC stream delivery filters its friendship updates;
+/// the shared publisher retains address-only updates for the JSON stream. An
+/// upsert naming it answers `internalServerError` after the write
 /// (`src/logic/friends/component.ts` `upsertFriendship`,
 /// `src/logic/friends/friendships.ts:254-266`). A listed request's absent
 /// message reads `''` (`:242`).
@@ -1016,7 +1026,8 @@ async fn a_wallet_without_a_profile_is_left_out_with_a_profile_source() {
             .action,
         "accept"
     );
-    // a friendship update from a wallet without a profile reaches no one
+    // Raw events retain the address for JSON stream delivery; RPC subscribers
+    // resolve profiles and filter their own output at the delivery boundary.
     let answer = SocialServiceImpl
         .upsert_friendship(
             UpsertFriendshipPayload {
@@ -1032,10 +1043,10 @@ async fn a_wallet_without_a_profile_is_left_out_with_a_profile_source() {
         answer,
         upsert_friendship_response::Response::InternalServerError(_)
     ));
-    assert!(
-        drained(&mut to_me).is_empty(),
-        "nothing from the profile-less wallet"
-    );
+    let raw = friendship_updates(&drained(&mut to_me));
+    assert_eq!(raw.len(), 1);
+    assert!(matches!(&raw[0], friendship_update::Update::Delete(_)));
+    assert_eq!(updated_by(&raw[0]), Some(unknown.as_str()));
     // the known wallet's cancel does reach me
     assert!(matches!(
         upsert_with(&ctx, &known, cancel(&me)).await,

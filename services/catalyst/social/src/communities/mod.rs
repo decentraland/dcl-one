@@ -53,8 +53,6 @@ mod requests;
 pub(crate) mod voice;
 mod write_support;
 
-pub(crate) use places::{destinations_of, positions_and_worlds};
-
 #[cfg(test)]
 mod tests;
 
