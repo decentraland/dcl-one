@@ -484,8 +484,8 @@
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -523,12 +523,30 @@
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
-          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
+          "scope": "Four actual-source domain/cache/poller/broadcaster/privileged-adapter/RPC/JSON scenarios regenerate exactly, with controlled JSON-serializing Redis facade, media HTTP responses and clock; records25 recipient events and real job-SDK timer scheduling. No network Redis or LiveKit is used."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_alias_lifecycles_match_source_rpc_json_audiences_and_restart_reads",
+          "scope": "Replays the four complete source lifecycles against real PostgreSQL with component restarts and exact RPC/JSON audiences; local source providers remain controlled."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "exact_key_cas_restore_and_pages_preserve_sibling_generations_and_ttls",
+          "scope": "Tests raw-key generation CAS, restore, independent expiry and130 aliases in64/64/2 ordered pages."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
+          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "active_raw_aliases_refresh_through_real_comms_presence_and_end_after_moderator_expiry",
+          "scope": "Uses actual local Comms State/VoiceDb to preserve active uppercase/sibling keys and observe ENDED after moderator expiry. No live media or populated deployment cutover is exercised."
         }
       ],
-      "gaps": [
-        "Functional difference remains; see community-voice-raw-cache-aliases."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -2800,8 +2818,8 @@
     {
       "id": "api_http:POST:/v1/community-voice-chats",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -2854,12 +2872,30 @@
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
-          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
+          "scope": "Four actual-source domain/cache/poller/broadcaster/privileged-adapter/RPC/JSON scenarios regenerate exactly, with controlled JSON-serializing Redis facade, media HTTP responses and clock; records25 recipient events and real job-SDK timer scheduling. No network Redis or LiveKit is used."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_alias_lifecycles_match_source_rpc_json_audiences_and_restart_reads",
+          "scope": "Replays the four complete source lifecycles against real PostgreSQL with component restarts and exact RPC/JSON audiences; local source providers remain controlled."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "exact_key_cas_restore_and_pages_preserve_sibling_generations_and_ttls",
+          "scope": "Tests raw-key generation CAS, restore, independent expiry and130 aliases in64/64/2 ordered pages."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
+          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "active_raw_aliases_refresh_through_real_comms_presence_and_end_after_moderator_expiry",
+          "scope": "Uses actual local Comms State/VoiceDb to preserve active uppercase/sibling keys and observe ENDED after moderator expiry. No live media or populated deployment cutover is exercised."
         }
       ],
-      "gaps": [
-        "Functional difference remains; see community-voice-raw-cache-aliases."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -3433,8 +3469,8 @@
     {
       "id": "json_stream:SUBSCRIBE:community_voice_chat_updates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "status": "reviewed",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -3478,12 +3514,30 @@
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
-          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
+          "scope": "Four actual-source domain/cache/poller/broadcaster/privileged-adapter/RPC/JSON scenarios regenerate exactly, with controlled JSON-serializing Redis facade, media HTTP responses and clock; records25 recipient events and real job-SDK timer scheduling. No network Redis or LiveKit is used."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_alias_lifecycles_match_source_rpc_json_audiences_and_restart_reads",
+          "scope": "Replays the four complete source lifecycles against real PostgreSQL with component restarts and exact RPC/JSON audiences; local source providers remain controlled."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "exact_key_cas_restore_and_pages_preserve_sibling_generations_and_ttls",
+          "scope": "Tests raw-key generation CAS, restore, independent expiry and130 aliases in64/64/2 ordered pages."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
+          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "active_raw_aliases_refresh_through_real_comms_presence_and_end_after_moderator_expiry",
+          "scope": "Uses actual local Comms State/VoiceDb to preserve active uppercase/sibling keys and observe ENDED after moderator expiry. No live media or populated deployment cutover is exercised."
         }
       ],
-      "gaps": [
-        "Functional difference remains; see community-voice-raw-cache-aliases."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -3734,8 +3788,8 @@
     {
       "id": "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
+      "status": "reviewed",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
@@ -3789,12 +3843,30 @@
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
-          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
+          "scope": "Four actual-source domain/cache/poller/broadcaster/privileged-adapter/RPC/JSON scenarios regenerate exactly, with controlled JSON-serializing Redis facade, media HTTP responses and clock; records25 recipient events and real job-SDK timer scheduling. No network Redis or LiveKit is used."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_alias_lifecycles_match_source_rpc_json_audiences_and_restart_reads",
+          "scope": "Replays the four complete source lifecycles against real PostgreSQL with component restarts and exact RPC/JSON audiences; local source providers remain controlled."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "exact_key_cas_restore_and_pages_preserve_sibling_generations_and_ttls",
+          "scope": "Tests raw-key generation CAS, restore, independent expiry and130 aliases in64/64/2 ordered pages."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
+          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "active_raw_aliases_refresh_through_real_comms_presence_and_end_after_moderator_expiry",
+          "scope": "Uses actual local Comms State/VoiceDb to preserve active uppercase/sibling keys and observe ENDED after moderator expiry. No live media or populated deployment cutover is exercised."
         }
       ],
-      "gaps": [
-        "Functional difference remains; see community-voice-raw-cache-aliases."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -4142,8 +4214,8 @@
     {
       "id": "rpc_unary:RPC:endCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -4186,12 +4258,30 @@
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
-          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
+          "scope": "Four actual-source domain/cache/poller/broadcaster/privileged-adapter/RPC/JSON scenarios regenerate exactly, with controlled JSON-serializing Redis facade, media HTTP responses and clock; records25 recipient events and real job-SDK timer scheduling. No network Redis or LiveKit is used."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_alias_lifecycles_match_source_rpc_json_audiences_and_restart_reads",
+          "scope": "Replays the four complete source lifecycles against real PostgreSQL with component restarts and exact RPC/JSON audiences; local source providers remain controlled."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "exact_key_cas_restore_and_pages_preserve_sibling_generations_and_ttls",
+          "scope": "Tests raw-key generation CAS, restore, independent expiry and130 aliases in64/64/2 ordered pages."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
+          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "active_raw_aliases_refresh_through_real_comms_presence_and_end_after_moderator_expiry",
+          "scope": "Uses actual local Comms State/VoiceDb to preserve active uppercase/sibling keys and observe ENDED after moderator expiry. No live media or populated deployment cutover is exercised."
         }
       ],
-      "gaps": [
-        "Functional difference remains; see community-voice-raw-cache-aliases."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -5034,8 +5124,8 @@
     {
       "id": "rpc_unary:RPC:startCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "status": "reviewed",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 35 paired source-domain/SDK and entry-wrapper regressions through the shared adapter; ordinary responses alone are not the side-effect proof. Exact raw UUID spelling now keys independent notification scopes, generations and TTLs; START/END wire IDs and START notification keys/metadata retain that spelling. Explicit END claims only its key, and polling observes the shared canonical media room for each remaining alias.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -5093,12 +5183,30 @@
         },
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
-          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
+          "scope": "Four actual-source domain/cache/poller/broadcaster/privileged-adapter/RPC/JSON scenarios regenerate exactly, with controlled JSON-serializing Redis facade, media HTTP responses and clock; records25 recipient events and real job-SDK timer scheduling. No network Redis or LiveKit is used."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_alias_lifecycles_match_source_rpc_json_audiences_and_restart_reads",
+          "scope": "Replays the four complete source lifecycles against real PostgreSQL with component restarts and exact RPC/JSON audiences; local source providers remain controlled."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "exact_key_cas_restore_and_pages_preserve_sibling_generations_and_ttls",
+          "scope": "Tests raw-key generation CAS, restore, independent expiry and130 aliases in64/64/2 ordered pages."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "raw_start_broadcast_key_and_metadata_match_source_inbox_and_local_sns",
+          "scope": "Compares actual source broadcast/SNS keys and raw communityId with candidate SQL inbox and local official-SDK publisher."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/community_raw_source_cases.rs",
+          "test": "active_raw_aliases_refresh_through_real_comms_presence_and_end_after_moderator_expiry",
+          "scope": "Uses actual local Comms State/VoiceDb to preserve active uppercase/sibling keys and observe ENDED after moderator expiry. No live media or populated deployment cutover is exercised."
         }
       ],
-      "gaps": [
-        "Functional difference remains; see community-voice-raw-cache-aliases."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -8046,7 +8154,7 @@
     },
     {
       "id": "community-voice-raw-cache-aliases",
-      "status": "known_gap",
+      "status": "unverified",
       "operations": [
         "rpc_unary:RPC:startCommunityVoiceChat",
         "rpc_unary:RPC:endCommunityVoiceChat",
@@ -8055,7 +8163,7 @@
         "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
         "json_stream:SUBSCRIBE:community_voice_chat_updates"
       ],
-      "description": "Two complete executed-source lifecycles show independent raw UUID cache keys, their original wire spellings and restart/poll behavior. Candidate stores one notification generation/scope per canonical UUID, losing that cardinality and lexical identity. Analytics spelling is already preserved; stream/cache lifecycle parity remains open. A single authoritative raw-key relation, bounded polling and data-safe migration are being reviewed before implementation."
+      "description": "One authoritative case-sensitive raw-key relation now preserves independent alias scopes, generation CAS and exact expirations; canonical UUID remains media/membership identity. Four independently regenerated source lifecycles and four PostgreSQL-backed regressions cover raw RPC/JSON/SNS identity, restarts, expiry, stale-generation interleavings and bounded polling; actual Comms presence checks active aliases. The composed schema3 release shares canonical table DDL, requires genuinely recorded unchanged0020, atomically backfills/verifies/retires legacy facts and stamps3 last. Eight owned-database upgrade tests cover populated genuine-v2 captures, refusal, rollback, retry, executor/indexes/bootstrap and immutable ledger. Original raw aliases cannot be recovered from older UUID-only facts; production Redis import/drain, room continuity and cutover/rollback are unverified. No architecture or deployment acceptance is inferred."
     }
   ]
 }
