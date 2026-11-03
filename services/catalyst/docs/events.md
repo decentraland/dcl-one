@@ -75,3 +75,22 @@ ROLLBACK;
 ```
 
 The exact URL and generated-provenance guards leave explicit organizer images, mirrored events and other image URLs untouched. This repairs representation only; it does not change event lifecycle timestamps, moderation or notification state.
+
+## Optional upcoming-event Slack summaries
+
+`EVENTS_UPCOMING_SUMMARIES_ENABLED=true` explicitly enables aggregate summaries
+through `SLACK_WEBHOOK` (or `SLACK_WEBHOOK_FILE`) when `OPS_WRITES_ENABLED=true`.
+It defaults to false, independently of moderation alerts. A missing or blank
+webhook disables summary scanning and delivery.
+
+Each minute, a leased worker scans up to 100 approved native occurrences starting
+within the next hour with local going RSVPs. Repeated scans include late approvals,
+new RSVPs and rescheduled occurrences; retained occurrence keys prevent duplicates.
+At most ten deliveries run per tick. Payloads contain the current public name,
+event link and current aggregate RSVP count, never attendee identities or private
+author fields. Rejected, deleted, rescheduled and expired occurrences are rechecked
+before delivery. Six failed attempts leave a visible dead letter
+(`completed_at IS NULL AND attempts=6`); HTTP delivery is at least once.
+Occurrences older than thirty days are cleaned in bounded batches, including after
+summary opt-out while operator jobs remain enabled. Downtime does not replay past
+occurrences.

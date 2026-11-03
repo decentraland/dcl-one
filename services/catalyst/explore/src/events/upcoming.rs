@@ -1,69 +1,91 @@
-//! Optional aggregate operational summaries, one hour before a native event.
-//! The queue contains no RSVP identities; current explicit consent is counted
-//! again before delivery. First activation skips historical occurrences.
+//! Optional aggregate summaries for native occurrences starting within an hour.
+//! Rolling scans recover late eligibility; unique retained keys deduplicate work.
+//! HTTP delivery is at least once because Slack provides no idempotency contract.
 
 use std::time::Duration;
 
 use chrono::{NaiveDateTime, Utc};
 use serde_json::{Value, json};
-use sqlx::PgPool;
+use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
-#[derive(sqlx::FromRow)]
-struct Occurrence {
-    event_id: String,
-    starts_at: NaiveDateTime,
-    due_at: NaiveDateTime,
-    name: String,
+const RETENTION_DAYS: i32 = 30;
+const CLEANUP_LIMIT: i64 = 1000;
+
+async fn timed_transaction(pool: &PgPool) -> Result<Transaction<'_, Postgres>, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL statement_timeout='2s'")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SET LOCAL lock_timeout='100ms'")
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
+
+// Reuse the public event list's finite, validated recurrence dates. Native
+// nonrecurring events use their typed UTC start when no series dates exist.
+fn occurrences_sql() -> String {
+    format!(
+        "SELECT dates.starts_at AT TIME ZONE 'UTC' AS starts_at FROM ({}) dates \
+        UNION SELECT e.start_at WHERE e.start_at IS NOT NULL AND isfinite(e.start_at) \
+        AND CASE WHEN jsonb_typeof(e.raw->'recurrent_dates')='array' \
+            THEN jsonb_array_length(e.raw->'recurrent_dates')=0 ELSE true END",
+        super::VALID_RECURRENCE_DATES_SQL
+    )
 }
 
 async fn scan(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<u64> {
-    let mut tx = pool.begin().await?;
-    let initialized=sqlx::query("INSERT INTO explore.event_upcoming_hook_cursor (due_at) VALUES ($1) ON CONFLICT DO NOTHING")
-        .bind(now).execute(&mut *tx).await?.rows_affected()>0;
-    if initialized {
-        tx.commit().await?;
-        return Ok(0);
-    }
-    let (since,after_id,after_start):(NaiveDateTime,String,NaiveDateTime)=sqlx::query_as(
-        "SELECT due_at,event_id,occurrence_start FROM explore.event_upcoming_hook_cursor WHERE singleton FOR UPDATE")
-        .fetch_one(&mut *tx).await?;
-    if now < since {
-        tx.commit().await?;
-        return Ok(0);
-    }
-    let rows:Vec<Occurrence>=sqlx::query_as(
-        "SELECT DISTINCT e.id AS event_id,left(e.name,500) AS name,d.starts_at,d.starts_at-interval '1 hour' AS due_at \
-         FROM explore.event e CROSS JOIN LATERAL ( \
-            SELECT CASE WHEN pg_input_is_valid(value,'timestamp with time zone') \
-                THEN value::timestamptz AT TIME ZONE 'UTC' END AS starts_at \
-            FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(e.raw->'recurrent_dates')='array' \
-                AND e.raw->'recurrent_dates'<>'[]'::jsonb THEN e.raw->'recurrent_dates' \
-                ELSE jsonb_build_array(e.raw->'start_at') END) \
-         ) d WHERE e.origin='local' AND e.approved \
-            AND COALESCE(e.raw->>'rejected','false')<>'true' \
-            AND COALESCE(e.raw->>'deleted_by_user','false')<>'true' \
-            AND COALESCE(e.raw->>'deleted_by_admin','false')<>'true' \
-            AND EXISTS (SELECT 1 FROM explore.event_attendance_local a WHERE a.event_id=e.id AND a.action='going') \
-            AND (d.starts_at-interval '1 hour',e.id,d.starts_at)>($1,$2,$3) \
-            AND d.starts_at-interval '1 hour'<=$4 \
-         ORDER BY due_at,event_id,starts_at LIMIT 100")
-        .bind(since).bind(&after_id).bind(after_start).bind(now).fetch_all(&mut *tx).await?;
-    let event_ids: Vec<&str> = rows.iter().map(|row| row.event_id.as_str()).collect();
-    let starts: Vec<NaiveDateTime> = rows.iter().map(|row| row.starts_at).collect();
-    let names: Vec<&str> = rows.iter().map(|row| row.name.as_str()).collect();
-    let inserted=sqlx::query("INSERT INTO explore.event_upcoming_hooks (event_id,occurrence_start,name,next_attempt_at) SELECT n.*,$4 FROM UNNEST($1::text[],$2::timestamp[],$3::text[]) n ON CONFLICT DO NOTHING")
-        .bind(event_ids).bind(starts).bind(names).bind(now).execute(&mut *tx).await?.rows_affected();
-    if let Some(last) = rows.last() {
-        sqlx::query("UPDATE explore.event_upcoming_hook_cursor SET due_at=$1,event_id=$2,occurrence_start=$3 WHERE singleton")
-            .bind(last.due_at).bind(&last.event_id).bind(last.starts_at).execute(&mut *tx).await?;
-    }
-    if rows.len() < 100 && rows.last().is_none_or(|last| last.due_at < now) {
-        sqlx::query("UPDATE explore.event_upcoming_hook_cursor SET due_at=$1,event_id='',occurrence_start='0001-01-01' WHERE singleton")
-            .bind(now).execute(&mut *tx).await?;
-    }
+    let mut tx = timed_transaction(pool).await?;
+    // Typed bounds use event_notifications_live_idx before expanding the series.
+    // NOT EXISTS is before LIMIT, so a second tick reaches the next 100 rows,
+    // including when every occurrence shares the same start time.
+    let sql = format!(
+        "INSERT INTO explore.event_upcoming_hooks (event_id,occurrence_start,name,next_attempt_at) \
+        SELECT DISTINCT e.id,d.starts_at,'',$1 FROM explore.event e \
+        CROSS JOIN LATERAL ({}) d \
+        WHERE e.origin='local' AND e.approved AND e.finish_at>$1 \
+          AND e.start_at<=$1+interval '1 hour' \
+          AND COALESCE(e.raw->>'rejected','false')<>'true' \
+          AND COALESCE(e.raw->>'deleted_by_user','false')<>'true' \
+          AND COALESCE(e.raw->>'deleted_by_admin','false')<>'true' \
+          AND d.starts_at>$1 AND d.starts_at<=$1+interval '1 hour' \
+          AND EXISTS (SELECT 1 FROM explore.event_attendance_local a WHERE a.event_id=e.id AND a.action='going') \
+          AND NOT EXISTS (SELECT 1 FROM explore.event_upcoming_hooks h WHERE h.event_id=e.id AND h.occurrence_start=d.starts_at) \
+        ORDER BY d.starts_at,e.id LIMIT 100 ON CONFLICT DO NOTHING",
+        occurrences_sql()
+    );
+    let inserted = sqlx::query(sqlx::AssertSqlSafe(sql))
+        .bind(now)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
     tx.commit().await?;
     Ok(inserted)
+}
+
+async fn cleanup(pool: &PgPool, now: NaiveDateTime) -> anyhow::Result<u64> {
+    let mut tx = timed_transaction(pool).await?;
+    sqlx::query("SET LOCAL statement_timeout='500ms'")
+        .execute(&mut *tx)
+        .await?;
+    // Expired occurrences cannot be delivered, whether completed, dead-lettered,
+    // or abandoned during downtime. Retain all of them for thirty days.
+    let removed = sqlx::query(
+        "DELETE FROM explore.event_upcoming_hooks h USING ( \
+        SELECT event_id,occurrence_start FROM explore.event_upcoming_hooks \
+        WHERE occurrence_start<$1-$2::int4*interval '1 day' \
+        ORDER BY occurrence_start,event_id LIMIT $3 FOR UPDATE SKIP LOCKED) old \
+        WHERE h.event_id=old.event_id AND h.occurrence_start=old.occurrence_start",
+    )
+    .bind(now)
+    .bind(RETENTION_DAYS)
+    .bind(CLEANUP_LIMIT)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    tx.commit().await?;
+    Ok(removed)
 }
 
 fn message(event_id: &str, name: &str, count: i64, base: &str) -> Value {
@@ -76,49 +98,76 @@ fn message(event_id: &str, name: &str, count: i64, base: &str) -> Value {
 pub(super) async fn run_once(
     pool: &PgPool,
     client: &crate::http::Outbound,
-    endpoint: &str,
+    endpoint: Option<&str>,
     base: &str,
     now: NaiveDateTime,
 ) -> anyhow::Result<u64> {
-    scan(pool, now).await?;
+    match tokio::time::timeout(Duration::from_secs(1), cleanup(pool, now)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "upcoming hook cleanup deferred"),
+        Err(_) => tracing::warn!("upcoming hook cleanup exceeded budget"),
+    }
+    let Some(endpoint) = endpoint.filter(|value| !value.trim().is_empty()) else {
+        return Ok(0);
+    };
+    // A slow scan must not prevent already queued retries from being delivered.
+    match tokio::time::timeout(Duration::from_secs(3), scan(pool, now)).await {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "upcoming hook scan deferred"),
+        Err(_) => tracing::warn!("upcoming hook scan exceeded budget"),
+    }
     let mut sent = 0;
     for _ in 0..10 {
         let claim = Uuid::new_v4();
-        let row:Option<(String,NaiveDateTime,String)>=sqlx::query_as(
+        let mut tx = timed_transaction(pool).await?;
+        let row:Option<(String,NaiveDateTime)>=sqlx::query_as(
             "WITH due AS (SELECT event_id,occurrence_start FROM explore.event_upcoming_hooks \
-             WHERE completed_at IS NULL AND attempts<6 AND next_attempt_at<=$1 \
+             WHERE completed_at IS NULL AND attempts<6 AND next_attempt_at<=$1 AND occurrence_start>$1 AND occurrence_start<=$1+interval '1 hour' \
              ORDER BY next_attempt_at,event_id,occurrence_start LIMIT 1 FOR UPDATE SKIP LOCKED) \
              UPDATE explore.event_upcoming_hooks h SET claim=$2,attempts=attempts+1,next_attempt_at=$1+interval '1 minute' \
              FROM due WHERE h.event_id=due.event_id AND h.occurrence_start=due.occurrence_start \
-             RETURNING h.event_id,h.occurrence_start,h.name")
-            .bind(now).bind(claim).fetch_optional(pool).await?;
-        let Some((event_id, start, name)) = row else {
+             RETURNING h.event_id,h.occurrence_start")
+            .bind(now).bind(claim).fetch_optional(&mut *tx).await?;
+        let Some((event_id, start)) = row else {
             break;
         };
-        let count:i64=sqlx::query_scalar(
-            "SELECT count(*) FROM explore.event_attendance_local a JOIN explore.event e ON e.id=a.event_id \
-             WHERE e.id=$1 AND a.action='going' AND e.origin='local' AND e.approved AND $2>$3 \
+        let sql = format!(
+            "SELECT left(e.name,500),(SELECT count(*) FROM explore.event_attendance_local a \
+            WHERE a.event_id=e.id AND a.action='going') FROM explore.event e \
+            WHERE e.id=$1 AND e.origin='local' AND e.approved AND $2>$3 \
                AND COALESCE(e.raw->>'rejected','false')<>'true' \
                AND COALESCE(e.raw->>'deleted_by_user','false')<>'true' \
                AND COALESCE(e.raw->>'deleted_by_admin','false')<>'true' \
-               AND EXISTS (SELECT 1 FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(e.raw->'recurrent_dates')='array' \
-                 AND e.raw->'recurrent_dates'<>'[]'::jsonb THEN e.raw->'recurrent_dates' ELSE jsonb_build_array(e.raw->'start_at') END) d(value) \
-                 WHERE pg_input_is_valid(value,'timestamp with time zone') AND \
-                   CASE WHEN pg_input_is_valid(value,'timestamp with time zone') THEN value::timestamptz AT TIME ZONE 'UTC' END=$2)")
-            .bind(&event_id).bind(start).bind(now).fetch_one(pool).await?;
-        let success = count > 0
-            && client
+               AND EXISTS (SELECT 1 FROM ({}) d WHERE d.starts_at=$2)",
+            occurrences_sql()
+        );
+        let current: Option<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            .bind(&event_id)
+            .bind(start)
+            .bind(now)
+            .fetch_optional(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        let eligible = current.as_ref().is_some_and(|(_, count)| *count > 0);
+        let success = if let Some((name, count)) = current.filter(|(_, count)| *count > 0) {
+            client
                 .post(endpoint)
                 .timeout(Duration::from_secs(5))
                 .json(&message(&event_id, &name, count, base))
                 .send()
                 .await
-                .is_ok_and(|response| response.status().is_success());
-        sqlx::query("UPDATE explore.event_upcoming_hooks SET completed_at=CASE WHEN $4 OR attempts>=6 THEN $5 ELSE NULL END,next_attempt_at=$5+(30 * (1 << attempts)) * interval '1 second',claim=NULL WHERE event_id=$1 AND occurrence_start=$2 AND claim=$3")
-            .bind(&event_id).bind(start).bind(claim).bind(success || count==0).bind(now).execute(pool).await?;
+                .is_ok_and(|response| response.status().is_success())
+        } else {
+            false
+        };
+        let mut tx = timed_transaction(pool).await?;
+        // attempts<6 retires failures while completed_at=NULL exposes dead letters.
+        sqlx::query("UPDATE explore.event_upcoming_hooks SET completed_at=CASE WHEN $4 THEN $5 ELSE NULL END,next_attempt_at=$5+(30 * (1 << attempts)) * interval '1 second',claim=NULL WHERE event_id=$1 AND occurrence_start=$2 AND claim=$3")
+            .bind(&event_id).bind(start).bind(claim).bind(success || !eligible).bind(now).execute(&mut *tx).await?;
+        tx.commit().await?;
         if success {
             sent += 1
-        } else if count > 0 {
+        } else if eligible {
             tracing::warn!(event_id, "upcoming event hook delivery failed");
         }
     }
@@ -128,7 +177,7 @@ pub(super) async fn run_once(
 pub(crate) fn spawn(
     pool: PgPool,
     client: crate::http::Outbound,
-    endpoint: String,
+    endpoint: Option<String>,
     base: String,
     jobs: &crate::jobs::Jobs,
 ) {
@@ -139,7 +188,14 @@ pub(crate) fn spawn(
             let (pool, client, endpoint, base) =
                 (pool.clone(), client.clone(), endpoint.clone(), base.clone());
             async move {
-                run_once(&pool, &client, &endpoint, &base, Utc::now().naive_utc()).await?;
+                run_once(
+                    &pool,
+                    &client,
+                    endpoint.as_deref(),
+                    &base,
+                    Utc::now().naive_utc(),
+                )
+                .await?;
                 Ok(())
             }
         },
@@ -149,6 +205,7 @@ pub(crate) fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -157,6 +214,7 @@ mod tests {
     #[tokio::test]
     async fn upcoming_summaries_recover_per_occurrence_and_recheck_current_consent_without_private_payloads()
      {
+        let _guard = TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
@@ -176,8 +234,8 @@ mod tests {
             ("upcoming-preview-only", "local"),
             ("upcoming-mirror", "upstream"),
         ] {
-            sqlx::query("INSERT INTO explore.event (id,name,approved,origin,raw) VALUES ($1,'Public upcoming @channel',true,$2,$3)")
-                .bind(id).bind(origin).bind(&raw).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO explore.event (id,name,approved,origin,raw,start_at,finish_at) VALUES ($1,'Public upcoming @channel',true,$2,$3,$4,$5)")
+                .bind(id).bind(origin).bind(&raw).bind(start).bind(next+chrono::Duration::hours(1)).execute(&pool).await.unwrap();
         }
         sqlx::query("INSERT INTO explore.event_attendance_local (event_id,signer,action) VALUES ('upcoming-native','private-going','going'),('upcoming-native','private-cancel','cancel'),('upcoming-mirror','private-going','going')")
             .execute(&pool).await.unwrap();
@@ -210,7 +268,7 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let client = crate::http::Outbound::for_tests();
         assert_eq!(
-            run_once(&pool, &client, &endpoint, "https://example.org", due)
+            run_once(&pool, &client, Some(&endpoint), "https://example.org", due)
                 .await
                 .unwrap(),
             0
@@ -219,7 +277,7 @@ mod tests {
             run_once(
                 &pool,
                 &client,
-                &endpoint,
+                Some(&endpoint),
                 "https://example.org",
                 due + chrono::Duration::seconds(1)
             )
@@ -232,11 +290,27 @@ mod tests {
             1,
             "failure waits for backoff rather than immediate retry"
         );
+        // Fail only the INSERT scan. The already queued retry must still send.
+        let scan_failure = seed(&pool, due, 30, true, true).await;
+        let fail_sql = format!(
+            "CREATE FUNCTION explore.test_upcoming_scan_failure() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.event_id='{}' THEN RAISE EXCEPTION 'scan fixture fault'; END IF; RETURN NEW; END $$; CREATE TRIGGER test_upcoming_scan_failure BEFORE INSERT ON explore.event_upcoming_hooks FOR EACH ROW EXECUTE FUNCTION explore.test_upcoming_scan_failure();",
+            scan_failure
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(fail_sql))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE explore.event SET name='Renamed before retry' WHERE id='upcoming-native'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         assert_eq!(
             run_once(
                 &pool,
                 &client,
-                &endpoint,
+                Some(&endpoint),
                 "https://example.org",
                 due + chrono::Duration::minutes(2)
             )
@@ -244,11 +318,17 @@ mod tests {
             .unwrap(),
             1
         );
+        sqlx::raw_sql("DROP TRIGGER test_upcoming_scan_failure ON explore.event_upcoming_hooks; DROP FUNCTION explore.test_upcoming_scan_failure();").execute(&pool).await.unwrap();
+        sqlx::query("DELETE FROM explore.event WHERE id=$1")
+            .bind(&scan_failure)
+            .execute(&pool)
+            .await
+            .unwrap();
         assert_eq!(
             run_once(
                 &pool,
                 &client,
-                &endpoint,
+                Some(&endpoint),
                 "https://example.org",
                 due + chrono::Duration::minutes(3)
             )
@@ -267,18 +347,249 @@ mod tests {
                     .contains("reminders: 1")
             );
         }
+        assert!(
+            payloads.last().unwrap()["blocks"][1]["text"]["text"]
+                .as_str()
+                .unwrap()
+                .contains("Renamed before retry")
+        );
         drop(payloads);
         let tomorrow = due + chrono::Duration::days(1);
         assert_eq!(scan(&pool, tomorrow).await.unwrap(), 1);
         sqlx::query("UPDATE explore.event_attendance_local SET action='cancel' WHERE event_id='upcoming-native'").execute(&pool).await.unwrap();
         assert_eq!(
-            run_once(&pool, &client, &endpoint, "https://example.org", tomorrow)
-                .await
-                .unwrap(),
+            run_once(
+                &pool,
+                &client,
+                Some(&endpoint),
+                "https://example.org",
+                tomorrow
+            )
+            .await
+            .unwrap(),
             0,
             "cancelled RSVPs suppress a queued operational summary"
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+        server.abort();
+    }
+    async fn seed(
+        pool: &PgPool,
+        now: NaiveDateTime,
+        minutes: i64,
+        approved: bool,
+        going: bool,
+    ) -> String {
+        let id = Uuid::new_v4().to_string();
+        let start = now + chrono::Duration::minutes(minutes);
+        sqlx::query("INSERT INTO explore.event(id,name,approved,origin,raw,start_at,finish_at) VALUES($1,'Current name', $2,'local',$3,$4,$5)")
+            .bind(&id).bind(approved).bind(json!({"start_at":start.and_utc().to_rfc3339(),"recurrent_dates":[start.and_utc().to_rfc3339()]}))
+            .bind(start).bind(start+chrono::Duration::hours(1)).execute(pool).await.unwrap();
+        if going {
+            rsvp(pool, &id).await;
+        }
+        id
+    }
+
+    async fn rsvp(pool: &PgPool, id: &str) {
+        sqlx::query("INSERT INTO explore.event_attendance_local(event_id,signer,action) VALUES($1,'going-wallet','going')")
+            .bind(id).execute(pool).await.unwrap();
+    }
+
+    fn clock(date: &str) -> NaiveDateTime {
+        chrono::DateTime::parse_from_rfc3339(date)
+            .unwrap()
+            .naive_utc()
+    }
+
+    #[tokio::test]
+    async fn rolling_window_includes_late_eligibility_and_skips_existing_history_and_invalid_dates()
+    {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let now = clock("2055-01-01T12:00:00Z");
+        seed(&pool, now, -5, true, true).await;
+        seed(&pool, now, 120, true, true).await;
+        let approval = seed(&pool, now, 30, false, true).await;
+        let going = seed(&pool, now, 40, true, false).await;
+        let invalid = seed(&pool, now, 45, true, true).await;
+        sqlx::query("UPDATE explore.event SET raw=jsonb_set(raw,'{recurrent_dates}','[\"infinity\",\"-infinity\",\"bad\"]') WHERE id=$1")
+            .bind(&invalid).execute(&pool).await.unwrap();
+        assert_eq!(
+            scan(&pool, now).await.unwrap(),
+            0,
+            "first activation skips existing past events"
+        );
+        sqlx::query("UPDATE explore.event SET approved=true WHERE id=$1")
+            .bind(&approval)
+            .execute(&pool)
+            .await
+            .unwrap();
+        rsvp(&pool, &going).await;
+        assert_eq!(
+            scan(&pool, now + chrono::Duration::minutes(10))
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            scan(&pool, now + chrono::Duration::minutes(11))
+                .await
+                .unwrap(),
+            0
+        );
+        let recent = seed(&pool, now, 15, true, true).await;
+        assert_eq!(
+            scan(&pool, now + chrono::Duration::minutes(12))
+                .await
+                .unwrap(),
+            1,
+            "new events less than an hour ahead are included"
+        );
+        let start = now + chrono::Duration::minutes(25);
+        sqlx::query("UPDATE explore.event SET start_at=$2,finish_at=$2+interval '1 hour',raw=$3 WHERE id=$1")
+            .bind(&recent).bind(start).bind(json!({"start_at":start.and_utc().to_rfc3339(),"recurrent_dates":[]}))
+            .execute(&pool).await.unwrap();
+        assert_eq!(
+            scan(&pool, now + chrono::Duration::minutes(20))
+                .await
+                .unwrap(),
+            1,
+            "rescheduled occurrences use their new identity"
+        );
+        assert_eq!(
+            scan(&pool, now + chrono::Duration::days(1)).await.unwrap(),
+            0,
+            "downtime never replays expired occurrences"
+        );
+    }
+
+    #[tokio::test]
+    async fn tied_due_times_page_past_retained_keys_without_losing_late_additions() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let now = clock("2056-01-01T12:00:00Z");
+        for _ in 0..205 {
+            seed(&pool, now, 30, true, true).await;
+        }
+        assert_eq!(scan(&pool, now).await.unwrap(), 100);
+        assert_eq!(scan(&pool, now).await.unwrap(), 100);
+        assert_eq!(scan(&pool, now).await.unwrap(), 5);
+        seed(&pool, now, 30, true, true).await;
+        assert_eq!(scan(&pool, now).await.unwrap(), 1);
+        assert_eq!(scan(&pool, now).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn failures_remain_dead_letters_and_disabled_delivery_still_cleans_expired_history() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let now = clock("2057-01-01T12:00:00Z");
+        let failed = seed(&pool, now, 55, true, true).await;
+        let rejected = seed(&pool, now, 40, true, true).await;
+        let deleted = seed(&pool, now, 45, true, true).await;
+        assert_eq!(scan(&pool, now).await.unwrap(), 3);
+        sqlx::query("UPDATE explore.event SET raw=raw||'{\"rejected\":true}' WHERE id=$1")
+            .bind(&rejected)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE explore.event SET raw=raw||'{\"deleted_by_admin\":true}' WHERE id=$1")
+            .bind(&deleted)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured = calls.clone();
+        let app = axum::Router::new().route(
+            "/hook",
+            axum::routing::post(move || {
+                let calls = captured.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    axum::http::StatusCode::SERVICE_UNAVAILABLE
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/hook", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = crate::http::Outbound::for_tests();
+        let mut at = now;
+        for _ in 0..6 {
+            assert_eq!(
+                run_once(&pool, &client, Some(&endpoint), "https://example.org", at)
+                    .await
+                    .unwrap(),
+                0
+            );
+            at = sqlx::query_scalar(
+                "SELECT next_attempt_at FROM explore.event_upcoming_hooks WHERE event_id=$1",
+            )
+            .bind(&failed)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            6,
+            "rejected and deleted events send nothing"
+        );
+        let state: (i32, Option<NaiveDateTime>) = sqlx::query_as(
+            "SELECT attempts,completed_at FROM explore.event_upcoming_hooks WHERE event_id=$1",
+        )
+        .bind(&failed)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(state, (6, None));
+        run_once(&pool, &client, Some(&endpoint), "https://example.org", at)
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 6);
+        // Opt-out runs bounded retention, including pending rows abandoned during downtime.
+        let old = now - chrono::Duration::days(31);
+        sqlx::query("INSERT INTO explore.event_upcoming_hooks(event_id,occurrence_start,name) SELECT 'expired-'||n,$1,'legacy' FROM generate_series(1,1005) n")
+            .bind(old).execute(&pool).await.unwrap();
+        assert_eq!(cleanup(&pool, now).await.unwrap(), 1000);
+        let disabled = seed(&pool, now, 50, true, true).await;
+        run_once(&pool, &client, Some("   "), "https://example.org", now)
+            .await
+            .unwrap();
+        assert!(
+            !sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM explore.event_upcoming_hooks WHERE event_id=$1)"
+            )
+            .bind(&disabled)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "blank endpoints do not scan new work"
+        );
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore.event_upcoming_hooks WHERE event_id LIKE 'expired-%'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 0);
+        assert!(
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM explore.event_upcoming_hooks WHERE event_id=$1)"
+            )
+            .bind(&failed)
+            .fetch_one(&pool)
+            .await
+            .unwrap(),
+            "retention keeps recent dead letters"
+        );
         server.abort();
     }
 }

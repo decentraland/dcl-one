@@ -125,6 +125,8 @@ pub struct Settings {
     pub events_admin_token: Option<String>,
     /// Optional moderation webhook, dispatched only with operator writes enabled.
     pub events_slack_webhook: Option<String>,
+    /// Separate explicit opt-in for aggregate upcoming-event Slack summaries.
+    pub events_upcoming_summaries_enabled: bool,
     pub places_upstream: Option<MirrorSource>,
     pub places_interval: Duration,
     pub worlds_upstream: Option<MirrorSource>,
@@ -197,6 +199,7 @@ impl Settings {
             asset_rewrite_domain: None,
             events_admin_token: None,
             events_slack_webhook: None,
+            events_upcoming_summaries_enabled: false,
             places_upstream: None,
             places_interval: Duration::from_secs(3600),
             worlds_upstream: None,
@@ -348,15 +351,21 @@ impl ExploreState {
                 self.settings.events_base_url.clone(),
                 jobs,
             );
-            if let Some(endpoint) = &self.settings.events_slack_webhook {
-                events::upcoming::spawn(
-                    self.pool.clone(),
-                    client.clone(),
-                    endpoint.clone(),
-                    self.settings.events_base_url.clone(),
-                    jobs,
-                );
-            }
+            // Cleanup keeps running after opt-out. A blank webhook never starts
+            // delivery or scanning; existing moderation-only installs stay quiet.
+            events::upcoming::spawn(
+                self.pool.clone(),
+                client.clone(),
+                self.settings
+                    .events_slack_webhook
+                    .clone()
+                    .filter(|endpoint| {
+                        self.settings.events_upcoming_summaries_enabled
+                            && !endpoint.trim().is_empty()
+                    }),
+                self.settings.events_base_url.clone(),
+                jobs,
+            );
         }
         let cfg = |interval: Duration| {
             PeriodicCfg::every(interval)
