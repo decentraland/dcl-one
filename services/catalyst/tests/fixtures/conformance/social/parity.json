@@ -3458,6 +3458,23 @@
   "baseline": {
     "repository": "decentraland/social-service-ea",
     "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "protocol_schemas": [
+      {
+        "source_path": "node_modules/@dcl/protocol/proto/decentraland/common/colors.proto",
+        "local_path": "library/protocol/proto/decentraland/common/colors.proto",
+        "sha256": "7d0a661fcbeb4f04804054781e51df30dc79a0a856014924995830846f8cdcde"
+      },
+      {
+        "source_path": "node_modules/@dcl/protocol/proto/decentraland/social_service/errors.proto",
+        "local_path": "library/protocol/proto/decentraland/social_service/errors.proto",
+        "sha256": "255e2d33dc2426d91b08085121889a3eb0d5490931bb562a795a804ad2e600e0"
+      },
+      {
+        "source_path": "node_modules/@dcl/protocol/proto/decentraland/social_service/v2/social_service_v2.proto",
+        "local_path": "library/protocol/proto/decentraland/social_service/v2/social_service_v2.proto",
+        "sha256": "0dd13dbb67ed755116b264de2eb4f2ceb7eb8f8dabafe2f1ab7baed801149669"
+      }
+    ],
     "counts": {
       "api_auxiliary": 5,
       "api_http": 72,
@@ -3479,6 +3496,18 @@
       {
         "path": "node_modules/@dcl/http-server/dist/status-checks.js",
         "sha256": "f9c565a1ff90b02cf2f287f5615a004d3e10c6f927d33d54c4e8296e808c5d2e"
+      },
+      {
+        "path": "node_modules/@dcl/protocol/proto/decentraland/common/colors.proto",
+        "sha256": "7d0a661fcbeb4f04804054781e51df30dc79a0a856014924995830846f8cdcde"
+      },
+      {
+        "path": "node_modules/@dcl/protocol/proto/decentraland/social_service/errors.proto",
+        "sha256": "255e2d33dc2426d91b08085121889a3eb0d5490931bb562a795a804ad2e600e0"
+      },
+      {
+        "path": "node_modules/@dcl/protocol/proto/decentraland/social_service/v2/social_service_v2.proto",
+        "sha256": "0dd13dbb67ed755116b264de2eb4f2ceb7eb8f8dabafe2f1ab7baed801149669"
       },
       {
         "path": "node_modules/@dcl/uws-http-server/dist/src/metrics.js",

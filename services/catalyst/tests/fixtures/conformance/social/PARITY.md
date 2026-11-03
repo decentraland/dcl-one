@@ -6,7 +6,7 @@ The source inventory contains **123 operations**: 5 api_auxiliary, 72 api_http, 
 
 reviewed means the stated source/behaviour scope was compared; it never means exhaustive equivalence. known_gap names a remaining observed difference. not_reviewed requires an explicit comparison, even if a matching route or local test exists.
 
-Source hashes include the pinned service registrations, handlers, stream definitions, lockfile and the installed framework code that supplies health, CORS, metrics and fallback handling. `tooling/social-service-parity.py --upstream <checkout>` re-derives that inventory; the default check validates its complete backlog, local evidence references and the 33-method protocol set without an external checkout.
+Source hashes include the pinned service registrations, handlers, stream definitions, lockfile and the installed framework code that supplies health, CORS, metrics and fallback handling. `tooling/social-service-parity.py --upstream <checkout>` re-derives that inventory; the default check validates its complete backlog, local evidence references and the 33-method protocol set and complete source-pinned social-service/error/color schema hashes without an external checkout. The only other schema import is the standard `google/protobuf/empty.proto`.
 
 Executed upstream handler cases live in [source-cases.json](source-cases.json); their Protobuf bytes are replayed by `rpc_wire_answers_match_executed_upstream_source_cases`. Those cases use injected dependencies and do not prove deployed HTTP, Redis, SNS, PostgreSQL or live-client equivalence.
 

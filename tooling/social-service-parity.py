@@ -17,6 +17,27 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "services/catalyst/tests/fixtures/conformance/social/parity.json"
 REVISION = "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
 PROTO = "library/protocol/proto/decentraland/social_service/v2/social_service_v2.proto"
+PROTO_SCHEMA_DIGESTS = {
+    "decentraland/social_service/v2/social_service_v2.proto": "0dd13dbb67ed755116b264de2eb4f2ceb7eb8f8dabafe2f1ab7baed801149669",
+    "decentraland/social_service/errors.proto": "255e2d33dc2426d91b08085121889a3eb0d5490931bb562a795a804ad2e600e0",
+    "decentraland/common/colors.proto": "7d0a661fcbeb4f04804054781e51df30dc79a0a856014924995830846f8cdcde",
+}
+
+
+def protocol_schema_pins():
+    return [{"source_path": f"node_modules/@dcl/protocol/proto/{suffix}",
+             "local_path": f"library/protocol/proto/{suffix}", "sha256": pinned}
+            for suffix, pinned in sorted(PROTO_SCHEMA_DIGESTS.items())]
+
+
+def validate_protocol_schemas(baseline, root=ROOT):
+    assert baseline.get("protocol_schemas") == protocol_schema_pins(), "protocol schema source pins differ"
+    for schema in baseline["protocol_schemas"]:
+        path = root / schema["local_path"]
+        assert path.is_file() and digest(path) == schema["sha256"], f"protocol schema hash differs: {schema['local_path']}"
+        imports = set(re.findall(r'import\s+"([^"]+)"', path.read_text()))
+        assert imports <= set(PROTO_SCHEMA_DIGESTS) | {"google/protobuf/empty.proto"}, "untracked protocol schema import"
+
 
 
 def digest(path):
@@ -104,7 +125,13 @@ def extract(upstream):
             ref(row["handler"])
     for source in ["yarn.lock", "src/components.ts", "src/adapters/rpc-server/rpc-server.ts", "src/adapters/stream-sessions/component.ts", "src/adapters/stream-sessions/messages.ts"]:
         ref(source)
+    schemas = protocol_schema_pins()
+    for schema in schemas:
+        ref(schema["source_path"])
+        if digest(upstream / schema["source_path"]) != schema["sha256"]:
+            raise ValueError(f"installed protocol schema differs from pinned source: {schema['source_path']}")
     return {"repository": "decentraland/social-service-ea", "revision": revision,
+            "protocol_schemas": schemas,
             "counts": dict(sorted(Counter(row["kind"] for row in rows).items())),
             "sources": [{"path": p, "sha256": digest(upstream / p)} for p in sorted(sources)],
             "registrations": sorted(rows, key=lambda row: row["id"])}
@@ -114,6 +141,7 @@ def validate(data):
     assert data["schema_version"] == 1
     baseline = data["baseline"]
     assert baseline["revision"] == REVISION
+    validate_protocol_schemas(baseline)
     registrations = baseline["registrations"]
     ids = [row["id"] for row in registrations]
     assert len(ids) == len(set(ids)), "duplicate registrations"
@@ -157,7 +185,7 @@ def report(data):
              f"Baseline: `decentraland/social-service-ea@{REVISION}`. The machine source is [parity.json](parity.json).",
              "", f"The source inventory contains **{len(data['operations'])} operations**: " + ", ".join(f"{count} {kind}" for kind, count in counts.items()) + ".",
              "", data["review_policy"], "",
-             "Source hashes include the pinned service registrations, handlers, stream definitions, lockfile and the installed framework code that supplies health, CORS, metrics and fallback handling. `tooling/social-service-parity.py --upstream <checkout>` re-derives that inventory; the default check validates its complete backlog, local evidence references and the 33-method protocol set without an external checkout.",
+             "Source hashes include the pinned service registrations, handlers, stream definitions, lockfile and the installed framework code that supplies health, CORS, metrics and fallback handling. `tooling/social-service-parity.py --upstream <checkout>` re-derives that inventory; the default check validates its complete backlog, local evidence references and the 33-method protocol set and complete source-pinned social-service/error/color schema hashes without an external checkout. The only other schema import is the standard `google/protobuf/empty.proto`.",
              "", "Executed upstream handler cases live in [source-cases.json](source-cases.json); their Protobuf bytes are replayed by `rpc_wire_answers_match_executed_upstream_source_cases`. Those cases use injected dependencies and do not prove deployed HTTP, Redis, SNS, PostgreSQL or live-client equivalence.", ""]
     byid = {row["id"]: row for row in data["operations"]}
     if data.get("cross_cutting_gaps"):

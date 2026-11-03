@@ -2,6 +2,8 @@ import copy
 import importlib.util
 import json
 import re
+import shutil
+import tempfile
 from pathlib import Path
 import unittest
 
@@ -40,6 +42,29 @@ class SocialServiceParityInventoryTest(unittest.TestCase):
         }])
         with self.assertRaisesRegex(AssertionError, "known gap must name"):
             PARITY.validate(self.data)
+
+    def test_a_field_change_with_unchanged_rpc_names_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for schema in self.data["baseline"]["protocol_schemas"]:
+                target = root / schema["local_path"]
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(ROOT / schema["local_path"], target)
+            PARITY.validate_protocol_schemas(self.data["baseline"], root)
+            path = root / PARITY.PROTO
+            original = path.read_text()
+            changed = original.replace("string address = 1;", "string address = 2;", 1)
+            self.assertNotEqual(original, changed)
+            self.assertEqual(re.findall(r"\brpc\s+(\w+)\s*\(", original),
+                             re.findall(r"\brpc\s+(\w+)\s*\(", changed))
+            path.write_text(changed)
+            with self.assertRaisesRegex(AssertionError, "protocol schema hash differs"):
+                PARITY.validate_protocol_schemas(self.data["baseline"], root)
+
+    def test_editing_the_manifest_digest_cannot_repin_a_schema(self):
+        self.data["baseline"]["protocol_schemas"][0]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(AssertionError, "protocol schema source pins differ"):
+            PARITY.validate_protocol_schemas(self.data["baseline"])
 
     def test_a_short_route_prefix_does_not_reuse_the_longer_route_source_line(self):
         content = "router.delete('/v1/communities/:id/members/:address', handler)\nrouter.delete('/v1/communities/:id', handler)\n"
