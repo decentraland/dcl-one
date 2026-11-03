@@ -66,6 +66,21 @@ fn hold_a_waiting_download(ipfs: &IpfsIo, slots: usize) -> Vec<Arc<Ticket>> {
         .collect()
 }
 
+/// The player's parcel (0,0) points at `hash`, which is live as `scene`.
+fn player_stands_on(world: &mut World, hash: &str, scene: Entity) {
+    world.resource_mut::<ScenePointers>().insert(
+        IVec2::ZERO,
+        PointerResult::Exists {
+            hash: hash.to_owned(),
+            urn: None,
+        },
+    );
+    world
+        .resource_mut::<LiveScenes>()
+        .scenes
+        .insert(hash.to_owned(), scene);
+}
+
 fn scene_with_parcels(world: &mut World, parcels: &[IVec2]) -> Entity {
     let root = world.spawn_empty().id();
     let context = RendererSceneContext::new(
@@ -205,10 +220,12 @@ fn publishes_a_wearable_by_the_best_avatar_wearing_it() {
         PartitionedDownloads(vec!["shared".to_owned(), "far-only".to_owned()]),
         Partition(far),
     ));
-    world.spawn((
-        PartitionedDownloads(vec!["shared".to_owned()]),
-        Partition(near),
-    ));
+    let near_avatar = world
+        .spawn((
+            PartitionedDownloads(vec!["shared".to_owned()]),
+            Partition(near),
+        ))
+        .id();
     let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
 
     world.run_system_once(publish_download_priorities).unwrap();
@@ -220,6 +237,19 @@ fn publishes_a_wearable_by_the_best_avatar_wearing_it() {
     );
     assert_eq!(
         ipfs.scene_priority("far-only"),
+        Some(far.load_priority(Tier::Avatar))
+    );
+
+    // the near avatar walks off beyond the far one: the shared wearable follows the best left
+    let farther = PartitionData {
+        sqr_distance: 20000.0,
+        parcel_distance: 9,
+        is_behind: false,
+    };
+    world.get_mut::<Partition>(near_avatar).unwrap().0 = farther;
+    world.run_system_once(publish_download_priorities).unwrap();
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("shared"),
         Some(far.load_priority(Tier::Avatar))
     );
 }
@@ -283,24 +313,193 @@ fn publishes_nothing_while_no_download_waits_for_a_slot() {
     world.init_resource::<ScenePointers>();
     world.init_resource::<PortableScenes>();
     world.init_resource::<LiveScenes>();
-    world.spawn((
-        SceneHash("home".to_owned()),
-        Partition(PartitionData::NEAREST),
-    ));
+    let home = world
+        .spawn((
+            SceneHash("home".to_owned()),
+            Partition(PartitionData::NEAREST),
+        ))
+        .id();
+    player_stands_on(&mut world, "home", home);
 
     world.run_system_once(publish_download_priorities).unwrap();
     assert_eq!(
         world.resource::<IpfsResource>().scene_priority("home"),
-        None,
-        "nothing waits for a slot, so nothing is published"
+        Some(PartitionData::NEAREST.load_priority(Tier::Scene)),
+        "nothing waits for a slot, so the key stays as registered"
     );
 
     let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
     world.run_system_once(publish_download_priorities).unwrap();
-    assert!(world
-        .resource::<IpfsResource>()
-        .scene_priority("home")
-        .is_some());
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("home"),
+        Some(LoadPriority::TOP)
+    );
+}
+
+#[test]
+fn a_scene_registers_its_hash_at_spawn_and_releases_it_at_despawn() {
+    let mut world = world_with_player(None);
+    insert_ipfs(&mut world, 1);
+
+    let scene = world.spawn(SceneHash("s".to_owned())).id();
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("s"),
+        Some(LoadPriority::SCENE_PENDING),
+        "no partition yet: the bottom of the scene tier"
+    );
+
+    world.despawn(scene);
+    assert_eq!(world.resource::<IpfsResource>().scene_priority("s"), None);
+}
+
+#[test]
+fn the_players_scene_is_active_before_it_has_a_context() {
+    let mut world = world_with_player(Some(Vec3::X));
+    insert_ipfs(&mut world, 1);
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    // spawned this frame: no context, no partition
+    let home = world.spawn(SceneHash("home".to_owned())).id();
+    player_stands_on(&mut world, "home", home);
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+
+    world.run_system_once(publish_download_priorities).unwrap();
+
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("home"),
+        Some(LoadPriority::TOP)
+    );
+}
+
+#[test]
+fn a_scene_without_a_partition_stays_at_the_bottom_of_the_scene_tier() {
+    let mut world = world_with_player(Some(Vec3::X));
+    insert_ipfs(&mut world, 1);
+    world.init_resource::<ScenePointers>();
+    world.init_resource::<PortableScenes>();
+    world.init_resource::<LiveScenes>();
+    world.spawn(SceneHash("loading".to_owned()));
+    let _waiting = hold_a_waiting_download(world.resource::<IpfsResource>(), 1);
+
+    world.run_system_once(publish_download_priorities).unwrap();
+
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("loading"),
+        Some(LoadPriority::SCENE_PENDING)
+    );
+}
+
+#[test]
+fn an_avatars_wearables_register_at_its_partition_and_release_at_despawn() {
+    let mut world = world_with_player(None);
+    insert_ipfs(&mut world, 1);
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+
+    let avatar = world
+        .spawn((
+            PartitionedDownloads(vec!["body".to_owned(), "hat".to_owned()]),
+            Partition(near),
+        ))
+        .id();
+    let ipfs = world.resource::<IpfsResource>();
+    assert_eq!(
+        ipfs.scene_priority("body"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+    assert_eq!(
+        ipfs.scene_priority("hat"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+
+    world.despawn(avatar);
+    let ipfs = world.resource::<IpfsResource>();
+    assert_eq!(ipfs.scene_priority("body"), None);
+    assert_eq!(ipfs.scene_priority("hat"), None);
+}
+
+#[test]
+fn an_avatar_without_a_partition_registers_at_the_bottom_of_the_avatar_tier() {
+    let mut world = world_with_player(None);
+    insert_ipfs(&mut world, 1);
+
+    world.spawn(PartitionedDownloads(vec!["body".to_owned()]));
+
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("body"),
+        Some(LoadPriority::AVATAR_PENDING)
+    );
+}
+
+#[test]
+fn a_shared_wearable_survives_one_avatar_leaving() {
+    let mut world = world_with_player(None);
+    insert_ipfs(&mut world, 1);
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+    let far = PartitionData {
+        sqr_distance: 6400.0,
+        parcel_distance: 5,
+        is_behind: true,
+    };
+    let near_avatar = world
+        .spawn((
+            PartitionedDownloads(vec!["shared".to_owned()]),
+            Partition(near),
+        ))
+        .id();
+    world.spawn((
+        PartitionedDownloads(vec!["shared".to_owned()]),
+        Partition(far),
+    ));
+
+    world.despawn(near_avatar);
+
+    assert_eq!(
+        world.resource::<IpfsResource>().scene_priority("shared"),
+        Some(near.load_priority(Tier::Avatar)),
+        "still registered, at the key it had; the next publish lowers it to the far avatar's"
+    );
+}
+
+#[test]
+fn an_outfit_change_swaps_the_registered_hashes() {
+    let mut world = world_with_player(None);
+    insert_ipfs(&mut world, 1);
+    let near = PartitionData {
+        sqr_distance: 100.0,
+        parcel_distance: 1,
+        is_behind: false,
+    };
+    let avatar = world
+        .spawn((
+            PartitionedDownloads(vec!["old".to_owned(), "kept".to_owned()]),
+            Partition(near),
+        ))
+        .id();
+
+    world.entity_mut(avatar).insert(PartitionedDownloads(vec![
+        "new".to_owned(),
+        "kept".to_owned(),
+    ]));
+
+    let ipfs = world.resource::<IpfsResource>();
+    assert_eq!(ipfs.scene_priority("old"), None);
+    assert_eq!(
+        ipfs.scene_priority("new"),
+        Some(near.load_priority(Tier::Avatar))
+    );
+    assert_eq!(
+        ipfs.scene_priority("kept"),
+        Some(near.load_priority(Tier::Avatar))
+    );
 }
 
 /// The publisher's per-frame work at a busy plaza: 20 scenes in range, 50 avatars with 10
@@ -348,6 +547,6 @@ fn overhead_of_publishing_at_a_busy_plaza() {
     }
     let idle = start.elapsed() / 200;
     println!(
-        "publisher: 20 live scenes + 50 avatars x 10 wearables: {busy:?} per frame with a download waiting (partitions, map build, publish); {idle:?} with none (partitions only)"
+        "publisher: 20 live scenes + 50 avatars x 10 wearables: {busy:?} per frame with a download waiting (partitions, keys written in place); {idle:?} with none (partitions only)"
     );
 }

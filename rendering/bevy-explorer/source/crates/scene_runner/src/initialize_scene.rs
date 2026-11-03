@@ -1808,7 +1808,13 @@ pub fn process_scene_lifecycle(
     }
 }
 
+/// The scene's entity hash, from spawn. Inserting it registers the hash with the ipfs request
+/// slots (its downloads rank by the scene's partition) and despawning releases it.
 #[derive(Component)]
+#[component(
+    on_insert = crate::scene_partition::register_scene_hash,
+    on_replace = crate::scene_partition::release_scene_hash
+)]
 pub struct SceneHash(pub String);
 
 #[derive(Component)]

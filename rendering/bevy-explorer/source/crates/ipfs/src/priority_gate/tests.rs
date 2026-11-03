@@ -21,11 +21,11 @@ fn scene(name: &str) -> Option<String> {
     Some(name.to_owned())
 }
 
-fn priorities(entries: &[(&str, LoadPriority)]) -> HashMap<String, LoadPriority> {
-    entries
-        .iter()
-        .map(|(name, key)| ((*name).to_owned(), *key))
-        .collect()
+/// Register each hash once, as its scene root or avatar would.
+fn register(gate: &PriorityGate, entries: &[(&str, LoadPriority)]) {
+    for (name, key) in entries {
+        gate.register(name, *key);
+    }
 }
 
 #[test]
@@ -76,11 +76,14 @@ fn reader(
 #[tokio::test]
 async fn grants_the_nearest_in_front_scene_first() {
     let gate = PriorityGate::new(1);
-    gate.set_priorities(priorities(&[
-        ("far", key(5, false, 6400.0)),
-        ("near", key(1, false, 100.0)),
-        ("near_behind", key(1, true, 100.0)),
-    ]));
+    register(
+        &gate,
+        &[
+            ("far", key(5, false, 6400.0)),
+            ("near", key(1, false, 100.0)),
+            ("near_behind", key(1, true, 100.0)),
+        ],
+    );
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
     let tasks = ["far", "near", "near_behind"]
@@ -98,20 +101,17 @@ async fn grants_the_nearest_in_front_scene_first() {
 #[tokio::test]
 async fn a_key_change_is_honoured_at_grant_time() {
     let gate = PriorityGate::new(1);
-    gate.set_priorities(priorities(&[
-        ("a", key(5, false, 6400.0)),
-        ("b", key(1, false, 100.0)),
-    ]));
+    register(
+        &gate,
+        &[("a", key(5, false, 6400.0)), ("b", key(1, false, 100.0))],
+    );
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
     let tasks = ["a", "b"].map(|name| reader(&gate, name, gate.ticket(scene(name)), &log));
     settle(&gate, 2).await;
 
     // the player turned round: a is now the near one
-    gate.set_priorities(priorities(&[
-        ("a", key(1, false, 100.0)),
-        ("b", key(5, false, 6400.0)),
-    ]));
+    gate.publish([("a", key(1, false, 100.0)), ("b", key(5, false, 6400.0))]);
     drop(holder);
     for task in tasks {
         task.await.unwrap();
@@ -121,9 +121,9 @@ async fn a_key_change_is_honoured_at_grant_time() {
 }
 
 #[tokio::test]
-async fn unknown_scene_is_top_priority() {
+async fn an_unregistered_hash_ranks_after_the_registered_ones() {
     let gate = PriorityGate::new(1);
-    gate.set_priorities(priorities(&[("known", key(1, false, 100.0))]));
+    register(&gate, &[("known", key(1, false, 100.0))]);
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
     let tasks =
@@ -135,16 +135,19 @@ async fn unknown_scene_is_top_priority() {
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["unknown", "known"]);
+    assert_eq!(*log.lock().unwrap(), vec!["known", "unknown"]);
 }
 
 #[tokio::test]
 async fn requests_without_a_scene_rank_after_live_scenes_and_before_departed_ones() {
     let gate = PriorityGate::new(1);
-    gate.set_priorities(priorities(&[
-        ("left", key(1, false, 100.0)),
-        ("live", key(5, true, 6400.0)),
-    ]));
+    register(
+        &gate,
+        &[
+            ("left", key(1, false, 100.0)),
+            ("live", key(5, true, 6400.0)),
+        ],
+    );
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
     let tasks = [
@@ -154,8 +157,8 @@ async fn requests_without_a_scene_rank_after_live_scenes_and_before_departed_one
     ];
     settle(&gate, 3).await;
 
-    // "left" has despawned: it is no longer published
-    gate.set_priorities(priorities(&[("live", key(5, true, 6400.0))]));
+    // "left" has despawned: its root released the hash
+    gate.unregister("left");
     drop(holder);
     for task in tasks {
         task.await.unwrap();
@@ -183,7 +186,7 @@ async fn same_key_is_first_come_first_served() {
 #[tokio::test]
 async fn one_scenes_requests_keep_their_order() {
     let gate = PriorityGate::new(1);
-    gate.set_priorities(priorities(&[("s", key(1, false, 100.0))]));
+    register(&gate, &[("s", key(1, false, 100.0))]);
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
     let tasks = ["s1", "s2", "s3"].map(|name| reader(&gate, name, gate.ticket(scene("s")), &log));
@@ -200,10 +203,13 @@ async fn one_scenes_requests_keep_their_order() {
 #[tokio::test]
 async fn a_cancelled_waiter_does_not_hold_a_slot() {
     let gate = PriorityGate::new(1);
-    gate.set_priorities(priorities(&[
-        ("far", key(5, false, 6400.0)),
-        ("near", key(1, false, 100.0)),
-    ]));
+    register(
+        &gate,
+        &[
+            ("far", key(5, false, 6400.0)),
+            ("near", key(1, false, 100.0)),
+        ],
+    );
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
     let far = reader(&gate, "far", gate.ticket(scene("far")), &log);
@@ -224,10 +230,13 @@ async fn a_cancelled_waiter_does_not_hold_a_slot() {
 #[tokio::test]
 async fn a_ticket_nobody_awaits_does_not_hold_a_slot() {
     let gate = PriorityGate::new(1);
-    gate.set_priorities(priorities(&[
-        ("far", key(5, false, 6400.0)),
-        ("near", key(1, false, 100.0)),
-    ]));
+    register(
+        &gate,
+        &[
+            ("far", key(5, false, 6400.0)),
+            ("near", key(1, false, 100.0)),
+        ],
+    );
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
     let far = reader(&gate, "far", gate.ticket(scene("far")), &log);
@@ -266,11 +275,14 @@ async fn forget_permits_frees_only_what_is_available() {
 #[tokio::test]
 async fn a_joined_reader_raises_the_download() {
     let gate = PriorityGate::new(1);
-    gate.set_priorities(priorities(&[
-        ("far", key(5, false, 6400.0)),
-        ("mid", key(3, false, 2500.0)),
-        ("near", key(1, false, 100.0)),
-    ]));
+    register(
+        &gate,
+        &[
+            ("far", key(5, false, 6400.0)),
+            ("mid", key(3, false, 2500.0)),
+            ("near", key(1, false, 100.0)),
+        ],
+    );
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
     let far_ticket = gate.ticket(scene("far"));
@@ -296,17 +308,20 @@ async fn a_joined_reader_raises_the_download() {
 #[tokio::test]
 async fn a_departed_scenes_downloads_sink_to_the_bottom() {
     let gate = PriorityGate::new(1);
-    gate.set_priorities(priorities(&[
-        ("left", key(1, false, 100.0)),
-        ("ahead", key(2, false, 1000.0)),
-    ]));
+    register(
+        &gate,
+        &[
+            ("left", key(1, false, 100.0)),
+            ("ahead", key(2, false, 1000.0)),
+        ],
+    );
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
     let tasks = ["left", "ahead"].map(|name| reader(&gate, name, gate.ticket(scene(name)), &log));
     settle(&gate, 2).await;
 
-    // the player walked out of "left": it is no longer a live scene
-    gate.set_priorities(priorities(&[("ahead", key(2, false, 1000.0))]));
+    // the player walked out of "left": its root despawned and released the hash
+    gate.unregister("left");
     drop(holder);
     for task in tasks {
         task.await.unwrap();
@@ -316,23 +331,91 @@ async fn a_departed_scenes_downloads_sink_to_the_bottom() {
 }
 
 #[tokio::test]
-async fn an_unknown_scene_stays_on_top_after_a_refresh() {
+async fn a_publish_updates_registered_keys_only() {
     let gate = PriorityGate::new(1);
-    gate.set_priorities(priorities(&[("ahead", key(2, false, 1000.0))]));
+    register(&gate, &[("ahead", key(2, false, 1000.0))]);
     let holder = gate.try_acquire().unwrap();
     let log = Log::default();
-    let tasks =
-        ["ahead", "unknown"].map(|name| reader(&gate, name, gate.ticket(scene(name)), &log));
-    settle(&gate, 2).await;
+    let tasks = [
+        reader(&gate, "ahead", gate.ticket(scene("ahead")), &log),
+        reader(&gate, "unknown", gate.ticket(scene("unknown")), &log),
+        reader(&gate, "no-hash", gate.ticket(None), &log),
+    ];
+    settle(&gate, 3).await;
 
-    // a refresh that never knew "unknown" leaves it on top
-    gate.set_priorities(priorities(&[("ahead", key(2, false, 1000.0))]));
+    // a publish that names "unknown" does not register it: it stays with the no-hash requests,
+    // oldest first
+    gate.publish([
+        ("ahead", key(2, false, 1000.0)),
+        ("unknown", key(0, false, 0.0)),
+    ]);
+    assert_eq!(gate.scene_priority("unknown"), None);
     drop(holder);
     for task in tasks {
         task.await.unwrap();
     }
 
-    assert_eq!(*log.lock().unwrap(), vec!["unknown", "ahead"]);
+    assert_eq!(*log.lock().unwrap(), vec!["ahead", "unknown", "no-hash"]);
+}
+
+#[test]
+fn a_shared_hash_stays_registered_until_its_last_holder_releases_it() {
+    let gate = PriorityGate::new(1);
+    gate.register("shared", key(5, false, 6400.0));
+    gate.register("shared", key(1, false, 100.0));
+    assert_eq!(
+        gate.scene_priority("shared"),
+        Some(key(1, false, 100.0)),
+        "the best of its holders"
+    );
+
+    gate.unregister("shared");
+    assert_eq!(gate.scene_priority("shared"), Some(key(1, false, 100.0)));
+    gate.unregister("shared");
+    assert_eq!(gate.scene_priority("shared"), None);
+    // releasing again is harmless
+    gate.unregister("shared");
+    assert_eq!(gate.scene_priority("shared"), None);
+}
+
+#[test]
+fn a_publish_takes_the_best_key_of_the_frame_and_replaces_the_last_frames() {
+    let gate = PriorityGate::new(1);
+    gate.register("w", key(1, false, 100.0));
+
+    // the holder walked away: the frame's only key replaces the old one, however good it was
+    gate.publish([("w", key(5, false, 6400.0))]);
+    assert_eq!(gate.scene_priority("w"), Some(key(5, false, 6400.0)));
+
+    // two holders in one frame: the best wins
+    gate.publish([("w", key(5, false, 6400.0)), ("w", key(2, false, 1000.0))]);
+    assert_eq!(gate.scene_priority("w"), Some(key(2, false, 1000.0)));
+}
+
+#[tokio::test]
+async fn a_hash_registered_again_ranks_by_its_key_while_its_old_requests_wait() {
+    let gate = PriorityGate::new(1);
+    register(
+        &gate,
+        &[
+            ("s", key(1, false, 100.0)),
+            ("ahead", key(2, false, 1000.0)),
+        ],
+    );
+    let holder = gate.try_acquire().unwrap();
+    let log = Log::default();
+    let tasks = ["s", "ahead"].map(|name| reader(&gate, name, gate.ticket(scene(name)), &log));
+    settle(&gate, 2).await;
+
+    // the scene left and came back before its downloads were granted
+    gate.unregister("s");
+    gate.register("s", key(1, false, 100.0));
+    drop(holder);
+    for task in tasks {
+        task.await.unwrap();
+    }
+
+    assert_eq!(*log.lock().unwrap(), vec!["s", "ahead"]);
 }
 
 /// Per-frame and per-grant cost at a dense-area load: hundreds of distinct hashes queued
@@ -352,7 +435,9 @@ async fn overhead_at_hundreds_of_queues() {
             )
         })
         .collect();
-    gate.set_priorities(keys.clone());
+    for (hash, key) in &keys {
+        gate.register(hash, *key);
+    }
     let mut tickets = Vec::new();
     for i in 0..HASHES {
         for _ in 0..REQUESTS_PER_HASH {
@@ -361,10 +446,10 @@ async fn overhead_at_hundreds_of_queues() {
     }
     assert_eq!(gate.waiting(), HASHES * REQUESTS_PER_HASH);
 
-    // a frame's publish: the whole key map replaced
+    // a frame's publish: every registered key written in place
     let start = std::time::Instant::now();
     for _ in 0..100 {
-        gate.set_priorities(keys.clone());
+        gate.publish(keys.iter().map(|(hash, key)| (hash.as_str(), *key)));
     }
     let publish = start.elapsed() / 100;
 
@@ -386,7 +471,7 @@ async fn overhead_at_hundreds_of_queues() {
     }
     let per_grant = start.elapsed() / (HASHES * REQUESTS_PER_HASH) as u32;
     println!(
-        "gate: {HASHES} queues, {} requests: publish {:?} per frame (map clone included), grant {:?} each (task wake included)",
+        "gate: {HASHES} queues, {} requests: publish {:?} per frame, grant {:?} each (task wake included)",
         HASHES * REQUESTS_PER_HASH,
         publish,
         per_grant

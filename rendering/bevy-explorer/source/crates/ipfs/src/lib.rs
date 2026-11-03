@@ -1036,15 +1036,27 @@ impl IpfsIo {
         }
     }
 
-    /// The download priority of every live scene and of every avatar's wearables, by hash. A
-    /// hash not in the map is top priority until it is published; a request with no hash
-    /// ranks after every published one; a hash that was published and no longer is ranks
-    /// last while requests of its wait.
-    pub fn set_scene_priorities(
+    /// An entity that owns downloads under `hash` (a scene root, an avatar wearing a wearable)
+    /// has appeared: its requests rank by `key`, the best of its holders' for a shared hash,
+    /// until `release_download_priority`. A request whose hash nobody registered ranks with the
+    /// requests that have no hash, after every registered one; a hash released while requests
+    /// of its wait ranks last.
+    pub fn register_download_priority(&self, hash: &str, key: LoadPriority) {
+        self.request_slots.register(hash, key);
+    }
+
+    /// The owner of downloads under `hash` has gone.
+    pub fn release_download_priority(&self, hash: &str) {
+        self.request_slots.unregister(hash);
+    }
+
+    /// This frame's keys for the registered hashes, written in place: the first write of a hash
+    /// replaces its key, later writes in the same call take the best.
+    pub fn update_download_priorities<'a>(
         &self,
-        priorities: std::collections::HashMap<String, LoadPriority>,
+        keys: impl IntoIterator<Item = (&'a str, LoadPriority)>,
     ) {
-        self.request_slots.set_priorities(priorities);
+        self.request_slots.publish(keys);
     }
 
     pub fn scene_priority(&self, scene: &str) -> Option<LoadPriority> {

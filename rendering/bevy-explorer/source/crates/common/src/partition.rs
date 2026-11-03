@@ -86,6 +86,22 @@ impl LoadPriority {
         is_behind: false,
         sqr_distance: FloatOrd(0.0),
     };
+
+    /// The bottom of the scene tier: a scene that has no partition yet (spawned, no context).
+    pub const SCENE_PENDING: Self = Self {
+        tier: Tier::Scene,
+        parcel_distance: u16::MAX,
+        is_behind: true,
+        sqr_distance: FloatOrd(f32::MAX),
+    };
+
+    /// The bottom of the avatar tier: an avatar that has no partition yet.
+    pub const AVATAR_PENDING: Self = Self {
+        tier: Tier::Avatar,
+        parcel_distance: u16::MAX,
+        is_behind: true,
+        sqr_distance: FloatOrd(f32::MAX),
+    };
 }
 
 /// `origin` is where distance is measured from (the player); `camera` is the position and

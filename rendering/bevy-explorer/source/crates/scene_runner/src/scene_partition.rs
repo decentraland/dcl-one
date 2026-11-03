@@ -1,5 +1,7 @@
-use bevy::prelude::*;
-use std::collections::HashMap;
+use bevy::{
+    ecs::{component::HookContext, world::DeferredWorld},
+    prelude::*,
+};
 
 use common::{
     partition::{point_partition, scene_partition, LoadPriority, PartitionData, Tier},
@@ -15,9 +17,75 @@ use crate::{initialize_scene::SceneHash, renderer_context::RendererSceneContext,
 pub struct Partition(pub PartitionData);
 
 /// The content hashes whose downloads take this entity's partition: an avatar's body and
-/// wearables. Scenes need none; their downloads carry the scene's own hash.
+/// wearables. Scenes need none; their downloads carry the scene's own hash. Inserting it
+/// registers the hashes with the ipfs request slots and replacing or removing it (an outfit
+/// change, a despawn) releases them, so the slots know exactly which hashes have an owner.
 #[derive(Component, Clone, Debug, Default, PartialEq)]
+#[component(
+    on_insert = register_partitioned_downloads,
+    on_replace = release_partitioned_downloads
+)]
 pub struct PartitionedDownloads(pub Vec<String>);
+
+/// `SceneHash` hook: the scene root appeared, so its hash ranks at its partition, or at the
+/// bottom of the scene tier until it has one; the publisher raises the player's scene to the
+/// top on its first frame with a download waiting. Without the ipfs resource (tests) nothing
+/// is registered.
+pub fn register_scene_hash(world: DeferredWorld, context: HookContext) {
+    let (Some(ipfs), Some(hash)) = (
+        world.get_resource::<IpfsResource>(),
+        world.get::<SceneHash>(context.entity),
+    ) else {
+        return;
+    };
+    let key = world
+        .get::<Partition>(context.entity)
+        .map_or(LoadPriority::SCENE_PENDING, |partition| {
+            partition.0.load_priority(Tier::Scene)
+        });
+    ipfs.register_download_priority(&hash.0, key);
+}
+
+/// `SceneHash` hook: the scene root is going (despawned, or the hash replaced), so its hash has
+/// no owner; requests still queued under it rank last.
+pub fn release_scene_hash(world: DeferredWorld, context: HookContext) {
+    let (Some(ipfs), Some(hash)) = (
+        world.get_resource::<IpfsResource>(),
+        world.get::<SceneHash>(context.entity),
+    ) else {
+        return;
+    };
+    ipfs.release_download_priority(&hash.0);
+}
+
+fn register_partitioned_downloads(world: DeferredWorld, context: HookContext) {
+    let (Some(ipfs), Some(downloads)) = (
+        world.get_resource::<IpfsResource>(),
+        world.get::<PartitionedDownloads>(context.entity),
+    ) else {
+        return;
+    };
+    let key = world
+        .get::<Partition>(context.entity)
+        .map_or(LoadPriority::AVATAR_PENDING, |partition| {
+            partition.0.load_priority(Tier::Avatar)
+        });
+    for hash in &downloads.0 {
+        ipfs.register_download_priority(hash, key);
+    }
+}
+
+fn release_partitioned_downloads(world: DeferredWorld, context: HookContext) {
+    let (Some(ipfs), Some(downloads)) = (
+        world.get_resource::<IpfsResource>(),
+        world.get::<PartitionedDownloads>(context.entity),
+    ) else {
+        return;
+    };
+    for hash in &downloads.0 {
+        ipfs.release_download_priority(hash);
+    }
+}
 
 /// A scene behind the camera counts as this many times farther in the tick queue: it keeps
 /// ticking, and yields first when frame time runs short.
@@ -74,13 +142,16 @@ pub fn update_scene_partitions(
     }
 }
 
-/// Every download priority, by content hash, for the ipfs request slots: the player's scenes
-/// first; then the avatars' bodies and wearables, nearest avatar first, a shared wearable at the
-/// best of its avatars; then the other scenes by partition. Published only on a frame in which
-/// a download waits for a slot: the keys are read at a grant, so the steady state costs nothing,
-/// and the first frame with a waiter publishes before the next slot is granted.
+/// This frame's download priority of every registered hash, written into the ipfs request
+/// slots in place: the player's scenes first, even before they have a context; then the
+/// avatars' bodies and wearables, nearest avatar first, a shared wearable at the best of its
+/// avatars; then the other scenes by partition, a scene with no partition yet last among them.
+/// Which hashes are registered is the hooks' business (`register_scene_hash`,
+/// `register_partitioned_downloads`). Runs only on a frame in which a download waits for a
+/// slot: the keys are read at a grant, so the steady state costs nothing, and the first frame
+/// with a waiter publishes before the next slot is granted.
 pub fn publish_download_priorities(
-    scenes: Query<(Entity, &SceneHash, &Partition)>,
+    scenes: Query<(Entity, &SceneHash, Option<&Partition>)>,
     partitioned: Query<(&Partition, &PartitionedDownloads)>,
     player: Query<Entity, With<PrimaryUser>>,
     containing_scene: ContainingScene,
@@ -93,29 +164,21 @@ pub fn publish_download_priorities(
         .single()
         .map(|player| containing_scene.get(player))
         .unwrap_or_default();
-    let mut priorities: HashMap<String, LoadPriority> = scenes
-        .iter()
-        .map(|(entity, hash, partition)| {
-            let priority = if active.contains(&entity) {
-                LoadPriority::TOP
-            } else {
+    let scene_keys = scenes.iter().map(|(entity, hash, partition)| {
+        let key = if active.contains(&entity) {
+            LoadPriority::TOP
+        } else {
+            partition.map_or(LoadPriority::SCENE_PENDING, |partition| {
                 partition.0.load_priority(Tier::Scene)
-            };
-            (hash.0.clone(), priority)
-        })
-        .collect();
-    for (partition, downloads) in &partitioned {
-        let priority = partition.0.load_priority(Tier::Avatar);
-        for hash in &downloads.0 {
-            match priorities.get_mut(hash) {
-                Some(current) => *current = (*current).min(priority),
-                None => {
-                    priorities.insert(hash.clone(), priority);
-                }
-            }
-        }
-    }
-    ipfs.set_scene_priorities(priorities);
+            })
+        };
+        (hash.0.as_str(), key)
+    });
+    let wearable_keys = partitioned.iter().flat_map(|(partition, downloads)| {
+        let key = partition.0.load_priority(Tier::Avatar);
+        downloads.0.iter().map(move |hash| (hash.as_str(), key))
+    });
+    ipfs.update_download_priorities(scene_keys.chain(wearable_keys));
 }
 
 #[cfg(test)]

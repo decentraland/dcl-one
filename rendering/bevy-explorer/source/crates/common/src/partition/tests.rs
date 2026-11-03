@@ -184,3 +184,16 @@ fn resolved_hashes_are_collected_once_each_and_sorted() {
 fn nothing_resolved_is_an_empty_list() {
     assert!(resolved_hashes(["urn:a"], |_| None).is_empty());
 }
+
+#[test]
+fn pending_keys_sit_at_the_bottom_of_their_tier() {
+    let worst = PartitionData {
+        sqr_distance: 1.0e9,
+        parcel_distance: 5000,
+        is_behind: true,
+    };
+    assert!(LoadPriority::SCENE_PENDING > worst.load_priority(Tier::Scene));
+    assert!(LoadPriority::SCENE_PENDING < LoadPriority::OTHER);
+    assert!(LoadPriority::AVATAR_PENDING > worst.load_priority(Tier::Avatar));
+    assert!(LoadPriority::AVATAR_PENDING < PartitionData::NEAREST.load_priority(Tier::Scene));
+}

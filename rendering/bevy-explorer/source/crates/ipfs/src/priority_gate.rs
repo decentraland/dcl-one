@@ -1,7 +1,10 @@
-//! Request slots handed out by priority instead of first come first served: the scene a
-//! download belongs to decides, through the keys `scene_runner` publishes every frame, so the
-//! nearest in-front scene's files download first. Requests queue per scene, so a key change
-//! re-ranks tens of queues, not every waiting request, and a grant pops one queue's head.
+//! Request slots handed out by priority instead of first come first served: the scene or avatar
+//! a download belongs to decides, through the keys `scene_runner` keeps here, so the nearest
+//! in-front scene's files download first. A hash is registered by the entity that owns it (a
+//! scene root, each avatar wearing a wearable) and released when that entity goes, so the set
+//! of keys follows the entities' lifecycle; the values are written in place on frames with a
+//! download waiting. Requests queue per hash, so a key change re-ranks queues, not every waiting
+//! request, and a grant pops one queue's head.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -34,16 +37,27 @@ pub struct PriorityGate {
 struct GateState {
     available: usize,
     next_seq: u64,
-    priorities: HashMap<String, LoadPriority>,
-    /// requests that are no scene's and no avatar's: after every live scene
+    /// the registered hashes and their keys
+    keys: HashMap<String, KeyEntry>,
+    /// counts publishes, so that a frame's first write of a key replaces it and later writes
+    /// (a wearable's other avatars) take the best
+    generation: u64,
+    /// requests that carry no hash: after every registered one
     no_scene: VecDeque<Arc<Ticket>>,
     scenes: HashMap<String, SceneQueue>,
 }
 
+struct KeyEntry {
+    key: LoadPriority,
+    /// the entities that hold the hash: one scene root, or each avatar wearing it
+    holders: usize,
+    generation: u64,
+}
+
 struct SceneQueue {
     tickets: VecDeque<Arc<Ticket>>,
-    /// the scene has had a published key; without one again it has left, and ranks last
-    published: bool,
+    /// every holder released the hash while these waited: the scene has left, and ranks last
+    departed: bool,
 }
 
 /// A held request slot; dropping it frees the slot for the best waiting ticket.
@@ -74,15 +88,16 @@ impl PriorityGate {
             state: Mutex::new(GateState {
                 available: permits,
                 next_seq: 0,
-                priorities: HashMap::new(),
+                keys: HashMap::new(),
+                generation: 0,
                 no_scene: VecDeque::new(),
                 scenes: HashMap::new(),
             }),
         })
     }
 
-    /// Queue a request of `scene` (`None`: no scene's and no avatar's, ranked after every live
-    /// scene). A free slot with nobody ahead is granted at once; either way the slot arrives
+    /// Queue a request of `scene` (`None`: a request with no hash, ranked after every registered
+    /// one). A free slot with nobody ahead is granted at once; either way the slot arrives
     /// through `acquire`.
     pub fn ticket(self: &Arc<Self>, scene: Option<String>) -> Arc<Ticket> {
         let (grant, slot) = oneshot::channel();
@@ -143,21 +158,61 @@ impl PriorityGate {
         freed
     }
 
-    /// Replace the published keys. A scene that was published before and is not any more
-    /// (despawned) ranks last for as long as requests of its wait, so they do not count as
-    /// unknown and jump to the top.
-    pub fn set_priorities(&self, priorities: HashMap<String, LoadPriority>) {
-        let previous = {
-            let mut state = self.state.lock().unwrap();
-            for (hash, queue) in state.scenes.iter_mut() {
-                if priorities.contains_key(hash) {
-                    queue.published = true;
+    /// An entity that owns `hash` (a scene root, an avatar wearing it) has appeared: the hash
+    /// ranks by `key`, or by the best key of its holders when it is held already.
+    pub fn register(&self, hash: &str, key: LoadPriority) {
+        let mut state = self.state.lock().unwrap();
+        match state.keys.get_mut(hash) {
+            Some(entry) => {
+                entry.holders += 1;
+                entry.key = entry.key.min(key);
+            }
+            None => {
+                state.keys.insert(
+                    hash.to_owned(),
+                    KeyEntry {
+                        key,
+                        holders: 1,
+                        generation: 0,
+                    },
+                );
+            }
+        }
+    }
+
+    /// An entity that owned `hash` has gone. With no holder left the key goes, and requests
+    /// still queued under the hash rank last: they do not count as unknown.
+    pub fn unregister(&self, hash: &str) {
+        let mut state = self.state.lock().unwrap();
+        let Some(entry) = state.keys.get_mut(hash) else {
+            return;
+        };
+        entry.holders -= 1;
+        if entry.holders > 0 {
+            return;
+        }
+        state.keys.remove(hash);
+        if let Some(queue) = state.scenes.get_mut(hash) {
+            queue.departed = !queue.tickets.is_empty();
+        }
+    }
+
+    /// A frame's keys, written in place: the first write of a hash replaces its key, later
+    /// writes in the same publish take the best, and a hash nobody registered is ignored.
+    pub fn publish<'a>(&self, keys: impl IntoIterator<Item = (&'a str, LoadPriority)>) {
+        let mut state = self.state.lock().unwrap();
+        state.generation += 1;
+        let generation = state.generation;
+        for (hash, key) in keys {
+            if let Some(entry) = state.keys.get_mut(hash) {
+                if entry.generation == generation {
+                    entry.key = entry.key.min(key);
+                } else {
+                    entry.key = key;
+                    entry.generation = generation;
                 }
             }
-            std::mem::replace(&mut state.priorities, priorities)
-        };
-        // freed after the lock: hundreds of strings
-        drop(previous);
+        }
     }
 
     /// Whether any request waits for a slot. While none does, the keys are not read, so the
@@ -168,7 +223,12 @@ impl PriorityGate {
     }
 
     pub fn scene_priority(&self, scene: &str) -> Option<LoadPriority> {
-        self.state.lock().unwrap().priorities.get(scene).copied()
+        self.state
+            .lock()
+            .unwrap()
+            .keys
+            .get(scene)
+            .map(|entry| entry.key)
     }
 
     #[cfg(test)]
@@ -224,22 +284,25 @@ impl GateState {
         match scene {
             None => self.no_scene.push_back(ticket),
             Some(hash) => {
-                let published = self.priorities.contains_key(&hash);
-                let queue = self.scenes.entry(hash).or_insert_with(|| SceneQueue {
-                    tickets: VecDeque::new(),
-                    published: false,
-                });
-                queue.published |= published;
-                queue.tickets.push_back(ticket);
+                self.scenes
+                    .entry(hash)
+                    .or_insert_with(|| SceneQueue {
+                        tickets: VecDeque::new(),
+                        departed: false,
+                    })
+                    .tickets
+                    .push_back(ticket);
             }
         }
     }
 
+    /// A registered hash ranks by its key; one whose holders all left while these requests
+    /// waited ranks last; one nobody registered ranks with the requests that carry no hash.
     fn rank(&self, hash: &str, queue: &SceneQueue) -> LoadPriority {
-        match self.priorities.get(hash) {
-            Some(key) => *key,
-            None if queue.published => LoadPriority::BOTTOM,
-            None => LoadPriority::TOP,
+        match self.keys.get(hash) {
+            Some(entry) => entry.key,
+            None if queue.departed => LoadPriority::BOTTOM,
+            None => LoadPriority::OTHER,
         }
     }
 
