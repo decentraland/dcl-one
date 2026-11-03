@@ -709,7 +709,20 @@ async fn community_events_write_the_notification_rows_upstream_publishes() {
     // a rename reaches every member, the renamer included
     let (status, _) = put(&rig, c, &owner, &[("name", b"Renamed Club")]).await;
     assert_eq!(status, StatusCode::OK);
-    let renamed = of_kind(&rig, &owner, c, "community_renamed").await;
+    // Source updateCommunity launches the rename broadcast without awaiting
+    // delivery. Wait for this fixture's inbox row before inspecting its exact
+    // contents and proceeding to deletion; the HTTP response is no delivery ack.
+    let renamed = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let rows = of_kind(&rig, &owner, c, "community_renamed").await;
+            if !rows.is_empty() {
+                return rows;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
     assert_eq!(renamed.len(), 1);
     assert_eq!(
         renamed[0]["oldName"],
