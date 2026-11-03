@@ -5,9 +5,11 @@
 -- Authority: explore.event and event_attendance_local. Unique occurrence keys
 -- deduplicate rolling scans, including late approval/RSVP and concurrent workers.
 -- Lifecycle: send-time source reads suppress changed/deleted/expired occurrences;
--- completed_at NULL with attempts=6 is an observable dead letter. A bounded
+-- Only delivery sets completed_at; temporarily ineligible intents are removed
+-- and can be recaptured when eligibility returns. An unfinished row is a dead
+-- letter when attempts=6 or occurrence_start has passed. A bounded
 -- cleanup removes occurrences older than thirty days, including after opt-out.
--- No FK to explore.event: intent/dead-letter history survives event deletion;
+-- No FK to explore.event: delivery/dead-letter history survives event deletion;
 -- the writer and send-time source check enforce eligibility. Retention deletes it.
 -- The unused name column is retained for additive compatibility with earlier
 -- development layouts; new writes use an empty value and delivery reads event.name.

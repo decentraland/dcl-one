@@ -161,9 +161,17 @@ pub(super) async fn run_once(
             false
         };
         let mut tx = timed_transaction(pool).await?;
-        // attempts<6 retires failures while completed_at=NULL exposes dead letters.
-        sqlx::query("UPDATE explore.event_upcoming_hooks SET completed_at=CASE WHEN $4 THEN $5 ELSE NULL END,next_attempt_at=$5+(30 * (1 << attempts)) * interval '1 second',claim=NULL WHERE event_id=$1 AND occurrence_start=$2 AND claim=$3")
-            .bind(&event_id).bind(start).bind(claim).bind(success || !eligible).bind(now).execute(&mut *tx).await?;
+        if eligible {
+            // Only delivery marks completion. Exhausted or expired unfinished
+            // rows remain observable until retention removes them.
+            sqlx::query("UPDATE explore.event_upcoming_hooks SET completed_at=CASE WHEN $4 THEN $5 ELSE NULL END,next_attempt_at=$5+(30 * (1 << attempts)) * interval '1 second',claim=NULL WHERE event_id=$1 AND occurrence_start=$2 AND claim=$3")
+                .bind(&event_id).bind(start).bind(claim).bind(success).bind(now).execute(&mut *tx).await?;
+        } else {
+            // A temporary loss of approval or RSVPs is not delivery. A future
+            // scan can capture this key again if it becomes eligible in time.
+            sqlx::query("DELETE FROM explore.event_upcoming_hooks WHERE event_id=$1 AND occurrence_start=$2 AND claim=$3")
+                .bind(&event_id).bind(start).bind(claim).execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         if success {
             sent += 1
@@ -221,11 +229,6 @@ mod tests {
         let now = chrono::DateTime::parse_from_rfc3339("2099-09-01T16:00:00Z")
             .unwrap()
             .naive_utc();
-        assert_eq!(
-            scan(&pool, now).await.unwrap(),
-            0,
-            "first activation skips historical catalogue work"
-        );
         let start = now + chrono::Duration::hours(2);
         let next = start + chrono::Duration::days(1);
         let raw = json!({"start_at":start.and_utc().to_rfc3339(),"recurrent_dates":[start.and_utc().to_rfc3339(),next.and_utc().to_rfc3339()],"latest_attendees":["private-preview"],"total_attendees":100,"contact":"private contact","details":"private details"});
@@ -241,10 +244,27 @@ mod tests {
             .execute(&pool).await.unwrap();
         let due = start - chrono::Duration::hours(1);
         let (one, two) = tokio::join!(scan(&pool, due), scan(&pool, due));
+        let mut inserted = 0;
+        for outcome in [one, two] {
+            match outcome {
+                Ok(count) => inserted += count,
+                Err(error) => {
+                    let Some(sqlx::Error::Database(database)) = error.downcast_ref::<sqlx::Error>()
+                    else {
+                        panic!("unexpected scan failure: {error:#}");
+                    };
+                    assert_eq!(database.code().as_deref(), Some("55P03"), "{error:#}");
+                }
+            }
+        }
         assert_eq!(
-            one.unwrap() + two.unwrap(),
-            1,
+            inserted, 1,
             "concurrent scans enqueue one native occurrence"
+        );
+        assert_eq!(
+            scan(&pool, due).await.unwrap(),
+            0,
+            "a tick after bounded contention deduplicates the committed intent"
         );
         let calls = Arc::new(AtomicUsize::new(0));
         let payloads = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
@@ -485,6 +505,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn temporarily_ineligible_occurrences_recover_without_resending_delivered_summaries() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let now = clock("2058-01-01T12:00:00Z");
+        let cancelled = seed(&pool, now, 40, true, true).await;
+        let unapproved = seed(&pool, now, 45, true, true).await;
+        assert_eq!(scan(&pool, now).await.unwrap(), 2);
+        sqlx::query("UPDATE explore.event_attendance_local SET action='cancel' WHERE event_id=$1")
+            .bind(&cancelled)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE explore.event SET approved=false WHERE id=$1")
+            .bind(&unapproved)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let captured = calls.clone();
+        let app = axum::Router::new().route(
+            "/hook",
+            axum::routing::post(move || {
+                let calls = captured.clone();
+                async move {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    axum::http::StatusCode::OK
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/hook", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = crate::http::Outbound::for_tests();
+        assert_eq!(
+            run_once(&pool, &client, Some(&endpoint), "https://example.org", now)
+                .await
+                .unwrap(),
+            0
+        );
+        let queued: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore.event_upcoming_hooks WHERE event_id=ANY($1)",
+        )
+        .bind(vec![&cancelled, &unapproved])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            queued, 0,
+            "suppression must not leave a permanently deduplicated completion"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        sqlx::query("UPDATE explore.event_attendance_local SET action='going' WHERE event_id=$1")
+            .bind(&cancelled)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE explore.event SET approved=true WHERE id=$1")
+            .bind(&unapproved)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            run_once(
+                &pool,
+                &client,
+                Some(&endpoint),
+                "https://example.org",
+                now + chrono::Duration::minutes(1)
+            )
+            .await
+            .unwrap(),
+            2
+        );
+        assert_eq!(
+            run_once(
+                &pool,
+                &client,
+                Some(&endpoint),
+                "https://example.org",
+                now + chrono::Duration::minutes(2)
+            )
+            .await
+            .unwrap(),
+            0
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            2,
+            "delivered keys still suppress repeated ticks"
+        );
+        server.abort();
+    }
+
+    #[tokio::test]
     async fn failures_remain_dead_letters_and_disabled_delivery_still_cleans_expired_history() {
         let _guard = TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(4).await else {
@@ -492,9 +610,10 @@ mod tests {
         };
         let now = clock("2057-01-01T12:00:00Z");
         let failed = seed(&pool, now, 55, true, true).await;
+        let expired = seed(&pool, now, 20, true, true).await;
         let rejected = seed(&pool, now, 40, true, true).await;
         let deleted = seed(&pool, now, 45, true, true).await;
-        assert_eq!(scan(&pool, now).await.unwrap(), 3);
+        assert_eq!(scan(&pool, now).await.unwrap(), 4);
         sqlx::query("UPDATE explore.event SET raw=raw||'{\"rejected\":true}' WHERE id=$1")
             .bind(&rejected)
             .execute(&pool)
@@ -539,7 +658,7 @@ mod tests {
         }
         assert_eq!(
             calls.load(Ordering::SeqCst),
-            6,
+            11,
             "rejected and deleted events send nothing"
         );
         let state: (i32, Option<NaiveDateTime>) = sqlx::query_as(
@@ -550,10 +669,31 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(state, (6, None));
+        let state: (i32, Option<NaiveDateTime>) = sqlx::query_as(
+            "SELECT attempts,completed_at FROM explore.event_upcoming_hooks WHERE event_id=$1",
+        )
+        .bind(&expired)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(state, (5, None), "a deadline can precede the sixth attempt");
+        let dead_letters: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore.event_upcoming_hooks WHERE event_id=ANY($1) \
+            AND completed_at IS NULL AND (attempts>=6 OR occurrence_start<=$2)",
+        )
+        .bind(vec![&failed, &expired])
+        .bind(at)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            dead_letters, 2,
+            "the operational dead-letter predicate includes expired unfinished work"
+        );
         run_once(&pool, &client, Some(&endpoint), "https://example.org", at)
             .await
             .unwrap();
-        assert_eq!(calls.load(Ordering::SeqCst), 6);
+        assert_eq!(calls.load(Ordering::SeqCst), 11);
         // Opt-out runs bounded retention, including pending rows abandoned during downtime.
         let old = now - chrono::Duration::days(31);
         sqlx::query("INSERT INTO explore.event_upcoming_hooks(event_id,occurrence_start,name) SELECT 'expired-'||n,$1,'legacy' FROM generate_series(1,1005) n")

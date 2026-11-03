@@ -89,8 +89,19 @@ new RSVPs and rescheduled occurrences; retained occurrence keys prevent duplicat
 At most ten deliveries run per tick. Payloads contain the current public name,
 event link and current aggregate RSVP count, never attendee identities or private
 author fields. Rejected, deleted, rescheduled and expired occurrences are rechecked
-before delivery. Six failed attempts leave a visible dead letter
-(`completed_at IS NULL AND attempts=6`); HTTP delivery is at least once.
+before delivery. A temporary loss of approval or RSVPs removes the unsent intent;
+it can be captured again if eligibility returns before the occurrence starts.
+Successfully delivered keys remain retained to prevent another summary.
+HTTP delivery is at least once. Unfinished work is a dead letter when retries
+are exhausted or the occurrence has started, including after downtime:
+
+```sql
+SELECT event_id, occurrence_start, attempts
+FROM explore.event_upcoming_hooks
+WHERE completed_at IS NULL
+  AND (attempts >= 6 OR occurrence_start <= timezone('UTC', now()));
+```
+
 Occurrences older than thirty days are cleaned in bounded batches, including after
 summary opt-out while operator jobs remain enabled. Downtime does not replay past
 occurrences.
