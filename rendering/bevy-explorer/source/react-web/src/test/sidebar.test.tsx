@@ -1,8 +1,11 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { Sidebar } from '../features/sidebar/Sidebar'
 import { fakeSession } from './harness'
+import { PopupHost } from '../design/popups'
+import { requestDebugPanel } from '../features/debug/useDebugPanel'
+import * as boot from '../lib/bootMode'
 
 // Unity parity for the nav rail (unity-explorer DCL/UI/Sidebar/SidebarView.cs).
 describe('sidebar parity', () => {
@@ -49,3 +52,21 @@ describe('sidebar parity', () => {
 })
 
 afterEach(() => vi.restoreAllMocks())
+
+it.each([true, false])('routes the Session support action through the host that can open a browser (native=%s)', async (native) => {
+  vi.spyOn(boot, 'isNativeHud').mockReturnValue(native)
+  const open = vi.spyOn(window, 'open').mockReturnValue(null)
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async (line) => line === '/debug_panel' ? '[]' : 'false')
+  render(<><Sidebar session={session} /><PopupHost /></>)
+  act(() => requestDebugPanel('Session', vi.fn()))
+  const panel = within(await screen.findByRole('dialog', { name: 'Debug panel' }))
+  await userEvent.click(await panel.findByRole('button', { name: 'Report a bug' }))
+  if (native) {
+    expect(session.nav).toHaveBeenCalledWith('support')
+    expect(open).not.toHaveBeenCalled()
+  } else {
+    expect(open).toHaveBeenCalledWith('https://decentraland.org/help/', '_blank', 'noopener')
+    expect(session.nav).not.toHaveBeenCalled()
+  }
+})

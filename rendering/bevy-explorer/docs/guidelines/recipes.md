@@ -151,6 +151,13 @@ from `console::{AddDebugSection, DebugSection}`. Give it a unique title, a read-
 query and labeled fields using dot-separated keys or array indices. Actions pair a button
 label with a console command line. Use commands available in the same builds as the section.
 The HUD discovers sections through `/debug_panel` and polls only expanded sections.
+Return numeric groups as arrays. For a tuple with named components, end the field label
+with their ordered names, for example `Scene definitions per batch (min / mean / max)`
+or `Position (X / Y / Z)`. The HUD puts each caption beside its value.
+If a measurement needs a peer, scene or sample, an object reply can include an
+`unavailable` map from field paths to reasons. The HUD uses the closest matching path
+prefix (or the empty key as a default) only when the value is missing or null.
+Fields waiting for the same prerequisite share one explanation.
 When developing a runtime feature, include the diagnostics that answer a concrete testing
 question. Show the effective state, units, scope and reason for an unavailable reading.
 For an adjustable feature, bind its existing validated action or setting. Register controls

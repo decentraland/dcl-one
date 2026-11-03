@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { PopupHost, resetPopups } from '../design/popups'
 import { Sidebar } from '../features/sidebar/Sidebar'
@@ -81,15 +81,16 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
 it('opens a named section from chat and applies plugin-declared values', async () => {
   const session = fakeSession()
   const section = { title: 'Graphics', query: '/metrics', fields: [['GPU', 'gpu']], actions: [], inputs: [
-    { label: 'Scale', field: 'scale', command: '/scale {value}', kind: { type: 'number', options: { min: 1, max: 10, step: 1 } } },
+    { label: 'Scale', field: 'scale', command: '/scale {value}', kind: { type: 'number', options: { min: 0.01, max: 10, step: 0.01 } } },
     { label: 'Fog', field: 'fog', command: '/fog {value}', kind: { type: 'toggle' } },
     { label: 'Mode', field: 'mode', command: '/mode {value}', kind: { type: 'select', options: [['Low', 'low'], ['High', 'high']] } }
   ] }
   session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel' ? JSON.stringify([section]) :
-    line === '/metrics' ? JSON.stringify({ scale: 2, fog: true, mode: 'low', gpu: { samples: [1, 3, 2], unit: 'ms' } }) : 'Updated')
+    line === '/metrics' ? JSON.stringify({ scale: 0.800000011920929, fog: true, mode: 'low', gpu: { samples: [1, 3, 2], unit: 'ms' } }) : 'Updated')
   render(<><Sidebar session={session} /><PopupHost /></>)
   await act(async () => requestDebugPanel('Graphics', vi.fn()))
   expect(screen.getByRole('img', { name: 'GPU history' })).toBeInTheDocument()
+  expect(screen.getByRole('spinbutton', { name: 'Scale' })).toHaveDisplayValue('0.8')
   fireEvent.change(screen.getByRole('spinbutton', { name: 'Scale' }), { target: { value: '4' } })
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Apply Scale' })) })
   expect(session.runDebugCommand).toHaveBeenCalledWith('/scale 4')
@@ -98,6 +99,43 @@ it('opens a named section from chat and applies plugin-declared values', async (
   fireEvent.click(screen.getByRole('button', { name: 'Mode' }))
   await act(async () => { fireEvent.click(screen.getByRole('option', { name: 'High' })) })
   expect(session.runDebugCommand).toHaveBeenCalledWith('/mode high')
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+})
+
+it('keeps the caption with each number and separates unlabelled tuples too', async () => {
+  const session = fakeSession()
+  const fields = [['Scene definitions per batch (min / mean / max)', 'batch'], ['Samples', 'pair']]
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel'
+    ? JSON.stringify([{ title: 'Entity Requests', query: '/counts', fields, actions: [] }])
+    : JSON.stringify({ batch: [9, 269.114, 430], pair: [0, -2.5] }))
+  render(<><Sidebar session={session} /><PopupHost /></>)
+  await act(async () => requestDebugPanel('Entity Requests', vi.fn()))
+  const group = within(screen.getByRole('list', { name: 'Scene definitions per batch' })).getAllByRole('listitem')
+  expect(group.map(cell => cell.textContent?.trim())).toEqual(['min 9', 'mean 269.11', 'max 430'])
+  expect(within(screen.getByRole('list', { name: 'Samples' })).getAllByRole('listitem')).toHaveLength(2)
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+})
+
+it('explains absent readings once per cause and replaces the explanation when data arrives', async () => {
+  const session = fakeSession()
+  const fields = [['Peer', 'room.peer'], ['Rate', 'room.rate'], ['Peak rate', 'room.peak'],
+    ['Other room', 'roommate'], ['Packets', 'count'], ['Muted', 'muted']]
+  let room: Record<string, unknown> | null = null
+  session.runDebugCommand = vi.fn(async (line: string) => line === '/debug_panel'
+    ? JSON.stringify([{ title: 'Room', query: '/metrics', fields, actions: [] }])
+    : JSON.stringify({ room, count: 0, muted: false, unavailable: {
+      'room.peer': 'Select a peer', room: 'Waiting for a room', '': 'No sample yet'
+    } }))
+  render(<><Sidebar session={session} /><PopupHost /></>)
+  await act(async () => requestDebugPanel('Room', vi.fn()))
+  expect(screen.getAllByText('Waiting for a room')).toHaveLength(1)
+  expect(screen.getByText('Select a peer')).toBeInTheDocument()
+  expect(screen.getByText('No sample yet')).toBeInTheDocument()
+  expect(screen.getByText('0')).toBeInTheDocument()
+  expect(screen.getByText('No')).toBeInTheDocument()
+  room = { peer: 'Dawn', rate: 5, peak: 6 }
+  expect(await screen.findByText('Dawn', {}, { timeout: 2500 })).toBeInTheDocument()
+  expect(screen.queryByText('Waiting for a room')).toBeNull()
   fireEvent.click(screen.getByRole('button', { name: 'Close' }))
 })
 

@@ -55,12 +55,39 @@ function fieldValue(data: unknown, path: string): unknown {
   return value
 }
 
+// Plugins can explain missing values by path, by enclosing object, or with a section default.
+function unavailableReason(reasons: unknown, path: string): string | undefined {
+  if (!reasons || typeof reasons !== 'object') return
+  const entries = reasons as Record<string, unknown>
+  for (;;) {
+    const reason = entries[path]
+    if (Object.hasOwn(entries, path) && typeof reason === 'string') return reason
+    if (!path) return
+    const dot = path.lastIndexOf('.')
+    path = dot < 0 ? '' : path.slice(0, dot)
+  }
+}
+
 function displayField(value: unknown): string {
   if (value == null) return 'Unavailable'
   if (typeof value === 'boolean') return value ? 'Yes' : 'No'
   if (typeof value === 'number') return String(Number(value.toFixed(2)))
-  if (Array.isArray(value) && value.every((v) => typeof v === 'number')) return value.map(displayField).join(', ')
   return typeof value === 'object' ? JSON.stringify(value, null, 2) : String(value)
+}
+
+function NumericValues({ label, items }: {
+  label: string; items: { caption?: string; value: number | null; unit?: string }[]
+}) {
+  return <ul className={styles.numericValues} role="list" aria-label={label}>
+    {items.map(({ caption, value, unit }, index) => <li key={index}>
+      {caption && <span className={styles.caption}>{caption} </span>}
+      <span>{value === null ? 'Unavailable' : displayField(value)}{unit && ' ' + unit}</span>
+    </li>)}
+  </ul>
+}
+
+function numericTuple(value: unknown): value is (number | null)[] {
+  return Array.isArray(value) && value.length > 0 && value.every(v => v === null || Number.isFinite(v))
 }
 
 function StructuredReading({ value, label }: { value: object; label: string }) {
@@ -77,7 +104,9 @@ function StructuredReading({ value, label }: { value: object; label: string }) {
   )
 }
 
-function FieldReading({ value, label }: { value: unknown; label: string }) {
+function FieldReading({ value, label, captions }: { value: unknown; label: string; captions?: string[] }) {
+  if (numericTuple(value)) return <NumericValues label={label}
+    items={value.map((n, index) => ({ value: n, caption: captions?.[index] }))} />
   if (value && typeof value === 'object' && 'samples' in value && 'unit' in value &&
     typeof value.unit === 'string' && Array.isArray(value.samples) && value.samples.every(Number.isFinite)) {
     const samples: number[] = value.samples
@@ -90,35 +119,75 @@ function FieldReading({ value, label }: { value: unknown; label: string }) {
       <svg viewBox="0 0 100 32" preserveAspectRatio="none" role="img" aria-label={label + ' history'}>
         <polyline points={points} fill="none" stroke="currentColor" vectorEffect="non-scaling-stroke" />
       </svg>
-      <figcaption>{displayField(min)}–{displayField(max)} {value.unit} · {samples.length} samples</figcaption>
+      <figcaption><NumericValues label={label + ' summary'} items={[
+        { caption: 'min', value: min, unit: value.unit }, { caption: 'max', value: max, unit: value.unit },
+        { caption: 'samples', value: samples.length }
+      ]} /></figcaption>
     </figure>
   }
-  if (value !== null && typeof value === 'object' && !(Array.isArray(value) && value.length > 0 && value.every(Number.isFinite))) {
+  if (value !== null && typeof value === 'object') {
     return <StructuredReading value={value} label={label} />
   }
   return <>{displayField(value)}</>
 }
 
-function InputWidget({ input, live, busy, submit }: {
-  input: WidgetInput; live: unknown; busy: boolean; submit: (line: string) => Promise<boolean>
+function Readings({ fields, data }: { fields: DebugSection['fields']; data: unknown }) {
+  const reasons = fieldValue(data, 'unavailable')
+  const groups = new Map<string, string[]>()
+  const rows = fields.map(([label, path]) => {
+    const value = fieldValue(data, path)
+    const reason = value == null ? unavailableReason(reasons, path) : undefined
+    if (reason) {
+      const labels = groups.get(reason)
+      if (labels) labels.push(label)
+      else groups.set(reason, [label])
+    }
+    return { label, value, reason }
+  })
+  return <dl className={styles.fields}>{rows.map(({ label, value, reason }) => {
+    const labels = reason && groups.get(reason)
+    if (labels && labels[0] !== label) return null
+    const suffix = numericTuple(value) ? / \(([^()]+ \/ [^()]+)\)$/.exec(label) : null
+    const parts = suffix?.[1].split(' / ')
+    const labelled = parts && Array.isArray(value) && parts.length === value.length
+    const title = labelled && suffix ? label.slice(0, suffix.index) : label
+    return <div key={label}>
+      <dt>{labels && labels.length > 1
+        ? <details><summary>{labels.length} readings</summary>{labels.join(', ')}</details>
+        : title}</dt>
+      <dd>{reason ?? <FieldReading value={value} label={title} captions={labelled ? parts : undefined} />}</dd>
+    </div>
+  })}</dl>
+}
+
+function InputWidget({ input, live, reason, busy, submit }: {
+  input: WidgetInput; live: unknown; reason?: string; busy: boolean; submit: (line: string) => Promise<boolean>
 }) {
   const [draft, setDraft] = useState<string | null>(null)
   const apply = (v: string) => submit(input.command.replace('{value}', () => v))
   const kind = input.kind
   const unavailable = input.field !== '' && live == null
   if (kind.type === 'toggle') return (
-    <div className={styles.inputRow}><span>{input.label}</span>
+    <div className={styles.inputRow}><span>{input.label}{unavailable && reason && <> — {reason}</>}</span>
       <Toggle aria-label={input.label} checked={live === true} disabled={busy || unavailable}
         onChange={(v) => void apply(String(v))} /></div>
   )
   if (kind.type === 'select') return (
-    <div className={styles.inputRow}><span>{input.label}</span>
+    <div className={styles.inputRow}><span>{input.label}{unavailable && reason && <> — {reason}</>}</span>
       <Select aria-label={input.label} value={String(live ?? '')} disabled={busy || unavailable}
         options={kind.options.map(([label, value]) => ({ label, value }))}
         onChange={(v) => void apply(v)} /></div>
   )
   const numeric = kind.type === 'number'
-  const value = draft ?? String(live ?? '')
+  // Seed the editor on its HTML step grid. Rust f32 values and a running sky clock
+  // can land between steps, which otherwise makes an untouched form invalid.
+  let initial = String(live ?? '')
+  if (kind.type === 'number' && typeof live === 'number') {
+    const { min, max, step } = kind.options
+    const steps = Math.round((live - min) / step)
+    initial = String(Number(Math.min(max, Math.max(min, min + steps * step)).toPrecision(12)))
+  }
+  const value = draft ?? initial
   return (
     <form className={styles.edit} onSubmit={async (event) => {
       event.preventDefault()
@@ -156,11 +225,7 @@ function Widgets({ section, run }: { section: DebugSection; run: RunCommand }) {
     <>
       {error ? <p role="status">Could not read {section.title}. {error}</p> :
         value === undefined ? <p>Reading…</p> :
-          <dl className={styles.fields}>
-            {section.fields.map(([label, path]) => (
-              <div key={label}><dt>{label}</dt><dd><FieldReading value={fieldValue(value, path)} label={label} /></dd></div>
-            ))}
-          </dl>}
+          <Readings fields={section.fields} data={value} />}
       {section.actions.length > 0 && (
         <div className={styles.actions}>
           {section.actions.map(([label, line]) => (
@@ -171,7 +236,8 @@ function Widgets({ section, run }: { section: DebugSection; run: RunCommand }) {
         </div>
       )}
       {section.inputs?.map((input) => (
-        <InputWidget key={input.label} input={input} live={fieldValue(value, input.field)} busy={busy} submit={invoke} />
+        <InputWidget key={input.label} input={input} live={fieldValue(value, input.field)}
+          reason={unavailableReason(fieldValue(value, 'unavailable'), input.field)} busy={busy} submit={invoke} />
       ))}
       {result && <pre className={styles.reply} role="status">{result}</pre>}
     </>

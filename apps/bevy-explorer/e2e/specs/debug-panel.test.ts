@@ -5,6 +5,25 @@ const scenario = spec(import.meta.url)
 const panel = { role: 'dialog', name: 'Debug panel' } as const
 const button = (name: string) => ({ role: 'button', name } as const)
 
+scenario('every registered debug reading resolves or explains what it is waiting for', async ({ explorer }) => {
+  const sections = await explorer.json<{ title: string; query: string; fields: [string, string][] }[]>('/debug_panel')
+  assert.ok(sections.length > 0)
+  const replies = new Map<string, Record<string, unknown>>()
+  for (const section of sections) {
+    if (!replies.has(section.query)) replies.set(section.query, await explorer.json(section.query))
+    const reply = replies.get(section.query)!
+    for (const [label, path] of section.fields) {
+      let value: unknown = reply
+      for (const key of path.split('.')) value = value && typeof value === 'object'
+        ? (value as Record<string, unknown>)[key] : undefined
+      if (value != null) continue
+      const explained = Object.entries(reply.unavailable ?? {}).some(([prefix, reason]) =>
+        typeof reason === 'string' && reason.trim() && (prefix === '' || path === prefix || path.startsWith(prefix + '.')))
+      assert.ok(explained, `${section.title} → ${label}: ${section.query} returned no value or explanation for ${path}`)
+    }
+  }
+}, { session: { signIn: 'guest' } })
+
 scenario('the debug panel shows live plugin data and can play an avatar emote', async ({ explorer }) => {
   const filter = { name: 'Find debug controls' }
   const expand = async (title: string) => {

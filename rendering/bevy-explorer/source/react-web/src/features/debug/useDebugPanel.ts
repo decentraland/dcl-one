@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { bugReportUrl } from '../../lib/bugReport'
+import { isNativeHud } from '../../lib/bootMode'
 import type { EngineSession } from '../session/useEngineSession'
 import { openDebugPanel, useCommandResult, type DebugSection } from './DebugPanel'
 
@@ -31,7 +32,10 @@ export function useDebugPanel(session: EngineSession) {
       case 'hud/session': return JSON.stringify({ phase: s.phase, ready: s.login.engineReady })
       case 'hud/lobby': popup.current?.(); s.lobbyPage.toggle(); return 'Opened lobby'
       case 'hud/signout': popup.current?.(); s.logout(); return 'Signed out'
-      case 'hud/report': window.open(bugReportUrl(), '_blank', 'noopener'); return 'Opened support'
+      case 'hud/report':
+        if (isNativeHud()) s.nav('support')
+        else window.open(bugReportUrl(), '_blank', 'noopener')
+        return 'Requested the support page in your browser'
       default: return s.runDebugCommand(line)
     }
   }, [])
