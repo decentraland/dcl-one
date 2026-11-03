@@ -27,6 +27,7 @@ import { SUBCAT_MAP } from "../lib/categories";
 import type { CatalogItem } from "../lib/catalogItem";
 import { rarityLabel } from "../lib/rarity";
 import { routeSegment } from "../lib/routes";
+import { EMOTE_FILTER_DEFAULTS, emoteFilterBindings } from "../lib/itemsGrid";
 import { useInfiniteShopQuery, useShopQuery } from "../query";
 import { fetchStore } from "../../seller/lib/store";
 import CreatorCard from "./collection/CreatorCard";
@@ -40,7 +41,7 @@ export default function Collection() {
   const params = useParams<{ contractAddress: string }>();
   const contractAddress = routeSegment(params.contractAddress);
   const filterDefaults = useMemo(
-    () => ({ category: "all", status: "all", subCategory: null as string | null, rarities: [] as string[], priceMin: "", priceMax: "", smart: false, sort: "newest" }),
+    () => ({ category: "all", status: "all", subCategory: null as string | null, rarities: [] as string[], priceMin: "", priceMax: "", smart: false, ...EMOTE_FILTER_DEFAULTS, sort: "newest" }),
     [],
   );
   const [filterState, setFilters] = useUrlFilters(filterDefaults);
@@ -51,6 +52,7 @@ export default function Collection() {
 
   const min = priceMin && !Number.isNaN(Number(priceMin)) ? Number(priceMin) : undefined;
   const max = priceMax && !Number.isNaN(Number(priceMax)) ? Number(priceMax) : undefined;
+  const emoteFilters = emoteFilterBindings(category, filterState, setFilters);
   // Nothing not for sale has a price: the range applies to the other statuses only.
   const priced = status !== "not_for_sale";
   const filters = {
@@ -63,6 +65,7 @@ export default function Collection() {
     isWearableSmart: smart || undefined,
     isOnSale: status === "all" ? undefined : status === "on_sale",
     sortBy: (SORTS.find((s) => s.key === sort) ?? SORTS[0]!).server,
+    ...emoteFilters.emote,
   };
   const grid = useInfiniteShopQuery<CatalogItem, { freshness: IndexFreshness | null }>(contractAddress ? ["collection-page", filters] : null, (skip, signal) =>
     fetchCatalogItems({ ...filters, first: PAGE_SIZE, skip }, { signal }),
@@ -81,6 +84,7 @@ export default function Collection() {
   if (priced && (min != null || max != null)) chips.push({ key: "price", label: t("filter.price"), onRemove: () => setFilters({ priceMin: "", priceMax: "" }) });
   for (const r of RARITIES) if (rarities.includes(r)) chips.push({ key: `rarity-${r}`, label: rarityLabel(r), onRemove: () => toggleRarity(r) });
   if (smart) chips.push({ key: "smart", label: t("filter.smart"), onRemove: () => setFilters({ smart: false }) });
+  chips.push(...emoteFilters.chips);
   if (status !== "all") chips.push({ key: "status", label: status === "on_sale" ? t("filter.onSale") : t("filter.notForSale"), onRemove: () => setFilters({ status: "all" }) });
 
   const unavailable = indexUnavailable(grid.error);
@@ -109,7 +113,7 @@ export default function Collection() {
           <Filters
             category={category}
             subCategory={subCategory}
-            onCategory={(key) => setFilters({ category: key, subCategory: null })}
+            onCategory={(key) => setFilters({ category: key, subCategory: null, ...emoteFilters.resetFor(key) })}
             onSub={(v) => setFilters({ subCategory: v })}
             priceMin={priceMin}
             priceMax={priceMax}
@@ -121,6 +125,7 @@ export default function Collection() {
             onStatus={(s) => setFilters({ status: s })}
             smart={smart}
             onSmart={(v) => setFilters({ smart: v })}
+            {...emoteFilters.props}
             hidePrice={!priced}
             hideNames
           />
