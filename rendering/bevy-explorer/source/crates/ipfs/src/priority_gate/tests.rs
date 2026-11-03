@@ -242,7 +242,7 @@ async fn a_ticket_nobody_awaits_does_not_hold_a_slot() {
     let far = reader(&gate, "far", gate.ticket(scene("far")), &log);
     // a read that queued a ticket and then went away without ever awaiting it
     drop(gate.ticket(scene("near")));
-    settle(&gate, 2).await;
+    settle(&gate, 1).await;
 
     drop(holder);
     far.await.unwrap();
@@ -502,4 +502,72 @@ async fn overhead_at_hundreds_of_queues() {
         publish,
         per_grant
     );
+}
+
+#[tokio::test]
+async fn late_join_keeps_the_shared_tickets_original_fifo_sequence() {
+    let gate = PriorityGate::new(1);
+    gate.register("near", key(0, false, 0.0));
+    let holder = gate.try_acquire().unwrap();
+    let shared = gate.ticket(scene("far"));
+    let later = gate.ticket(scene("near"));
+    gate.join(&shared, scene("near"));
+    let log = Log::default();
+    let a = reader(&gate, "older-shared", shared, &log);
+    let b = reader(&gate, "later", later, &log);
+    drop(holder);
+    a.await.unwrap();
+    b.await.unwrap();
+    assert_eq!(*log.lock().unwrap(), vec!["older-shared", "later"]);
+}
+
+#[tokio::test]
+async fn abandoned_receivers_return_a_slot_without_recursing() {
+    use std::{
+        future::{poll_fn, Future},
+        task::Poll,
+    };
+    let gate = PriorityGate::new(1);
+    let blocker = gate.try_acquire().unwrap();
+    let mut held = Vec::new();
+    for _ in 0..4096 {
+        let ticket = gate.ticket(None);
+        let mut acquire = Box::pin(gate.acquire(ticket.clone()));
+        poll_fn(|cx| {
+            assert!(acquire.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(acquire);
+        held.push(ticket);
+    }
+    drop(blocker);
+    assert!(!gate.has_waiters());
+    assert!(gate.try_acquire().is_some());
+}
+
+#[tokio::test]
+async fn removing_the_last_reader_wakes_a_queued_attempt_without_a_free_slot() {
+    use std::future::{poll_fn, Future};
+    use std::task::Poll;
+
+    let gate = PriorityGate::new(0);
+    let registration = DownloadReaders::first(&gate, scene("first"), None);
+    let readers = registration.readers.clone();
+    let mut attempt = Box::pin(readers.acquire());
+    poll_fn(|cx| {
+        assert!(attempt.as_mut().poll(cx).is_pending());
+        Poll::Ready(())
+    })
+    .await;
+    drop(registration);
+    assert!(!gate.has_waiters());
+    poll_fn(|cx| {
+        assert!(matches!(
+            attempt.as_mut().poll(cx),
+            Poll::Ready(Err(GateClosed))
+        ));
+        Poll::Ready(())
+    })
+    .await;
 }

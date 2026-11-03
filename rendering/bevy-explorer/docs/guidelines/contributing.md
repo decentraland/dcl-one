@@ -25,6 +25,8 @@ understand the change in one sitting.
   not why the new one doesn't need X, not an argument addressed to the reviewer. Strip those
   before pushing. Rationale goes in the PR description.
 - Existing comments survive a refactor unless they became wrong.
+- Limit each `Drop` implementation to one blocking operation. Release a lock before taking
+  another or doing file I/O. Put multi-step cleanup in an explicit completion path.
 - Reuse what exists: protocol and SDK types, the existing scheduling, picking and loading
   paths. Hand-rolled parallels are the main source of drift.
 - You should not need to add a schedule set or ordering step. If you think you do, raise it

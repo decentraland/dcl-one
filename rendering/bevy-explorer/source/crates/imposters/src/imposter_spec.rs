@@ -212,16 +212,26 @@ pub async fn load_imposter_remote(
     // bounds the connect+headers phase and the body by an inactivity timeout, so a
     // slow-but-progressing download isn't killed.
     let request = client.get(&zip_url).build()?;
-    let bytes = match platform::fetch(
-        ipfs.async_request(request, client),
-        std::time::Duration::from_secs(30),
-        std::time::Duration::from_secs(10),
-    )
-    .await
+    let bytes = match ipfs
+        .fetch_request(
+            request,
+            client,
+            std::time::Duration::from_secs(30),
+            std::time::Duration::from_secs(10),
+            None,
+        )
+        .await
     {
         Ok(fetched) => fetched.body,
         // a missing imposter for this area is an expected 404
-        Err(platform::FetchError::Status(_, _)) => return Ok(()),
+        Err(platform::FetchError::Status(status, _))
+            if status == reqwest::StatusCode::NOT_FOUND =>
+        {
+            return Ok(())
+        }
+        Err(platform::FetchError::Status(status, _)) => {
+            anyhow::bail!("imposter request returned {status}")
+        }
         Err(platform::FetchError::Send(e)) => return Err(e),
         Err(platform::FetchError::Headers) => {
             anyhow::bail!("imposter request timed out awaiting headers")

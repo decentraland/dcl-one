@@ -264,40 +264,53 @@ fn init_asset_cmd(
                         // scene folder right now — the immediate push, so the asset renders without
                         // waiting for a save (and the dev server can serve it on the live merge).
                         let url = format!("{CONTENTS_BASE}{hash}");
-                        match client
+                        let fetched = match client
                             .get(&url)
                             .timeout(std::time::Duration::from_secs(60))
-                            .send()
-                            .await
-                            .and_then(|resp| resp.error_for_status())
+                            .build()
                         {
-                            Ok(resp) => match resp.bytes().await {
-                                Ok(bytes) => {
-                                    let _ = io.cache_bytes(hash, &bytes).await; // no-op on web
-                                    if let Err(e) = platform::write_scene_file(
-                                        &scene_hash,
-                                        &rel,
-                                        &bytes,
-                                        &target,
-                                    )
-                                    .await
-                                    {
-                                        if errors.len() < 5 {
-                                            errors.push(format!("{rel}: {e}"));
-                                        }
-                                    } else {
-                                        written_rels.push(rel.clone());
-                                    }
+                            Ok(request) => match io
+                                .fetch_request(
+                                    request,
+                                    client.clone(),
+                                    std::time::Duration::from_secs(30),
+                                    std::time::Duration::from_secs(10),
+                                    Some(scene_hash.clone()),
+                                )
+                                .await
+                            {
+                                Ok(response) => Ok(response.body),
+                                Err(platform::FetchError::Headers) => {
+                                    Err("timed out awaiting headers".to_owned())
                                 }
-                                Err(e) => {
-                                    if errors.len() < 5 {
-                                        errors.push(format!("{rel}: read: {e}"));
-                                    }
+                                Err(platform::FetchError::Stalled) => {
+                                    Err("body transfer stalled".to_owned())
                                 }
+                                Err(platform::FetchError::Status(status, _)) => {
+                                    Err(format!("status {status}"))
+                                }
+                                Err(platform::FetchError::Send(error)) => Err(error.to_string()),
+                                Err(platform::FetchError::Body(error)) => Err(error.to_string()),
                             },
-                            Err(e) => {
+                            Err(error) => Err(error.to_string()),
+                        };
+                        match fetched {
+                            Ok(bytes) => {
+                                let _ = io.cache_bytes(hash, &bytes).await; // no-op on web
+                                if let Err(e) =
+                                    platform::write_scene_file(&scene_hash, &rel, &bytes, &target)
+                                        .await
+                                {
+                                    if errors.len() < 5 {
+                                        errors.push(format!("{rel}: {e}"));
+                                    }
+                                } else {
+                                    written_rels.push(rel.clone());
+                                }
+                            }
+                            Err(error) => {
                                 if errors.len() < 5 {
-                                    errors.push(format!("{rel}: fetch: {e}"));
+                                    errors.push(format!("{rel}: fetch: {error}"));
                                 }
                             }
                         }
