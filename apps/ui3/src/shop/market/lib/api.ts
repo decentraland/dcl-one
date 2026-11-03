@@ -194,8 +194,9 @@ export async function fetchUserSales(
 export async function fetchSales(
   filters: { contractAddress?: string; tokenId?: string; itemId?: string; seller?: string; buyer?: string; first?: number; skip?: number },
   c?: ShopClient,
+  signal?: AbortSignal,
 ): Promise<{ items: SaleRecord[]; total: number }> {
-  const res = await client(c).market.sales({ ...filters, sortBy: "recently_sold" });
+  const res = await client(c).market.sales({ ...filters, sortBy: "recently_sold" }, { signal });
   return { items: res.data.map(toSaleRecord), total: res.total };
 }
 
@@ -292,8 +293,9 @@ export async function fetchOpenOrderById(owner: string, id: string, c?: ShopClie
 export async function fetchOwners(
   filters: { contractAddress: string; itemId: string; first?: number; skip?: number; sortBy?: "issuedId"; orderDirection?: "asc" | "desc" },
   c?: ShopClient,
+  signal?: AbortSignal,
 ): Promise<{ data: Owner[]; total: number }> {
-  return client(c).market.owners({ ...filters, contractAddress: filters.contractAddress.toLowerCase() });
+  return client(c).market.owners({ ...filters, contractAddress: filters.contractAddress.toLowerCase() }, { signal });
 }
 
 /** marketplace `GET /v1/stats/estate/size`: estate counts by size (deferred on v2 until its indexer runs). */

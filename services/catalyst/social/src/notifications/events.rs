@@ -234,7 +234,9 @@ fn metadata(intent: &Intent, recipient: &Recipient, base: &str, asset_base: &str
 
 /// PostgreSQL cancels blocked or slow statements even if the Rust future is
 /// dropped. SET LOCAL is transaction-scoped and never leaks into pooled users.
-async fn timed_transaction(pool: &PgPool) -> Result<Transaction<'_, Postgres>, sqlx::Error> {
+pub(super) async fn timed_transaction(
+    pool: &PgPool,
+) -> Result<Transaction<'_, Postgres>, sqlx::Error> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET LOCAL statement_timeout = '500ms'")
         .execute(&mut *tx)
@@ -445,9 +447,12 @@ pub async fn run_once(
         Ok(Ok(())) => {}
         Err(_) => tracing::error!("event intent cleanup exceeded budget"),
     }
-    let (reminders, starts) = tokio::join!(
+    let (reminders, starts, ended) = tokio::join!(
         scan_with_budget(pool, "events_starts_soon", 3600, now),
         scan_with_budget(pool, "events_started", 0, now),
+        within_scan_budget("events_ended", async {
+            super::event_ended::run_once(pool, now).await.map(|_| ())
+        }),
     );
     let deadline = tokio::time::Instant::now() + PASS_BUDGET;
     let mut emitted = 0;
@@ -465,6 +470,7 @@ pub async fn run_once(
     }
     reminders?;
     starts?;
+    ended?;
     Ok(emitted)
 }
 
@@ -514,6 +520,7 @@ mod tests {
 
     #[tokio::test]
     async fn event_notices_recover_without_duplicates_respect_consent_and_separate_channels() {
+        let _guard = super::super::event_ended::TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
@@ -721,6 +728,7 @@ mod tests {
             None,
             &json!({"approved":true,"user":HOST}),
             true,
+            &catalyst_explore::Settings::for_tests(),
         )
         .await
         .unwrap();
@@ -785,6 +793,31 @@ mod tests {
         catch_up_pages_live_audiences_and_retention(&pool).await;
         bounded_work_preserves_fairness_cleanup_and_polling(&pool).await;
         drain_waits_for_an_intent_claimed_by_another_transaction(&pool).await;
+        blocked_metrics_preserve_notification_delivery(&pool).await;
+    }
+
+    async fn blocked_metrics_preserve_notification_delivery(pool: &PgPool) {
+        let id = Uuid::new_v4();
+        let event_id = format!("metric-lock-{id}");
+        let now = Utc::now().naive_utc();
+        let address = format!("0x{}00000000", Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO social.event_notification_intents(id,event_id,kind,event,local_event,occurred_at) VALUES($1,$2,'event_approved',$3,false,$4)")
+            .bind(id).bind(&event_id).bind(json!({"user":address})).bind(now).execute(pool).await.unwrap();
+        let mut held = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE social.event_ended_activation IN ACCESS EXCLUSIVE MODE")
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        let result = run_once(
+            pool,
+            "https://example.org",
+            now,
+            "https://assets.example.org/events",
+        )
+        .await;
+        held.rollback().await.unwrap();
+        result.expect("metric lock deferral preserves normal notification cadence");
+        assert_eq!(count(pool, &event_id, "event_approved", &address).await, 1);
     }
 
     async fn drain_waits_for_an_intent_claimed_by_another_transaction(pool: &PgPool) {
