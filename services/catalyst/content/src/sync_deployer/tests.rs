@@ -17,6 +17,8 @@ fn lazy_deployer() -> LiveSyncDeployer {
         flush_backlog_max: DEFAULT_FLUSH_BACKLOG_MAX,
         inflight_bytes: Arc::new(ByteBudget::new(DEFAULT_INFLIGHT_BYTES_MAX)),
         validation: SyncValidation::AuthChainOnly,
+        validations: Arc::new(Semaphore::new(1)),
+        access_passed: Arc::default(),
     }
 }
 

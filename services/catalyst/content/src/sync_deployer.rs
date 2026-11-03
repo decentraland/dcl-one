@@ -284,6 +284,12 @@ fn validation_failure(entity_id: &str, errors: Vec<ValidationError>) -> SyncErro
 }
 
 pub const BATCH_SIZE: usize = 500;
+
+/// Content validations a deployer runs at once ([`LiveSyncDeployer::verify_entity`]).
+const VALIDATIONS_IN_FLIGHT: usize = 64;
+/// How long a `Pending` access pass stands for the `Fetched` check of the same entity.
+const ACCESS_PASSED_TTL: std::time::Duration = std::time::Duration::from_secs(600);
+const ACCESS_PASSED_MAX: usize = 10_000;
 const BATCH_TIMEOUT_MS: u64 = 200;
 /// The old `SYNC_FLUSH_CONCURRENCY` default.
 pub const DEFAULT_FLUSH_CONCURRENCY: usize = 8;
@@ -333,6 +339,12 @@ pub struct LiveSyncDeployer {
     inflight_bytes: Arc<ByteBudget>,
     /// How every entity is judged before it is buffered.
     validation: SyncValidation,
+    /// Content validations in flight: each asks the chain about twenty times on a cold block
+    /// memo, so this bounds the RPC load a bootstrap puts on the providers.
+    validations: Arc<Semaphore>,
+    /// Entities (with their chain) whose access a `Pending` check passed, for the `Fetched`
+    /// check that follows; taken by it, dropped after [`ACCESS_PASSED_TTL`].
+    access_passed: Arc<std::sync::Mutex<HashMap<String, std::time::Instant>>>,
 }
 
 fn spawn_flush(
@@ -432,7 +444,27 @@ impl LiveSyncDeployer {
             flush_backlog_max,
             inflight_bytes: Arc::new(ByteBudget::new(limits.inflight_bytes_max)),
             validation,
+            validations: Arc::new(Semaphore::new(VALIDATIONS_IN_FLIGHT)),
+            access_passed: Arc::default(),
         }
+    }
+
+    fn take_access_passed(&self, key: &str) -> bool {
+        let mut passed = self.access_passed.lock().unwrap_or_else(|e| e.into_inner());
+        passed
+            .remove(key)
+            .is_some_and(|at| at.elapsed() < ACCESS_PASSED_TTL)
+    }
+
+    fn remember_access_passed(&self, key: String) {
+        let mut passed = self.access_passed.lock().unwrap_or_else(|e| e.into_inner());
+        if passed.len() >= ACCESS_PASSED_MAX {
+            passed.retain(|_, at| at.elapsed() < ACCESS_PASSED_TTL);
+            if passed.len() >= ACCESS_PASSED_MAX {
+                passed.clear();
+            }
+        }
+        passed.insert(key, std::time::Instant::now());
     }
 
     /// What [`Self::deploy_entity`] checks before it buffers, without buffering. `Fetched` once
@@ -447,9 +479,31 @@ impl LiveSyncDeployer {
     ) -> Result<ChainVerdict, SyncError> {
         match &self.validation {
             SyncValidation::Content(sources) => {
-                validate_synced(sources, entity_data, entity_id, auth_chain, content)
+                let key = format!(
+                    "{entity_id}\n{}",
+                    serde_json::to_string(auth_chain).unwrap_or_default()
+                );
+                let access_passed =
+                    content == SyncedContent::Fetched && self.take_access_passed(&key);
+                let _slot = self
+                    .validations
+                    .acquire()
                     .await
-                    .map_err(|errors| validation_failure(entity_id, errors))
+                    .map_err(|_| SyncError::Stopped)?;
+                let verdict = validate_synced(
+                    sources,
+                    entity_data,
+                    entity_id,
+                    auth_chain,
+                    content,
+                    access_passed,
+                )
+                .await
+                .map_err(|errors| validation_failure(entity_id, errors))?;
+                if content == SyncedContent::Pending {
+                    self.remember_access_passed(key);
+                }
+                Ok(verdict)
             }
             #[cfg(any(test, feature = "test-support"))]
             SyncValidation::AuthChainOnly => {

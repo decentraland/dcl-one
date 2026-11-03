@@ -67,6 +67,9 @@ pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
     /// An entity a peer serves: the item thumbnail is not checked and an
     /// item's equivalent pointers count as one, as the reference does.
     pub synced: bool,
+    /// The access step already passed for this entity and chain (the
+    /// read-through's check before its content was in): not asked again.
+    pub access_passed: bool,
 }
 
 impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
@@ -845,6 +848,9 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
     }
 
     async fn validate_access(&self, deployment: &Deployment<'_>) -> ValidationResponse {
+        if self.access_passed {
+            return ValidationResponse::Ok;
+        }
         if self.ignore_blockchain_access {
             let deployer = deployment.deployer();
             let local = super::checker::validate_local_pointer_ownership(deployment, &deployer);
@@ -1194,6 +1200,7 @@ mod tests {
                 blockchain_checker: &SlowChecker(delay),
                 ignore_blockchain_access: false,
                 synced: false,
+                access_passed: false,
             }
             .validate_access(&d.view())
             .await

@@ -288,6 +288,7 @@ pub async fn validate(
         blockchain_checker: ctx.sources,
         ignore_blockchain_access: ctx.sources.ignore_blockchain_access,
         synced: false,
+        access_passed: false,
     }
     .validate(&deployment)
     .await

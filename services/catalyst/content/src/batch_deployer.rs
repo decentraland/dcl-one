@@ -990,6 +990,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn the_check_after_the_download_reuses_the_access_the_check_before_it_passed() {
+        use crate::validator::fake_chain::{self, at_deployment};
+        let Some(pool) = test_pool(1).await else {
+            return;
+        };
+        let timestamp = a_day_ago();
+        let (entity, parcel) = scene_at(timestamp);
+        let chain =
+            fake_chain::serve(land_held_until(parcel, Some(at_deployment(timestamp)))).await;
+        let (storage, tmp) = temp_storage("access-passed").await;
+        let deployer = LiveSyncDeployer::new(
+            pool.clone(),
+            1,
+            crate::sync_deployer::SyncValidation::Content(Arc::new(
+                crate::validator::Sources::new(
+                    pool.clone(),
+                    storage,
+                    crate::http::Outbound::for_tests(),
+                    None,
+                    over(&chain),
+                ),
+            )),
+        );
+        let body = serde_json::to_vec(&entity).unwrap();
+        let id = hash_bytes_v1(&body);
+        let auth = signed_chain(&id).await;
+        let eth_calls = || {
+            chain
+                .calls()
+                .iter()
+                .filter(|c| c.starts_with("eth_call"))
+                .count()
+        };
+        let verify = |content| deployer.verify_entity(&body, &id, &auth, content);
+
+        verify(crate::validator::SyncedContent::Pending)
+            .await
+            .unwrap();
+        let asked = eth_calls();
+        assert!(asked > 0);
+        verify(crate::validator::SyncedContent::Fetched)
+            .await
+            .unwrap();
+        assert_eq!(eth_calls(), asked, "the access already passed");
+        verify(crate::validator::SyncedContent::Fetched)
+            .await
+            .unwrap();
+        assert!(eth_calls() > asked, "taken once: a later check asks again");
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        pool.close().await;
+    }
+
+    #[tokio::test]
     async fn a_synced_collection_item_is_judged_by_the_collection_at_the_entity_block() {
         use crate::validator::fake_chain::{self, Query, Reply, at_deployment};
         let timestamp = a_day_ago();

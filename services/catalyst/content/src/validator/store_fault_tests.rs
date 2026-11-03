@@ -136,6 +136,7 @@ fn validator(external: &StubExternalCalls) -> ContentValidator<'_, StubExternalC
         blockchain_checker: &StubChecker,
         ignore_blockchain_access: true,
         synced: false,
+        access_passed: false,
     }
 }
 

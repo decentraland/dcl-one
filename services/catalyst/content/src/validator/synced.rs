@@ -261,12 +261,13 @@ pub async fn validate_synced(
     entity_id: &str,
     auth_chain: &AuthChain,
     content: SyncedContent,
+    access_passed: bool,
 ) -> Result<ChainVerdict, Vec<ValidationError>> {
     let entity = entity_parser::parse_entity_from_bytes(entity_bytes, entity_id)
         .map_err(|e| vec![ValidationError::Rejected(e.to_string())])?;
-    // Judged at the chain head until the clock catches up: retried, not decided now.
-    let latest = chrono::Utc::now().timestamp_millis()
-        + crate::write_deployer::REQUEST_TTL_FORWARDS_MS;
+    // Retried until this node's clock catches up, never judged ahead of it.
+    let latest =
+        chrono::Utc::now().timestamp_millis() + crate::write_deployer::REQUEST_TTL_FORWARDS_MS;
     if entity.timestamp > latest {
         return Err(vec![ValidationError::Unavailable(format!(
             "The entity timestamp {} is too far in the future",
@@ -285,6 +286,7 @@ pub async fn validate_synced(
         blockchain_checker: &synced,
         ignore_blockchain_access: sources.ignore_blockchain_access,
         synced: true,
+        access_passed,
     }
     .validate(&Deployment {
         entity: &entity,
@@ -358,7 +360,7 @@ mod tests {
     #[tokio::test]
     async fn a_synced_item_skips_the_thumbnail_check_a_local_deploy_keeps() {
         let (bytes, id, chain, sources, tmp) = wearable(&[HAT_BY_NAME]).await;
-        validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched)
+        validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched, false)
             .await
             .expect("no thumbnail check on a synced item");
 
@@ -384,12 +386,12 @@ mod tests {
     #[tokio::test]
     async fn a_synced_item_naming_one_asset_two_ways_has_one_pointer() {
         let (bytes, id, chain, sources, tmp) = wearable(&[HAT_BY_NAME, HAT_BY_ADDRESS]).await;
-        validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched)
+        validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched, false)
             .await
             .expect("both pointers resolve to the same asset");
 
         let (bytes, id, chain, sources, tmp2) = wearable(&[HAT_BY_NAME, MASK_BY_NAME]).await;
-        let errors = validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched)
+        let errors = validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched, false)
             .await
             .unwrap_err();
         assert!(
@@ -493,7 +495,7 @@ mod tests {
 
         let (bytes, id) = at(now + 2 * crate::write_deployer::REQUEST_TTL_FORWARDS_MS);
         let chain = crate::sync_test_support::signed_chain(&id).await;
-        let errors = validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched)
+        let errors = validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched, false)
             .await
             .unwrap_err();
         assert!(
@@ -503,9 +505,119 @@ mod tests {
 
         let (bytes, id) = at(now + 60_000);
         let chain = crate::sync_test_support::signed_chain(&id).await;
-        validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched)
+        validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched, false)
             .await
             .expect("inside the clock skew");
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// Synced scenes validated per second over a chain whose every RPC answer takes `latency`.
+    /// `SYNCED_BENCH_LATENCY_MS`, `SYNCED_BENCH_CONCURRENCY`, `SYNCED_BENCH_N`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    #[ignore]
+    async fn bench_synced_scene_throughput() {
+        use super::super::fake_chain::{self, Query, Reply};
+        use futures::StreamExt;
+        let env = |k: &str, d: u64| {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(d)
+        };
+        let latency = std::time::Duration::from_millis(env("SYNCED_BENCH_LATENCY_MS", 20));
+        let concurrency = env("SYNCED_BENCH_CONCURRENCY", 50) as usize;
+        let n = env("SYNCED_BENCH_N", 300) as usize;
+        let passes = env("SYNCED_BENCH_PASSES", 1);
+
+        let chain = fake_chain::serve(|q, _| match q {
+            Query::Land { .. } => Reply::Yes(true),
+            other => panic!("unexpected question {other:?}"),
+        })
+        .await;
+        let upstream = chain.url.clone();
+        let client = reqwest::Client::new();
+        let proxy = axum::Router::new().route(
+            "/",
+            axum::routing::post(move |body: axum::body::Bytes| {
+                let (client, upstream) = (client.clone(), upstream.clone());
+                async move {
+                    tokio::time::sleep(latency).await;
+                    let resp = client
+                        .post(&upstream)
+                        .header("content-type", "application/json")
+                        .body(body)
+                        .send()
+                        .await
+                        .unwrap();
+                    (
+                        [("content-type", "application/json")],
+                        resp.bytes().await.unwrap(),
+                    )
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        tokio::spawn(async move { axum::serve(listener, proxy).await.unwrap() });
+
+        let (storage, tmp) = crate::sync_test_support::temp_storage("bench").await;
+        let sources = Sources::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage,
+            crate::http::Outbound::for_tests(),
+            None,
+            super::super::Settings {
+                eth_network: "mainnet".into(),
+                l1_rpc_url: Some(url.clone()),
+                l2_rpc_url: Some(url),
+                ..Default::default()
+            },
+        );
+        let now = chrono::Utc::now().timestamp_millis();
+        let mut entities = Vec::with_capacity(n);
+        for i in 0..n {
+            // Spread over the last year, as a bootstrap replays history.
+            let timestamp = now - 86_400_000 - (i as i64 * 7_919_993_000) % 31_536_000_000;
+            let parcel = format!("{},{}", i % 150, i / 150);
+            let bytes = serde_json::to_vec(&serde_json::json!({
+                "version": "v3", "type": "scene", "pointers": [parcel], "timestamp": timestamp,
+                "content": [], "metadata": {"scene": {"base": parcel, "parcels": [parcel]}}
+            }))
+            .unwrap();
+            let id = crate::auth::hash_bytes_v1(&bytes);
+            let chain = crate::sync_test_support::signed_chain(&id).await;
+            entities.push((bytes, id, chain));
+        }
+
+        let started = std::time::Instant::now();
+        futures::stream::iter(&entities)
+            .for_each_concurrent(concurrency, |(bytes, id, auth)| {
+                let sources = &sources;
+                async move {
+                    if passes > 1 {
+                        validate_synced(sources, bytes, id, auth, SyncedContent::Pending, false)
+                            .await
+                            .unwrap();
+                    }
+                    validate_synced(sources, bytes, id, auth, SyncedContent::Fetched, passes > 1)
+                        .await
+                        .unwrap();
+                }
+            })
+            .await;
+        let elapsed = started.elapsed();
+        let calls = chain.calls();
+        let blocks = calls
+            .iter()
+            .filter(|c| c.starts_with("eth_getBlock"))
+            .count();
+        println!(
+            "latency={latency:?} concurrency={concurrency} n={n} passes={passes}: {:.1} entities/s, \
+             {:.2} eth_call and {:.2} block reads per entity",
+            n as f64 / elapsed.as_secs_f64(),
+            (calls.len() - blocks) as f64 / n as f64,
+            blocks as f64 / n as f64,
+        );
         let _ = std::fs::remove_dir_all(tmp);
     }
 
