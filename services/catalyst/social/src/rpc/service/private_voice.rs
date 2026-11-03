@@ -170,9 +170,11 @@ async fn accept_private_voice_chat_with_id(
             other => Refusal::Internal(format!("private voice credentials: {other}")),
         })?;
     let url_of = |address: &str| {
-        urls.get(&address.to_lowercase())
-            .cloned()
-            .unwrap_or_default()
+        urls.get(&address.to_lowercase()).cloned().ok_or_else(|| {
+            Refusal::Internal(
+                "Cannot read properties of undefined (reading 'connectionUrl')".into(),
+            )
+        })
     };
     ctx.pubsub()
         .publish_mutation(
@@ -184,12 +186,14 @@ async fn accept_private_voice_chat_with_id(
                 caller: None,
                 callee: None,
                 credentials: Some(PrivateVoiceChatCredentials {
-                    connection_url: url_of(&chat.caller_address),
+                    connection_url: url_of(&chat.caller_address)?,
                 }),
             }),
         )
         .await;
-    Ok(url_of(&chat.callee_address))
+    // Upstream reads the callee's grant after notifying the caller. Preserve
+    // that already committed event if only the callee's credential is missing.
+    url_of(&chat.callee_address)
 }
 
 /// Deletes the pending call and tells the caller. Only the callee rejects,

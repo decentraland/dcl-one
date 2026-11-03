@@ -19,6 +19,8 @@ struct Faulty {
     inner: FakeVoiceRooms,
     lose_reservations: AtomicBool,
     fail_grants: AtomicBool,
+    omit_caller: AtomicBool,
+    omit_callee: AtomicBool,
 }
 
 impl Faulty {
@@ -75,9 +77,17 @@ impl VoiceRooms for Faulty {
         if self.fail_grants.load(Ordering::SeqCst) {
             return Err(Self::failed());
         }
-        self.inner
+        let mut credentials = self
+            .inner
             .private_voice_credentials(call_id, callee, caller)
-            .await
+            .await?;
+        if self.omit_caller.load(Ordering::SeqCst) {
+            credentials.remove(caller);
+        }
+        if self.omit_callee.load(Ordering::SeqCst) {
+            credentials.remove(callee);
+        }
+        Ok(credentials)
     }
 
     async fn end_private_voice_chat(
@@ -176,6 +186,8 @@ impl Rig {
             inner: FakeVoiceRooms::new(pool.clone()),
             lose_reservations: AtomicBool::new(false),
             fail_grants: AtomicBool::new(false),
+            omit_caller: AtomicBool::new(false),
+            omit_callee: AtomicBool::new(false),
         });
         let ctx = test_ctx(Db::new(pool.clone()), runtime.clone());
         Some(Self { pool, ctx, runtime })
@@ -339,4 +351,164 @@ async fn a_failed_community_grant_is_an_internal_error() {
         "{join:?}"
     );
     drop_community(&rig.pool, community).await;
+}
+
+/// The actual upstream media adapter accepts incomplete maps. The domain deletes
+/// the pending intent first, reads the caller grant before publishing ACCEPTED,
+/// then reads the callee grant. HTTP hides the unexpected error; RPC preserves it.
+#[tokio::test]
+async fn incomplete_private_credentials_match_source_errors_and_committed_events() {
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/private-grant-source-cases.json"
+    )))
+    .unwrap();
+    assert_eq!(
+        fixture["baseline"]["revision"],
+        "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+    );
+    let source_caller = fixture["caller"].as_str().unwrap();
+    let source_callee = fixture["target"].as_str().unwrap();
+    let id: Uuid = fixture["call"].as_str().unwrap().parse().unwrap();
+    let key = PrivateKeySigner::random();
+    let http_callee = format!("{:#x}", key.address());
+    let http_caller = addr("incomplete-grant-caller");
+    let cases = fixture["cases"].as_array().unwrap();
+    assert_eq!(cases.len(), 8);
+    for source in cases {
+        let is_http = source["protocol"] == "http";
+        let (caller, callee) = if is_http {
+            (&*http_caller, &*http_callee)
+        } else {
+            (source_caller, source_callee)
+        };
+        let case: serde_json::Value = serde_json::from_str(
+            &source
+                .to_string()
+                .replace(source_caller, caller)
+                .replace(source_callee, callee),
+        )
+        .unwrap();
+        let label = case["id"].as_str().unwrap();
+        let scenario = case["scenario"].as_str().unwrap();
+        rig.forget_calls(&[caller, callee]).await;
+        sqlx::query("INSERT INTO social.private_voice_chats(id,caller_address,callee_address) VALUES($1,$2,$3)")
+            .bind(id).bind(caller).bind(callee).execute(&rig.pool).await.unwrap();
+        rig.runtime.omit_caller.store(
+            matches!(scenario, "missing-caller" | "missing-both"),
+            Ordering::SeqCst,
+        );
+        rig.runtime.omit_callee.store(
+            matches!(scenario, "missing-callee" | "missing-both"),
+            Ordering::SeqCst,
+        );
+        let mut to_caller = rig.ctx.pubsub().subscribe(caller);
+        let mut to_callee = rig.ctx.pubsub().subscribe(callee);
+        if !is_http {
+            let response = SocialServiceImpl
+                .accept_private_voice_chat(
+                    AcceptPrivateVoiceChatPayload {
+                        call_id: id.to_string(),
+                    },
+                    procedure_ctx(&rig.ctx, callee, 78),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                hex::encode(response.encode_to_vec()),
+                case["expected_hex"].as_str().unwrap(),
+                "{label}"
+            );
+        } else {
+            let app = crate::rpc::http::router(Arc::new(State::with_context(
+                Settings::default(),
+                rig.ctx.clone(),
+                None,
+            )));
+            let path = format!("/v1/private-voice-chats/{id}");
+            let timestamp = chrono::Utc::now().timestamp_millis();
+            let payload = crate::shared::signed_fetch::build_payload_v6(
+                "patch",
+                &path,
+                &timestamp.to_string(),
+                "{}",
+            );
+            let (_, auth) = frame_signed(
+                &key,
+                &PrivateKeySigner::random(),
+                FAR_EXPIRATION,
+                timestamp,
+                &payload,
+                "{}",
+            )
+            .await;
+            let mut request = Request::builder().method("PATCH").uri(&path);
+            for (name, value) in
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&auth).unwrap()
+            {
+                request = request.header(name, value.as_str().unwrap());
+            }
+            let response = app
+                .oneshot(
+                    request
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{"intention":"accepted"}"#))
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let status = response.status().as_u16();
+            let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+                .await
+                .unwrap();
+            let body: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                serde_json::json!({"status":status,"body":body}),
+                case["response"],
+                "{label}"
+            );
+        }
+        let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM social.private_voice_chats c WHERE id=$1 AND NOT EXISTS(SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)")
+            .bind(id).fetch_one(&rig.pool).await.unwrap();
+        assert_eq!(
+            pending,
+            case["remaining_rows"].as_i64().unwrap(),
+            "{label}: committed pending deletion"
+        );
+        let received: Vec<_> = std::iter::from_fn(|| to_caller.try_recv().ok()).collect();
+        let expected = case["updates"].as_array().unwrap();
+        assert_eq!(received.len(), expected.len(), "{label}: caller events");
+        assert_eq!(
+            drained(&mut to_callee),
+            0,
+            "{label}: callee receives no ACCEPTED"
+        );
+        for (event, expected) in received.iter().zip(expected) {
+            let SocialEvent::PrivateVoice(update) = &**event else {
+                panic!("{label}: wrong event")
+            };
+            assert_eq!(
+                update.status,
+                PrivateVoiceChatStatus::VoiceChatAccepted as i32,
+                "{label}"
+            );
+            assert_eq!(
+                update.call_id,
+                expected["callId"].as_str().unwrap(),
+                "{label}"
+            );
+            assert_eq!(
+                update.credentials.as_ref().unwrap().connection_url,
+                expected["credentials"]["connectionUrl"].as_str().unwrap(),
+                "{label}"
+            );
+        }
+        rig.forget_calls(&[caller, callee]).await;
+    }
 }

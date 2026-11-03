@@ -126,6 +126,11 @@ deletion; or an immutable payload reference. The decoder checks version, kind,
 UUIDs, normalized wallet identities, status enums and the permitted protobuf arm.
 Private REQUESTED includes only the caller, ACCEPTED alone may carry credentials,
 and neither private parties nor closure notices can be added by another arm.
+Private acceptance reads the caller's credential before publishing ACCEPTED, then
+reads the callee's credential for the reply. An incomplete credential map returns
+the source missing-property error in RPC and a generic HTTP 500. The accepted
+intent remains consumed; if only the callee's grant is missing, ACCEPTED has
+already been published with the caller's own grant.
 The NATS subject and payload together are limited to 64 KiB. The
 outbound application queue contains at most 256 messages; mutation publishers
 await admission for up to five seconds. The community inbound queue contains at
