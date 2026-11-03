@@ -106,8 +106,7 @@ pub struct ContentConfig {
     // drops the deployments no pointer is served by any more (superseded or
     // unpublished), their content_files and the blobs nothing else names.
     // Off by default, and never beside CONTENT_WRITES_ENABLED: an
-    // authoritative node keeps its history (an unpublish there restores the
-    // scene a local deployment superseded).
+    // authoritative node keeps its history.
     #[arg(long, env = "CONTENT_HISTORY_PRUNE_ENABLED", default_value_t = false, action = clap::ArgAction::Set)]
     pub content_history_prune_enabled: bool,
 

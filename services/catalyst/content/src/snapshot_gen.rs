@@ -540,8 +540,7 @@ const WINDOW_SQL: &str = r#"
 /// (the old `snapshot_is_outdated`, inclusive window, strict `>`), or a
 /// local unpublish since then touched it: a scene tombstoned after the
 /// generation shares a pointer with a deployment of the window (the scene
-/// itself, which the windows leave out once tombstoned, and the older
-/// scenes the unpublish restored, whose `local_timestamp` is old). The
+/// itself, which the windows leave out once tombstoned). The
 /// second leg reads the tombstones since the generation
 /// (`local_entities_tombstoned_idx`, a handful) and the GIN pointer index. Planned
 /// per call (`persistent(false)`): with the values, the planner walks

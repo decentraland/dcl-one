@@ -5,13 +5,15 @@
 //! request's own path (the 6.x payload, then the pre-6.0 folded one behind
 //! the canonical `signer` metadata key, which ui3 and dcl-scene-cli still
 //! mint; a scene runtime's `decentraland-kernel-scene` signer refused), a
-//! 5-minute window, and a deploy-granting leg on the parcel for the signer
-//! (`land_authz::can_deploy`, the rule `POST /entities` applies to the scene
-//! itself). Only a locally published scene can go ([`land_publish`]); what
-//! a peer serves is not this node's to withdraw. Answers: 200 `{entityId,
-//! unpublished: true, parcels}`, 400 for a malformed chain or coordinate,
-//! 401 for a chain that does not verify, 403 without LAND rights, 404 with
-//! no local scene there, 409 when a concurrent deploy moved the parcel, 503
+//! 5-minute window, and a deploy-granting leg for the signer on every parcel
+//! of the scene the request takes down, not just the requested one
+//! (`land_authz::can_deploy_batch`, the rule `POST /entities` applies to the
+//! scene itself). Only a locally published scene can go ([`land_publish`]);
+//! what a peer serves is not this node's to withdraw, and the freed parcels
+//! are left empty. Answers: 200 `{entityId, unpublished: true, parcels}`,
+//! 400 for a malformed chain or coordinate, 401 for a chain that does not
+//! verify, 403 without LAND rights on any of those parcels, 404 with no
+//! local scene there, 409 when a concurrent deploy moved the parcel, 503
 //! when LAND rights cannot be decided; the [`super::writes`] gates first.
 //!
 //! [`land_publish`]: super::land_publish
@@ -24,7 +26,7 @@ use serde_json::json;
 
 use super::SharedState;
 use super::errors::{AppError, AppResult};
-use super::land_publish::{UnpublishError, tombstone_and_repoint};
+use super::land_publish::{UnpublishError, local_scene_at, unpublish_local_scene};
 use super::writes;
 use crate::shared::signed_fetch::{PayloadPolicy, SignedFetchError, require_signer};
 
@@ -77,31 +79,62 @@ pub async fn unpublish_scene(
             "LAND ownership checks are unavailable on this node".to_string(),
         )
     })?;
-    let decision = crate::land_authz::can_deploy(land, (x, y), &signer)
+    let pointer = format!("{x},{y}");
+    let scene = local_scene_at(&state.pool, &pointer)
+        .await
+        .map_err(|e| AppError::Internal(e.to_string()))?;
+    // Every parcel of the scene the unpublish takes down; the requested one alone when none.
+    let parcels: Vec<(i32, i32)> = match &scene {
+        Some(scene) => scene
+            .pointers
+            .iter()
+            .map(|p| {
+                parse_parcel(p).ok_or_else(|| {
+                    AppError::Internal(format!(
+                        "scene {} has a non-parcel pointer {p}",
+                        scene.entity_id
+                    ))
+                })
+            })
+            .collect::<Result<_, _>>()?,
+        None => vec![(x, y)],
+    };
+    let decisions = crate::land_authz::can_deploy_batch(land, &parcels, &signer)
         .await
         .map_err(|e| AppError::ServiceUnavailable(format!("parcel access check failed: {e}")))?;
-    if !decision.verdict.allows() {
-        return Err(AppError::Forbidden(format!(
-            "The provided Eth Address does not have access to the following parcel: ({x},{y})"
-        )));
+    let denied: Vec<String> = parcels
+        .iter()
+        .zip(&decisions)
+        .filter(|(_, d)| !d.verdict.allows())
+        .map(|((px, py), _)| {
+            format!(
+                "The provided Eth Address does not have access to the following parcel: ({px},{py})"
+            )
+        })
+        .collect();
+    if !denied.is_empty() {
+        return Err(AppError::Forbidden(denied.join("; ")));
     }
+    let Some(scene) = scene else {
+        return Err(AppError::NotFound(format!(
+            "No locally published scene at {x},{y}."
+        )));
+    };
 
-    let pointer = format!("{x},{y}");
-    match tombstone_and_repoint(&state.pool, &pointer).await {
+    match unpublish_local_scene(&state.pool, &pointer, &scene.entity_id).await {
         Ok(outcome) => {
             state.deployments_cache.clear();
             tracing::info!(
                 entity_id = %outcome.entity_id,
                 signer = %signer,
                 pointer = %pointer,
-                repointed = outcome.repointed.len(),
+                parcels = outcome.parcels.len(),
                 "DELETE /scenes - local publish tombstoned"
             );
-            let parcels: Vec<&str> = outcome.repointed.iter().map(|(p, _)| p.as_str()).collect();
             Ok(Json(json!({
                 "entityId": outcome.entity_id,
                 "unpublished": true,
-                "parcels": parcels,
+                "parcels": outcome.parcels,
             }))
             .into_response())
         }

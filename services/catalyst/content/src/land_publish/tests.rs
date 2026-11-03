@@ -122,11 +122,10 @@ fn the_unpublish_function_is_named_by_its_body_and_lives_in_content() {
     assert!(name.starts_with("unpublish_scene_") && name.len() == "unpublish_scene_".len() + 12);
     assert_eq!(unpublish_function_name(), name, "the name is deterministic");
     let sql = unpublish_function_sql(false);
-    assert!(sql.starts_with(&format!("CREATE FUNCTION content.{name}(text)")));
-    assert!(
-        unpublish_function_sql(true)
-            .starts_with(&format!("CREATE OR REPLACE FUNCTION content.{name}(text)"))
-    );
+    assert!(sql.starts_with(&format!("CREATE FUNCTION content.{name}(text, text)")));
+    assert!(unpublish_function_sql(true).starts_with(&format!(
+        "CREATE OR REPLACE FUNCTION content.{name}(text, text)"
+    )));
     for table in [
         "content.active_pointers",
         "content.deployments",
@@ -135,8 +134,8 @@ fn the_unpublish_function_is_named_by_its_body_and_lives_in_content() {
         assert!(sql.contains(table), "{table} is schema-qualified");
     }
     assert!(
-        sql.contains("WHERE d.entity_pointers && v_pointers"),
-        "the candidates are one GIN-served overlap probe (metrics/unpublish.md)"
+        !sql.contains("deleter_deployment"),
+        "the scenes the unpublished one superseded stay superseded"
     );
     assert!(
         sql.contains(r#"ORDER BY k COLLATE "C""#),
@@ -159,7 +158,7 @@ async fn a_missing_function_is_named_with_its_remedy() {
     require_function(&pool, &unpublish_function_signature())
         .await
         .expect("schema.sql installs it");
-    let err = require_function(&pool, "content.unpublish_scene_000000000000(text)")
+    let err = require_function(&pool, "content.unpublish_scene_000000000000(text,text)")
         .await
         .unwrap_err();
     assert!(
@@ -212,8 +211,26 @@ async fn provenance_recorded_and_surfaced_in_states() {
     pool.close().await;
 }
 
+/// Looks the local scene at `pointer` up and unpublishes it, as the route does.
+async fn unpublish_at(pool: &PgPool, pointer: &str) -> Result<UnpublishOutcome, UnpublishError> {
+    let Some(scene) = local_scene_at(pool, pointer).await? else {
+        return Err(UnpublishError::NotLocal(pointer.to_string()));
+    };
+    unpublish_local_scene(pool, pointer, &scene.entity_id).await
+}
+
+async fn deleter_of(pool: &PgPool, entity_id: &str) -> Option<i32> {
+    sqlx::query_scalar("SELECT deleter_deployment FROM content.deployments WHERE entity_id = $1")
+        .bind(entity_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// The freed parcels stay empty: the older scene the local one superseded is
+/// not restored and keeps it as its deleter.
 #[tokio::test]
-async fn unpublish_repoints_to_last_synced_upstream_row() {
+async fn unpublish_leaves_the_parcels_empty_over_a_superseded_scene() {
     let Some(pool) = pool().await else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
         return;
@@ -229,29 +246,23 @@ async fn unpublish_repoints_to_last_synced_upstream_row() {
     set_active_pointer(&pool, &b, &local).await;
     record_provenance(&pool, &local, "0xowner").await;
 
-    let outcome = tombstone_and_repoint(&pool, &a).await.expect("unpublish");
+    assert_eq!(
+        local_scene_at(&pool, &a).await.unwrap(),
+        Some(LocalScene {
+            entity_id: local.clone(),
+            pointers: vec![a.clone(), b.clone()],
+        })
+    );
+    let outcome = unpublish_at(&pool, &a).await.expect("unpublish");
     assert_eq!(outcome.entity_id, local);
-    assert_eq!(outcome.repointed.len(), 2);
-    for (_, replacement) in &outcome.repointed {
-        assert_eq!(replacement.as_deref(), Some(up.as_str()));
-    }
-    assert_eq!(
-        active_pointer(&pool, &a).await.as_deref(),
-        Some(up.as_str())
-    );
-    assert_eq!(
-        active_pointer(&pool, &b).await.as_deref(),
-        Some(up.as_str())
-    );
+    let mut expected = vec![a.clone(), b.clone()];
+    expected.sort();
+    assert_eq!(outcome.parcels, expected);
+    assert_eq!(active_pointer(&pool, &a).await, None);
+    assert_eq!(active_pointer(&pool, &b).await, None);
+    assert_eq!(deleter_of(&pool, &up).await, Some(t));
+    assert_eq!(deleter_of(&pool, &local).await, None);
 
-    let restored: Option<i32> = sqlx::query_scalar(
-        "SELECT deleter_deployment FROM content.deployments WHERE entity_id = $1",
-    )
-    .bind(&up)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(restored, None);
     let prov = local_provenance(&pool, &local)
         .await
         .unwrap()
@@ -273,8 +284,8 @@ async fn unpublish_deletes_pointer_when_nothing_underneath() {
     set_active_pointer(&pool, &p, &only).await;
     record_provenance(&pool, &only, "0xowner").await;
 
-    let outcome = tombstone_and_repoint(&pool, &p).await.expect("unpublish");
-    assert_eq!(outcome.repointed, vec![(p.clone(), None)]);
+    let outcome = unpublish_at(&pool, &p).await.expect("unpublish");
+    assert_eq!(outcome.parcels, vec![p.clone()]);
     assert_eq!(active_pointer(&pool, &p).await, None);
     pool.close().await;
 }
@@ -294,16 +305,21 @@ async fn unpublish_refuses_synced_and_already_tombstoned_entities() {
     );
     insert_deployment(&pool, &synced, 1_000, &[&p_synced]).await;
     set_active_pointer(&pool, &p_synced, &synced).await;
-    let err = tombstone_and_repoint(&pool, &p_synced).await.unwrap_err();
+    assert_eq!(local_scene_at(&pool, &p_synced).await.unwrap(), None);
+    let err = unpublish_local_scene(&pool, &p_synced, &synced)
+        .await
+        .unwrap_err();
     assert!(matches!(err, UnpublishError::NotLocal(_)), "{err:?}");
 
     insert_deployment(&pool, &local, 2_000, &[&p_local]).await;
     set_active_pointer(&pool, &p_local, &local).await;
     record_provenance(&pool, &local, "0xowner").await;
-    tombstone_and_repoint(&pool, &p_local)
+    unpublish_at(&pool, &p_local)
         .await
         .expect("first unpublish");
-    let err = tombstone_and_repoint(&pool, &p_local).await.unwrap_err();
+    let err = unpublish_local_scene(&pool, &p_local, &local)
+        .await
+        .unwrap_err();
     assert!(matches!(err, UnpublishError::NotLocal(_)), "{err:?}");
 
     assert_eq!(
@@ -313,76 +329,36 @@ async fn unpublish_refuses_synced_and_already_tombstoned_entities() {
     pool.close().await;
 }
 
+/// The function takes down only the scene the caller authorized: another
+/// scene active at the pointer is a conflict and nothing changes.
 #[tokio::test]
-async fn unpublish_skips_tombstoned_locals_when_repointing() {
+async fn unpublish_of_another_scene_than_the_active_one_is_a_conflict() {
     let Some(pool) = pool().await else {
         eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
         return;
     };
     let s = Scope::new();
-    let (up, old, new, p) = (s.id("up5"), s.id("old5"), s.id("new5"), s.parcel(0, 5));
-    insert_deployment(&pool, &up, 1_000, &[&p]).await;
-    insert_deployment(&pool, &old, 2_000, &[&p]).await;
-    record_provenance(&pool, &old, "0xowner").await;
-    sqlx::query("UPDATE content.local_entities SET tombstoned_at = timezone('UTC', now()) WHERE entity_id = $1")
-        .bind(&old)
-        .execute(&pool)
-        .await
-        .unwrap();
-    let t2 = insert_deployment(&pool, &new, 3_000, &[&p]).await;
-    set_deleter(&pool, &up, t2).await;
-    set_deleter(&pool, &old, t2).await;
-    set_active_pointer(&pool, &p, &new).await;
-    record_provenance(&pool, &new, "0xowner").await;
+    let (local, other, p) = (s.id("local6"), s.id("other6"), s.parcel(0, 6));
+    insert_deployment(&pool, &local, 2_000, &[&p]).await;
+    set_active_pointer(&pool, &p, &local).await;
+    record_provenance(&pool, &local, "0xowner").await;
 
-    let outcome = tombstone_and_repoint(&pool, &p).await.expect("unpublish");
-    assert_eq!(outcome.repointed[0].1.as_deref(), Some(up.as_str()));
+    let err = unpublish_local_scene(&pool, &p, &other).await.unwrap_err();
+    assert!(matches!(err, UnpublishError::Conflict), "{err:?}");
     assert_eq!(
         active_pointer(&pool, &p).await.as_deref(),
-        Some(up.as_str())
+        Some(local.as_str())
+    );
+    assert_eq!(
+        local_provenance(&pool, &local).await.unwrap().unwrap()["status"],
+        "active"
     );
     pool.close().await;
 }
 
-/// The re-pointed row names the scene type (the old boot-schema variant
-/// with `active_pointers.entity_type`, which schema.sql always has).
-#[tokio::test]
-async fn unpublish_writes_the_pointer_type_column() {
-    let Some(pool) = pool().await else {
-        eprintln!("skipping: CATALYST_TEST_DATABASE_URL not set");
-        return;
-    };
-    let s = Scope::new();
-    let (up, local, p) = (s.id("up6"), s.id("local6"), s.parcel(0, 6));
-    insert_deployment(&pool, &up, 1_000, &[&p]).await;
-    let t = insert_deployment(&pool, &local, 2_000, &[&p]).await;
-    set_deleter(&pool, &up, t).await;
-    set_active_pointer(&pool, &p, &local).await;
-    sqlx::query("UPDATE content.active_pointers SET entity_type = NULL WHERE pointer = $1")
-        .bind(&p)
-        .execute(&pool)
-        .await
-        .unwrap();
-    record_provenance(&pool, &local, "0xowner").await;
-
-    let outcome = tombstone_and_repoint(&pool, &p).await.expect("unpublish");
-    assert_eq!(outcome.repointed, vec![(p.clone(), Some(up.clone()))]);
-    let row: (String, Option<String>) = sqlx::query_as(
-        "SELECT entity_id, entity_type FROM content.active_pointers WHERE pointer = $1",
-    )
-    .bind(&p)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(row, (up.clone(), Some("scene".to_string())));
-    let err = tombstone_and_repoint(&pool, &p).await.unwrap_err();
-    assert!(matches!(err, UnpublishError::NotLocal(_)), "{err:?}");
-    pool.close().await;
-}
-
 /// A scene on several parcels: the unpublish of any one of them takes the
-/// whole scene down, each parcel re-pointed on its own (one to the older
-/// upstream scene underneath, one emptied).
+/// whole scene down and empties every parcel, the one an older upstream
+/// scene occupied before included.
 #[tokio::test]
 async fn unpublish_of_one_parcel_takes_the_whole_scene_down() {
     let Some(pool) = pool().await else {
@@ -399,16 +375,12 @@ async fn unpublish_of_one_parcel_takes_the_whole_scene_down() {
     set_active_pointer(&pool, &b, &local).await;
     record_provenance(&pool, &local, "0xowner").await;
 
-    let outcome = tombstone_and_repoint(&pool, &b).await.expect("unpublish");
-    let mut repointed = outcome.repointed.clone();
-    repointed.sort();
-    let mut expected = vec![(a.clone(), Some(up.clone())), (b.clone(), None)];
+    let outcome = unpublish_at(&pool, &b).await.expect("unpublish");
+    let mut expected = vec![a.clone(), b.clone()];
     expected.sort();
-    assert_eq!(repointed, expected);
-    assert_eq!(
-        active_pointer(&pool, &a).await.as_deref(),
-        Some(up.as_str())
-    );
+    assert_eq!(outcome.parcels, expected);
+    assert_eq!(active_pointer(&pool, &a).await, None);
     assert_eq!(active_pointer(&pool, &b).await, None);
+    assert_eq!(deleter_of(&pool, &up).await, Some(t));
     pool.close().await;
 }

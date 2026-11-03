@@ -140,17 +140,13 @@ impl LiveDeploymentRepository {
 
     /// Repairs `deleter_deployment` for every row an intra-batch overwrite could not see:
     /// each pointer's successor chain, ordered by (entity_timestamp, lower(entity_id)), per type.
-    /// A row an unpublished local scene still deletes is released first (its nearest live
-    /// successor, or none and its pointers back), all in one transaction.
+    /// An unpublished local scene is a link of the chain like any other (its parcels stay
+    /// empty); a row the repair gives a deleter gives up its pointers, in the same transaction.
     pub async fn resolve_deleter_deployments(&self) -> Result<(), SyncError> {
         let start = std::time::Instant::now();
         let storage = |e: sqlx::Error| SyncError::Storage(e.to_string());
         let mut tx = self.pool.begin().await.map_err(storage)?;
-        let released: Vec<i32> = sqlx::query_scalar(RELEASE_UNPUBLISHED_DELETERS_SQL)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(storage)?;
-        let result = sqlx::query(
+        let (superseded, cleared): (i64, i64) = sqlx::query_as(
             r#"
             WITH pointer_successors AS (
                 SELECT id AS older_id,
@@ -163,10 +159,6 @@ impl LiveDeploymentRepository {
                            unnest(entity_pointers) AS pointer
                     FROM content.deployments d
                     WHERE deleter_deployment IS NULL
-                      -- an unpublished local scene is no link of any chain
-                      AND NOT EXISTS (
-                          SELECT 1 FROM content.local_entities le
-                          WHERE le.entity_id = d.entity_id AND le.tombstoned_at IS NOT NULL)
                 ) pointers
                 WHERE pointer IS NOT NULL
             ), successors AS (
@@ -174,92 +166,36 @@ impl LiveDeploymentRepository {
                 FROM pointer_successors p
                 JOIN content.deployments newer ON newer.id = p.newer_id
                 ORDER BY p.older_id, newer.entity_timestamp, lower(newer.entity_id)
+            ), superseded AS (
+                UPDATE content.deployments older
+                SET deleter_deployment = successors.newer_id
+                FROM successors
+                WHERE older.id = successors.older_id
+                  AND older.deleter_deployment IS NULL
+                RETURNING older.entity_id
+            ), cleared AS (
+                DELETE FROM content.active_pointers ap
+                USING superseded s
+                WHERE ap.entity_id = s.entity_id
+                RETURNING ap.pointer
             )
-            UPDATE content.deployments older
-            SET deleter_deployment = successors.newer_id
-            FROM successors
-            WHERE older.id = successors.older_id
-              AND older.deleter_deployment IS NULL
+            SELECT (SELECT count(*) FROM superseded), (SELECT count(*) FROM cleared)
             "#,
         )
-        .execute(&mut *tx)
+        .fetch_one(&mut *tx)
         .await
         .map_err(storage)?;
-        if !released.is_empty() {
-            for sql in [CLEAR_RELEASED_SUCCESSORS_SQL, RECLAIM_RELEASED_POINTERS_SQL] {
-                sqlx::query(sql)
-                    .bind(&released)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(storage)?;
-            }
-        }
         tx.commit().await.map_err(storage)?;
 
         tracing::info!(
-            released = released.len(),
-            rows_affected = result.rows_affected(),
+            rows_affected = superseded,
+            pointers_cleared = cleared,
             elapsed_ms = start.elapsed().as_millis() as u64,
             "Resolved deleter_deployment"
         );
         Ok(())
     }
 }
-
-/// Rows whose deleter is an unpublished local scene (a flush or repair that ran beside the
-/// unpublish, or one from before the flush skipped tombstones) take their nearest live
-/// successor, or none; returns their ids.
-const RELEASE_UNPUBLISHED_DELETERS_SQL: &str = r#"
-    UPDATE content.deployments d
-    SET deleter_deployment = (
-        SELECT c.id FROM content.deployments c
-        WHERE c.entity_pointers && d.entity_pointers
-          AND c.entity_type = d.entity_type
-          AND c.id <> d.id
-          AND (c.entity_timestamp > d.entity_timestamp
-               OR (c.entity_timestamp = d.entity_timestamp
-                   AND lower(c.entity_id) > lower(d.entity_id)))
-          AND NOT EXISTS (
-              SELECT 1 FROM content.local_entities le
-              WHERE le.entity_id = c.entity_id AND le.tombstoned_at IS NOT NULL)
-        ORDER BY c.entity_timestamp, lower(c.entity_id)
-        LIMIT 1)
-    FROM content.deployments del
-    JOIN content.local_entities le ON le.entity_id = del.entity_id AND le.tombstoned_at IS NOT NULL
-    WHERE d.deleter_deployment = del.id
-    RETURNING d.id
-"#;
-
-/// A released row that is deleted again, and a scene a released row now deletes, give up
-/// their pointers: the flush's clearing of replaced rows (`$1` the released ids).
-const CLEAR_RELEASED_SUCCESSORS_SQL: &str = r#"
-    DELETE FROM content.active_pointers ap
-    USING content.deployments d
-    WHERE ap.entity_id = d.entity_id
-      AND d.deleter_deployment IS NOT NULL
-      AND (d.deleter_deployment = ANY($1) OR d.id = ANY($1))
-"#;
-
-/// A released row left undeleted takes its pointers back unless a newer entity holds one,
-/// the flush's rule (`$1` the released ids).
-const RECLAIM_RELEASED_POINTERS_SQL: &str = r#"
-    INSERT INTO content.active_pointers (pointer, entity_id, entity_type)
-    SELECT DISTINCT ON (p.pointer) p.pointer, d.entity_id, d.entity_type
-    FROM content.deployments d
-    CROSS JOIN LATERAL unnest(d.entity_pointers) AS p(pointer)
-    WHERE d.id = ANY($1) AND d.deleter_deployment IS NULL
-    ORDER BY p.pointer, d.entity_timestamp DESC, lower(d.entity_id) DESC
-    ON CONFLICT (pointer) DO UPDATE
-        SET entity_id = EXCLUDED.entity_id, entity_type = EXCLUDED.entity_type
-        WHERE NOT EXISTS (
-            SELECT 1
-            FROM content.deployments cur, content.deployments incoming
-            WHERE cur.entity_id = active_pointers.entity_id
-              AND incoming.entity_id = EXCLUDED.entity_id
-              AND (cur.entity_timestamp > incoming.entity_timestamp
-                   OR (cur.entity_timestamp = incoming.entity_timestamp
-                       AND lower(cur.entity_id) > lower(EXCLUDED.entity_id))))
-"#;
 
 /// GREATEST-monotonic upsert: a stale offer can never rewind the persisted frontier.
 const ADVANCE_SYNC_FRONTIER_SQL: &str = "INSERT INTO content.system_properties (key, value) VALUES ('sync_frontier', $1) ON CONFLICT (key) DO UPDATE SET value = GREATEST(content.system_properties.value::bigint, EXCLUDED.value::bigint)::text";
@@ -439,10 +375,10 @@ mod tests {
     }
 
     /// The bootstrap repair walks each pointer's chain of undeleted rows; an
-    /// unpublished local scene is not part of it, so the peer scene older than it
-    /// stays active instead of gaining the tombstone as its deleter.
+    /// unpublished local scene is a link of it like any other, so the peer scene
+    /// older than it gains the tombstone as its deleter.
     #[tokio::test]
-    async fn the_deleter_repair_skips_unpublished_local_scenes() {
+    async fn the_deleter_repair_keeps_unpublished_local_scenes_in_the_chain() {
         let Some((admin, pool, name)) = repair_database().await else {
             return;
         };
@@ -470,19 +406,18 @@ mod tests {
             vec![
                 ("bafylocal".into(), None),
                 ("bafyold".into(), Some("bafypeer".into())),
-                ("bafypeer".into(), None),
+                ("bafypeer".into(), Some("bafylocal".into())),
             ]
         );
 
         drop_repair_database(admin, pool, &name).await;
     }
 
-    /// A row an unpublished local scene still deletes (a flush or a repair that ran beside the
-    /// unpublish, or one from before the flush skipped tombstones) is released: on 0,0 the peer
-    /// scene takes the pointer back from the older scene the unpublish repointed it to; on 0,1
-    /// the row takes its nearest live successor.
+    /// A row the repair gives a deleter gives up its pointers: on 0,0 the scene an
+    /// unpublished local scene had superseded but that still holds the parcel goes,
+    /// leaving it empty; on 0,1 the newest scene keeps the parcel.
     #[tokio::test]
-    async fn the_deleter_repair_releases_rows_an_unpublished_scene_still_deletes() {
+    async fn the_deleter_repair_clears_the_pointers_of_rows_it_supersedes() {
         let Some((admin, pool, name)) = repair_database().await else {
             return;
         };
@@ -491,22 +426,18 @@ mod tests {
             ("bafypeer", 1_000.0, "0,0"),
             ("bafylocal", 2_000.0, "0,0"),
             ("bafymid", 1_500.0, "0,1"),
-            ("bafylocal2", 1_800.0, "0,1"),
             ("bafynewest", 3_000.0, "0,1"),
         ] {
             insert_scene(&pool, id, ts, pointer).await;
         }
         for sql in [
             "INSERT INTO content.local_entities (entity_id, signer, tombstoned_at)
-             VALUES ('bafylocal', '0xabc', timezone('UTC', now())),
-                    ('bafylocal2', '0xabc', timezone('UTC', now()))",
+             VALUES ('bafylocal', '0xabc', timezone('UTC', now()))",
             "UPDATE content.deployments o SET deleter_deployment = d.id
-             FROM (VALUES ('bafypeer', 'bafylocal'), ('bafymid', 'bafylocal2'),
-                          ('bafylocal2', 'bafynewest')) AS v(older, newer)
-             JOIN content.deployments d ON d.entity_id = v.newer
-             WHERE o.entity_id = v.older",
+             FROM content.deployments d
+             WHERE o.entity_id = 'bafyold' AND d.entity_id = 'bafypeer'",
             "INSERT INTO content.active_pointers (pointer, entity_id, entity_type)
-             VALUES ('0,0', 'bafyold', 'scene'), ('0,1', 'bafynewest', 'scene')",
+             VALUES ('0,0', 'bafypeer', 'scene'), ('0,1', 'bafynewest', 'scene')",
         ] {
             sqlx::query(sql).execute(&pool).await.unwrap();
         }
@@ -519,11 +450,10 @@ mod tests {
             deleters(&pool).await,
             vec![
                 ("bafylocal".into(), None),
-                ("bafylocal2".into(), Some("bafynewest".into())),
                 ("bafymid".into(), Some("bafynewest".into())),
                 ("bafynewest".into(), None),
                 ("bafyold".into(), Some("bafypeer".into())),
-                ("bafypeer".into(), None),
+                ("bafypeer".into(), Some("bafylocal".into())),
             ]
         );
         let active: Vec<(String, String)> = sqlx::query_as(
@@ -532,13 +462,7 @@ mod tests {
         .fetch_all(&pool)
         .await
         .unwrap();
-        assert_eq!(
-            active,
-            vec![
-                ("0,0".into(), "bafypeer".into()),
-                ("0,1".into(), "bafynewest".into()),
-            ]
-        );
+        assert_eq!(active, vec![("0,1".into(), "bafynewest".into())]);
 
         drop_repair_database(admin, pool, &name).await;
     }

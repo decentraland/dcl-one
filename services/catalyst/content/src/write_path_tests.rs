@@ -589,23 +589,37 @@ fn land_token(x: i32, y: i32) -> String {
 
 /// Folds `owner`'s LAND at `parcels` into the index and publishes the fold.
 async fn index_land(pool: &PgPool, owner: &str, parcels: &[(i32, i32)]) {
+    let grants: Vec<_> = parcels
+        .iter()
+        .map(|&p| (crate::land_authz::KIND_TRANSFER, p, owner))
+        .collect();
+    index_land_events(pool, &grants).await;
+}
+
+/// Folds LAND registry events `(kind, parcel, address)` into the index and
+/// publishes the fold: a transfer's address is the new owner, an update
+/// operator's the operator.
+async fn index_land_events(pool: &PgPool, grants: &[(&'static str, (i32, i32), &str)]) {
     let settings = crate::land_authz::Settings::for_tests();
     let start = settings.start_block as i64;
     indexer::ensure_cursor(pool, &settings).await.unwrap();
-    let events: Vec<AuthzEvent> = parcels
+    let events: Vec<AuthzEvent> = grants
         .iter()
         .enumerate()
-        .map(|(i, (x, y))| AuthzEvent {
-            block_number: start + 10,
-            log_index: i as i32,
-            block_time: (start + 10) * 12,
-            token_address: crate::land_authz::LAND_REGISTRY_MAINNET.to_string(),
-            kind: crate::land_authz::KIND_TRANSFER,
-            token_id: Some(land_token(*x, *y)),
-            estate_id: None,
-            account: Some(owner.to_string()),
-            operator: None,
-            approved: None,
+        .map(|(i, &(kind, (x, y), address))| {
+            let transfer = kind == crate::land_authz::KIND_TRANSFER;
+            AuthzEvent {
+                block_number: start + 10,
+                log_index: i as i32,
+                block_time: (start + 10) * 12,
+                token_address: crate::land_authz::LAND_REGISTRY_MAINNET.to_string(),
+                kind,
+                token_id: Some(land_token(x, y)),
+                estate_id: None,
+                account: transfer.then(|| address.to_string()),
+                operator: (!transfer).then(|| address.to_string()),
+                approved: None,
+            }
         })
         .collect();
     let mut conn = pool.acquire().await.unwrap();
@@ -831,6 +845,121 @@ async fn a_signed_scene_deploys_serves_and_unpublishes_end_to_end() {
     .await;
     assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
     assert_eq!(active_by_pointers(&router, &[&parcel]).await[0]["id"], id4);
+
+    drop((router, deployer, state));
+    let _ = std::fs::remove_dir_all(&tmp);
+    db.drop_now().await;
+}
+
+/// A scene on two parcels goes only for a signer with LAND rights on both:
+/// the holder of one of them is refused and the scene stays; the holder of
+/// both takes it down, and both parcels are left empty although an older
+/// scene occupied one of them before.
+#[tokio::test]
+async fn unpublishing_a_scene_needs_rights_on_every_parcel_and_empties_them() {
+    require_test_db!(Some(db) = OwnDb::create("contentu").await);
+    let (owner, neighbour) = (key(OWNER_KEY), key(STRANGER_KEY));
+    let (x, y) = (41, -13);
+    let (a, b) = (format!("{x},{y}"), format!("{},{y}", x + 1));
+    // The owner holds (x, y) and operates (x + 1, y), which the neighbour owns.
+    index_land_events(
+        &db.pool,
+        &[
+            (crate::land_authz::KIND_TRANSFER, (x, y), &address(&owner)),
+            (
+                crate::land_authz::KIND_TRANSFER,
+                (x + 1, y),
+                &address(&neighbour),
+            ),
+            (
+                crate::land_authz::KIND_UPDATE_OPERATOR,
+                (x + 1, y),
+                &address(&owner),
+            ),
+        ],
+    )
+    .await;
+
+    let tmp = std::env::temp_dir().join(format!(
+        "catalyst-write-path-{}-{}",
+        std::process::id(),
+        uuid::Uuid::new_v4().simple()
+    ));
+    let storage = Arc::new(Storage::from_config(&tmp).await.unwrap());
+    let state = Arc::new(ContentState::new(
+        db.pool.clone(),
+        Settings::for_tests(),
+        storage.clone(),
+    ));
+    state.sync.set_state(SyncState::Syncing);
+    let land = Arc::new(LandAuthzState::new(
+        db.pool.clone(),
+        Outbound::for_tests(),
+        crate::land_authz::Settings::for_tests(),
+        None,
+    ));
+    attach(&state, true, Some(land), None);
+    let router = build_router(state.clone());
+    let deployer = state.deployer().unwrap().clone();
+
+    // The neighbour's older scene on (x + 1, y), then the owner's over both.
+    let (old_bytes, old_id, old_chain) = signed_entity(&neighbour, scene(&[&b], &[])).await;
+    let (status, _, body) = call(
+        &router,
+        deploy_request("/entities", &old_id, &old_chain, &[(&old_id, &old_bytes)]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    deployer.clear_rate_limits();
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    let (bytes, entity_id, chain) = signed_entity(&owner, scene(&[&a, &b], &[])).await;
+    let (status, _, body) = call(
+        &router,
+        deploy_request("/entities", &entity_id, &chain, &[(&entity_id, &bytes)]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    let active = active_by_pointers(&router, &[&a, &b]).await;
+    assert_eq!(active.as_array().unwrap().len(), 1, "{active}");
+    assert_eq!(active[0]["id"], entity_id);
+
+    // The neighbour holds (x + 1, y) only: refused on either coordinate.
+    for coord in [&a, &b] {
+        let path = format!("/content/scenes/{coord}");
+        let (status, _, body) = call(&router, signed_delete(&neighbour, &path).await).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "{}", json_of(&body));
+        assert_eq!(
+            json_of(&body),
+            json!({"error": format!("The provided Eth Address does not have access to the following parcel: ({x},{y})")})
+        );
+    }
+    let active = active_by_pointers(&router, &[&a, &b]).await;
+    assert_eq!(active.as_array().unwrap().len(), 1, "{active}");
+    assert_eq!(active[0]["id"], entity_id, "the scene is still active");
+
+    // The owner holds both: the scene goes and neither parcel has a scene.
+    let path = format!("/content/scenes/{b}");
+    let (status, _, body) = call(&router, signed_delete(&owner, &path).await).await;
+    assert_eq!(status, StatusCode::OK, "{}", json_of(&body));
+    let mut parcels = vec![a.clone(), b.clone()];
+    parcels.sort();
+    assert_eq!(
+        json_of(&body),
+        json!({"entityId": entity_id, "unpublished": true, "parcels": parcels})
+    );
+    assert_eq!(active_by_pointers(&router, &[&a, &b]).await, json!([]));
+    let (_, _, audit) = call(
+        &router,
+        Request::get(format!("/audit/scene/{old_id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        json_of(&audit)["localProvenance"]["status"],
+        "superseded",
+        "the older scene is not restored"
+    );
 
     drop((router, deployer, state));
     let _ = std::fs::remove_dir_all(&tmp);

@@ -1069,11 +1069,11 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
 
 /// A scene this node unpublished (`DELETE /scenes/{coord}`: tombstoned, its
 /// deployment row kept with `deleter_deployment` NULL, the older scene it had
-/// overwritten restored) is not history a peer replays: `/pointer-changes`
-/// and the snapshot windows leave it out, and the unpublish outdates the
-/// windows it touched, so a fresh peer ends with this node's active set (the
-/// restored scene on the parcel, the unpublished one nowhere). Before the
-/// 2026-09-25 review the peer served the unpublished scene as active.
+/// overwritten left superseded and the parcel empty) is not history a peer
+/// replays: `/pointer-changes` and the snapshot windows leave it and the
+/// scenes it superseded out, and the unpublish outdates the windows it
+/// touched, so a fresh peer ends with this node's active set (the parcel
+/// empty, neither scene anywhere).
 #[tokio::test]
 async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
     let _ = tracing_subscriber::fmt()
@@ -1128,33 +1128,47 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         "the old scene is overwritten, the newer one is in today's remainder"
     );
 
-    // The owner unpublishes 7,7: A's parcel falls back to the old scene.
-    let outcome = catalyst::content::land_publish::tombstone_and_repoint(&db_a.pool, "7,7")
-        .await
-        .unwrap();
-    assert_eq!(outcome.entity_id, new_local);
-    assert_eq!(
-        outcome.repointed,
-        vec![("7,7".to_string(), Some(old_local.clone()))]
-    );
-    let a_pointer: String =
-        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = '7,7'")
-            .fetch_one(&db_a.pool)
+    // The owner unpublishes 7,7: A's parcel is left empty.
+    let outcome =
+        catalyst::content::land_publish::unpublish_local_scene(&db_a.pool, "7,7", &new_local)
             .await
             .unwrap();
-    assert_eq!(a_pointer, old_local);
+    assert_eq!(outcome.entity_id, new_local);
+    assert_eq!(outcome.parcels, vec!["7,7".to_string()]);
+    let a_pointer: Option<String> =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = '7,7'")
+            .fetch_optional(&db_a.pool)
+            .await
+            .unwrap();
+    assert_eq!(a_pointer, None);
 
-    // The unpublish outdates the windows it touched; the next pass holds the old scene alone.
-    let (after, summary) = generator
+    // A scene on 8,8 B waits for: once it lands, B has replayed A.
+    let marker_asset = b"a neighbouring scene".to_vec();
+    let marker_hash = catalyst::auth::hash_bytes_v1(&marker_asset);
+    let (marker, marker_bytes) = entity_file(
+        "scene",
+        &["8,8"],
+        now - 30_000,
+        &[("bin/game.js", &marker_hash)],
+    );
+    let chain = serde_json::to_value(auth::signed_chain(&marker).await).unwrap();
+    deployer
+        .deploy_entity(
+            vec![Bytes::from(marker_bytes), Bytes::from(marker_asset)],
+            &marker,
+            chain,
+            "LOCAL",
+        )
+        .await
+        .unwrap_or_else(|e| panic!("local deploy on A: {:?}", e.errors()));
+
+    // The next pass holds neither scene of 7,7.
+    let (after, _) = generator
         .generate(chrono::Utc::now().timestamp_millis())
         .await
         .unwrap();
-    assert!(summary.generated >= 1, "{summary:?}");
     let in_files: u64 = after.iter().map(|r| r.number_of_entities).sum();
-    assert_eq!(
-        in_files, 1,
-        "the restored old scene's window was outdated by the unpublish and regenerated"
-    );
+    assert_eq!(in_files, 0, "the old scene stays superseded");
     let (url_a, _, serve_a) = serve_node(node_a.clone()).await;
     let changes: Value = reqwest::Client::new()
         .get(format!("{url_a}/content/pointer-changes"))
@@ -1171,7 +1185,9 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         .map(|d| d["entityId"].as_str().unwrap())
         .collect();
     assert!(
-        listed.contains(&old_local.as_str()) && !listed.contains(&new_local.as_str()),
+        listed.contains(&marker.as_str())
+            && !listed.contains(&old_local.as_str())
+            && !listed.contains(&new_local.as_str()),
         "{listed:?}"
     );
 
@@ -1192,9 +1208,9 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
     })
     .await;
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    let b_pointer = loop {
+    let b_marker = loop {
         let p: Option<String> = sqlx::query_scalar(
-            "SELECT entity_id FROM content.active_pointers WHERE pointer = '7,7'",
+            "SELECT entity_id FROM content.active_pointers WHERE pointer = '8,8'",
         )
         .fetch_optional(&db_b.pool)
         .await
@@ -1204,18 +1220,20 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         }
         tokio::time::sleep(Duration::from_millis(200)).await;
     };
-    assert_eq!(
-        b_pointer.as_deref(),
-        Some(old_local.as_str()),
-        "B serves A's active scene on 7,7"
-    );
-    let unpublished_on_b: i64 =
-        sqlx::query_scalar("SELECT count(*) FROM content.deployments WHERE entity_id = $1")
-            .bind(&new_local)
+    assert_eq!(b_marker.as_deref(), Some(marker.as_str()), "B replayed A");
+    let b_pointer: Option<String> =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer = '7,7'")
+            .fetch_optional(&db_b.pool)
+            .await
+            .unwrap();
+    assert_eq!(b_pointer, None, "B leaves 7,7 empty, as A does");
+    let on_b: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM content.deployments WHERE entity_id = ANY($1)")
+            .bind(vec![new_local.clone(), old_local.clone()])
             .fetch_one(&db_b.pool)
             .await
             .unwrap();
-    assert_eq!(unpublished_on_b, 0, "the unpublished scene never reached B");
+    assert_eq!(on_b, 0, "neither scene of 7,7 reached B");
 
     jobs_b.shutdown(Duration::from_secs(10)).await;
     serve_a.abort();
