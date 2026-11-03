@@ -5,8 +5,8 @@
 //! and this one at `/v1/stream`).
 //!
 //! The handshake is the RPC socket's signed fetch, signed for `get` and
-//! `/v1/stream` (the served path, or an `x-original-path` ending in it, too;
-//! never `/`, so a chain captured for one socket cannot open the other):
+//! `/v1/stream`, independently of the connection URL or proxy headers; a
+//! signature for the RPC root cannot open this stream:
 //! either as `x-identity-*` headers of the upgrade request, verified before
 //! the upgrade (`401` refused, `503` when the verification could not run), or
 //! as the first frame, with `auth_in_progress` for any frame sent while it is

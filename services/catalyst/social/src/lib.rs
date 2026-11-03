@@ -120,7 +120,7 @@ pub fn social_api_gateway_with_limit(router: Router, max_body_bytes: usize) -> R
 /// `notifications.<domain>/x` to `/notifications/x` and sets
 /// `x-original-path` so the signed-fetch signature still verifies. The
 /// social RPC socket is `/social-rpc` (the old `rpc-social-service-ea.`
-/// vhost root; the handshake accepts a signature over `/` too) and its admin
+/// vhost root; its handshake signature binds `/`) and its admin
 /// routes `/admin/social/*`. Every router is wrapped in the
 /// [`writes::guard`] with the process's `SOCIAL_WRITES_ENABLED`.
 pub fn router(states: &States, writes_enabled: bool) -> Router {

@@ -24,6 +24,11 @@
           "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
           "test": "social_api_methods_match_the_executed_source_server",
           "scope": "Replays current-source middleware and real listener captures for preflight/reflection,404/405/501,HEAD and parser-rejected methods."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -43,6 +48,11 @@
           "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
           "test": "the_probes_answer_under_the_gateway_prefix_only",
           "scope": "Local stable-state health responses, MIME and prefix mounting; seeded production captures are supplementary evidence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -62,6 +72,11 @@
           "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
           "test": "the_probes_answer_under_the_gateway_prefix_only",
           "scope": "Local stable-state health responses, MIME and prefix mounting; seeded production captures are supplementary evidence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -81,6 +96,11 @@
           "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
           "test": "the_probes_answer_under_the_gateway_prefix_only",
           "scope": "Local stable-state health responses, MIME and prefix mounting; seeded production captures are supplementary evidence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -109,6 +129,11 @@
           "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
           "test": "social_api_methods_match_the_executed_source_server",
           "scope": "Replays current-source middleware and real listener captures for preflight/reflection,404/405/501,HEAD and parser-rejected methods."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -143,6 +168,11 @@
           "path": "services/catalyst/social/src/rpc/limits.rs",
           "test": "concurrent_replicas_share_one_atomic_pair_budget",
           "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -196,6 +226,11 @@
           "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
           "test": "real_mutations_publish_all_twelve_source_community_subtypes",
           "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -204,7 +239,7 @@
     {
       "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress",
       "owner": "community-http",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
       "evidence": [
         {
@@ -239,9 +274,16 @@
           "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
           "test": "real_mutations_publish_all_twelve_source_community_subtypes",
           "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -267,6 +309,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -295,6 +342,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -323,6 +375,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -351,6 +408,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -359,7 +421,7 @@
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
@@ -380,9 +442,16 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -409,6 +478,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -438,6 +512,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -467,6 +546,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -501,6 +585,11 @@
           "path": "services/catalyst/social/src/rpc/limits.rs",
           "test": "concurrent_replicas_share_one_atomic_pair_budget",
           "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -520,6 +609,11 @@
           "path": "services/catalyst/social/src/communities/tests/mute_body.rs",
           "test": "the_mute_body_is_read_after_the_signature_and_as_upstream_reads_it",
           "scope": "Local body/error/write/filter regression."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -528,7 +622,7 @@
     {
       "id": "api_http:DELETE:/v1/private-voice-chats/:callId",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 9 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
@@ -549,9 +643,16 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -573,6 +674,11 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -606,6 +712,11 @@
           "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
           "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
           "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [
@@ -632,6 +743,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -676,6 +792,11 @@
           "path": "services/catalyst/social/src/communities/profiles.rs",
           "test": "registry_requested_key_case_matches_executed_source_adapter",
           "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -700,6 +821,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -724,6 +850,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -748,6 +879,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -772,6 +908,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -800,6 +941,11 @@
           "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -834,6 +980,11 @@
           "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
           "test": "active_handler_preserves_empty_error_and_all_settled_source_contracts",
           "scope": "Eight executed source cases and real-schema faults cover active empty/error/allSettled/image behavior and v1/v2 core detail SQL message-only 500. Other provider failures remain separately scoped."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -858,6 +1009,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -886,6 +1042,11 @@
           "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -919,6 +1080,11 @@
           "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
           "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
           "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -948,6 +1114,11 @@
           "path": "services/catalyst/explore/src/api/tests.rs",
           "test": "dapps_flags_refresh_preserves_the_audience_and_last_good_document",
           "scope": "Bounded fake HTTP provider, Referer audience, valid snapshot persistence, last-good state after malformed/failing response and process reload."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -967,6 +1138,11 @@
           "path": "services/catalyst/social/src/communities/tests/mute_body.rs",
           "test": "the_mute_body_is_read_after_the_signature_and_as_upstream_reads_it",
           "scope": "Local body/error/write/filter regression."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -991,6 +1167,11 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1020,6 +1201,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1060,6 +1246,11 @@
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
           "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
           "scope": "Five executed source handlers with real PostgreSQL errors, replayed through isolated candidate SQLx HTTP routes; native client connection-failure wording remains unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1084,6 +1275,11 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1108,6 +1304,11 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1132,6 +1333,11 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1165,6 +1371,11 @@
           "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
           "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
           "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [
@@ -1201,6 +1412,11 @@
           "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
           "test": "active_handler_preserves_empty_error_and_all_settled_source_contracts",
           "scope": "Eight executed source cases and real-schema faults cover active empty/error/allSettled/image behavior and v1/v2 core detail SQL message-only 500. Other provider failures remain separately scoped."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1225,6 +1441,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1249,6 +1470,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1273,6 +1499,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1301,6 +1532,11 @@
           "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1325,6 +1561,11 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1349,6 +1590,11 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1382,6 +1628,11 @@
           "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
           "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
           "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1406,6 +1657,11 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1444,6 +1700,11 @@
           "path": "services/catalyst/explore/src/api/tests.rs",
           "test": "dapps_flags_refresh_preserves_the_audience_and_last_good_document",
           "scope": "Bounded fake HTTP provider, Referer audience, valid snapshot persistence, last-good state after malformed/failing response and process reload."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1487,6 +1748,11 @@
           "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
           "test": "real_mutations_publish_all_twelve_source_community_subtypes",
           "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1495,7 +1761,7 @@
     {
       "id": "api_http:PATCH:/v1/communities/:id/requests/:requestId",
       "owner": "community-http",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
       "evidence": [
         {
@@ -1534,15 +1800,22 @@
           "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
           "test": "real_mutations_publish_all_twelve_source_community_subtypes",
           "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:PATCH:/v1/community-voice-chats/:communityId/speakers/:address",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 6 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
@@ -1563,9 +1836,16 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -1602,6 +1882,11 @@
           "path": "services/catalyst/social/src/rpc/tests/notification_source_cases.rs",
           "test": "friendship_sns_events_and_retries_match_executed_source",
           "scope": "Four actual source notification creator/retrier captures are compared with real SQL mutations and the official SNS SDK against a local stub, including request/accept payloads, success after two failures and exhausted failures. Dynamic action UUID/time are asserted against committed state/clock bounds then normalized for comparison; no real topic or deployed consumer was contacted."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1610,7 +1895,7 @@
     {
       "id": "api_http:PATCH:/v1/private-voice-chats/:callId",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 20 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
@@ -1631,9 +1916,21 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
+          "test": "incomplete_private_credentials_match_source_errors_and_committed_events",
+          "scope": "Eight actual source PostgreSQL/domain/media-adapter/RPC/HTTP cases replay complete, missing caller, missing callee and missing both grants. Pending state and ACCEPTED event ordering survive source-shaped failures. Analytics captured by the source remains a separate open side-effect gap."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -1671,6 +1968,11 @@
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
           "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
           "scope": "Five executed source handlers with real PostgreSQL errors, replayed through isolated candidate SQLx HTTP routes; native client connection-failure wording remains unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1695,6 +1997,11 @@
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
           "test": "every_route_requires_a_signed_fetch_over_its_own_path",
           "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1729,6 +2036,11 @@
           "path": "services/catalyst/social/src/rpc/limits.rs",
           "test": "concurrent_replicas_share_one_atomic_pair_budget",
           "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1787,6 +2099,11 @@
           "path": "services/catalyst/social/src/communities/profiles.rs",
           "test": "registry_requested_key_case_matches_executed_source_adapter",
           "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [
@@ -1797,7 +2114,7 @@
     {
       "id": "api_http:POST:/v1/communities/:id/members",
       "owner": "community-http",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
       "evidence": [
         {
@@ -1817,15 +2134,22 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
       "owner": "community-http",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
       "evidence": [
         {
@@ -1860,9 +2184,16 @@
           "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
           "test": "real_mutations_publish_all_twelve_source_community_subtypes",
           "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -1888,6 +2219,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1936,6 +2272,11 @@
           "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
           "test": "create_post_resolves_strict_author_after_insert_and_before_broadcast",
           "scope": "Four actual source handler/component/registry cases: regular, historical alias, missing and invalid profile. Candidate status/DTO, persisted row and absence of events on failure are compared."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1964,6 +2305,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -1972,7 +2318,7 @@
     {
       "id": "api_http:POST:/v1/communities/:id/requests",
       "owner": "community-http",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
       "evidence": [
         {
@@ -2011,15 +2357,22 @@
           "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
           "test": "real_mutations_publish_all_twelve_source_community_subtypes",
           "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/community-voice-chats",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
@@ -2055,15 +2408,22 @@
           "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
           "test": "real_mutations_publish_all_twelve_source_community_subtypes",
           "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:POST:/v1/community-voice-chats/:communityId/participants",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
@@ -2084,9 +2444,16 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -2113,6 +2480,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -2152,6 +2524,11 @@
           "path": "services/catalyst/social/src/rpc/tests/notification_source_cases.rs",
           "test": "friendship_sns_events_and_retries_match_executed_source",
           "scope": "Four actual source notification creator/retrier captures are compared with real SQL mutations and the official SNS SDK against a local stub, including request/accept payloads, success after two failures and exhausted failures. Dynamic action UUID/time are asserted against committed state/clock bounds then normalized for comparison; no real topic or deployed consumer was contacted."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -2180,6 +2557,11 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -2199,6 +2581,11 @@
           "path": "services/catalyst/social/src/communities/tests/mute_body.rs",
           "test": "the_mute_body_is_read_after_the_signature_and_as_upstream_reads_it",
           "scope": "Local body/error/write/filter regression."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -2207,7 +2594,7 @@
     {
       "id": "api_http:POST:/v1/private-voice-chats",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
@@ -2228,9 +2615,16 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -2268,6 +2662,11 @@
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
           "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
           "scope": "Five executed source handlers with real PostgreSQL errors, replayed through isolated candidate SQLx HTTP routes; native client connection-failure wording remains unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -2328,6 +2727,11 @@
           "path": "services/catalyst/social/src/communities/referral.rs",
           "test": "referral_numeric_configuration_matches_executed_source_pg_and_login_days",
           "scope": "Actual source config provider, referral component, SQL adapter, translating PG wrapper and create/error handlers run on PostgreSQL TEMP relations. Local SQLx replay compares status/body and persisted rows plus five distinct-day login invocations for each MIN configuration. NaN is rejected at startup; startup diagnostic formatting is outside the HTTP contract."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [
@@ -2393,10 +2797,16 @@
           "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
           "test": "real_mutations_publish_all_twelve_source_community_subtypes",
           "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [
-        "Provider transport bounds differ: the candidate caps response bodies at 4 MiB and applies 600s as a total request timeout, while the pinned Node SDK applies its abort timer until headers and uses runtime-specific body inactivity handling. Missing API credentials fail lazily rather than at the source component bootstrap; these startup/provider boundaries remain differences."
+        "Provider transport bounds differ: the candidate caps response bodies at 4 MiB and applies 600s as a total request timeout, while the pinned Node SDK applies its abort timer until headers and uses runtime-specific body inactivity handling. Missing API credentials fail lazily rather than at the source component bootstrap; these startup/provider boundaries remain differences.",
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
@@ -2424,6 +2834,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
           "scope": "76 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/body_limit.rs",
+          "test": "real_http_body_precedence_and_all_body_readers_match_configured_source",
+          "scope": "Common social-api boundary replay: 39 actual source HTTP cases at cap64 compare complete status/body/application headers through real Hyper, outer drain and trailing-slash normalization. Covers 21 source body readers, unknown/method/auth precedence and header-only declared rejection; it does not execute every operation body."
         }
       ],
       "gaps": [],
@@ -2459,6 +2874,16 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2494,6 +2919,16 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2529,6 +2964,16 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2564,6 +3009,16 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2599,6 +3054,16 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2634,6 +3099,16 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2679,6 +3154,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2724,6 +3209,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2769,6 +3264,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2829,6 +3334,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2874,6 +3389,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2919,6 +3444,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -2927,7 +3462,7 @@
     {
       "id": "rpc_unary:RPC:acceptPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards.",
       "evidence": [
         {
@@ -2953,9 +3488,26 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
+          "test": "incomplete_private_credentials_match_source_errors_and_committed_events",
+          "scope": "Eight actual source PostgreSQL/domain/media-adapter/RPC/HTTP cases replay complete, missing caller, missing callee and missing both grants. Pending state and ACCEPTED event ordering survive source-shaped failures. Analytics captured by the source remains a separate open side-effect gap."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Verify raw/noncanonical private call-ID branches beyond the recorded cases."
     },
     {
@@ -3012,6 +3564,16 @@
           "path": "services/catalyst/social/src/communities/profiles.rs",
           "test": "registry_requested_key_case_matches_executed_source_adapter",
           "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3041,6 +3603,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3049,7 +3621,7 @@
     {
       "id": "rpc_unary:RPC:endCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
       "evidence": [
         {
@@ -3070,15 +3642,27 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:endPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards.",
       "evidence": [
         {
@@ -3104,9 +3688,21 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Verify raw/noncanonical private call-ID branches beyond the recorded cases."
     },
     {
@@ -3153,6 +3749,16 @@
           "path": "services/catalyst/social/src/communities/profiles.rs",
           "test": "registry_requested_key_case_matches_executed_source_adapter",
           "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3182,6 +3788,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3231,6 +3847,16 @@
           "path": "services/catalyst/social/src/communities/profiles.rs",
           "test": "registry_requested_key_case_matches_executed_source_adapter",
           "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3265,6 +3891,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3294,6 +3930,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3343,6 +3989,16 @@
           "path": "services/catalyst/social/src/communities/profiles.rs",
           "test": "registry_requested_key_case_matches_executed_source_adapter",
           "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3387,6 +4043,16 @@
           "path": "services/catalyst/social/src/communities/profiles.rs",
           "test": "registry_requested_key_case_matches_executed_source_adapter",
           "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3421,6 +4087,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3465,6 +4141,16 @@
           "path": "services/catalyst/social/src/communities/profiles.rs",
           "test": "registry_requested_key_case_matches_executed_source_adapter",
           "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3499,6 +4185,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3507,7 +4203,7 @@
     {
       "id": "rpc_unary:RPC:joinCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
       "evidence": [
         {
@@ -3528,9 +4224,21 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -3557,6 +4265,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3565,7 +4283,7 @@
     {
       "id": "rpc_unary:RPC:muteSpeakerFromCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source handler/domain branches; 8 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
       "evidence": [
         {
@@ -3586,9 +4304,21 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -3615,6 +4345,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3623,7 +4363,7 @@
     {
       "id": "rpc_unary:RPC:rejectPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards.",
       "evidence": [
         {
@@ -3649,9 +4389,21 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Verify raw/noncanonical private call-ID branches beyond the recorded cases."
     },
     {
@@ -3678,6 +4430,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3707,6 +4469,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3715,7 +4487,7 @@
     {
       "id": "rpc_unary:RPC:startCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
       "evidence": [
         {
@@ -3751,15 +4523,27 @@
           "path": "services/catalyst/social/src/communities/tests/sns_parity.rs",
           "test": "real_mutations_publish_all_twelve_source_community_subtypes",
           "scope": "Real SQL-backed HTTP/RPC mutations emit all twelve source subtypes through the existing official publisher and a local stub. HTTP broadcasts run in the background; voice START awaits them. No live AWS request is sent."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:startPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
       "evidence": [
         {
@@ -3780,9 +4564,21 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -3839,6 +4635,16 @@
           "path": "services/catalyst/social/src/communities/profiles.rs",
           "test": "registry_requested_key_case_matches_executed_source_adapter",
           "scope": "Eight actual source registry adapter/cache-key operations replay through two candidate readers. Cache keys and Set deduplication are case-sensitive. The source profile-fetch dependency supplies one normalized document per pointer; deployed registry case handling and order are outside this component scope."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3888,6 +4694,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -3922,6 +4738,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -4083,6 +4909,16 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "one_accepted_stalled_response_still_expires_without_a_retry_head",
           "scope": "A real signed Social socket accepts one 8 MiB response while its client stops reading, with no later response/retry head. The existing timer retires the connection at its configured eight-second idle boundary through a passive reader observer. Native uWS timer-wheel and kernel scheduling remain unmeasured."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -4107,6 +4943,16 @@
         {
           "path": "services/catalyst/shared/src/rpc/handshake.rs",
           "scope": "Executed-source timestamp decisions and cryptographically signed alternate literal regressions; native timer scheduling and kernel-buffer behavior remain outside this proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
+          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/startup.rs",
+          "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
+          "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
       "gaps": [],
@@ -6298,7 +7144,7 @@
         "api_http:PUT:/v1/communities/:id",
         "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address"
       ],
-      "description": "The pinned HTTP server applies HTTP_MAX_REQUEST_BODY_BYTES and rejects oversized declared bodies with413 before authentication; the current gateway still uses handler-level hardcoded limits. Declared/chunked body overflow, configured limits, response/CORS and connection-close behavior need a full boundary comparison and fix."
+      "description": "Configured HTTP_MAX_REQUEST_BODY_BYTES now uses source prefix parsing and integer 1..16MiB admission. Declared oversize returns 413 before routing/auth; deferred handler reads preserve schema400 versus raw/multipart500 and independent multipart1MiB/thumbnail1..500KiB limits. Eighteen boot and 44 real HTTP cases replay with the actual outer drain and path normalizer. Unread chunked bodies still use the shared drain upload budget; source close timing for fast versus delayed uploads remains under comparison. Raw parser/framing equivalence and concurrent resource use remain unverified."
     },
     {
       "id": "shared-social-profile-cache",
@@ -6380,7 +7226,55 @@
       "description": "Pinned decentraland/comms-gatekeeper@be6a4b97a2189157884503485892ff46d0ac68da voice.ts catches single/bulk status database errors and returns idle status objects. Candidate community status currently participates in the main SQL statement, so a status-only SQL fault can abort that request instead of degrading. Normal liveness/count proofs and core community SQL error tests do not close this separate dependency-failure boundary."
     },
     {
-      "id": "social-websocket-signature-paths",
+      "id": "social-client-artifact-cutover",
+      "status": "unverified",
+      "operations": [
+        "json_stream:SUBSCRIBE:block_updates",
+        "json_stream:SUBSCRIBE:community_member_connectivity_updates",
+        "json_stream:SUBSCRIBE:community_voice_chat_updates",
+        "json_stream:SUBSCRIBE:friend_connectivity_updates",
+        "json_stream:SUBSCRIBE:friendship_updates",
+        "json_stream:SUBSCRIBE:private_voice_chat_updates",
+        "rpc_stream:RPC:subscribeToBlockUpdates",
+        "rpc_stream:RPC:subscribeToCommunityMemberConnectivityUpdates",
+        "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
+        "rpc_stream:RPC:subscribeToFriendConnectivityUpdates",
+        "rpc_stream:RPC:subscribeToFriendshipUpdates",
+        "rpc_stream:RPC:subscribeToPrivateVoiceChatUpdates",
+        "rpc_unary:RPC:acceptPrivateVoiceChat",
+        "rpc_unary:RPC:blockUser",
+        "rpc_unary:RPC:demoteSpeakerInCommunityVoiceChat",
+        "rpc_unary:RPC:endCommunityVoiceChat",
+        "rpc_unary:RPC:endPrivateVoiceChat",
+        "rpc_unary:RPC:getBlockedUsers",
+        "rpc_unary:RPC:getBlockingStatus",
+        "rpc_unary:RPC:getFriends",
+        "rpc_unary:RPC:getFriendshipStatus",
+        "rpc_unary:RPC:getIncomingPrivateVoiceChatRequest",
+        "rpc_unary:RPC:getMutualFriends",
+        "rpc_unary:RPC:getPendingFriendshipRequests",
+        "rpc_unary:RPC:getPrivateMessagesSettings",
+        "rpc_unary:RPC:getSentFriendshipRequests",
+        "rpc_unary:RPC:getSocialSettings",
+        "rpc_unary:RPC:joinCommunityVoiceChat",
+        "rpc_unary:RPC:kickPlayerFromCommunityVoiceChat",
+        "rpc_unary:RPC:muteSpeakerFromCommunityVoiceChat",
+        "rpc_unary:RPC:promoteSpeakerInCommunityVoiceChat",
+        "rpc_unary:RPC:rejectPrivateVoiceChat",
+        "rpc_unary:RPC:rejectSpeakRequestInCommunityVoiceChat",
+        "rpc_unary:RPC:requestToSpeakInCommunityVoiceChat",
+        "rpc_unary:RPC:startCommunityVoiceChat",
+        "rpc_unary:RPC:startPrivateVoiceChat",
+        "rpc_unary:RPC:unblockUser",
+        "rpc_unary:RPC:upsertFriendship",
+        "rpc_unary:RPC:upsertSocialSettings",
+        "websocket:UPGRADE:/",
+        "websocket:UPGRADE:/v1/stream"
+      ],
+      "description": "Signed Social paths now match 81 source verifier decisions and real socket replays. The Bevy client preserves its connection URL while signing /; a native cryptographic unit covers standalone, mounted and query URLs. Deployed web artifacts must contain that update before strict server cutover. Cached/running clients, full Explorer, wasm and rendered /play behavior have not been exercised."
+    },
+    {
+      "id": "social-initial-subscription-readiness",
       "status": "known_gap",
       "operations": [
         "json_stream:SUBSCRIBE:block_updates",
@@ -6425,7 +7319,48 @@
         "websocket:UPGRADE:/",
         "websocket:UPGRADE:/v1/stream"
       ],
-      "description": "Pinned Social verifies RPC signatures for / and JSON stream signatures for /v1/stream. Candidate Social currently also accepts mounted aliases and x-original-path variants. Exact source authentication-path captures and Social-only alignment are under implementation. The existing /play consumer signs its connect URL path, so its local mounted configuration also needs the source signing path while preserving its connection URL; standalone source-root connections already match."
+      "description": "The Social subscription is registered and retained before its first readiness latch observes the existing broker fence. Both valid upgrades are refused before auth/slots until that latch; later outages retain transient at-most-once policy. Six actual source lifecycle stages and two candidate tests cover order and local-mode admission. Candidate startup responds empty HTTP 503 while the standalone source listener is not yet open; this operational difference is explicit and has no user acceptance verdict."
+    },
+    {
+      "id": "community-fanout-whole-membership-failure",
+      "status": "known_gap",
+      "operations": [
+        "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
+        "json_stream:SUBSCRIBE:community_voice_chat_updates",
+        "rpc_unary:RPC:startCommunityVoiceChat",
+        "rpc_unary:RPC:endCommunityVoiceChat",
+        "api_http:POST:/v1/community-voice-chats",
+        "api_http:DELETE:/v1/community-voice-chats/:communityId"
+      ],
+      "description": "Fresh review FRESH-CODE-001: candidate delivers each 256-address page before later membership reads finish. Pinned logic/updates.ts379-426 gathers the entire audience first: any late-page failure aborts Members delivery or clears every isMember annotation for All STARTED. Candidate can partially deliver or preserve true annotations from earlier pages. An executed-source/owned-SQL second-page failure regression and focused fix are under implementation; public ENDED is independent of membership reads."
+    },
+    {
+      "id": "configured-social-analytics-effects",
+      "status": "known_gap",
+      "operations": [
+        "rpc_unary:RPC:startPrivateVoiceChat",
+        "rpc_unary:RPC:acceptPrivateVoiceChat",
+        "rpc_unary:RPC:rejectPrivateVoiceChat",
+        "rpc_unary:RPC:endPrivateVoiceChat",
+        "rpc_unary:RPC:startCommunityVoiceChat",
+        "rpc_unary:RPC:joinCommunityVoiceChat",
+        "rpc_unary:RPC:endCommunityVoiceChat",
+        "rpc_unary:RPC:muteSpeakerFromCommunityVoiceChat",
+        "api_http:POST:/v1/private-voice-chats",
+        "api_http:PATCH:/v1/private-voice-chats/:callId",
+        "api_http:DELETE:/v1/private-voice-chats/:callId",
+        "api_http:POST:/v1/community-voice-chats",
+        "api_http:POST:/v1/community-voice-chats/:communityId/participants",
+        "api_http:DELETE:/v1/community-voice-chats/:communityId",
+        "api_http:PATCH:/v1/community-voice-chats/:communityId/speakers/:address",
+        "api_http:POST:/v1/communities/:id/members",
+        "api_http:DELETE:/v1/communities/:id/members/:memberAddress",
+        "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
+        "api_http:PUT:/v1/communities/:id",
+        "api_http:POST:/v1/communities/:id/requests",
+        "api_http:PATCH:/v1/communities/:id/requests/:requestId"
+      ],
+      "description": "Pinned Social uses 16 analytics event kinds across 17 voice/community call sites. Installed @dcl/analytics-component posts event/body-with-env/context to ANALYTICS_API_URL with x-token, configured/default header timeout, immediate response cancellation and fire-and-forget failure isolation. Candidate Social currently emits none of these events. Adapter reuse of the existing Outbound and exact producer metadata/order are under implementation; deployed analytics configuration/routing and provider timing remain unverified."
     }
   ]
 }
