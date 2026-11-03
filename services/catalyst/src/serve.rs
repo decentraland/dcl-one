@@ -911,6 +911,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social
         .rpc
         .start_topology(&jobs, comms_stage.archipelago.feed.topology.clone());
+    // A room the gatekeeper closes reaches the open voice streams as ENDED.
+    comms_stage
+        .social_directory
+        .set_updates(social.rpc.ctx.pubsub().clone());
     market.attach_profile_images(social.profile_images.clone());
     let subscriptions = Arc::new(shop::subscriptions::State::new(
         pool.clone(),
@@ -1693,6 +1697,9 @@ async fn worlds_states(
 struct CommsStage {
     archipelago: crate::comms::archipelago::AppState,
     gatekeeper: crate::comms::gatekeeper::SharedState,
+    /// The gatekeeper's social seam, kept to attach the social RPC's
+    /// fan-out once it exists.
+    social_directory: Arc<social::comms_directory::Directory>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1726,6 +1733,7 @@ async fn comms_states(
         &content.settings.content_public_url,
     );
 
+    let social_directory = Arc::new(social::comms_directory::Directory::new(pool.clone()));
     let gatekeeper = comms::gatekeeper::CommsState::new(
         pool.clone(),
         http_client.clone(),
@@ -1735,7 +1743,7 @@ async fn comms_states(
         policy.clone() as Arc<dyn AccessPolicy>,
         Arc::new(worlds::rooms::SceneResolver::new(pool.clone())),
         presence,
-        Arc::new(social::comms_directory::Directory::new(pool.clone())),
+        social_directory.clone(),
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(market.clone())
@@ -1767,6 +1775,7 @@ async fn comms_states(
     Ok(CommsStage {
         archipelago,
         gatekeeper,
+        social_directory,
     })
 }
 
@@ -1987,6 +1996,18 @@ fn social_states(
                 .private_voice_chat_expiration_batch_size,
             ws_max_concurrent_connections: config.social.ws_max_concurrent_connections,
             ws_max_payload_bytes: config.social.ws_max_payload_length,
+            ws_max_backpressure_bytes: config.social.ws_max_backpressure,
+            admission: social_rpc::limits::AdmissionLimits {
+                max_per_address: config.social.ws_max_connections_per_address as usize,
+                subscriptions_per_second: config.social.ws_subscriptions_per_second,
+                subscription_burst: config.social.ws_subscription_burst as usize,
+                idle_budget_capacity: config.social.ws_address_budget_capacity as usize,
+            },
+            stream: social_rpc::stream::StreamLimits {
+                max_payload_bytes: config.social.stream_ws_max_payload_length as usize,
+                messages_per_second: config.social.stream_ws_messages_per_second,
+                message_burst: config.social.stream_ws_message_burst as usize,
+            },
             admin_token: non_empty(&config.social.catalyrst_social_rpc_admin_token),
             faces,
             writes_enabled: config.writes.social_writes_enabled,
@@ -1995,6 +2016,10 @@ fn social_states(
         eip1654,
         comms.clone(),
     ));
+    // Membership changes and deletions reach the open RPC streams; a voice
+    // start reads the community's places and thumbnail.
+    communities.set_updates(rpc.ctx.pubsub().clone());
+    rpc.ctx.set_communities(communities.clone());
 
     tracing::info!(
         translate = media.backend_label(),

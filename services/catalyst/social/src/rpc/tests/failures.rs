@@ -210,11 +210,15 @@ async fn community_executor_failures_are_reported_and_do_not_announce_an_end() {
         ),
         (
             "promote",
-            ops::set_speaker(&ctx, &owner, &cid, &owner, true).await,
+            ops::set_speaker(&ctx, &owner, &cid, &owner, true)
+                .await
+                .map(|_| ()),
         ),
         (
             "demote",
-            ops::set_speaker(&ctx, &owner, &cid, &owner, false).await,
+            ops::set_speaker(&ctx, &owner, &cid, &owner, false)
+                .await
+                .map(|_| ()),
         ),
         ("kick", ops::kick_player(&ctx, &owner, &cid, &owner).await),
         (
