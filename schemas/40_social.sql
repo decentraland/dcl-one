@@ -1317,5 +1317,5 @@ CREATE TABLE social.event_payloads (
 CREATE INDEX event_payloads_expiry_idx ON social.event_payloads (expires_at, id);
 
 -- The 45 s notification poll walks only currently tracked generations in PK pages.
-CREATE INDEX IF NOT EXISTS communities_voice_notifications_idx ON social.communities(id)
+CREATE INDEX communities_voice_notifications_idx ON social.communities(id)
   WHERE voice_notification_generation IS NOT NULL;
