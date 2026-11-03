@@ -35,6 +35,7 @@ impl Plugin for SystemBridgePlugin {
             (
                 post_events,
                 handle_home_scene,
+                handle_service_urls,
                 handle_satellite_view,
                 handle_exit,
                 world_access::handle_world_access,
@@ -139,6 +140,9 @@ pub enum SystemApi {
     LiveSceneInfo(RpcResultSender<Vec<LiveSceneInfo>>),
     GetHomeScene(RpcResultSender<HomeScene>),
     SetHomeScene(HomeScene),
+    /// (web param, resolved base url) for each service with a web param — its override, else
+    /// its composition from the base domain
+    GetServiceUrls(RpcResultSender<Vec<(String, String)>>),
     GetWelcome(RpcResultSender<WelcomeState>),
     AcceptTerms(RpcResultSender<()>),
     GetSatelliteView(RpcResultSender<Option<SatelliteView>>),
@@ -285,6 +289,20 @@ fn handle_home_scene(mut ev: EventReader<SystemApi>, mut config: ResMut<AppConfi
                 platform::write_config_file(&*config);
             }
             _ => (),
+        }
+    }
+}
+
+fn handle_service_urls(mut ev: EventReader<SystemApi>) {
+    for ev in ev.read() {
+        if let SystemApi::GetServiceUrls(sender) = ev {
+            use common::base_domain::Service;
+            sender.send(
+                Service::all()
+                    .filter(|s| s.has_web_param())
+                    .map(|s| (s.param(), common::base_domain::service(s)))
+                    .collect(),
+            );
         }
     }
 }

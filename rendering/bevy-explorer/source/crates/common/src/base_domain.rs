@@ -168,6 +168,7 @@ mod tests {
             url(Service::AuthPage, "/requests"),
             "https://decentraland.org/auth/requests"
         );
+        assert_eq!(service(Service::Reels), "https://decentraland.org/reels");
         assert_eq!(
             url(Service::SocialRpc, ""),
             "wss://rpc-social-service-ea.decentraland.org"
