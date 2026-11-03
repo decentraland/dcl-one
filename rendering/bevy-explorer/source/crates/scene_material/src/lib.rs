@@ -18,6 +18,9 @@ use common::{
     structs::{PreviewMode, ShowOutOfBounds},
     util::InvertedScaleExt,
 };
+use highlight::HighlightPlugin;
+
+pub mod highlight;
 
 pub type SceneMaterial = ExtendedMaterial<SceneBound>;
 
@@ -500,7 +503,10 @@ pub struct SceneBoundPlugin;
 
 impl Plugin for SceneBoundPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(MaterialExtPlugin::<SceneMaterial>::default());
+        app.add_plugins((
+            MaterialExtPlugin::<SceneMaterial>::default(),
+            HighlightPlugin,
+        ));
 
         app.init_resource::<InvertedMaterials>();
         // Default false; the app entry overrides it.
