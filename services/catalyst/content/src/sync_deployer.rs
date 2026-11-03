@@ -141,7 +141,7 @@ fn parse_entity_for_deploy(
     let version = entity
         .get("version")
         .and_then(|v| v.as_str())
-        .unwrap_or("v3")
+        .unwrap_or(crate::entity::DEFAULT_ENTITY_VERSION)
         .to_string();
 
     let deployer = auth_chain
