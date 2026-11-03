@@ -27,7 +27,7 @@
 //!
 //! Not carried: `squid_checker.rs` (replaced as above), the squid root
 //! source of third-party wearables and its refresh job, `land_rights.rs`
-//! (the types live in `land_authz::resolve`; their tests are in `chain.rs`),
+//! (the types and their tests live in `land_authz::resolve`),
 //! `ExternalCalls::calculate_files_hashes`, the ts-rs bindings.
 
 mod chain;

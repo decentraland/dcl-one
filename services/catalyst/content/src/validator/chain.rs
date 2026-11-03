@@ -252,8 +252,6 @@ impl BlockchainChecker for Sources {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::land_authz::resolve::{DEPLOY_GRANTING_LEGS, operator_flags};
-    use crate::land_authz::{LandOperators, LandRightLeg, ParcelPermissionFlags};
 
     #[test]
     fn urn_and_token_keys_follow_the_stored_spelling() {
@@ -293,68 +291,5 @@ mod tests {
             "urn:decentraland:matic:collections-v2:0xdef:0",
             &grant(item, None)
         ));
-    }
-
-    #[test]
-    fn operator_grants_each_leg() {
-        let ops = LandOperators {
-            operator: Some("0xAAA1".into()),
-            update_operator: Some("0xbbb2".into()),
-            update_managers: vec!["0xccc3".into()],
-            approved_for_all: vec!["0xDDD4".into()],
-        };
-        assert!(operator_flags("0xaaa1", &ops).grants_deploy());
-        assert!(operator_flags("0xBBB2", &ops).grants_deploy());
-        assert!(operator_flags("0xCCC3", &ops).grants_deploy());
-        assert!(operator_flags("0xddd4", &ops).grants_deploy());
-        assert!(!operator_flags("0xeee5", &ops).grants_deploy());
-    }
-
-    #[test]
-    fn operator_grants_denies_on_empty() {
-        assert!(!operator_flags("0xaaa1", &LandOperators::default()).grants_deploy());
-    }
-
-    #[test]
-    fn no_flags_denies() {
-        assert!(!ParcelPermissionFlags::default().grants_deploy());
-    }
-
-    #[test]
-    fn each_granting_leg_grants_alone() {
-        for &leg in &DEPLOY_GRANTING_LEGS {
-            let mut flags = ParcelPermissionFlags::default();
-            match leg {
-                LandRightLeg::Owner => flags.owner = true,
-                LandRightLeg::Operator => flags.operator = true,
-                LandRightLeg::UpdateOperator => flags.update_operator = true,
-                LandRightLeg::UpdateManager => flags.update_manager = true,
-                LandRightLeg::ApprovedForAll => flags.approved_for_all = true,
-            }
-            assert!(flags.grants_deploy(), "{leg:?} should grant deploy");
-        }
-    }
-
-    #[test]
-    fn serialized_shape_matches_lambdas_permissions_response() {
-        let json = serde_json::to_string(&ParcelPermissionFlags::default()).unwrap();
-        assert_eq!(
-            json,
-            "{\"owner\":false,\"operator\":false,\"updateOperator\":false,\"updateManager\":false,\"approvedForAll\":false}"
-        );
-    }
-
-    #[test]
-    fn legs_serialize_to_flag_keys() {
-        for &leg in &DEPLOY_GRANTING_LEGS {
-            let key = serde_json::to_value(leg).unwrap();
-            let flags = serde_json::to_value(ParcelPermissionFlags::default()).unwrap();
-            assert!(
-                flags
-                    .as_object()
-                    .unwrap()
-                    .contains_key(key.as_str().unwrap())
-            );
-        }
     }
 }
