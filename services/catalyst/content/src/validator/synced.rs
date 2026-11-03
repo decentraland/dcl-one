@@ -25,8 +25,10 @@
 //!   five minutes before it ([`super::onchain`]), as for a local deploy; item
 //!   ownership leaves out the escrow lease overlay, which knows only the
 //!   leases active now, and counts a collection URN naming no item as owned
-//!   (the reference skips URNs it cannot parse). A source unset or failing, or a node without that
-//!   block's state, is undecidable; a revert is a "no".
+//!   (the reference skips URNs it cannot parse). Its item caps are wider than
+//!   a local deploy's and past them the entity is undecided, never refused
+//!   (the reference has no cap). A source unset or failing, or a node without
+//!   that block's state, is undecidable; a revert is a "no".
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -189,7 +191,12 @@ impl BlockchainChecker for Synced<'_> {
         let owned = self
             .sources
             .access()
-            .items(eth_address, urns, timestamp)
+            .items_capped(
+                eth_address,
+                urns,
+                timestamp,
+                super::onchain::SYNCED_ITEM_CAPS,
+            )
             .await?;
         // The reference skips URNs it cannot parse, so they count as owned.
         Ok(PermissionResult::from_failing(
@@ -779,6 +786,49 @@ mod tests {
             matches!(&local[..], [ValidationError::Rejected(m)] if m.contains(malformed)),
             "a local deploy stays strict: {local:?}"
         );
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[tokio::test]
+    async fn a_synced_entity_is_not_refused_items_past_the_local_cap() {
+        use super::super::fake_chain::{self, Query, Reply};
+        const OWNER: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+        let chain = fake_chain::serve(|q, _| match q {
+            Query::OwnerOf { .. } => Reply::Owner(OWNER.parse().unwrap()),
+            other => panic!("unexpected question {other:?}"),
+        })
+        .await;
+        let (storage, tmp) = crate::sync_test_support::temp_storage("synced-caps").await;
+        let sources = Sources::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage,
+            crate::http::Outbound::for_tests(),
+            None,
+            super::super::Settings {
+                eth_network: "mainnet".into(),
+                l2_rpc_url: Some(chain.url.clone()),
+                ..Default::default()
+            },
+        );
+        let synced = Synced {
+            sources: &sources,
+            not_fetched: HashSet::new(),
+            content: SyncedContent::Fetched,
+            trusted_expirations: Mutex::new(Vec::new()),
+        };
+        let urns: Vec<String> = (0..=super::super::onchain::MAX_ITEMS_ASKED)
+            .map(|t| {
+                format!(
+                    "urn:decentraland:matic:collections-v2:0x0002000000000000000000000000000000000001:0:{t}"
+                )
+            })
+            .collect();
+
+        let verdict = synced
+            .check_items_ownership(OWNER, &urns, 1_700_000_000_000)
+            .await
+            .unwrap();
+        assert!(verdict.result, "{verdict:?}");
         let _ = std::fs::remove_dir_all(tmp);
     }
 
