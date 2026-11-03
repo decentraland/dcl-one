@@ -193,7 +193,7 @@ pub(super) async fn run_once(
             "WITH due AS (SELECT id FROM explore.event_moderation_hooks \
              WHERE completed_at IS NULL AND attempts<6 AND next_attempt_at<=$1 \
                AND created_at >= (SELECT activated_at FROM explore.event_moderation_hook_activation WHERE singleton) \
-             ORDER BY CASE WHEN kind='edited' THEN 1 ELSE 0 END,next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED) \
+             ORDER BY CASE WHEN kind IN ('approved','rejected','deleted') THEN 0 WHEN kind='submitted' THEN 1 ELSE 2 END,next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED) \
              UPDATE explore.event_moderation_hooks h SET claim=$2,attempts=attempts+1,next_attempt_at=$1+interval '1 minute' \
              FROM due WHERE h.id=due.id RETURNING h.id,h.event_id,h.kind,h.event,h.attempts")
             .bind(now).bind(claim).fetch_optional(&mut *tx).await?;
@@ -430,7 +430,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn moderation_alerts_are_delivered_before_an_edit_backlog() {
+    async fn operator_alerts_precede_a_submission_flood_and_edits() {
         let _guard = TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
@@ -472,6 +472,44 @@ mod tests {
         )
         .await
         .unwrap();
+        for index in 0..300 {
+            record(
+                &mut tx,
+                &format!("{prefix}-flood-{index}"),
+                &Value::Null,
+                &json!({"name":"Flood submission", "user":prefix}),
+                true,
+            )
+            .await
+            .unwrap();
+        }
+        for (kind, before, after) in [
+            (
+                "approved",
+                json!({"approved":false}),
+                json!({"name":"Operator approved", "approved":true}),
+            ),
+            (
+                "rejected",
+                json!({"approved":true}),
+                json!({"name":"Operator rejected", "approved":false,"rejected":true}),
+            ),
+            (
+                "deleted",
+                json!({"approved":true}),
+                json!({"name":"Operator deleted", "deleted_by_admin":true}),
+            ),
+        ] {
+            record(
+                &mut tx,
+                &format!("{prefix}-operator-{kind}"),
+                &before,
+                &after,
+                true,
+            )
+            .await
+            .unwrap();
+        }
         tx.commit().await.unwrap();
         assert_eq!(
             run_once(
@@ -486,13 +524,20 @@ mod tests {
             10
         );
         let payloads = captured.lock().await;
+        let first: Vec<&str> = payloads
+            .iter()
+            .take(3)
+            .map(|body| body["blocks"][0]["text"]["text"].as_str().unwrap())
+            .collect();
+        assert!(first.iter().any(|text| text.starts_with("Event approved:")));
+        assert!(first.iter().any(|text| text.starts_with("Event rejected:")));
+        assert!(first.iter().any(|text| text.starts_with("Event deleted:")));
         assert!(
-            payloads[0]["blocks"][0]["text"]["text"]
+            payloads[3]["blocks"][0]["text"]["text"]
                 .as_str()
                 .unwrap()
                 .starts_with("Event submitted:")
         );
-        assert_eq!(payloads[0]["blocks"][1]["text"]["text"], "New submission");
         sqlx::query("DELETE FROM explore.event_moderation_hooks WHERE event_id LIKE $1")
             .bind(format!("{prefix}-%"))
             .execute(&pool)

@@ -267,8 +267,12 @@ Unchanged eligible starts shared by the old and new materialized schedules
 remain eligible, including live occurrences and deferred endings. A private
 lookup stores only those pre-edit starts still in the current schedule, bounded
 by that schedule rather than growing across edits. Newly introduced backdated
-starts cannot contribute. Creation also sets a database-clock eligibility cutoff,
-so backdated recurring creates cannot import historical attendance. These keys
+starts cannot contribute. Creation and each transition into approved state start
+an eligibility window using the database clock: already-ended occurrences are
+excluded, while an already eligible occurrence still in progress is retained.
+Thus a late first submission counts its ongoing occurrence without importing
+historical attendance, and later approval cannot backfill endings from pending
+review or resurrect a newly backdated schedule identity. These keys
 are excluded from the public event projection and notification snapshots.
 Existing immutable facts remain intact. Ordinary
 owners must obtain moderation again after changing dates or durations. Recovery
@@ -287,8 +291,9 @@ once, bounded to six attempts with five-second HTTP timeouts, and starts at its
 first capture cutoff, written atomically with the intent using the database clock.
 Exhausted delivery attempts remain distinct from successful completion. A creator
 can enqueue at most two edited notices per rolling minute; unsent edits
-coalesce per event. Every submission retains an alert, and submissions or administrative transitions take priority
-over edits. Deployment configuration supplies the secret endpoint;
+coalesce per event. Every submission retains its own durable alert. Approvals,
+rejections and deletions precede all submissions, and submissions precede edits;
+submission volume therefore cannot delay operator moderation alerts. Deployment configuration supplies the secret endpoint;
 operator writes and deployment posture gate outbound delivery. Unconfigured or
 operator-write-disabled authoring captures no webhook intent. The same worker
 performs bounded cleanup even when its endpoint is disabled: at most 1000 rows
