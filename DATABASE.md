@@ -439,10 +439,15 @@ record delivery, retry, or replay work.
 The expected hot set is tracked active voice communities plus oversized events
 published during the preceding day, rather than all communities or subscribers.
 Membership fanout uses set probes of at most 256 subscriber addresses per SQL
-statement. Production active-room counts, oversized-event frequency and a 512 MiB
-payload's memory/latency cost have not been measured; the byte limit is an admission
-bound, not a demonstrated capacity. Operators can observe transport drops through
-`social_event_delivery_dropped` and retain the existing SQL/job instrumentation.
+statement. A community voice update snapshots eligible subscribers and completes
+all membership reads before emitting. Any failed page suppresses the entire
+member-scoped update; a public start instead clears all membership annotations and
+announces to the whole snapshot with `isMember=false`. A public end skips
+membership reads. The snapshot and membership set each hold at most one entry per
+eligible subscriber. Production active-room counts, oversized-event frequency and
+a 512 MiB payload's memory/latency cost have not been measured; the byte limit is
+an admission bound, not a demonstrated capacity. Operators can observe transport
+drops through `social_event_delivery_dropped` and retain the existing SQL/job instrumentation.
 
 Private-call accept, reject and end RPCs first run the parameterized scalar query
 `SELECT $1::text::uuid` through the existing pool. This adds one SQL round trip per

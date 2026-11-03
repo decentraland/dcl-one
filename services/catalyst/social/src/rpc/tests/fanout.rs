@@ -4,6 +4,9 @@ use crate::comms::gatekeeper::bus::{BrokerBus, InProcessBus, NatsBus};
 use crate::rpc::fanout::{Event, Scope};
 use tokio::sync::broadcast;
 
+#[path = "fanout_membership.rs"]
+mod membership;
+
 /// Separate fixtures keep a fake media view from polling another test's rooms.
 struct OwnedDatabase {
     pool: PgPool,

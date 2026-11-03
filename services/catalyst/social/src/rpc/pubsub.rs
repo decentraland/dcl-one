@@ -352,6 +352,10 @@ impl PubSub {
         let Ok(community) = update.community_id.parse() else {
             return;
         };
+        let mut recipients = self.subscribed_addresses();
+        recipients.retain(|recipient| {
+            !exclude.is_some_and(|excluded| excluded.eq_ignore_ascii_case(recipient))
+        });
         let ended = update.status == CommunityVoiceChatStatus::CommunityVoiceChatEnded as i32;
         let scope = if ended {
             scope
@@ -365,35 +369,35 @@ impl PubSub {
             }
         };
         let everyone = scope == super::fanout::Scope::All;
-        for page in self.subscribed_addresses().chunks(256) {
-            let members: std::collections::HashSet<String> = if everyone && ended {
-                Default::default()
-            } else {
+        let mut members = std::collections::HashSet::new();
+        // Source exhausts its membership generator before emitting anything.
+        // A later failed page applies to the whole snapshotted audience, not
+        // only the page that failed. Public ENDED needs no membership read.
+        if !everyone || !ended {
+            for page in recipients.chunks(256) {
                 match subscribed_members(pool, community, page).await {
-                    Ok(members) => members.into_iter().collect(),
+                    Ok(page_members) => members.extend(page_members),
                     Err(error) => {
                         tracing::warn!(%error, %community, "community voice member read failed");
                         if !everyone {
-                            continue;
+                            return;
                         }
-                        Default::default()
+                        members.clear();
+                        break;
                     }
                 }
-            };
-            for recipient in page {
-                if exclude.is_some_and(|excluded| excluded.eq_ignore_ascii_case(recipient)) {
-                    continue;
-                }
-                let is_member = members.contains(recipient);
-                if everyone || is_member {
-                    self.publish_local(
-                        recipient,
-                        SocialEvent::CommunityVoice(CommunityVoiceChatUpdate {
-                            is_member,
-                            ..update.clone()
-                        }),
-                    );
-                }
+            }
+        }
+        for recipient in &recipients {
+            let is_member = members.contains(recipient);
+            if everyone || is_member {
+                self.publish_local(
+                    recipient,
+                    SocialEvent::CommunityVoice(CommunityVoiceChatUpdate {
+                        is_member,
+                        ..update.clone()
+                    }),
+                );
             }
         }
     }
