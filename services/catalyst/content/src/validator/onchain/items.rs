@@ -138,7 +138,7 @@ pub fn item_ref(urn: &str) -> ItemRef {
         return ItemRef::Malformed;
     };
     match (kind, rest) {
-        // A collection or an asset without a token: the reference counts it as owned.
+        // The reference counts assets without a token as owned (on-chain/client.js ownsItemsAtTimestamp).
         ("collections-v1", [_] | [_, _]) => ItemRef::NotAsked,
         ("collections-v1", [collection, _name, id]) if is_digits(id) => {
             if is_hex_address(collection) {
