@@ -62,6 +62,9 @@ pub const STREAM_PATH: &str = "/v1/stream";
 /// How long a closing socket may take to write what is queued before its
 /// close frame; past it the connection is dropped.
 const CLOSE_BUDGET: Duration = Duration::from_secs(10);
+/// A flushed close may drain in-flight client frames without holding a pool
+/// slot through the much longer stalled-writer deadline.
+const CLOSE_HANDSHAKE_BUDGET: Duration = Duration::from_millis(100);
 /// A subscription or unsubscription id: 1 to 64 UTF-16 units, as JS counts.
 const MAX_ID_UNITS: usize = 64;
 
@@ -349,7 +352,7 @@ impl Outbox {
                     break;
                 }
             }
-            let _ = tokio::time::timeout(Duration::from_millis(100), sink.close()).await;
+            let _ = tokio::time::timeout(CLOSE_HANDSHAKE_BUDGET, sink.close()).await;
         });
         Self {
             tx: Some(tx),
@@ -522,7 +525,7 @@ impl Session {
             // in flight. Dropping a TCP socket with unread data can reset it and
             // discard the close we just flushed. Only drain the closing handshake;
             // no further client command is processed.
-            let _ = tokio::time::timeout(CLOSE_BUDGET, async {
+            let _ = tokio::time::timeout(CLOSE_HANDSHAKE_BUDGET, async {
                 while let Some(Ok(message)) = self.incoming.next().await {
                     if matches!(message, Message::Close(_)) {
                         break;
