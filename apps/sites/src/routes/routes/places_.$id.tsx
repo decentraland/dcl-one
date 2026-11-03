@@ -15,6 +15,7 @@ import { loadPlaceViewer, savePlaceFavorite, savePlaceLike } from "@/data/lib/ca
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { pageLoaderWith } from "@/core/lib/telemetry/page-loader";
 import WorldScenes from "@/features/explorer/WorldScenes";
+import { playUrl } from "@/data/lib/catalyst/bases";
 import { loadPlaceTravel } from "@/data/lib/catalyst/places/world-scenes";
 import { track } from "@/core/lib/telemetry/track";
 
@@ -51,7 +52,8 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     return redirect(`/places/${encodeURIComponent(place.id)}${search}`, 301);
   }
 
-  const travel = place ? await loadPlaceTravel(place, { signal: request.signal }) : null;
+  const resolvedTravel = place ? await loadPlaceTravel(place, { signal: request.signal }) : null;
+  const travel = resolvedTravel ?? (place ? { playBase: playUrl(), launchError: "Travel is temporarily unavailable. Please retry." } : null);
   return wrap(
     { id, place, sid, unavailable, travel },
     { status: place ? 200 : unavailable ? 503 : 404 },
@@ -86,6 +88,13 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
   const revalidator = useRevalidator();
   const signer = isConnected ? identity : null;
   const viewer = usePlaceViewer(signer, place?.id);
+
+  function onTravel(placeId: string, launchUrl?: string, error?: string) {
+    const context = { sid, story: "jump-in" as const };
+    track("jump_in_started", { place_id: placeId }, context);
+    if (launchUrl) track("jump_in_completed", { place_id: placeId, launch_url: launchUrl }, context);
+    else track("jump_in_failed", { place_id: placeId, error: error ?? "Travel is unavailable." }, context);
+  }
 
   if (!place && unavailable) {
     return (
@@ -132,17 +141,12 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
         jumpHref={travel?.jumpHref}
         onJumpIn={() => {
           if (!place) return;
-          const context = { sid, story: "jump-in" as const };
-          track("jump_in_started", { place_id: place.id }, context);
-          if (travel?.jumpHref) track("jump_in_completed", { place_id: place.id, launch_url: travel.jumpHref }, context);
-          else {
-            track("jump_in_failed", { place_id: place.id, error: travel?.launchError ?? "Travel is unavailable." }, context);
-            void revalidator.revalidate();
-          }
+          onTravel(place.id, travel?.jumpHref, travel?.launchError);
+          if (!travel?.jumpHref) void revalidator.revalidate();
         }}
         detailSlot={<>
           {travel?.launchError && <div role="alert"><p>{travel.launchError}</p><button type="button" disabled={revalidator.state !== "idle"} onClick={() => { void revalidator.revalidate(); }}>Retry travel</button></div>}
-          {place?.world && place.world_name && <WorldScenes worldName={place.world_name} selectedId={place.id} playBase={travel?.playBase} />}
+          {place?.world && place.world_name && <WorldScenes worldName={place.world_name} selectedId={place.id} playBase={travel?.playBase} onVisit={onTravel} />}
         </>}
         notFound={!place}
         viewer={viewer}

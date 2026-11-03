@@ -63,6 +63,7 @@ export type LandingsEvents = {
     room_id?: string;
     stub: true;
   };
+  /** A valid launch URL was handed to browser navigation; Explorer loading is not measured here. */
   jump_in_completed: {
     launch_url?: string;
     place_id: string;
