@@ -44,6 +44,7 @@ const FORGED: &str = "/v1/forged/not-a-route";
 /// The active voice-chat list is database-wide: the test that seeds voice
 /// rows and the one that reads the list empty take turns.
 static VOICE_ROWS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static DAPPS_FLAGS: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 struct Wallet {
     signer: PrivateKeySigner,

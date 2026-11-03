@@ -2,6 +2,87 @@
 //! controllers/routes/http.routes.ts, handlers/http/schemas.ts and logic/community/*.
 use super::*;
 
+#[tokio::test]
+async fn dapps_variants_and_sdk_boolean_overrides_drive_community_permissions() {
+    let _flags = DAPPS_FLAGS.lock().await;
+    let mut settings = Settings::for_tests();
+    settings
+        .features
+        .overrides
+        .insert(super::super::features::AI_COMPLIANCE.into(), "true".into());
+    settings.features.overrides.insert(
+        super::super::features::REFERRAL_REGISTRATION_DISABLED.into(),
+        "1".into(),
+    );
+    let Some(rig) = Rig::new(settings).await else {
+        return;
+    };
+    let (owner, moderator) = (wallet(), wallet());
+    let id = rig.community(&owner, false).await;
+    let doc = json!({
+        "flags": {"dapps-communities_global_moderators":true, "dapps-communities_ai_compliance":true},
+        "variants": {"dapps-communities_global_moderators": {
+            "payload": {"value": format!("\u{feff}{},\r\n", moderator.address.to_string().to_uppercase())}
+        }}
+    });
+    crate::explore::api::feature_flags::store(&rig.pool, "dapps", &doc, None)
+        .await
+        .unwrap();
+    rig.state.load_flags().await.unwrap();
+    assert!(rig.state.is_global_moderator(&moderator.address));
+    assert!(!rig.state.is_global_moderator(&owner.address));
+    assert!(
+        !rig.state
+            .feature_enabled(super::super::features::AI_COMPLIANCE),
+        "the SDK accepts literal 1, not true"
+    );
+    assert!(
+        rig.state
+            .feature_enabled(super::super::features::REFERRAL_REGISTRATION_DISABLED)
+    );
+    assert_eq!(
+        hit(
+            &rig.app,
+            Case::new("get", "/v1/moderation/communities")
+                .signed(&moderator)
+                .await
+        )
+        .await
+        .0,
+        StatusCode::OK
+    );
+    let path = format!("/v1/communities/{id}");
+    let (status, body) = hit(
+        &rig.app,
+        Case::new("patch", &path)
+            .signed(&moderator)
+            .await
+            .json(&json!({"editorsChoice":true})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
+    let disabled = json!({"flags":{}, "variants":doc["variants"]});
+    crate::explore::api::feature_flags::store(&rig.pool, "dapps", &disabled, None)
+        .await
+        .unwrap();
+    rig.state.load_flags().await.unwrap();
+    assert!(
+        !rig.state.is_global_moderator(&moderator.address),
+        "disabled document hides its variant"
+    );
+    assert_eq!(
+        hit(&rig.app, Case::new("delete", path).signed(&moderator).await)
+            .await
+            .0,
+        StatusCode::UNAUTHORIZED
+    );
+    sqlx::query("DELETE FROM explore_api.feature_flags WHERE app='dapps'")
+        .execute(&rig.pool)
+        .await
+        .unwrap();
+    rig.finish();
+}
+
 fn keys(value: &Value) -> Vec<&str> {
     value
         .as_object()

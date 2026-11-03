@@ -249,6 +249,11 @@ const ROWS: &[Row] = &[
     ),
     upstream(
         "mirrors",
+        "FF_URL",
+        "https://feature-flags.decentraland.org",
+    ),
+    upstream(
+        "mirrors",
         "EXPLORER_MAP_SOURCE_URL",
         "https://api.decentraland.org",
     ),
@@ -738,6 +743,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("BADGES_PUBLIC_ASSET_BASE_URL", LINK),
     ("PROFILE_CDN_BASE_URL", LINK),
     ("COMMUNITIES_CDN_URL", LINK),
+    ("SERVICE_BASE_URL", LINK),
     ("FIRST_WEAR_IMAGE_BASE", LINK),
     ("MAP_EXTERNAL_BASE_URL", LINK),
     ("MAP_IMAGE_BASE_URL", LINK),

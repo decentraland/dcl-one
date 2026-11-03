@@ -65,6 +65,39 @@ pub struct SocialConfig {
     #[arg(long, env = "COMMUNITIES_GLOBAL_MODERATORS", default_value = "")]
     pub communities_global_moderators: String,
 
+    /// Feature service base; `dapps.json` is fetched with SERVICE_BASE_URL as Referer.
+    #[arg(long, env = "FF_URL", default_value = "")]
+    pub social_feature_flags_url: String,
+
+    #[arg(
+        long,
+        env = "SERVICE_BASE_URL",
+        default_value = "https://social-service-ea.decentraland.zone"
+    )]
+    pub social_service_base_url: String,
+
+    #[arg(
+        long,
+        env = "FEATURE_FLAG_REFRESH_INTERVAL_IN_MS",
+        default_value_t = 240_000
+    )]
+    pub social_feature_flags_refresh_ms: u64,
+
+    #[arg(long, env = "FF_REQUEST_TIMEOUT", default_value_t = 10_000)]
+    pub social_feature_flags_timeout_ms: u64,
+
+    #[arg(long, env = "FF_DAPPS_COMMUNITIES_AI_COMPLIANCE")]
+    pub social_ai_compliance_override: Option<String>,
+
+    #[arg(long, env = "FF_DAPPS_DEV_COMMUNITIES_AI_COMPLIANCE")]
+    pub social_dev_ai_compliance_override: Option<String>,
+
+    #[arg(long, env = "FF_DAPPS_COMMUNITIES_GLOBAL_MODERATORS")]
+    pub social_global_moderators_override: Option<String>,
+
+    #[arg(long, env = "FF_DAPPS_REFERRAL_REGISTRATION_DISABLED")]
+    pub social_referral_registration_disabled_override: Option<String>,
+
     /// Comma-separated community names refused on create/rename (folded comparison).
     #[arg(long, env = "RESTRICTED_NAMES", default_value = "")]
     pub restricted_names: String,

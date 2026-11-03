@@ -26,6 +26,7 @@ pub mod auth;
 pub mod copies;
 pub mod cors;
 pub mod dto;
+pub mod features;
 pub mod fed;
 pub mod friendship;
 pub mod http;
@@ -86,6 +87,7 @@ pub struct Settings {
     /// `COMMUNITIES_GLOBAL_MODERATORS`: comma-separated wallets allowed on
     /// `GET /v1/moderation/communities`.
     pub global_moderators: Vec<Address>,
+    pub features: features::Settings,
     /// `RESTRICTED_NAMES`: comma-separated community names refused on
     /// create/rename, compared through `validate::fold_name_for_comparison`
     /// (stored here already folded).
@@ -139,6 +141,7 @@ impl Settings {
         Self {
             admin_token: None,
             global_moderators: Vec::new(),
+            features: features::Settings::default(),
             restricted_names: Vec::new(),
             cdn_url: "http://cdn.test".to_string(),
             faces: profiles::FaceUrls::new(None, "http://127.0.0.1:9/profile-images/", false),
@@ -158,6 +161,8 @@ pub struct State {
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     pub profiles: ProfilesCache,
     pub presence: Presence,
+    /// One DAPPS document shared by moderator, compliance and referral decisions.
+    pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
     /// `POST /v1/friends/{peer}/messages`: 60 sends per signer per minute,
     /// the old service's `RateLimiter::new(60, 60s)`; past it the route
     /// answers 429 before touching the database.
@@ -250,6 +255,7 @@ impl State {
             eip1654,
             profiles,
             presence,
+            flags: Arc::new(crate::explore::api::feature_flags::Snapshot::empty()),
             dm_limiter,
             voice: std::sync::OnceLock::new(),
             worlds: std::sync::OnceLock::new(),
@@ -302,6 +308,10 @@ impl State {
 
     pub fn is_global_moderator(&self, address: &Address) -> bool {
         self.settings.global_moderators.iter().any(|m| m == address)
+            || self
+                .flags
+                .variant_values("dapps", features::GLOBAL_MODERATORS)
+                .is_some_and(|values| values.iter().any(|value| value == address.as_str()))
     }
 
     pub fn thumbnail_url(&self, id: CommunityId) -> String {

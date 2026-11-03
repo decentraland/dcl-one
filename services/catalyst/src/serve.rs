@@ -935,6 +935,13 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .communities
         .set_voice_eviction(comms_stage.gatekeeper.clone());
     social.communities.set_chain_index(market.index.clone());
+    social.communities.load_flags().await?;
+    if let Err(error) = social.communities.refresh_flags(&explorer_api).await {
+        tracing::warn!(%error,"initial DAPPS flags refresh failed; retaining the stored document");
+    }
+    social
+        .communities
+        .spawn_flags_job(&jobs, explorer_api.clone());
     // A permission, access-setting or block edit reaches the running rooms
     // at once: the host's sockets and comms' LiveKit participants.
     if let Some(host) = &stage5.scene_host {
@@ -1866,6 +1873,33 @@ fn social_states(
             global_moderators: communities::Settings::global_moderators_from(
                 &config.social.communities_global_moderators,
             ),
+            features: communities::features::Settings {
+                base_url: config.social.social_feature_flags_url.clone(),
+                audience: config.social.social_service_base_url.clone(),
+                interval: Duration::from_millis(config.social.social_feature_flags_refresh_ms),
+                timeout: Duration::from_millis(config.social.social_feature_flags_timeout_ms),
+                overrides: [
+                    (
+                        communities::features::AI_COMPLIANCE,
+                        &config.social.social_ai_compliance_override,
+                    ),
+                    (
+                        communities::features::DEV_AI_COMPLIANCE,
+                        &config.social.social_dev_ai_compliance_override,
+                    ),
+                    (
+                        communities::features::GLOBAL_MODERATORS,
+                        &config.social.social_global_moderators_override,
+                    ),
+                    (
+                        communities::features::REFERRAL_REGISTRATION_DISABLED,
+                        &config.social.social_referral_registration_disabled_override,
+                    ),
+                ]
+                .into_iter()
+                .filter_map(|(key, value)| value.clone().map(|value| (key.into(), value)))
+                .collect(),
+            },
             restricted_names: communities::Settings::restricted_names_from(
                 &config.social.restricted_names,
             ),
