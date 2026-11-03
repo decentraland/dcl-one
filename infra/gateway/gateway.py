@@ -72,13 +72,19 @@ def settings(env, resolv_conf="/etc/resolv.conf"):
     storage = env.get("GATEWAY_STORAGE_ROOT", "")
     if storage and not re.fullmatch(r"/[a-zA-Z0-9_./-]+", storage):
         raise ValueError("GATEWAY_STORAGE_ROOT must be an absolute path without whitespace")
+    trusted = networks(env.get("GATEWAY_TRUSTED_PROXY_CIDRS", ""))
+    storage_trusted = networks(env.get("GATEWAY_STORAGE_TRUSTED_CIDRS", ""))
+    if any(ipaddress.ip_network(proxy).overlaps(ipaddress.ip_network(caller))
+           for proxy in trusted for caller in storage_trusted
+           if ipaddress.ip_network(proxy).version == ipaddress.ip_network(caller).version):
+        raise ValueError("GATEWAY_STORAGE_TRUSTED_CIDRS must not overlap GATEWAY_TRUSTED_PROXY_CIDRS")
     return {
         "domain": domain, "hosts": aliases, "resolvers": " ".join(resolvers),
         "apis": [upstream(value) for value in words(env.get("GATEWAY_APIS_UPSTREAMS", "apis:5210"))],
         "sites": [upstream(value) for value in words(env.get("GATEWAY_SITES_UPSTREAMS", "sites:5212"))],
         "admins": networks(env.get("GATEWAY_ADMIN_CIDRS", "")),
-        "trusted": networks(env.get("GATEWAY_TRUSTED_PROXY_CIDRS", "")),
-        "storage_trusted": networks(env.get("GATEWAY_STORAGE_TRUSTED_CIDRS", "")),
+        "trusted": trusted,
+        "storage_trusted": storage_trusted,
         "storage": storage.rstrip("/"),
     }
 

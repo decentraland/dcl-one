@@ -84,6 +84,17 @@ class StorageTrustedCidrsTest(unittest.TestCase):
     def test_storage_trust_is_closed_by_default(self):
         self.assertEqual(gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})["storage_trusted"], [])
 
+    def test_proxy_and_storage_networks_must_not_overlap(self):
+        for proxy, caller in [("10.0.0.0/8", "10.2.0.0/16"),
+                              ("10.2.0.0/16", "10.0.0.0/8"),
+                              ("2001:db8::/32", "2001:db8:1::/48")]:
+            with self.subTest(proxy=proxy, caller=caller), self.assertRaisesRegex(ValueError, "overlap"):
+                render(GATEWAY_TRUSTED_PROXY_CIDRS=proxy, GATEWAY_STORAGE_TRUSTED_CIDRS=caller)
+
+    def test_disjoint_networks_and_different_address_families_are_allowed(self):
+        render(GATEWAY_TRUSTED_PROXY_CIDRS="10.0.0.0/8,2001:db8::/48",
+               GATEWAY_STORAGE_TRUSTED_CIDRS="192.0.2.0/24,2001:db8:1::/48")
+
 
 if __name__ == "__main__":
     unittest.main()

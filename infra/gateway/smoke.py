@@ -2,7 +2,6 @@
 """Test the built gateway on an isolated Docker network, without application data."""
 import argparse
 import base64
-from concurrent.futures import ThreadPoolExecutor
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import http.client
@@ -83,17 +82,6 @@ def request(host, path, *, vhost="example.test", headers=None, method="GET", bod
     return result
 
 
-def burst(host, path, count, vhost="example.test"):
-    def one(_):
-        conn = http.client.HTTPConnection(host, 8080, timeout=10)
-        conn.request("GET", path, headers={"Host": vhost})
-        status = conn.getresponse().status
-        conn.close()
-        return status
-    with ThreadPoolExecutor(16) as pool:
-        return list(pool.map(one, range(count)))
-
-
 def websocket(host, path):
     with socket.create_connection((host, 8080), timeout=10) as conn:
         conn.sendall((f"GET {path} HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\n"
@@ -124,7 +112,7 @@ def wait_ready(host):
 
 def client(args):
     table = json.loads(Path(args.table).read_text())
-    public, admitted, untrusted, trusted, accel, storage_trusted, late, rate_public, rate_trusted = args.targets
+    public, admitted, untrusted, trusted, accel, storage_trusted, late, rate_public, rate_trusted, rate_untrusted = args.targets
     for host in args.targets:
         wait_ready(host)
 
@@ -221,6 +209,9 @@ def client(args):
         data = hit(path, "apis", vhost=vhost, target="/world-storage/values/k")
         assert data["headers"]["x-original-path"] == "/values/k", (vhost, data)
     hit("/world-storage/values/k", "apis", vhost="storage.example.test")
+    hit("/world-storage/values/key.data", "apis")
+    hit("/values/key.data", "apis", vhost="storage.example.test", target="/world-storage/values/key.data")
+    hit("/world-storage/values/k", "apis", host=storage_trusted)
     data = hit("/get-scene-adapter", "apis", vhost="comms-gatekeeper-local.example.test",
         target="/comms-gatekeeper/get-scene-adapter")
     assert data["headers"]["x-original-path"] == "/get-scene-adapter"
@@ -282,6 +273,9 @@ def client(args):
     statuses = [request(rate_public, "/world-storage/values/k", method="PUT", body=b"{}",
                         headers={"X-Forwarded-For": "198.51.100.77"})[0] for _ in range(4)]
     assert statuses == [200, 200, 429, 429], statuses
+    statuses = [request(rate_untrusted, "/world-storage/values/key.data",
+                        headers={"X-Forwarded-For": f"198.51.100.{i + 1}"})[0] for i in range(8)]
+    assert statuses == [200, 200, 200, 429, 429, 429, 429, 429], statuses
     print("Real-nginx storage read, write and trusted ceilings passed.", flush=True)
 
 
@@ -346,6 +340,7 @@ def smoke(args):
                           "GATEWAY_SITES_UPSTREAMS": token + "-late-upstreams:8082"}),
                 ("rate-public", {"GATEWAY_TRUSTED_PROXY_CIDRS": fixture_ip + "/32"}),
                 ("rate-trusted", {"GATEWAY_STORAGE_TRUSTED_CIDRS": fixture_ip + "/32"}),
+                ("rate-untrusted", {"GATEWAY_STORAGE_TRUSTED_CIDRS": "198.51.100.0/24"}),
             ]
             targets = []
             for name, extra in cases:
@@ -387,7 +382,7 @@ if __name__ == "__main__":
     parser.add_argument("--client", action="store_true")
     parser.add_argument("--unresolved")
     parser.add_argument("--table")
-    parser.add_argument("--targets", nargs=9)
+    parser.add_argument("--targets", nargs=10)
     parser.add_argument("--rate-fixture")
     parser.add_argument("--image", default="foundation-gateway:nix")
     parser.add_argument("--revision")
