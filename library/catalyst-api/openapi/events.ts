@@ -997,6 +997,8 @@ export interface operations {
                 search?: string;
                 to?: string;
                 with_connected_users?: string;
+                /** @description Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time; the event page limit defaults to 25, and explicit limits above 25 are rejected with HTTP 400. Invalid dates and occurrences that have already finished are excluded in both modes. */
+                with_recurrent_dates?: string;
                 world?: string;
                 world_names?: string[];
             };
@@ -1468,6 +1470,8 @@ export interface operations {
                 recurrent?: "true" | "false" | "1" | "0";
                 search?: string;
                 with_connected_users?: string;
+                /** @description Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time; the event page limit defaults to 25, and explicit limits above 25 are rejected with HTTP 400. Invalid dates and occurrences that have already finished are excluded in both modes. */
+                with_recurrent_dates?: string;
             };
             header?: never;
             path?: never;
@@ -2331,6 +2335,8 @@ export interface operations {
                 search?: string;
                 to?: string;
                 with_connected_users?: string;
+                /** @description Controls recurrence-date expansion in list results. Boolean string: true or 1 enables extended expansion; false or 0 uses the default expansion. Defaults to false. By default, each event includes at most 100 valid active or future recurrence dates, sorted by start time; the usual event page limit defaults to 500 and is capped at 500. When enabled, each event includes at most 1000 valid active or future recurrence dates, sorted by start time; the event page limit defaults to 25, and explicit limits above 25 are rejected with HTTP 400. Invalid dates and occurrences that have already finished are excluded in both modes. */
+                with_recurrent_dates?: string;
                 world?: string;
                 world_names?: string[];
             };
