@@ -567,7 +567,7 @@ pub async fn create_referral(
     State(state): State<SharedState>,
     headers: HeaderMap,
     original: OriginalUri,
-    body: axum::body::Bytes,
+    body: super::http::DeferredBody,
 ) -> Result<StatusCode, CommError> {
     let invited = state
         .require_signer(
@@ -576,6 +576,7 @@ pub async fn create_referral(
             &signed_path(&original, "/v1/referral-progress"),
         )
         .await?;
+    let body = body.schema().await?;
     let body = crate::rpc::http::body(
         &body,
         &[(
@@ -689,7 +690,7 @@ pub async fn add_referral_email(
     State(state): State<SharedState>,
     headers: HeaderMap,
     original: OriginalUri,
-    body: axum::body::Bytes,
+    body: super::http::DeferredBody,
 ) -> Result<StatusCode, CommError> {
     let referrer = state
         .require_signer(
@@ -698,6 +699,7 @@ pub async fn add_referral_email(
             &signed_path(&original, "/v1/referral-email"),
         )
         .await?;
+    let body = body.schema().await?;
     let parsed = crate::rpc::http::body(
         &body,
         &[("email", crate::rpc::http::Kind::Email)],

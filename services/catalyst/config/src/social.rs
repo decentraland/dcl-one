@@ -69,10 +69,39 @@ fn source_idle_timeout(raw: &str) -> Result<u64, String> {
     }
 }
 
-/// Social: communities, the social RPC, comms, notifications, badges, media and profile
-/// images.
+fn source_body_limit(raw: &str) -> Result<usize, String> {
+    let value=source_number(raw).map_err(|_|format!("Configuration: config \"HTTP_MAX_REQUEST_BODY_BYTES\" should be a number, got string ({raw}) instead"))?;
+    if !value.is_finite() || value.fract() != 0.0 || !(1.0..=16_777_216.0).contains(&value) {
+        let display = if value == 0.0 {
+            "0".to_owned()
+        } else if value.is_infinite() {
+            if value.is_sign_negative() {
+                "-Infinity".to_owned()
+            } else {
+                "Infinity".to_owned()
+            }
+        } else if value.abs() >= 1e21 || value.abs() < 1e-6 {
+            let scientific = format!("{value:e}");
+            let (mantissa, exponent) = scientific.split_once('e').unwrap();
+            let exponent: i32 = exponent.parse().unwrap();
+            format!("{mantissa}e{exponent:+}")
+        } else {
+            value.to_string()
+        };
+        return Err(format!(
+            "Invalid HTTP_MAX_REQUEST_BODY_BYTES: expected an integer number of bytes between 1 and 16777216, got {display}"
+        ));
+    }
+    Ok(value as usize)
+}
+
+/// Social: communities, the social RPC, comms, notifications, badges, media and profile images.
 #[derive(Args, Clone, Debug)]
 pub struct SocialConfig {
+    /// Request-body cap for the social-api gateway, validated before serving.
+    #[arg(long,env="HTTP_MAX_REQUEST_BODY_BYTES",default_value="1048576",value_parser=source_body_limit,allow_hyphen_values=true)]
+    pub social_http_max_request_body_bytes: usize,
+
     /// Bearer of the community admin routes (old API_ADMIN_TOKEN); unset refuses them.
     #[arg(long, env = "COMMUNITIES_ADMIN_TOKEN", hide_env_values = true)]
     pub communities_admin_token: Option<String>,
@@ -723,6 +752,40 @@ mod tests {
     use crate::config::Config;
 
     const BASE: [(&str, &str); 1] = [("DATABASE_URL", "postgres:///catalyst")];
+
+    #[test]
+    fn http_body_cap_uses_executed_source_boot_rules() {
+        let source:serde_json::Value=serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"),"/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-body-limit.json"))).unwrap();
+        let default = social(&[]).unwrap().social_http_max_request_body_bytes;
+        for case in source["boot"].as_array().unwrap() {
+            let result = case["input"]
+                .as_str()
+                .map(super::source_body_limit)
+                .unwrap_or(Ok(default));
+            if let Some(expected) = case["result"].as_u64() {
+                assert_eq!(result.unwrap(), expected as usize, "{}", case["input"]);
+            } else {
+                assert_eq!(
+                    result.unwrap_err(),
+                    case["error"].as_str().unwrap(),
+                    "{}",
+                    case["input"]
+                );
+            }
+        }
+        assert_eq!(
+            social(&[("HTTP_MAX_REQUEST_BODY_BYTES", "64junk")])
+                .unwrap()
+                .social_http_max_request_body_bytes,
+            64
+        );
+        for invalid in ["0", "-1", "1.5", "16777217", "NaN", "Infinity", ""] {
+            assert!(
+                social(&[("HTTP_MAX_REQUEST_BODY_BYTES", invalid)]).is_err(),
+                "{invalid}"
+            );
+        }
+    }
 
     fn social(pairs: &[(&str, &str)]) -> Result<super::SocialConfig, clap::Error> {
         Config::parse_env_for_tests(BASE.iter().chain(pairs).copied()).map(|c| c.social)

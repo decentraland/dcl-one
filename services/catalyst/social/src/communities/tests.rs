@@ -27,6 +27,7 @@ use super::http::ADR44_MESSAGE;
 use super::standing::load_standing;
 use super::{Settings, State, router};
 
+mod body_limit;
 mod compliance_parity;
 mod fixture_shapes;
 mod full_http_parity;

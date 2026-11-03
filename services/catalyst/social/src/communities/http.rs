@@ -43,6 +43,137 @@ pub(crate) fn database_message(error: &sqlx::Error) -> String {
 #[derive(Clone)]
 pub(crate) struct SocialApiNotFound;
 
+#[derive(Clone)]
+struct BodyLimit {
+    bytes: usize,
+    exceeded: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Declared size is checked before route, CORS and authentication. A body
+/// consumed by a handler also counts actual streamed bytes against the cap.
+pub async fn social_api_body_limit(
+    axum::extract::State(bytes): axum::extract::State<usize>,
+    mut request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    use axum::http::{HeaderValue, header};
+    // Node's parser rejects TRACK before the request reaches this boundary.
+    if request.method().as_str() != "TRACK"
+        && request
+            .headers()
+            .get(header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok())
+            .is_some_and(|length| length > bytes as u64)
+    {
+        let mut response = (StatusCode::PAYLOAD_TOO_LARGE, "Payload Too Large").into_response();
+        response
+            .headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+        if request.headers().contains_key(header::ORIGIN) {
+            response.headers_mut().insert(
+                header::ACCESS_CONTROL_ALLOW_ORIGIN,
+                HeaderValue::from_static("*"),
+            );
+        }
+        return response;
+    }
+    let exceeded = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    request.extensions_mut().insert(BodyLimit {
+        bytes,
+        exceeded: exceeded.clone(),
+    });
+    let mut response = next.run(request).await;
+    if exceeded.load(std::sync::atomic::Ordering::Relaxed) {
+        response
+            .headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    }
+    response
+}
+
+/// Keep the body unread until the handler has performed its existing auth
+/// gate. Axum's Bytes extractor otherwise reads before entering that gate.
+pub struct DeferredBody(axum::extract::Request);
+
+enum BodyReadError {
+    Stream(String),
+    MultipartLimit,
+}
+
+impl<S: Send + Sync> axum::extract::FromRequest<S> for DeferredBody {
+    type Rejection = std::convert::Infallible;
+    async fn from_request(request: axum::extract::Request, _: &S) -> Result<Self, Self::Rejection> {
+        Ok(Self(request))
+    }
+}
+
+impl DeferredBody {
+    async fn read(self, multipart: bool) -> Result<axum::body::Bytes, BodyReadError> {
+        use futures::StreamExt;
+        const MULTIPART_MAX: usize = 1024 * 1024;
+        if multipart
+            && self
+                .0
+                .headers()
+                .get(axum::http::header::CONTENT_LENGTH)
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<u64>().ok())
+                .is_some_and(|length| length > MULTIPART_MAX as u64)
+        {
+            return Err(BodyReadError::MultipartLimit);
+        }
+        let limit = self
+            .0
+            .extensions()
+            .get::<BodyLimit>()
+            .cloned()
+            .unwrap_or(BodyLimit {
+                // An isolated multipart wrapper has its own1MiB cap; the
+                // configured gateway's stream cap, when present, takes precedence.
+                bytes: if multipart { usize::MAX } else { 1024 * 1024 },
+                exceeded: Default::default(),
+            });
+        let mut stream = self.0.into_body().into_data_stream();
+        let mut bytes = bytes::BytesMut::new();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|error| BodyReadError::Stream(error.to_string()))?;
+            if chunk.len() > limit.bytes.saturating_sub(bytes.len()) {
+                limit
+                    .exceeded
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                return Err(BodyReadError::Stream("Payload Too Large".to_owned()));
+            }
+            if multipart && chunk.len() > MULTIPART_MAX.saturating_sub(bytes.len()) {
+                return Err(BodyReadError::MultipartLimit);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes.freeze())
+    }
+    pub async fn schema(self) -> Result<axum::body::Bytes, CommError> {
+        self.read(false).await.map_err(|error| {
+            let message = match error {
+                BodyReadError::Stream(message) => message,
+                BodyReadError::MultipartLimit => "Request body too large".to_owned(),
+            };
+            CommError::Body(
+                StatusCode::BAD_REQUEST,
+                json!({"ok":false,"message":message}),
+            )
+        })
+    }
+    pub async fn raw(self) -> Result<axum::body::Bytes, CommError> {
+        self.read(false).await.map_err(|_| CommError::Internal)
+    }
+    pub async fn form(self) -> Result<axum::body::Bytes, CommError> {
+        self.read(true).await.map_err(|error| match error {
+            BodyReadError::MultipartLimit => CommError::bad_request("Request body too large"),
+            BodyReadError::Stream(_) => CommError::Internal,
+        })
+    }
+}
+
 /// The source router's allowedMethods boundary. CORS wraps this function and
 /// intercepts OPTIONS first; unsupported verbs still need the route's Allow set.
 pub async fn social_api_methods(

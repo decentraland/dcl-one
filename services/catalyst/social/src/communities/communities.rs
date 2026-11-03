@@ -9,7 +9,6 @@ use std::collections::HashMap;
 
 use crate::rpc::http::Kind;
 use axum::Json;
-use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -572,7 +571,7 @@ pub async fn create_community(
     State(state): State<SharedState>,
     headers: HeaderMap,
     original: OriginalUri,
-    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
+    body: super::http::DeferredBody,
 ) -> Response {
     let signer = match signer_or_refusal(
         &state,
@@ -585,16 +584,9 @@ pub async fn create_community(
         Ok(s) => s,
         Err(r) => return r,
     };
-    let body = match body {
+    let body = match body.form().await {
         Ok(body) => body,
-        Err(error) => {
-            return CommError::bad_request(if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
-                "Request body too large"
-            } else {
-                "Invalid multipart/form-data body"
-            })
-            .into_response();
-        }
+        Err(error) => return error.into_response(),
     };
     let fields = try_resp!(parse_form(&headers, body).await);
     let name = fields.name.unwrap_or_default();
@@ -733,7 +725,7 @@ pub async fn update_community(
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
-    body: Result<Bytes, axum::extract::rejection::BytesRejection>,
+    body: super::http::DeferredBody,
 ) -> Response {
     let signer = match signer_or_refusal(
         &state,
@@ -746,16 +738,9 @@ pub async fn update_community(
         Ok(s) => s,
         Err(r) => return r,
     };
-    let body = match body {
+    let body = match body.form().await {
         Ok(body) => body,
-        Err(error) => {
-            return CommError::bad_request(if error.status() == StatusCode::PAYLOAD_TOO_LARGE {
-                "Request body too large"
-            } else {
-                "Invalid multipart/form-data body"
-            })
-            .into_response();
-        }
+        Err(error) => return error.into_response(),
     };
     let fields = try_resp!(parse_form(&headers, body).await);
     if fields.name.is_none()
@@ -1047,7 +1032,7 @@ pub async fn update_community_partially(
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
     let signer = match signer_or_refusal(
         &state,
@@ -1059,6 +1044,10 @@ pub async fn update_community_partially(
     {
         Ok(s) => s,
         Err(r) => return r,
+    };
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
     };
     if let Err(error) = crate::rpc::http::body(
         &body,

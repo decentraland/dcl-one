@@ -9,7 +9,6 @@ use std::collections::HashMap;
 
 use crate::rpc::http::Kind;
 use axum::Json;
-use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -447,7 +446,7 @@ pub async fn member_communities_by_ids(
     State(state): State<SharedState>,
     headers: HeaderMap,
     Path(address): Path<String>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
     if !admin_token_configured(&state) {
         return CommError::not_found("Not found").into_response();
@@ -455,6 +454,10 @@ pub async fn member_communities_by_ids(
     if !state.admin_bearer(&headers) {
         return bearer_refusal(&headers).into_response();
     }
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
+    };
     if let Err(error) = crate::rpc::http::body(
         &body,
         &[(
@@ -744,7 +747,7 @@ pub async fn update_member_role(
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
     let signer = match signer_or_refusal(
         &state,
@@ -756,6 +759,10 @@ pub async fn update_member_role(
     {
         Ok(s) => s,
         Err(r) => return r,
+    };
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
     };
     if let Err(error) = crate::rpc::http::body(
         &body,

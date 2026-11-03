@@ -1893,6 +1893,7 @@ fn social_states(
         pool.clone(),
         storage.clone(),
         communities::Settings {
+            http_max_request_body_bytes: config.social.social_http_max_request_body_bytes,
             compliance: communities::compliance::Settings {
                 environment: config.social.social_environment.clone(),
                 model: config.social.community_compliance_model.clone(),

@@ -73,6 +73,10 @@ pub struct States {
 /// The social API host's unmatched paths and preflights apply to its entire
 /// gateway prefix, including paths no domain router registered.
 pub fn social_api_gateway(router: Router) -> Router {
+    social_api_gateway_with_limit(router, 1024 * 1024)
+}
+
+pub fn social_api_gateway_with_limit(router: Router, max_body_bytes: usize) -> Router {
     // Wrap the complete method router: Axum adds Allow after each individual
     // route's layers, whereas source allowedMethods and CORS surround routing.
     let router = router.fallback(|| async {
@@ -90,6 +94,10 @@ pub fn social_api_gateway(router: Router) -> Router {
         ))
         .layer(axum::middleware::from_fn(
             communities::cors::social_api_cors,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            max_body_bytes,
+            communities::http::social_api_body_limit,
         ))
 }
 
@@ -127,7 +135,7 @@ pub fn router(states: &States, writes_enabled: bool) -> Router {
         .merge(social_api())
         .nest(
             "/social-api",
-            social_api_gateway(
+            social_api_gateway_with_limit(
                 social_api()
                     .route(
                         "/openapi.json",
@@ -136,6 +144,7 @@ pub fn router(states: &States, writes_enabled: bool) -> Router {
                         }),
                     )
                     .merge(communities::health_router()),
+                states.communities.settings.http_max_request_body_bytes,
             ),
         )
         .nest(

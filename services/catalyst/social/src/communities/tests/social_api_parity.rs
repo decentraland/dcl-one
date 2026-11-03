@@ -50,7 +50,9 @@ fn transport_header(name: &str) -> bool {
     )
 }
 
-fn application_headers(headers: &HeaderMap) -> std::collections::BTreeMap<String, String> {
+pub(super) fn application_headers(
+    headers: &HeaderMap,
+) -> std::collections::BTreeMap<String, String> {
     headers
         .iter()
         .filter(|(name, _)| !transport_header(name.as_str()))
@@ -58,7 +60,9 @@ fn application_headers(headers: &HeaderMap) -> std::collections::BTreeMap<String
         .collect()
 }
 
-fn source_application_headers(headers: &Value) -> std::collections::BTreeMap<String, String> {
+pub(super) fn source_application_headers(
+    headers: &Value,
+) -> std::collections::BTreeMap<String, String> {
     headers
         .as_object()
         .unwrap()

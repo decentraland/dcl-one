@@ -16,7 +16,7 @@
 
 use std::sync::Arc;
 
-use axum::body::Bytes;
+use crate::communities::http::DeferredBody;
 use axum::extract::{OriginalUri, Path, Query, State as AxumState};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -639,10 +639,11 @@ async fn create_friendship_request(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = "/v1/friendship-requests".to_string();
     let me = signer(&state, &headers, &original, "post", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[
@@ -679,10 +680,11 @@ async fn update_friendship_request(
     headers: HeaderMap,
     original: OriginalUri,
     Path(address): Path<String>,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = format!("/v1/friendship-requests/{address}");
     let me = signer(&state, &headers, &original, "patch", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[(
@@ -762,9 +764,10 @@ async fn block_user(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let me = signer(&state, &headers, &original, "post", "/v1/blocks".into()).await?;
+    let bytes = bytes.schema().await?;
     let object = body(&bytes, &[("address", Kind::Address)], &["address"], 0)?;
     let other = text(&object, "address").unwrap_or_default().to_lowercase();
     if other == me {
@@ -850,10 +853,11 @@ async fn update_social_settings(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = "/v1/social-settings".to_string();
     let me = signer(&state, &headers, &original, "patch", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[
@@ -925,10 +929,11 @@ async fn start_private_voice_chat(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = "/v1/private-voice-chats".to_string();
     let me = signer(&state, &headers, &original, "post", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[("calleeAddress", Kind::Address)],
@@ -972,10 +977,11 @@ async fn update_private_voice_chat(
     headers: HeaderMap,
     original: OriginalUri,
     Path(call_id): Path<String>,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = format!("/v1/private-voice-chats/{call_id}");
     let me = signer(&state, &headers, &original, "patch", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(
         &bytes,
         &[("intention", Kind::OneOf(&["accepted", "rejected"]))],
@@ -1021,10 +1027,11 @@ async fn start_community_voice_chat(
     AxumState(state): AxumState<Shared>,
     headers: HeaderMap,
     original: OriginalUri,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = "/v1/community-voice-chats".to_string();
     let me = signer(&state, &headers, &original, "post", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(&bytes, &[("communityId", Kind::Uuid)], &["communityId"], 0)?;
     let community_id = text(&object, "communityId").unwrap_or_default();
     let connection_url = ops::start_community_voice_chat(&state.ctx, &me, community_id, false)
@@ -1132,10 +1139,11 @@ async fn mute_speaker(
     headers: HeaderMap,
     original: OriginalUri,
     Path(path): Path<(String, String)>,
-    bytes: Bytes,
+    bytes: DeferredBody,
 ) -> Answer {
     let local = format!("/v1/community-voice-chats/{}/speakers/{}", path.0, path.1);
     let me = signer(&state, &headers, &original, "patch", local).await?;
+    let bytes = bytes.schema().await?;
     let object = body(&bytes, &[("muted", Kind::Bool)], &["muted"], 0)?;
     path_uuid(&path.0, "communityId")?;
     let target = path_address(&path.1)?;

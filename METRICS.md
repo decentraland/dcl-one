@@ -142,3 +142,23 @@ failed broadcasts did not undo HTTP ban or voice START. This establishes the
 sampled audience, batching and request shapes. SNS service latency, retry timing,
 concurrent membership mutation across pages and sustained throughput were not
 measured.
+
+## Social HTTP body boundary
+
+The 2026-11-03 body replay used social-service-ea at
+`b6b2cefefdf727b2ed47ddb887e77d226a41eea6`, Node 26.12.0 and its installed
+`@dcl/http-server` 2.3.0. It compared 18 startup inputs and 44 HTTP cases: 39 with
+a 64-byte cap and five multipart cases with a 2 MiB cap. The target used real
+Hyper, the actual community and RPC HTTP routes, the shared unread-body drain
+and the outer trailing-slash normalizer. The replay compared status, complete
+body and every application header; date and transport framing/hop headers were
+excluded. Declared oversize and consumed-stream overflow explicitly checked the
+close header. A declared oversized request received its response without an
+upload body. Another domain accepted 65 bytes behind the same outer layers.
+
+The larger-cap fixture was valid native multipart with 1,050,055 wire bytes,
+including a 1,024-byte thumbnail and an unused padding field. Declared, chunked
+and header-only variants all reached the independent multipart 400. Thumbnail
+limits were checked separately while the total stayed below 1 MiB. This replay
+does not measure RSS, concurrent upload capacity, throughput, or unread chunked
+connection-close timing. The latter remains a separate source/target audit.

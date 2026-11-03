@@ -2,7 +2,6 @@
 //! offset-paged newest first, optionally filtered by `address`/`addresses`.
 
 use axum::Json;
-use axum::body::Bytes;
 use axum::extract::{OriginalUri, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
@@ -119,11 +118,12 @@ pub async fn add_mute(
     State(state): State<SharedState>,
     headers: HeaderMap,
     original: OriginalUri,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Result<impl IntoResponse, CommError> {
     let muter = state
         .require_signer(&headers, "post", &signed_path(&original, "/v1/mutes"))
         .await?;
+    let body = body.raw().await?;
     let muted = muted_address(&body)?;
     if muted == muter {
         return Err(CommError::bad_request("Cannot mute yourself"));
@@ -143,11 +143,12 @@ pub async fn remove_mute(
     State(state): State<SharedState>,
     headers: HeaderMap,
     original: OriginalUri,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Result<impl IntoResponse, CommError> {
     let muter = state
         .require_signer(&headers, "delete", &signed_path(&original, "/v1/mutes"))
         .await?;
+    let body = body.raw().await?;
     let muted = muted_address(&body)?;
     sqlx::query("DELETE FROM social.user_mutes WHERE muter_address = $1 AND muted_address = $2")
         .bind(&muter)

@@ -254,6 +254,20 @@ these are estimates, not measured throughput.
 
 ## Queries, ingest and derived state
 
+The `/social-api` gateway reads `HTTP_MAX_REQUEST_BODY_BYTES` at startup: the
+default is 1 MiB and the accepted range is an integer from 1 byte through 16 MiB.
+A declared oversize receives a plain 413 before auth or routing, with the actual
+response CORS headers and `Connection: close`. Social handlers defer body reads
+until their existing auth gate and count streamed bytes against this cap. The
+source schema boundary returns its own 400 for a failed read; multipart and raw
+mute readers retain the source generic 500 for a global stream overflow.
+The independent multipart total remains 1 MiB, even with a larger HTTP cap;
+thumbnail bytes have a separate 1 KiB through 500 KiB range. A multipart limit
+failure returns 400. The process's existing outer drain still handles bodies
+dropped without a handler read, under its shared upload budget; per-social
+unread-stream limiting and close timing remain outside these consumed-body
+checks. Other domains keep their existing body and drain policy.
+
 Community SNS egress reuses the legacy publisher already held by the referral
 component and the existing SQL pool. The raw event precedes the inbox consumer's
 opt-out filter. Its audience lookup reads membership in pages of 100 ordered by

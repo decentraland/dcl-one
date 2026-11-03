@@ -6,7 +6,6 @@
 
 use crate::rpc::http::Kind;
 use axum::Json;
-use axum::body::Bytes;
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -290,7 +289,7 @@ pub async fn create_request(
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
     let signer = match state
         .require_signer(
@@ -302,6 +301,10 @@ pub async fn create_request(
     {
         Ok(s) => s,
         Err(e) => return e.into_response(),
+    };
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
     };
     if let Err(error) = crate::rpc::http::body(
         &body,
@@ -531,7 +534,7 @@ pub async fn update_request_status(
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, request_id)): Path<(String, String)>,
-    body: Bytes,
+    body: super::http::DeferredBody,
 ) -> Response {
     let signer = match state
         .require_signer(
@@ -546,6 +549,10 @@ pub async fn update_request_status(
     {
         Ok(s) => s,
         Err(e) => return e.into_response(),
+    };
+    let body = match body.schema().await {
+        Ok(body) => body,
+        Err(error) => return error.into_response(),
     };
     if let Err(error) = crate::rpc::http::body(
         &body,

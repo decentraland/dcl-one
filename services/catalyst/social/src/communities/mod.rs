@@ -82,6 +82,7 @@ use profiles::ProfilesCache;
 /// from `Config`; every field maps to one env name (in the doc of each).
 #[derive(Clone, Debug)]
 pub struct Settings {
+    pub http_max_request_body_bytes: usize,
     /// `COMMUNITIES_ADMIN_TOKEN` (the old service's `API_ADMIN_TOKEN`):
     /// bearer of the admin listing/suspend routes, the managed-communities
     /// and member-communities-by-ids lookups and the privacy bypass of the
@@ -144,6 +145,7 @@ impl Settings {
 
     pub fn for_tests() -> Self {
         Self {
+            http_max_request_body_bytes: 1024 * 1024,
             admin_token: None,
             global_moderators: Vec::new(),
             features: features::Settings::default(),
