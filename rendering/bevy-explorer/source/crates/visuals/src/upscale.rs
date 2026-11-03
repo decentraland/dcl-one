@@ -383,24 +383,36 @@ mod tests {
         app.cleanup();
 
         let world = app.world_mut();
-        let image = |size: u32| {
+        let extent = |size: u32| Extent3d {
+            width: size,
+            height: size,
+            depth_or_array_layers: 1,
+        };
+        // a per-pixel pattern, so an offset or a flip in the copy shows
+        let pattern: Vec<u8> = (0..64u8)
+            .flat_map(|y| (0..64u8).flat_map(move |x| [x, y, x ^ y, 255]))
+            .collect();
+        let mut images = world.resource_mut::<Assets<Image>>();
+        let source = images.add(Image::new(
+            extent(64),
+            TextureDimension::D2,
+            pattern.clone(),
+            TextureFormat::bevy_default(),
+            RenderAssetUsages::all(),
+        ));
+        // blank outputs, so a compositor that never draws fails the check
+        let output = |size: u32| {
             let mut image = Image::new_fill(
-                Extent3d {
-                    width: size,
-                    height: size,
-                    depth_or_array_layers: 1,
-                },
+                extent(size),
                 TextureDimension::D2,
-                &[128, 64, 32, 255],
+                &[0, 0, 0, 0],
                 TextureFormat::bevy_default(),
                 RenderAssetUsages::all(),
             );
             image.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
             image
         };
-        let mut images = world.resource_mut::<Assets<Image>>();
-        let source = images.add(image(64));
-        let outputs = [images.add(image(64)), images.add(image(128))];
+        let outputs = [images.add(output(64)), images.add(output(128))];
         let mesh = world
             .resource_mut::<Assets<Mesh>>()
             .add(Rectangle::new(1.0, 1.0));
@@ -482,13 +494,8 @@ mod tests {
         println!("{ok} pipelines compiled");
         assert!(
             errors.is_empty(),
-            "pipeline errors:
-{}",
-            errors.join(
-                "
-
-"
-            )
+            "pipeline errors:\n{}",
+            errors.join("\n\n")
         );
 
         let shader = app
@@ -517,11 +524,8 @@ mod tests {
             .unwrap()
             .take()
             .expect("the copy was captured");
-        let pixels = copied.data.as_deref().unwrap();
         assert!(
-            pixels
-                .chunks_exact(4)
-                .all(|pixel| pixel == [128, 64, 32, 255]),
+            copied.data.as_deref() == Some(pattern.as_slice()),
             "the plain copy changed pixels"
         );
     }
