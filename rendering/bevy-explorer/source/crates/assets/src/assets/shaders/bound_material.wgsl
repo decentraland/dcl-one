@@ -20,10 +20,14 @@
 
 override fn shadows::fetch_directional_shadow(light_id: u32, frag_position: vec4<f32>, surface_normal: vec3<f32>, view_z: f32) -> f32 {
     let base = shadows::fetch_directional_shadow(light_id, frag_position, surface_normal, view_z);
-    // far bound of the last cascade = the shadow distance for this light
+    // near and far bounds of the last cascade; far = the shadow distance for this light
     let light = &lights.directional_lights[light_id];
     let far = (*light).cascades[max((*light).num_cascades, 1u) - 1u].far_bound;
-    return soften_directional_shadow(base, far, view_z);
+    var near = 0.0;
+    if (*light).num_cascades > 1u {
+        near = (*light).cascades[(*light).num_cascades - 2u].far_bound;
+    }
+    return soften_directional_shadow(base, near, far, view_z);
 }
 
 #ifdef ENVIRONMENT_MAP

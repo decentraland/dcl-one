@@ -11,6 +11,7 @@ use alloy_core::primitives::Address;
 use bevy::{
     color::palettes,
     math::DVec3,
+    pbr::CascadeShadowConfig,
     platform::collections::{HashMap, HashSet},
     prelude::*,
     render::{primitives::Aabb, view::RenderLayers},
@@ -616,7 +617,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 2;
+pub const SETTINGS_GENERATION: u32 = 3;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -708,6 +709,8 @@ impl AppConfig {
     /// one-time migrations for configs saved with an older generation, keeping everything
     /// else. gen 1: reinitialize the preset-managed settings to the current defaults.
     /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
+    /// gen 3: sun shadows follow Unity's cascades; reset the shadow distance, quality and
+    /// caster count to the new defaults.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -718,6 +721,11 @@ impl AppConfig {
         }
         if self.settings_generation < 2 && self.graphics.bloom == BloomSetting::High {
             self.graphics.bloom = default.graphics.bloom;
+        }
+        if self.settings_generation < 3 {
+            self.graphics.shadow_distance = default.graphics.shadow_distance;
+            self.graphics.shadow_settings = default.graphics.shadow_settings;
+            self.graphics.shadow_caster_count = default.graphics.shadow_caster_count;
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -897,10 +905,10 @@ impl Default for GraphicsSettings {
             log_fps: !cfg!(target_arch = "wasm32"),
             msaa: AaSetting::FxaaLow,
             fps_target: 60,
-            shadow_distance: 20.0,
+            shadow_distance: 60.0,
             shadow_settings: ShadowSetting::Low,
             light_count: 4,
-            shadow_caster_count: 0,
+            shadow_caster_count: 3,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::Atmospheric,
@@ -998,8 +1006,48 @@ impl AudioSettings {
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ShadowSetting {
     Off,
+    /// unity's Medium: one soft cascade
     Low,
+    /// unity's High: four soft cascades
     High,
+}
+
+/// unity: Assets/Rendering/UniversalRenderPipeline - High.asset, m_Cascade4Split
+pub const SUN_CASCADE_4_SPLITS: [f32; 3] = [0.102, 0.282, 0.474];
+/// unity: QualityPresetsAsset.asset MainShadowResolution (Medium, High)
+pub const SUN_SHADOW_MAP_SIZE: usize = 1024;
+/// unity: Quality Settings.asset dynamicLights, SpotLightsLods first tier
+pub const SPOT_SHADOW_MAX_DISTANCE: f32 = 20.0;
+pub const MIN_CASCADE: f32 = 0.1;
+
+/// The sun's cascades for a quality and a shadow distance, `None` when it casts no shadows.
+pub fn sun_cascades(setting: ShadowSetting, distance: f32) -> Option<CascadeShadowConfig> {
+    if distance <= 0.0 {
+        return None;
+    }
+    let far = distance.max(MIN_CASCADE + f32::EPSILON);
+    let bounds = match setting {
+        ShadowSetting::Off => return None,
+        ShadowSetting::Low => vec![far],
+        ShadowSetting::High => {
+            let mut previous = MIN_CASCADE;
+            SUN_CASCADE_4_SPLITS
+                .iter()
+                .map(|split| (f64::from(*split) * f64::from(far)) as f32)
+                .chain([far])
+                .map(|bound| {
+                    // bounds must increase strictly, even for a distance under the minimum
+                    previous = bound.max(previous + f32::EPSILON);
+                    previous
+                })
+                .collect()
+        }
+    };
+    Some(CascadeShadowConfig {
+        bounds,
+        overlap_proportion: 0.2,
+        minimum_distance: MIN_CASCADE,
+    })
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -1902,6 +1950,20 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sun_cascades_follow_unity_splits() {
+        let high = sun_cascades(ShadowSetting::High, 100.0).unwrap();
+        assert_eq!(high.bounds, vec![10.2, 28.2, 47.4, 100.0]);
+        assert_eq!(high.minimum_distance, MIN_CASCADE);
+        let medium = sun_cascades(ShadowSetting::Low, 60.0).unwrap();
+        assert_eq!(medium.bounds, vec![60.0]);
+        assert!(sun_cascades(ShadowSetting::Off, 60.0).is_none());
+        assert!(sun_cascades(ShadowSetting::High, 0.0).is_none());
+        // a distance under the minimum still yields a strictly increasing config
+        let tiny = sun_cascades(ShadowSetting::High, 0.05).unwrap();
+        assert!(tiny.bounds.windows(2).all(|w| w[0] < w[1]) && tiny.bounds[0] > MIN_CASCADE);
+    }
 
     #[test]
     fn migrate_inputs_updates_old_tables() {

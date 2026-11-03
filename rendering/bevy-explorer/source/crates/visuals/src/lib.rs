@@ -12,7 +12,7 @@ mod trees;
 
 use bevy::{
     core_pipeline::dof::{DepthOfField, DepthOfFieldMode},
-    pbr::{wireframe::WireframePlugin, CascadeShadowConfigBuilder, DirectionalLightShadowMap},
+    pbr::{wireframe::WireframePlugin, DirectionalLightShadowMap},
     prelude::*,
     render::view::{Layer, RenderLayers},
 };
@@ -30,8 +30,9 @@ use bevy_console::ConsoleCommand;
 use common::{
     sets::SetupSets,
     structs::{
-        AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes, PrimaryUser,
-        SceneGlobalLight, SceneLoadDistance, ShadowSetting, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
+        sun_cascades, AppConfig, DofConfig, FogSetting, PrimaryCamera, PrimaryCameraRes,
+        PrimaryUser, SceneGlobalLight, SceneLoadDistance, TimeOfDay, PRIMARY_AVATAR_LIGHT_LAYER,
+        SUN_SHADOW_MAP_SIZE,
     },
 };
 use console::DoAddConsoleCommand;
@@ -48,36 +49,36 @@ use crate::{
     trees::TreesPlugin,
 };
 
-const MIN_CASCADE: f32 = 0.1;
-
 pub struct VisualsPlugin {
     pub no_fog: bool,
 }
 
 impl Plugin for VisualsPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(DirectionalLightShadowMap { size: 4096 })
-            .init_resource::<SceneGlobalLight>()
-            .insert_resource(CloudCover {
-                cover: 0.375,
-                speed: 5.0,
-                density_cap: 0.8,
-                shadow: 0.05,
-                scale: 1.5,
-                steps: 44,
-                lacunarity: 2.0,
-                sharpness: 50.0,
-                sharp_mid: 0.1,
-            })
-            .add_plugins(WireframePlugin::default())
-            .add_plugins(DayNightPlugin)
-            .add_plugins(ShellTexturingPlugin)
-            .add_plugins(TerrainPlugin)
-            .add_plugins(CoastPlugin)
-            .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
-            .add_systems(Update, apply_global_light)
-            .add_systems(Update, update_dof)
-            .add_systems(Startup, setup.in_set(SetupSets::Main));
+        app.insert_resource(DirectionalLightShadowMap {
+            size: SUN_SHADOW_MAP_SIZE,
+        })
+        .init_resource::<SceneGlobalLight>()
+        .insert_resource(CloudCover {
+            cover: 0.375,
+            speed: 5.0,
+            density_cap: 0.8,
+            shadow: 0.05,
+            scale: 1.5,
+            steps: 44,
+            lacunarity: 2.0,
+            sharpness: 50.0,
+            sharp_mid: 0.1,
+        })
+        .add_plugins(WireframePlugin::default())
+        .add_plugins(DayNightPlugin)
+        .add_plugins(ShellTexturingPlugin)
+        .add_plugins(TerrainPlugin)
+        .add_plugins(CoastPlugin)
+        .add_plugins((TreesPlugin, PropsPlugin, SolidsPlugin))
+        .add_systems(Update, apply_global_light)
+        .add_systems(Update, update_dof)
+        .add_systems(Startup, setup.in_set(SetupSets::Main));
 
         app.insert_resource(AtmosphereSettings {
             resolution: 1024,
@@ -321,40 +322,12 @@ fn apply_global_light(
             layer = layer.union(&PRIMARY_AVATAR_LIGHT_LAYER);
         }
 
-        let (shadows_enabled, cascade_shadow_config) = match setting.graphics.shadow_settings {
-            ShadowSetting::Off => (false, Default::default()),
-            ShadowSetting::Low => (
-                true,
-                CascadeShadowConfigBuilder {
-                    num_cascades: 1,
-                    minimum_distance: MIN_CASCADE,
-                    maximum_distance: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    first_cascade_far_bound: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    overlap_proportion: 0.2,
-                }
-                .build(),
-            ),
-            ShadowSetting::High => (
-                true,
-                CascadeShadowConfigBuilder {
-                    num_cascades: 4,
-                    minimum_distance: MIN_CASCADE,
-                    maximum_distance: setting
-                        .graphics
-                        .shadow_distance
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    first_cascade_far_bound: (setting.graphics.shadow_distance / 15.0)
-                        .max(MIN_CASCADE + f32::EPSILON),
-                    overlap_proportion: 0.2,
-                }
-                .build(),
-            ),
+        let (shadows_enabled, cascade_shadow_config) = match sun_cascades(
+            setting.graphics.shadow_settings,
+            setting.graphics.shadow_distance,
+        ) {
+            Some(cascades) => (true, cascades),
+            None => (false, Default::default()),
         };
 
         commands.spawn((
