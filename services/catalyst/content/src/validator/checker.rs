@@ -415,7 +415,9 @@ pub async fn validate_item_access(
     } else {
         WEARABLE_ASSET_TYPES
     };
-    let mut resolved: Vec<(String, ItemAssetType)> = Vec::new();
+    // Compare against the first key only, so the scan stays linear.
+    let mut first: Option<(String, ItemAssetType)> = None;
+    let mut multiple = false;
     for pointer in pointers {
         let Some(asset_type) = item_asset_urn_type(pointer) else {
             return ValidationResponse::fail(format!(
@@ -425,17 +427,17 @@ pub async fn validate_item_access(
             ));
         };
         let key = pointer.to_lowercase();
-        if !resolved.iter().any(|(k, _)| *k == key) {
-            resolved.push((key, asset_type));
+        match &first {
+            None => first = Some((key, asset_type)),
+            Some((k, _)) => multiple |= *k != key,
         }
     }
-    if resolved.len() != 1 {
+    let Some((_, asset_type)) = first.filter(|_| !multiple) else {
         return ValidationResponse::fail(format!(
             "Only one pointer is allowed when you create an item. Received: {}",
             pointers.join(",")
         ));
-    }
-    let asset_type = resolved[0].1;
+    };
     if !valid_types.contains(&asset_type) {
         let valid: Vec<&str> = valid_types.iter().map(|t| t.as_str()).collect();
         return ValidationResponse::fail(format!(
@@ -1051,6 +1053,49 @@ mod tests {
                     .to_string()
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn an_invalid_pointer_is_reported_before_the_pointer_count() {
+        let errors = item_access_errors(
+            EntityType::Wearable,
+            &[
+                "urn:decentraland:matic:collections-v2:0xabc123:0",
+                "urn:decentraland:matic:collections-v2:0xabc123:1",
+                "not-an-urn",
+            ],
+        )
+        .await;
+        assert_eq!(
+            errors,
+            vec![
+                "Item pointers should be a urn, for example \
+                 (urn:decentraland:{protocol}:collections-v2:{contract(0x[a-fA-F0-9]+)}:{id}). \
+                 Invalid pointer: (not-an-urn)"
+                    .to_string()
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_huge_pointer_list_is_refused_in_linear_time() {
+        let pointers: Vec<String> = (0..200_000)
+            .map(|i| format!("urn:decentraland:off-chain:base-avatars:item_{i}"))
+            .collect();
+        let refs: Vec<&str> = pointers.iter().map(String::as_str).collect();
+        let started = std::time::Instant::now();
+        let errors = item_access_errors(EntityType::Wearable, &refs).await;
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "took {:?}",
+            started.elapsed()
+        );
+        assert_eq!(errors.len(), 1);
+        assert!(errors[0].starts_with(
+            "Only one pointer is allowed when you create an item. Received: \
+             urn:decentraland:off-chain:base-avatars:item_0,\
+             urn:decentraland:off-chain:base-avatars:item_1,"
+        ));
     }
 
     #[test]
