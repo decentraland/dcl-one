@@ -1264,6 +1264,13 @@ mod tests {
             hex::encode(Sha256::digest(ENUMS)),
             "upstream.lock.json records the vendored enums"
         );
+        assert_eq!(
+            lock["files"]["extract-enums.js"],
+            hex::encode(Sha256::digest(include_bytes!(
+                "dcl-schemas/extract-enums.js"
+            ))),
+            "upstream.lock.json records the extraction script"
+        );
         let upstream: Map<String, Value> = serde_json::from_slice(ENUMS).unwrap();
         let copied: [(&str, &[&str]); 13] = [
             ("wearableCategories", WEARABLE_CATEGORIES),
