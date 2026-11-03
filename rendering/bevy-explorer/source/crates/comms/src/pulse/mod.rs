@@ -25,6 +25,7 @@ use bevy::math::{IVec2, Vec3};
 use dcl_component::proto_components::{kernel::comms::rfc4, pulse};
 
 pub mod plugin;
+pub mod reconnect;
 pub mod transport;
 
 #[cfg(not(target_arch = "wasm32"))]

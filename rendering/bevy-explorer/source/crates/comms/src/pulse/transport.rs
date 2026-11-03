@@ -117,6 +117,12 @@ pub enum PulseDisconnect {
     InvalidHandshakeField,
     /// Sustained corrupt/oversized packets (buggy client, fuzzer, or amplification probe).
     PacketCorrupted,
+    /// Per-source-IP concurrent-connection cap exceeded. Unlike [`Self::PreAuthIpLimit`],
+    /// authenticated connections count against it; it frees as the IP's other connections close.
+    IpConnectionLimitExceeded,
+    /// Per-source-IP concurrent scene-listener cap exceeded. It frees only when another listener
+    /// from the same IP disconnects, which may take minutes or never.
+    SceneListenerIpLimitExceeded,
     /// `SceneListenerUpdate` carried an invalid AoI (no rects, inverted/out-of-range rect, or over
     /// the server's parcel budget). The AoI in force when it arrived is untouched.
     InvalidSceneListenerField,
@@ -150,6 +156,8 @@ impl PulseDisconnect {
             14 => Self::HandshakeReplayRejected,
             15 => Self::InvalidHandshakeField,
             16 => Self::PacketCorrupted,
+            17 => Self::IpConnectionLimitExceeded,
+            18 => Self::SceneListenerIpLimitExceeded,
             19 => Self::InvalidSceneListenerField,
             other => Self::Unknown(other),
         }
