@@ -80,11 +80,13 @@ sees a `cfg`. Backend functionality that only one caller needs lives next to tha
   `rendering/bevy-explorer/source` runs clippy, the native test suite on Linux, the headless smoke
   test and the web build (`tooling/bevy-ci.py` at the dcl-one root selects them). The suite adds
   Windows and macOS when the PR changes the root `Cargo.toml`, a `build*.rs`, `.cargo`, the
-  toolchain, `local-harness/benchmark`, `local-harness/web-driver`, the locked package set in
-  `Cargo.lock`, or a CI input outside the engine source (the workflow, the selector,
-  `library/vendor/rusty_enet`, `apps/bevy-explorer` build scripts); when it is labelled `ci:macos`
-  (then push or reopen); and on every main push and manual run that runs the suite. Label a PR
-  whose change is platform-specific, or the break shows up on `main`.
+  toolchain, `local-harness/benchmark`, `local-harness/web-driver`, a file or folder named
+  `windows` or `macos`, the locked package set in `Cargo.lock`, or a CI input outside the engine
+  source (the workflow, the selector, `library/vendor/rusty_enet`, `apps/bevy-explorer` build
+  scripts); when it is labelled `ci:macos` (then push or reopen); and on every main push and
+  manual run that runs the suite. Label a PR whose change is platform-specific, or the break shows
+  up on `main`: a `cfg(target_os)` block, or a crate `Cargo.toml` that adds a
+  `[target.'cfg(...)'.dependencies]` entry on a crate already in `Cargo.lock`, runs on Linux only.
 
 ## Memory budgets
 

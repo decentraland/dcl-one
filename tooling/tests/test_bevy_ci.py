@@ -87,7 +87,9 @@ class SelectionTest(unittest.TestCase):
 
     def test_platform_inputs_under_source_select_native_matrix(self):
         for name in ('build.rs', 'crates/assets/build.rs', 'crates/dcl_component/build_quant.rs',
-                     'local-harness/benchmark/src/main.rs', 'local-harness/web-driver/driver.mjs'):
+                     'local-harness/benchmark/src/main.rs', 'local-harness/web-driver/driver.mjs',
+                     'crates/platform/src/native/deeplink/windows.rs', 'crates/platform/src/native/deeplink/macos.rs',
+                     'deploy/macos/Info.plist'):
             with self.subTest(path=name):
                 before = self.git('rev-parse', 'HEAD')
                 self.write('rendering/bevy-explorer/source/' + name, 'changed')

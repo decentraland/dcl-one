@@ -162,7 +162,8 @@ def platform_input(path):
     """A source path whose change can behave differently on Windows or macOS."""
     path = path.removeprefix(SOURCE)
     return (path == 'Cargo.toml' or re.fullmatch(r'build\w*\.rs', path.rsplit('/', 1)[-1]) is not None
-            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/')))
+            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/'))
+            or re.search(r'(^|/)(windows|macos)(\.rs$|/)', path) is not None)
 
 
 def locked_packages(rev):
