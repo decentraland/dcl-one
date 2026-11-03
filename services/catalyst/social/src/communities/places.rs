@@ -164,13 +164,15 @@ pub struct PlacesBody {
 
 pub async fn add_places(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
     body: super::http::DeferredBody,
 ) -> Response {
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "post",
             &signed_path(&original, format!("/v1/communities/{id}/places")),
@@ -241,12 +243,14 @@ pub async fn add_places(
 
 pub async fn remove_place(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, place_id)): Path<(String, String)>,
 ) -> Response {
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "delete",
             &signed_path(&original, format!("/v1/communities/{id}/places/{place_id}")),

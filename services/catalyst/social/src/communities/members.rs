@@ -549,13 +549,14 @@ pub async fn member_communities_by_ids(
 }
 
 async fn signer_or_refusal(
+    caller: &super::auth::Caller,
     state: &SharedState,
     headers: &HeaderMap,
     method: &str,
     path: super::auth::SignedPath,
 ) -> Result<Address, Response> {
-    state
-        .require_signer(headers, method, &path)
+    caller
+        .require_signer(state, headers, method, &path)
         .await
         .map_err(IntoResponse::into_response)
 }
@@ -568,11 +569,13 @@ fn parse_address(raw: &str) -> Result<Address, Response> {
 /// the insert only fires when every guard holds.
 pub async fn add_member(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
 ) -> Response {
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "post",
@@ -650,11 +653,13 @@ pub async fn add_member(
 /// a moderator kicks members; a non-member target is treated as a member).
 pub async fn remove_member(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
 ) -> Response {
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "delete",
@@ -773,12 +778,14 @@ pub struct RoleBody {
 /// a moderator is written. `owner` is the ownership transfer.
 pub async fn update_member_role(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
     body: super::http::DeferredBody,
 ) -> Response {
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "patch",
@@ -948,11 +955,13 @@ async fn transfer_ownership(
 
 pub async fn ban_member(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
 ) -> Response {
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "post",
@@ -1063,11 +1072,13 @@ pub async fn ban_member(
 
 pub async fn unban_member(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, address)): Path<(String, String)>,
 ) -> Response {
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "delete",

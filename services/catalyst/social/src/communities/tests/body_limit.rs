@@ -3,7 +3,7 @@
 use super::*;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
-async fn response(
+pub(super) async fn response(
     socket: &mut BufReader<tokio::net::TcpStream>,
 ) -> (u16, axum::http::HeaderMap, String) {
     let mut line = String::new();
@@ -32,7 +32,7 @@ async fn response(
     (status, headers, String::from_utf8(body).unwrap())
 }
 
-async fn serve(rig: &Rig) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
+pub(super) async fn serve(rig: &Rig) -> (std::net::SocketAddr, tokio::task::JoinHandle<()>) {
     let rpc = Arc::new(crate::rpc::State::new(
         rig.pool.clone(),
         crate::rpc::Settings::default(),

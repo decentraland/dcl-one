@@ -33,6 +33,7 @@ mod compliance_parity;
 mod dependency_errors;
 mod fixture_shapes;
 mod full_http_parity;
+mod gateway_auth;
 mod mute_body;
 mod owner_parity;
 mod post_create;

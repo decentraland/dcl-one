@@ -63,6 +63,20 @@ async fn every_community_http_database_failure_uses_the_source_message_boundary(
     let legacy = router(state.clone());
     let api = Router::new().nest("/social-api", crate::social_api_gateway(router(state)));
     let fixture:Value=serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"),"/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-errors.json"))).unwrap();
+    // The source ADR-44 boundary precedes any domain dependency failure.
+    // These requests reach a real role denied the community table, so a 400
+    // proves the gateway does not perform mirror SQL before authentication.
+    for (method, path) in [
+        ("patch", format!("/social-api/v1/communities/{id}")),
+        ("post", format!("/social-api/v1/communities/{id}/requests")),
+        (
+            "delete",
+            format!("/social-api/v1/communities/{id}/posts/{post}"),
+        ),
+    ] {
+        let (status, body) = hit(&api, Case::new(method, path).json(&json!({}))).await;
+        assert_gate_400(status, &body, "gateway auth before mirror SQL failure");
+    }
     let before:(i64,i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM social.communities WHERE id=$1),(SELECT count(*) FROM social.community_members WHERE community_id=$1),(SELECT count(*) FROM social.community_requests WHERE community_id=$1),(SELECT count(*) FROM social.community_posts WHERE community_id=$1)").bind(id).fetch_one(&rig.pool).await.unwrap();
     for case in fixture["cases"].as_array().unwrap() {
         let method = match case["method"].as_str().unwrap() {

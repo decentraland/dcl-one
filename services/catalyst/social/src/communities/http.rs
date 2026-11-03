@@ -119,7 +119,10 @@ impl<S: Send + Sync> axum::extract::FromRequest<S> for DeferredBody {
 }
 
 impl DeferredBody {
-    async fn read(self, multipart: bool) -> Result<axum::body::Bytes, BodyReadError> {
+    async fn read_parts(
+        self,
+        multipart: bool,
+    ) -> Result<(axum::http::request::Parts, axum::body::Bytes), BodyReadError> {
         use futures::StreamExt;
         const MULTIPART_MAX: usize = 1024 * 1024;
         if multipart
@@ -144,7 +147,8 @@ impl DeferredBody {
                 bytes: if multipart { usize::MAX } else { 1024 * 1024 },
                 exceeded: Default::default(),
             });
-        let mut stream = self.0.into_body().into_data_stream();
+        let (parts, body) = self.0.into_parts();
+        let mut stream = body.into_data_stream();
         let mut bytes = bytes::BytesMut::new();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|error| BodyReadError::Stream(error.to_string()))?;
@@ -159,7 +163,31 @@ impl DeferredBody {
             }
             bytes.extend_from_slice(&chunk);
         }
-        Ok(bytes.freeze())
+        Ok((parts, bytes.freeze()))
+    }
+    async fn read(self, multipart: bool) -> Result<axum::body::Bytes, BodyReadError> {
+        self.read_parts(multipart).await.map(|(_, bytes)| bytes)
+    }
+    /// Gateway federation classification shares the configured stream limit.
+    /// The client's form-size check still runs in its handler; a confirmed
+    /// historical envelope has its separate legacy size check in `fed`.
+    pub(super) async fn classify(
+        request: axum::extract::Request,
+        form: bool,
+    ) -> Result<(axum::http::request::Parts, axum::body::Bytes), CommError> {
+        Self(request).read_parts(false).await.map_err(|error| {
+            if form {
+                return CommError::Internal;
+            }
+            let message = match error {
+                BodyReadError::Stream(message) => message,
+                BodyReadError::MultipartLimit => "Request body too large".to_owned(),
+            };
+            CommError::Body(
+                StatusCode::BAD_REQUEST,
+                json!({"ok":false,"message":message}),
+            )
+        })
     }
     pub async fn schema(self) -> Result<axum::body::Bytes, CommError> {
         self.read(false).await.map_err(|error| {

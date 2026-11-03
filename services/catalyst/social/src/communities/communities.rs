@@ -551,13 +551,14 @@ fn parse_visibility(value: String) -> Result<String, Refusal> {
 }
 
 async fn signer_or_refusal(
+    caller: &super::auth::Caller,
     state: &SharedState,
     headers: &HeaderMap,
     method: &str,
     path: super::auth::SignedPath,
 ) -> Result<Address, Response> {
-    state
-        .require_signer(headers, method, &path)
+    caller
+        .require_signer(state, headers, method, &path)
         .await
         .map_err(IntoResponse::into_response)
 }
@@ -573,11 +574,13 @@ macro_rules! try_resp {
 
 pub async fn create_community(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     body: super::http::DeferredBody,
 ) -> Response {
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "post",
@@ -726,12 +729,14 @@ pub async fn create_community(
 
 pub async fn update_community(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
     body: super::http::DeferredBody,
 ) -> Response {
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "put",
@@ -1051,12 +1056,14 @@ pub struct PatchBody {
 /// first sort key (upstream `updateEditorChoice`).
 pub async fn update_community_partially(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
     body: super::http::DeferredBody,
 ) -> Response {
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "patch",
@@ -1115,11 +1122,13 @@ async fn active_community_exists(state: &SharedState, id: CommunityId) -> Result
 
 pub async fn delete_community(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
 ) -> Response {
     let signer = match signer_or_refusal(
+        &caller,
         &state,
         &headers,
         "delete",

@@ -291,13 +291,15 @@ fn is_unique_violation(e: &sqlx::Error) -> bool {
 
 pub async fn create_request(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
     body: super::http::DeferredBody,
 ) -> Response {
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "post",
             &signed_path(&original, format!("/v1/communities/{id}/requests")),
@@ -530,13 +532,15 @@ pub struct RequestStatusBody {
 /// row in the same transaction, refused for a banned wallet.
 pub async fn update_request_status(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, request_id)): Path<(String, String)>,
     body: super::http::DeferredBody,
 ) -> Response {
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "patch",
             &signed_path(

@@ -199,13 +199,15 @@ fn keyed_post_id(headers: &HeaderMap, community: Uuid, author: &str) -> Result<U
 
 pub async fn create_post(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path(id): Path<String>,
     body: super::http::DeferredBody,
 ) -> Response {
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "post",
             &signed_path(&original, format!("/v1/communities/{id}/posts")),
@@ -439,12 +441,14 @@ pub async fn edit_post(
 
 pub async fn delete_post(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, post_id)): Path<(String, String)>,
 ) -> Response {
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "delete",
             &signed_path(&original, format!("/v1/communities/{id}/posts/{post_id}")),
@@ -491,12 +495,14 @@ pub async fn delete_post(
 
 pub async fn like_post(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, post_id)): Path<(String, String)>,
 ) -> Response {
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "post",
             &signed_path(
@@ -544,12 +550,14 @@ pub async fn like_post(
 
 pub async fn unlike_post(
     State(state): State<SharedState>,
+    caller: super::auth::Caller,
     headers: HeaderMap,
     original: OriginalUri,
     Path((id, post_id)): Path<(String, String)>,
 ) -> Response {
-    let signer = match state
+    let signer = match caller
         .require_signer(
+            &state,
             &headers,
             "delete",
             &signed_path(

@@ -794,6 +794,10 @@ pub fn router(state: SharedState) -> Router {
             state.clone(),
             copies::gate,
         ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            auth::gateway_preauth,
+        ))
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(axum::middleware::from_fn(cors::social_api_cors))
         .with_state(state)
