@@ -1,0 +1,1624 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "yarn_lock_sha256": "5e5f4a1ee4bd960bede74f5877921117ebbfa88a67cf5c75ffd86ea9416c7088"
+  },
+  "runtime": {
+    "node": "v26.12.0",
+    "protocol_package": "1.0.0-29103578374.commit-3c4b54e"
+  },
+  "scope": "Executed real upstream RPC handlers and stream parsers with deterministic injected component states. Not deployed PostgreSQL, Redis or LiveKit equivalence.",
+  "caller": "0x1111111111111111111111111111111111111111",
+  "target": "0x2222222222222222222222222222222222222222",
+  "community": "33333333-3333-4333-8333-333333333333",
+  "call": "44444444-4444-4444-8444-444444444444",
+  "cases": [
+    {
+      "group": "rpc",
+      "id": "start-community-voice-chat.success",
+      "method": "startCommunityVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "StartCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "credentials": {
+              "connectionUrl": "wss://livekit.test/voice-chat-community-33333333-3333-4333-8333-333333333333?for=0x1111111111111111111111111111111111111111"
+            }
+          }
+        }
+      },
+      "expected_hex": "0a7f0a7d0a7b7773733a2f2f6c6976656b69742e746573742f766f6963652d636861742d636f6d6d756e6974792d33333333333333332d333333332d343333332d383333332d3333333333333333333333333f666f723d307831313131313131313131313131313131313131313131313131313131313131313131313131313131"
+    },
+    {
+      "group": "rpc",
+      "id": "start-community-voice-chat.empty-community",
+      "method": "startCommunityVoiceChat",
+      "scenario": "empty-community",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": " ",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "StartCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Community ID is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c436f6d6d756e69747920494420697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "start-community-voice-chat.runtime-failure",
+      "method": "startCommunityVoiceChat",
+      "scenario": "runtime-failure",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "StartCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Failed to start community voice chat"
+          }
+        }
+      },
+      "expected_hex": "2a260a244661696c656420746f20737461727420636f6d6d756e69747920766f6963652063686174"
+    },
+    {
+      "group": "rpc",
+      "id": "join-community-voice-chat.success",
+      "method": "joinCommunityVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "JoinCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "voiceChatId": "33333333-3333-4333-8333-333333333333",
+            "credentials": {
+              "connectionUrl": "wss://livekit.test/voice-chat-community-33333333-3333-4333-8333-333333333333?for=0x1111111111111111111111111111111111111111"
+            }
+          }
+        }
+      },
+      "expected_hex": "0aa5010a2433333333333333332d333333332d343333332d383333332d333333333333333333333333127d0a7b7773733a2f2f6c6976656b69742e746573742f766f6963652d636861742d636f6d6d756e6974792d33333333333333332d333333332d343333332d383333332d3333333333333333333333333f666f723d307831313131313131313131313131313131313131313131313131313131313131313131313131313131"
+    },
+    {
+      "group": "rpc",
+      "id": "join-community-voice-chat.empty-community",
+      "method": "joinCommunityVoiceChat",
+      "scenario": "empty-community",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": " ",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "JoinCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Community ID is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c436f6d6d756e69747920494420697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "join-community-voice-chat.runtime-failure",
+      "method": "joinCommunityVoiceChat",
+      "scenario": "runtime-failure",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "JoinCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Failed to join community voice chat"
+          }
+        }
+      },
+      "expected_hex": "32250a234661696c656420746f206a6f696e20636f6d6d756e69747920766f6963652063686174"
+    },
+    {
+      "group": "rpc",
+      "id": "join-community-voice-chat.runtime-not-found",
+      "method": "joinCommunityVoiceChat",
+      "scenario": "runtime-not-found",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "JoinCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+          }
+        }
+      },
+      "expected_hex": "22620a60436f6d6d756e69747920766f6963652063686174206f72207061727469636970616e74206e6f7420666f756e6420666f7220636f6d6d756e6974792033333333333333332d333333332d343333332d383333332d333333333333333333333333"
+    },
+    {
+      "group": "rpc",
+      "id": "request-to-speak-in-community-voice-chat.success",
+      "method": "requestToSpeakInCommunityVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "Request to speak sent successfully"
+          }
+        }
+      },
+      "expected_hex": "0a240a225265717565737420746f20737065616b2073656e74207375636365737366756c6c79"
+    },
+    {
+      "group": "rpc",
+      "id": "request-to-speak-in-community-voice-chat.empty-community",
+      "method": "requestToSpeakInCommunityVoiceChat",
+      "scenario": "empty-community",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": " ",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Community ID is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c436f6d6d756e69747920494420697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "request-to-speak-in-community-voice-chat.runtime-failure",
+      "method": "requestToSpeakInCommunityVoiceChat",
+      "scenario": "runtime-failure",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Failed to update hand status in community voice chat"
+          }
+        }
+      },
+      "expected_hex": "2a360a344661696c656420746f207570646174652068616e642073746174757320696e20636f6d6d756e69747920766f6963652063686174"
+    },
+    {
+      "group": "rpc",
+      "id": "request-to-speak-in-community-voice-chat.runtime-not-found",
+      "method": "requestToSpeakInCommunityVoiceChat",
+      "scenario": "runtime-not-found",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+          }
+        }
+      },
+      "expected_hex": "22620a60436f6d6d756e69747920766f6963652063686174206f72207061727469636970616e74206e6f7420666f756e6420666f7220636f6d6d756e6974792033333333333333332d333333332d343333332d383333332d333333333333333333333333"
+    },
+    {
+      "group": "rpc",
+      "id": "promote-speaker-in-community-voice-chat.success",
+      "method": "promoteSpeakerInCommunityVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "User promoted to speaker successfully"
+          }
+        }
+      },
+      "expected_hex": "0a270a25557365722070726f6d6f74656420746f20737065616b6572207375636365737366756c6c79"
+    },
+    {
+      "group": "rpc",
+      "id": "promote-speaker-in-community-voice-chat.empty-community",
+      "method": "promoteSpeakerInCommunityVoiceChat",
+      "scenario": "empty-community",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": " ",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Community ID is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c436f6d6d756e69747920494420697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "promote-speaker-in-community-voice-chat.runtime-failure",
+      "method": "promoteSpeakerInCommunityVoiceChat",
+      "scenario": "runtime-failure",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Failed to promote speaker in community voice chat"
+          }
+        }
+      },
+      "expected_hex": "2a330a314661696c656420746f2070726f6d6f746520737065616b657220696e20636f6d6d756e69747920766f6963652063686174"
+    },
+    {
+      "group": "rpc",
+      "id": "promote-speaker-in-community-voice-chat.empty-target",
+      "method": "promoteSpeakerInCommunityVoiceChat",
+      "scenario": "empty-target",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": " ",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "User address is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c55736572206164647265737320697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "promote-speaker-in-community-voice-chat.forbidden",
+      "method": "promoteSpeakerInCommunityVoiceChat",
+      "scenario": "forbidden",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "Only community owners and moderators can promote speakers"
+          }
+        }
+      },
+      "expected_hex": "1a3b0a394f6e6c7920636f6d6d756e697479206f776e65727320616e64206d6f64657261746f72732063616e2070726f6d6f746520737065616b657273"
+    },
+    {
+      "group": "rpc",
+      "id": "promote-speaker-in-community-voice-chat.runtime-not-found",
+      "method": "promoteSpeakerInCommunityVoiceChat",
+      "scenario": "runtime-not-found",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "PromoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+          }
+        }
+      },
+      "expected_hex": "22620a60436f6d6d756e69747920766f6963652063686174206f72207061727469636970616e74206e6f7420666f756e6420666f7220636f6d6d756e6974792033333333333333332d333333332d343333332d383333332d333333333333333333333333"
+    },
+    {
+      "group": "rpc",
+      "id": "demote-speaker-in-community-voice-chat.success",
+      "method": "demoteSpeakerInCommunityVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "User demoted to listener successfully"
+          }
+        }
+      },
+      "expected_hex": "0a270a25557365722064656d6f74656420746f206c697374656e6572207375636365737366756c6c79"
+    },
+    {
+      "group": "rpc",
+      "id": "demote-speaker-in-community-voice-chat.empty-community",
+      "method": "demoteSpeakerInCommunityVoiceChat",
+      "scenario": "empty-community",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": " ",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Community ID is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c436f6d6d756e69747920494420697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "demote-speaker-in-community-voice-chat.runtime-failure",
+      "method": "demoteSpeakerInCommunityVoiceChat",
+      "scenario": "runtime-failure",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Failed to demote speaker in community voice chat"
+          }
+        }
+      },
+      "expected_hex": "2a320a304661696c656420746f2064656d6f746520737065616b657220696e20636f6d6d756e69747920766f6963652063686174"
+    },
+    {
+      "group": "rpc",
+      "id": "demote-speaker-in-community-voice-chat.empty-target",
+      "method": "demoteSpeakerInCommunityVoiceChat",
+      "scenario": "empty-target",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": " ",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "User address is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c55736572206164647265737320697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "demote-speaker-in-community-voice-chat.forbidden",
+      "method": "demoteSpeakerInCommunityVoiceChat",
+      "scenario": "forbidden",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "Only community owners and moderators can demote other speakers"
+          }
+        }
+      },
+      "expected_hex": "1a400a3e4f6e6c7920636f6d6d756e697479206f776e65727320616e64206d6f64657261746f72732063616e2064656d6f7465206f7468657220737065616b657273"
+    },
+    {
+      "group": "rpc",
+      "id": "demote-speaker-in-community-voice-chat.runtime-not-found",
+      "method": "demoteSpeakerInCommunityVoiceChat",
+      "scenario": "runtime-not-found",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+          }
+        }
+      },
+      "expected_hex": "22620a60436f6d6d756e69747920766f6963652063686174206f72207061727469636970616e74206e6f7420666f756e6420666f7220636f6d6d756e6974792033333333333333332d333333332d343333332d383333332d333333333333333333333333"
+    },
+    {
+      "group": "rpc",
+      "id": "kick-player-from-community-voice-chat.success",
+      "method": "kickPlayerFromCommunityVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "KickPlayerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "User kicked from voice chat successfully"
+          }
+        }
+      },
+      "expected_hex": "0a2a0a2855736572206b69636b65642066726f6d20766f6963652063686174207375636365737366756c6c79"
+    },
+    {
+      "group": "rpc",
+      "id": "kick-player-from-community-voice-chat.empty-community",
+      "method": "kickPlayerFromCommunityVoiceChat",
+      "scenario": "empty-community",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": " ",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "KickPlayerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Community ID is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c436f6d6d756e69747920494420697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "kick-player-from-community-voice-chat.runtime-failure",
+      "method": "kickPlayerFromCommunityVoiceChat",
+      "scenario": "runtime-failure",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "KickPlayerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Failed to kick player from community voice chat"
+          }
+        }
+      },
+      "expected_hex": "2a310a2f4661696c656420746f206b69636b20706c617965722066726f6d20636f6d6d756e69747920766f6963652063686174"
+    },
+    {
+      "group": "rpc",
+      "id": "kick-player-from-community-voice-chat.empty-target",
+      "method": "kickPlayerFromCommunityVoiceChat",
+      "scenario": "empty-target",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": " ",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "KickPlayerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "User address is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c55736572206164647265737320697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "kick-player-from-community-voice-chat.forbidden",
+      "method": "kickPlayerFromCommunityVoiceChat",
+      "scenario": "forbidden",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "KickPlayerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "Only community owners and moderators can kick players"
+          }
+        }
+      },
+      "expected_hex": "1a370a354f6e6c7920636f6d6d756e697479206f776e65727320616e64206d6f64657261746f72732063616e206b69636b20706c6179657273"
+    },
+    {
+      "group": "rpc",
+      "id": "kick-player-from-community-voice-chat.runtime-not-found",
+      "method": "kickPlayerFromCommunityVoiceChat",
+      "scenario": "runtime-not-found",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "KickPlayerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+          }
+        }
+      },
+      "expected_hex": "22620a60436f6d6d756e69747920766f6963652063686174206f72207061727469636970616e74206e6f7420666f756e6420666f7220636f6d6d756e6974792033333333333333332d333333332d343333332d383333332d333333333333333333333333"
+    },
+    {
+      "group": "rpc",
+      "id": "reject-speak-request-in-community-voice-chat.success",
+      "method": "rejectSpeakRequestInCommunityVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "Speak request rejected successfully"
+          }
+        }
+      },
+      "expected_hex": "0a250a23537065616b20726571756573742072656a6563746564207375636365737366756c6c79"
+    },
+    {
+      "group": "rpc",
+      "id": "reject-speak-request-in-community-voice-chat.empty-community",
+      "method": "rejectSpeakRequestInCommunityVoiceChat",
+      "scenario": "empty-community",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": " ",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Community ID is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c436f6d6d756e69747920494420697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "reject-speak-request-in-community-voice-chat.runtime-failure",
+      "method": "rejectSpeakRequestInCommunityVoiceChat",
+      "scenario": "runtime-failure",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Failed to reject speak request in community voice chat"
+          }
+        }
+      },
+      "expected_hex": "2a380a364661696c656420746f2072656a65637420737065616b207265717565737420696e20636f6d6d756e69747920766f6963652063686174"
+    },
+    {
+      "group": "rpc",
+      "id": "reject-speak-request-in-community-voice-chat.empty-target",
+      "method": "rejectSpeakRequestInCommunityVoiceChat",
+      "scenario": "empty-target",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": " ",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "User address is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c55736572206164647265737320697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "reject-speak-request-in-community-voice-chat.forbidden",
+      "method": "rejectSpeakRequestInCommunityVoiceChat",
+      "scenario": "forbidden",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "Only community owners and moderators can reject speak requests"
+          }
+        }
+      },
+      "expected_hex": "1a400a3e4f6e6c7920636f6d6d756e697479206f776e65727320616e64206d6f64657261746f72732063616e2072656a65637420737065616b207265717565737473"
+    },
+    {
+      "group": "rpc",
+      "id": "reject-speak-request-in-community-voice-chat.runtime-not-found",
+      "method": "rejectSpeakRequestInCommunityVoiceChat",
+      "scenario": "runtime-not-found",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "RejectSpeakRequestInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+          }
+        }
+      },
+      "expected_hex": "22620a60436f6d6d756e69747920766f6963652063686174206f72207061727469636970616e74206e6f7420666f756e6420666f7220636f6d6d756e6974792033333333333333332d333333332d343333332d383333332d333333333333333333333333"
+    },
+    {
+      "group": "rpc",
+      "id": "end-community-voice-chat.success",
+      "method": "endCommunityVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "EndCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "Community voice chat ended successfully"
+          }
+        }
+      },
+      "expected_hex": "0a290a27436f6d6d756e69747920766f696365206368617420656e646564207375636365737366756c6c79"
+    },
+    {
+      "group": "rpc",
+      "id": "end-community-voice-chat.empty-community",
+      "method": "endCommunityVoiceChat",
+      "scenario": "empty-community",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": " ",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "EndCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Community ID is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "122e0a2c436f6d6d756e69747920494420697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "end-community-voice-chat.runtime-failure",
+      "method": "endCommunityVoiceChat",
+      "scenario": "runtime-failure",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "EndCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Failed to end community voice chat"
+          }
+        }
+      },
+      "expected_hex": "2a240a224661696c656420746f20656e6420636f6d6d756e69747920766f6963652063686174"
+    },
+    {
+      "group": "rpc",
+      "id": "end-community-voice-chat.runtime-not-found",
+      "method": "endCommunityVoiceChat",
+      "scenario": "runtime-not-found",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "EndCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+          }
+        }
+      },
+      "expected_hex": "22620a60436f6d6d756e69747920766f6963652063686174206f72207061727469636970616e74206e6f7420666f756e6420666f7220636f6d6d756e6974792033333333333333332d333333332d343333332d383333332d333333333333333333333333"
+    },
+    {
+      "group": "rpc",
+      "id": "mute-speaker-from-community-voice-chat.success",
+      "method": "muteSpeakerFromCommunityVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "muted": true
+          }
+        }
+      },
+      "expected_hex": "0a020801"
+    },
+    {
+      "group": "rpc",
+      "id": "mute-speaker-from-community-voice-chat.empty-community",
+      "method": "muteSpeakerFromCommunityVoiceChat",
+      "scenario": "empty-community",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": " ",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "Community ID is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "222e0a2c436f6d6d756e69747920494420697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "mute-speaker-from-community-voice-chat.runtime-failure",
+      "method": "muteSpeakerFromCommunityVoiceChat",
+      "scenario": "runtime-failure",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "internalServerError",
+          "internalServerError": {
+            "message": "Failed to mute/unmute speaker from community voice chat: voice runtime not configured (no LiveKit adapter attached)"
+          }
+        }
+      },
+      "expected_hex": "2a750a734661696c656420746f206d7574652f756e6d75746520737065616b65722066726f6d20636f6d6d756e69747920766f69636520636861743a20766f6963652072756e74696d65206e6f7420636f6e6669677572656420286e6f204c6976654b6974206164617074657220617474616368656429"
+    },
+    {
+      "group": "rpc",
+      "id": "mute-speaker-from-community-voice-chat.empty-target",
+      "method": "muteSpeakerFromCommunityVoiceChat",
+      "scenario": "empty-target",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": " ",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "invalidRequest",
+          "invalidRequest": {
+            "message": "User address is required and cannot be empty"
+          }
+        }
+      },
+      "expected_hex": "222e0a2c55736572206164647265737320697320726571756972656420616e642063616e6e6f7420626520656d707479"
+    },
+    {
+      "group": "rpc",
+      "id": "mute-speaker-from-community-voice-chat.runtime-not-found",
+      "method": "muteSpeakerFromCommunityVoiceChat",
+      "scenario": "runtime-not-found",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "MuteSpeakerFromCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFoundError",
+          "notFoundError": {
+            "message": "Community voice chat or participant not found for community 33333333-3333-4333-8333-333333333333"
+          }
+        }
+      },
+      "expected_hex": "1a620a60436f6d6d756e69747920766f6963652063686174206f72207061727469636970616e74206e6f7420666f756e6420666f7220636f6d6d756e6974792033333333333333332d333333332d343333332d383333332d333333333333333333333333"
+    },
+    {
+      "group": "rpc",
+      "id": "start-community-voice-chat.conflict",
+      "method": "startCommunityVoiceChat",
+      "scenario": "conflict",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "StartCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "conflictingError",
+          "conflictingError": {
+            "message": "Community 33333333-3333-4333-8333-333333333333 already has an active voice chat"
+          }
+        }
+      },
+      "expected_hex": "22510a4f436f6d6d756e6974792033333333333333332d333333332d343333332d383333332d33333333333333333333333320616c72656164792068617320616e2061637469766520766f6963652063686174"
+    },
+    {
+      "group": "rpc",
+      "id": "request-to-speak-in-community-voice-chat.lower-hand",
+      "method": "requestToSpeakInCommunityVoiceChat",
+      "scenario": "lower-hand",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x2222222222222222222222222222222222222222",
+        "isRaisingHand": false,
+        "muted": true
+      },
+      "response_type": "RequestToSpeakInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "Hand lowered successfully"
+          }
+        }
+      },
+      "expected_hex": "0a1b0a1948616e64206c6f7765726564207375636365737366756c6c79"
+    },
+    {
+      "group": "rpc",
+      "id": "demote-speaker-in-community-voice-chat.self-demote",
+      "method": "demoteSpeakerInCommunityVoiceChat",
+      "scenario": "self-demote",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "userAddress": "0x1111111111111111111111111111111111111111",
+        "isRaisingHand": true,
+        "muted": true
+      },
+      "response_type": "DemoteSpeakerInCommunityVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "message": "You have been demoted to listener successfully"
+          }
+        }
+      },
+      "expected_hex": "0a300a2e596f752068617665206265656e2064656d6f74656420746f206c697374656e6572207375636365737366756c6c79"
+    },
+    {
+      "group": "rpc",
+      "id": "start-private-voice-chat.success",
+      "method": "startPrivateVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "callee": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "callId": "44444444-4444-4444-8444-444444444444"
+      },
+      "response_type": "StartPrivateVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "44444444-4444-4444-8444-444444444444"
+          }
+        }
+      },
+      "expected_hex": "0a260a2434343434343434342d343434342d343434342d383434342d343434343434343434343434"
+    },
+    {
+      "group": "rpc",
+      "id": "start-private-voice-chat.refused",
+      "method": "startPrivateVoiceChat",
+      "scenario": "refused",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "callee": {
+          "address": "0x1111111111111111111111111111111111111111"
+        },
+        "callId": "44444444-4444-4444-8444-444444444444"
+      },
+      "response_type": "StartPrivateVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "The callee or the caller are not accepting voice calls from users that are not friends"
+          }
+        }
+      },
+      "expected_hex": "2a580a565468652063616c6c6565206f72207468652063616c6c657220617265206e6f7420616363657074696e6720766f6963652063616c6c732066726f6d207573657273207468617420617265206e6f7420667269656e6473"
+    },
+    {
+      "group": "rpc",
+      "id": "accept-private-voice-chat.success",
+      "method": "acceptPrivateVoiceChat",
+      "scenario": "success",
+      "caller": "0x2222222222222222222222222222222222222222",
+      "request": {
+        "callee": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "callId": "44444444-4444-4444-8444-444444444444"
+      },
+      "response_type": "AcceptPrivateVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "44444444-4444-4444-8444-444444444444",
+            "credentials": {
+              "connectionUrl": "wss://livekit.test/voice-chat-private-44444444-4444-4444-8444-444444444444?for=0x2222222222222222222222222222222222222222"
+            }
+          }
+        }
+      },
+      "expected_hex": "0aa3010a2434343434343434342d343434342d343434342d383434342d343434343434343434343434127b0a797773733a2f2f6c6976656b69742e746573742f766f6963652d636861742d707269766174652d34343434343434342d343434342d343434342d383434342d3434343434343434343434343f666f723d307832323232323232323232323232323232323232323232323232323232323232323232323232323232"
+    },
+    {
+      "group": "rpc",
+      "id": "accept-private-voice-chat.refused",
+      "method": "acceptPrivateVoiceChat",
+      "scenario": "refused",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "callee": {
+          "address": "0x1111111111111111111111111111111111111111"
+        },
+        "callId": "44444444-4444-4444-8444-444444444444"
+      },
+      "response_type": "AcceptPrivateVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id 44444444-4444-4444-8444-444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "224b0a4954686520766f696365206368617420776974682069642034343434343434342d343434342d343434342d383434342d34343434343434343434343420776173206e6f7420666f756e64"
+    },
+    {
+      "group": "rpc",
+      "id": "reject-private-voice-chat.success",
+      "method": "rejectPrivateVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "callee": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "callId": "44444444-4444-4444-8444-444444444444"
+      },
+      "response_type": "RejectPrivateVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "44444444-4444-4444-8444-444444444444"
+          }
+        }
+      },
+      "expected_hex": "0a260a2434343434343434342d343434342d343434342d383434342d343434343434343434343434"
+    },
+    {
+      "group": "rpc",
+      "id": "reject-private-voice-chat.refused",
+      "method": "rejectPrivateVoiceChat",
+      "scenario": "refused",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "callee": {
+          "address": "0x1111111111111111111111111111111111111111"
+        },
+        "callId": "44444444-4444-4444-8444-444444444444"
+      },
+      "response_type": "RejectPrivateVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id 44444444-4444-4444-8444-444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "224b0a4954686520766f696365206368617420776974682069642034343434343434342d343434342d343434342d383434342d34343434343434343434343420776173206e6f7420666f756e64"
+    },
+    {
+      "group": "rpc",
+      "id": "end-private-voice-chat.success",
+      "method": "endPrivateVoiceChat",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "callee": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "callId": "44444444-4444-4444-8444-444444444444"
+      },
+      "response_type": "EndPrivateVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "44444444-4444-4444-8444-444444444444"
+          }
+        }
+      },
+      "expected_hex": "0a260a2434343434343434342d343434342d343434342d383434342d343434343434343434343434"
+    },
+    {
+      "group": "rpc",
+      "id": "end-private-voice-chat.refused",
+      "method": "endPrivateVoiceChat",
+      "scenario": "refused",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "callee": {
+          "address": "0x1111111111111111111111111111111111111111"
+        },
+        "callId": "44444444-4444-4444-8444-444444444444"
+      },
+      "response_type": "EndPrivateVoiceChatResponse",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The voice chat with id 44444444-4444-4444-8444-444444444444 was not found"
+          }
+        }
+      },
+      "expected_hex": "1a4b0a4954686520766f696365206368617420776974682069642034343434343434342d343434342d343434342d383434342d34343434343434343434343420776173206e6f7420666f756e64"
+    },
+    {
+      "group": "rpc",
+      "id": "get-incoming-private-voice-chat-requests.success",
+      "method": "getIncomingPrivateVoiceChatRequests",
+      "scenario": "success",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "callee": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "callId": "44444444-4444-4444-8444-444444444444"
+      },
+      "response_type": "GetIncomingPrivateVoiceChatRequestResponse",
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "44444444-4444-4444-8444-444444444444",
+            "caller": {
+              "address": "0x2222222222222222222222222222222222222222"
+            }
+          }
+        }
+      },
+      "expected_hex": "0a540a2c0a2a307832323232323232323232323232323232323232323232323232323232323232323232323232323232122434343434343434342d343434342d343434342d383434342d343434343434343434343434"
+    },
+    {
+      "group": "rpc",
+      "id": "get-incoming-private-voice-chat-requests.refused",
+      "method": "getIncomingPrivateVoiceChatRequests",
+      "scenario": "refused",
+      "caller": "0x1111111111111111111111111111111111111111",
+      "request": {
+        "callee": {
+          "address": "0x1111111111111111111111111111111111111111"
+        },
+        "callId": "44444444-4444-4444-8444-444444444444"
+      },
+      "response_type": "GetIncomingPrivateVoiceChatRequestResponse",
+      "response": {
+        "response": {
+          "$case": "notFound",
+          "notFound": {
+            "message": "The incoming voice chat for the address 0x1111111111111111111111111111111111111111 was not found"
+          }
+        }
+      },
+      "expected_hex": "12620a6054686520696e636f6d696e6720766f696365206368617420666f722074686520616464726573732030783131313131313131313131313131313131313131313131313131313131313131313131313131313120776173206e6f7420666f756e64"
+    },
+    {
+      "group": "stream",
+      "id": "friendship",
+      "response_type": "FriendshipUpdate",
+      "update": {
+        "action": "request",
+        "id": "44444444-4444-4444-8444-444444444444",
+        "from": "0x2222222222222222222222222222222222222222",
+        "to": "0x1111111111111111111111111111111111111111",
+        "timestamp": 1234,
+        "metadata": {
+          "message": "Hello"
+        }
+      },
+      "response": {
+        "update": {
+          "$case": "request",
+          "request": {
+            "friend": {
+              "address": "0x2222222222222222222222222222222222222222",
+              "name": "Stream Person",
+              "hasClaimedName": true,
+              "profilePictureUrl": "https://profiles.example/face.png"
+            },
+            "createdAt": 1234,
+            "message": "Hello",
+            "id": "44444444-4444-4444-8444-444444444444"
+          }
+        }
+      },
+      "expected_hex": "0a92010a600a2a307832323232323232323232323232323232323232323232323232323232323232323232323232323232120d53747265616d20506572736f6e1801222168747470733a2f2f70726f66696c65732e6578616d706c652f666163652e706e6710d2091a0548656c6c6f222434343434343434342d343434342d343434342d383434342d343434343434343434343434",
+      "json": {
+        "action": "request",
+        "id": "44444444-4444-4444-8444-444444444444",
+        "address": "0x2222222222222222222222222222222222222222",
+        "createdAt": 1234,
+        "message": "Hello"
+      }
+    },
+    {
+      "group": "stream-closed",
+      "id": "friendship",
+      "response_type": "FriendshipUpdate",
+      "response": {
+        "streamClosed": {
+          "reason": 1,
+          "message": "duplicate"
+        }
+      },
+      "expected_hex": "3a0d080112096475706c6963617465"
+    },
+    {
+      "group": "stream-missing-profile",
+      "id": "friendship",
+      "rpc_next_update": {
+        "update": {
+          "$case": "cancel",
+          "cancel": {
+            "user": {
+              "address": "0x2222222222222222222222222222222222222222"
+            }
+          }
+        }
+      },
+      "expected_hex": "2a2e0a2c0a2a307832323232323232323232323232323232323232323232323232323232323232323232323232323232",
+      "json": {
+        "action": "request",
+        "id": "44444444-4444-4444-8444-444444444444",
+        "address": "0x2222222222222222222222222222222222222222",
+        "createdAt": 1234,
+        "message": "Hello"
+      }
+    },
+    {
+      "group": "stream",
+      "id": "friend-connectivity",
+      "response_type": "FriendConnectivityUpdate",
+      "update": {
+        "address": "0x2222222222222222222222222222222222222222",
+        "status": 0
+      },
+      "response": {
+        "friend": {
+          "address": "0x2222222222222222222222222222222222222222",
+          "name": "Stream Person",
+          "hasClaimedName": true,
+          "profilePictureUrl": "https://profiles.example/face.png"
+        },
+        "status": 0
+      },
+      "expected_hex": "0a600a2a307832323232323232323232323232323232323232323232323232323232323232323232323232323232120d53747265616d20506572736f6e1801222168747470733a2f2f70726f66696c65732e6578616d706c652f666163652e706e67",
+      "json": {
+        "address": "0x2222222222222222222222222222222222222222",
+        "status": "online"
+      }
+    },
+    {
+      "group": "stream-closed",
+      "id": "friend-connectivity",
+      "response_type": "FriendConnectivityUpdate",
+      "response": {
+        "status": 0,
+        "streamClosed": {
+          "reason": 1,
+          "message": "duplicate"
+        }
+      },
+      "expected_hex": "1a0d080112096475706c6963617465"
+    },
+    {
+      "group": "stream",
+      "id": "block",
+      "response_type": "BlockUpdate",
+      "update": {
+        "blockerAddress": "0x2222222222222222222222222222222222222222",
+        "blockedAddress": "0x1111111111111111111111111111111111111111",
+        "isBlocked": true
+      },
+      "response": {
+        "address": "0x2222222222222222222222222222222222222222",
+        "isBlocked": true
+      },
+      "expected_hex": "0a2a3078323232323232323232323232323232323232323232323232323232323232323232323232323232321001",
+      "json": {
+        "address": "0x2222222222222222222222222222222222222222",
+        "isBlocked": true
+      }
+    },
+    {
+      "group": "stream-closed",
+      "id": "block",
+      "response_type": "BlockUpdate",
+      "response": {
+        "address": "",
+        "isBlocked": false,
+        "streamClosed": {
+          "reason": 1,
+          "message": "duplicate"
+        }
+      },
+      "expected_hex": "1a0d080112096475706c6963617465"
+    },
+    {
+      "group": "stream",
+      "id": "private-voice",
+      "response_type": "PrivateVoiceChatUpdate",
+      "update": {
+        "callId": "44444444-4444-4444-8444-444444444444",
+        "callerAddress": "0x2222222222222222222222222222222222222222",
+        "calleeAddress": "0x1111111111111111111111111111111111111111",
+        "status": "requested"
+      },
+      "response": {
+        "callId": "44444444-4444-4444-8444-444444444444",
+        "status": 0,
+        "caller": {
+          "address": "0x2222222222222222222222222222222222222222"
+        }
+      },
+      "expected_hex": "0a2434343434343434342d343434342d343434342d383434342d3434343434343434343434341a2c0a2a307832323232323232323232323232323232323232323232323232323232323232323232323232323232",
+      "json": {
+        "callId": "44444444-4444-4444-8444-444444444444",
+        "status": "requested",
+        "callerAddress": "0x2222222222222222222222222222222222222222"
+      }
+    },
+    {
+      "group": "stream-closed",
+      "id": "private-voice",
+      "response_type": "PrivateVoiceChatUpdate",
+      "response": {
+        "callId": "",
+        "status": 0,
+        "streamClosed": {
+          "reason": 1,
+          "message": "duplicate"
+        }
+      },
+      "expected_hex": "320d080112096475706c6963617465"
+    },
+    {
+      "group": "stream",
+      "id": "community-member",
+      "response_type": "CommunityMemberConnectivityUpdate",
+      "update": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "memberAddress": "0x2222222222222222222222222222222222222222",
+        "status": 1
+      },
+      "response": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "member": {
+          "address": "0x2222222222222222222222222222222222222222"
+        },
+        "status": 1
+      },
+      "expected_hex": "0a2433333333333333332d333333332d343333332d383333332d333333333333333333333333122c0a2a3078323232323232323232323232323232323232323232323232323232323232323232323232323232321801",
+      "json": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "memberAddress": "0x2222222222222222222222222222222222222222",
+        "status": "offline"
+      }
+    },
+    {
+      "group": "stream-closed",
+      "id": "community-member",
+      "response_type": "CommunityMemberConnectivityUpdate",
+      "response": {
+        "communityId": "",
+        "status": 0,
+        "streamClosed": {
+          "reason": 1,
+          "message": "duplicate"
+        }
+      },
+      "expected_hex": "220d080112096475706c6963617465"
+    },
+    {
+      "group": "stream",
+      "id": "community-voice",
+      "response_type": "CommunityVoiceChatUpdate",
+      "update": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "createdAt": 1234,
+        "status": 0,
+        "positions": [
+          "1,2"
+        ],
+        "worlds": [
+          "example.dcl.eth"
+        ],
+        "isMember": true,
+        "communityName": "Community",
+        "communityImage": "https://images.example/community.png"
+      },
+      "response": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "createdAt": 1234,
+        "status": 0,
+        "positions": [
+          "1,2"
+        ],
+        "isMember": true,
+        "communityName": "Community",
+        "communityImage": "https://images.example/community.png",
+        "worlds": [
+          "example.dcl.eth"
+        ]
+      },
+      "expected_hex": "0a2433333333333333332d333333332d343333332d383333332d33333333333333333333333310d2092a03312c3230013a09436f6d6d756e697479422468747470733a2f2f696d616765732e6578616d706c652f636f6d6d756e6974792e706e674a0f6578616d706c652e64636c2e657468",
+      "json": {
+        "communityId": "33333333-3333-4333-8333-333333333333",
+        "status": "started",
+        "createdAt": 1234,
+        "positions": [
+          "1,2"
+        ],
+        "worlds": [
+          "example.dcl.eth"
+        ],
+        "isMember": true,
+        "communityName": "Community",
+        "communityImage": "https://images.example/community.png"
+      }
+    },
+    {
+      "group": "stream-closed",
+      "id": "community-voice",
+      "response_type": "CommunityVoiceChatUpdate",
+      "response": {
+        "communityId": "",
+        "createdAt": 0,
+        "status": 0,
+        "positions": [],
+        "isMember": false,
+        "communityName": "",
+        "worlds": [],
+        "streamClosed": {
+          "reason": 1,
+          "message": "duplicate"
+        }
+      },
+      "expected_hex": "520d080112096475706c6963617465"
+    }
+  ]
+}
