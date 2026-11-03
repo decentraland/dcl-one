@@ -3241,7 +3241,7 @@
       ],
       "gaps": [
         "WKC_METRICS_RESET_AT_NIGHT=true does not reset the social view; the shared global recorder is preserved.",
-        "The committed44-family inventory finds11 literal name/type/label shapes and33 missing literal sites requiring dynamic-site/runtime review; missing initialization, family interpretation and histogram semantics are not proven. Node/V8-specific defaults are not fabricated."
+        "The committed44-family inventory finds11 literal shapes and33 missing literal sites requiring source/runtime review; entire production files are scanned, so inline-test sites are possible. Family interpretation, series initialization and histogram semantics are not proven. Node/V8-specific defaults are not fabricated."
       ],
       "remaining_verification": "Provider-specific default collectors, night reset semantics, actual disconnected scrape, runtime label/event interpretation and arbitrary wildcard/custom-path collisions remain unverified. Global sample values across processes are not compared."
     },

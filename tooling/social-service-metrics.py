@@ -25,7 +25,10 @@ def inventory():
             relative = path.relative_to(ROOT).as_posix()
             if '/tests/' in relative or relative.endswith('/tests.rs'):
                 continue
-            text = path.read_text().split('#[cfg(test)]', 1)[0]
+            # A cfg(test) method may precede production methods. Scan the
+            # whole production file rather than truncating everything after it.
+            # Inline test-module hits are expressly possible and need review.
+            text = path.read_text()
             for match in MACRO.finditer(text):
                 # Nested calls inside label expressions must not truncate later labels.
                 cursor = match.end()
@@ -49,7 +52,7 @@ def inventory():
                 body = text[match.end():cursor - 1]
                 candidate.setdefault(match[2], []).append({
                     'path': relative, 'line': text[:match.start()].count('\n') + 1,
-                    'kind': match[1],
+                    'kind': match[1], 'scope': 'production_file_inline_test_possible',
                     'labels': sorted(set(re.findall(r'"([a-zA-Z_][a-zA-Z0-9_]*)"\s*=>', body)))
                 })
     rows = []
@@ -65,7 +68,7 @@ def inventory():
                      'candidate': locations, 'status': status})
     return {
         'baseline': source['baseline'],
-        'scope': 'Static literal name/type/label inventory across production Rust before test modules. Presence does not establish runtime event meaning, series initialization, histogram buckets, dynamic-name sites or sample values. Missing literals remain review candidates until dynamic sites are checked.',
+        'scope': 'Static literal name/type/label inventory across entire production Rust files, excluding dedicated test paths. Inline test-module hits are possible and require source review. Presence does not establish production execution, runtime event meaning, series initialization, histogram buckets, dynamic-name sites or sample values. Missing literals remain candidates until dynamic sites are checked.',
         'known_differences': [
             'WKC_METRICS_RESET_AT_NIGHT=true is accepted but the social view does not reset; the global recorder is preserved for other domains.',
             'Node/V8/process default collectors are not fabricated by the Rust exporter. Their runtime-specific families are outside this declared-family inventory.',
