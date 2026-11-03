@@ -18,7 +18,6 @@ use crate::http::Outbound;
 struct Rig {
     db: Db,
     ctx: Context,
-    runtime: Arc<CommsState>,
     deleted_rooms: Arc<StdMutex<Vec<String>>>,
     /// Set, the stub answers every `DeleteRoom` with a 500 (still recorded).
     refuse_deletes: Arc<AtomicBool>,
@@ -68,7 +67,6 @@ impl Rig {
         Some(Self {
             db,
             ctx,
-            runtime,
             deleted_rooms,
             refuse_deletes,
             livekit,
@@ -155,35 +153,50 @@ fn statuses(rx: &mut Receiver<Arc<SocialEvent>>) -> Vec<i32> {
         .collect()
 }
 
-/// Ending an accepted call, or the caller dropping its socket, deletes the
-/// LiveKit room: the runtime's end path (`end_private_call`) deletes the row
-/// while membership is still checkable, then the room. Upstream ends the
-/// room through the gatekeeper, which deletes it (`logic/voice/voice.ts`,
-/// `endPrivateVoiceChat`).
+/// Explicit end deletes the media room. Disconnecting the Social socket only
+/// looks up pending calls upstream, so an accepted media call survives it.
 #[tokio::test]
-async fn ending_an_accepted_call_deletes_its_room() {
+async fn accepted_media_survives_social_disconnect_until_explicit_end() {
     let Some(rig) = Rig::new().await else {
         return;
     };
     let _turn = VOICE_TABLE.lock().await;
     let (caller, callee) = (addr("vb1a"), addr("vb1b"));
-    // Control: asked while the call row still exists, the runtime deletes the
-    // room, so the stub sees a delete when one is sent.
-    let control = rig.accepted_call(&caller, &callee).await;
-    let who = crate::shared::identity::Address::parse(&caller).unwrap();
-    let control_ended =
-        gatekeeper::voice::end_private_voice_chat_by(&rig.runtime, &control.to_string(), &who)
-            .await;
-    let control_deleted = rig.room_deleted(control);
-    let ended = rig.accepted_call(&caller, &callee).await;
-    let answer = rig.end(&caller, ended).await;
-    let dropped = rig.accepted_call(&caller, &callee).await;
-    rig.ctx.end_private_voice_chat_on_disconnect(&caller).await;
-    let (ended_deleted, dropped_deleted) = (rig.room_deleted(ended), rig.room_deleted(dropped));
-    // Cleaned up before asserting: a failure leaves no call row to the sweep.
+    let call = rig.accepted_call(&caller, &callee).await;
+    let (mut to_caller, mut to_callee) = (
+        rig.ctx.pubsub().subscribe(&caller),
+        rig.ctx.pubsub().subscribe(&callee),
+    );
+    rig.ctx
+        .end_private_voice_chat_on_disconnect(&caller.to_uppercase())
+        .await;
+    rig.ctx.end_private_voice_chat_on_disconnect(&callee).await;
+    let kept = call_exists(&rig.db, call).await;
+    let participants: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM social.private_voice_chat_participants WHERE call_id=$1",
+    )
+    .bind(call)
+    .fetch_one(rig.db.pool())
+    .await
+    .unwrap();
+    let disconnected_deleted = rig.room_deleted(call);
+    let (caller_heard, callee_heard) = (statuses(&mut to_caller), statuses(&mut to_callee));
+    let answer = rig.end(&caller, call).await;
+    let ended_deleted = rig.room_deleted(call);
     rig.finish(&[&caller, &callee]).await;
-    assert!(control_ended.is_ok(), "{control_ended:?}");
-    assert!(control_deleted, "the stub saw no delete");
+    assert!(kept, "Social disconnect removed the accepted call");
+    assert_eq!(
+        participants, 2,
+        "Social disconnect removed accepted participants"
+    );
+    assert!(
+        !disconnected_deleted,
+        "Social disconnect deleted the media room"
+    );
+    assert!(
+        caller_heard.is_empty() && callee_heard.is_empty(),
+        "disconnect published call updates: {caller_heard:?} {callee_heard:?}"
+    );
     assert!(
         matches!(
             answer,
@@ -191,11 +204,7 @@ async fn ending_an_accepted_call_deletes_its_room() {
         ),
         "{answer:?}"
     );
-    assert!(ended_deleted, "End left the room of {ended} open");
-    assert!(
-        dropped_deleted,
-        "the disconnect left the room of {dropped} open"
-    );
+    assert!(ended_deleted, "explicit End left the media room open");
 }
 
 /// An accepted call is never swept as EXPIRED, however long it lasts: the
@@ -245,7 +254,6 @@ async fn an_old_accepted_call_keeps_its_parties_busy() {
     rig.finish(&[&caller, &callee, &other]).await;
     let outcome = outcome.unwrap();
     assert!(outcome.started.is_none(), "{outcome:?}");
-    assert!(outcome.expired.is_empty(), "{outcome:?}");
     assert!(kept, "the accepted call was reclaimed");
 }
 

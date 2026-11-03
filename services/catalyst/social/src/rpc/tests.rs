@@ -697,45 +697,60 @@ async fn call_exists(db: &Db, id: Uuid) -> bool {
 }
 
 #[tokio::test]
-async fn expired_prior_call_does_not_block_new_one() {
+async fn expired_pending_call_stays_busy_until_the_sweep() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
     let _turn = VOICE_TABLE.lock().await;
     let db = Db::new(pool);
     let (caller, callee) = (addr("pv01"), addr("pv02"));
-    let stale_id = VoiceDb::new(db.pool().clone(), Default::default())
+    let voice = VoiceDb::new(db.pool().clone(), Default::default());
+    let stale_id = voice
         .seed_pending_private_call(&caller, &callee)
         .await
         .unwrap();
     backdate(&db, stale_id, EXPIRATION_MS + 3_600_000).await;
     assert!(
-        call_exists(&db, stale_id).await,
-        "stale row is present (not yet swept)"
-    );
-    assert!(
-        !db.are_users_being_called_or_calling_someone(
+        db.are_users_being_called_or_calling_someone(
             &[caller.clone(), callee.clone()],
             EXPIRATION_MS
         )
         .await
-        .unwrap(),
-        "an expired prior call must not block a new one"
+        .unwrap()
     );
-    // The locked start reclaims the stale row (the UNIQUEs would otherwise
-    // refuse the insert) and reports it expired.
-    let outcome = VoiceDb::new(db.pool().clone(), Default::default())
-        .create_pending_private_call(&caller, &callee, EXPIRATION_MS)
+    let preflight = db
+        .private_voice_preflight(&caller, &callee, EXPIRATION_MS, Default::default())
         .await
         .unwrap();
-    assert!(outcome.started.is_some());
-    assert_eq!(
-        outcome.expired.iter().map(|c| c.id).collect::<Vec<_>>(),
-        vec![stale_id]
+    assert!(
+        preflight.busy,
+        "the source busy check includes expired pending calls"
     );
-    assert!(!call_exists(&db, stale_id).await);
-    VoiceDb::new(db.pool().clone(), Default::default())
-        .finish_pending_private_call(PendingPrivateCall::Id(outcome.started.unwrap()))
+    assert!(
+        voice
+            .create_pending_private_call(&caller, &callee, EXPIRATION_MS)
+            .await
+            .unwrap()
+            .started
+            .is_none()
+    );
+    assert!(
+        call_exists(&db, stale_id).await,
+        "start must not reclaim or expire the old call"
+    );
+    let expired = voice
+        .expire_pending_private_calls(EXPIRATION_MS, 20)
+        .await
+        .unwrap();
+    assert!(expired.iter().any(|chat| chat.id == stale_id));
+    let new = voice
+        .create_pending_private_call(&caller, &callee, EXPIRATION_MS)
+        .await
+        .unwrap()
+        .started
+        .expect("free after sweep");
+    voice
+        .finish_pending_private_call(PendingPrivateCall::Id(new))
         .await
         .unwrap();
 }
@@ -769,10 +784,7 @@ async fn live_call_still_blocks_symmetrically() {
         .create_pending_private_call(&other, &callee, EXPIRATION_MS)
         .await
         .unwrap();
-    assert!(
-        outcome.started.is_none() && outcome.expired.is_empty(),
-        "the callee is busy"
-    );
+    assert!(outcome.started.is_none(), "the callee is busy");
     VoiceDb::new(db.pool().clone(), Default::default())
         .finish_pending_private_call(PendingPrivateCall::Id(live_id))
         .await
@@ -780,7 +792,7 @@ async fn live_call_still_blocks_symmetrically() {
 }
 
 #[tokio::test]
-async fn sweep_reclaims_the_same_rows_the_busy_check_skips() {
+async fn sweep_releases_expired_pending_calls() {
     let Some(pool) = scratch_pool().await else {
         return;
     };
@@ -1127,14 +1139,9 @@ async fn reject_and_disconnect_delete_through_voice_owner_before_signalling() {
         callee_rx.try_recv().is_err(),
         "the dropped party is not told"
     );
-    // The runtime is asked about the address's accepted call first; a pending
-    // call has none, so it is deleted as pending.
     assert!(
-        voice
-            .calls
-            .lock()
-            .iter()
-            .any(|c| c == &format!("end-private latest {callee}"))
+        voice.calls.lock().is_empty(),
+        "a pending disconnect does not ask the media runtime to end an accepted call"
     );
 }
 

@@ -55,7 +55,6 @@ async function main() {
       await new Promise(setImmediate)
       let entry = { id: `private.${id}`, kind: 'private', scenario: id, error, payloads, steps,
         remaining_rows: (await pg.query('SELECT count(*)::int AS n FROM private_voice_chats')).rows[0].n }
-      if (id === 'start-expired-pending') entry.lead_only = 'Source busy until expiry sweep; target opportunistic reclaim is a separate pending fix.'
       if (generated) entry = JSON.parse(JSON.stringify(entry).replaceAll(generated, call))
       cases.push(entry)
     }
@@ -88,7 +87,7 @@ async function main() {
       await new Promise(setImmediate)
       cases.push({ id: `community.${id}`, kind: 'community', scenario: id, error, payloads, steps })
     }
-    fs.writeFileSync(process.argv[3], JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision }, scope: 'Actual source voice/community domain and analytics SDK, private voice-db on owned PostgreSQL; media replies and analytics fetch controlled. Random start UUID normalized to the fixed call UUID. Steps capture source invocation order; network completion order is not promised. A tagged lead-only case records a separately pending source mismatch.', caller, target, community, call, cases }, null, 2) + '\n')
+    fs.writeFileSync(process.argv[3], JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision }, scope: 'Actual source voice/community domain and analytics SDK, private voice-db on owned PostgreSQL; media replies and analytics fetch controlled. Random start UUID normalized to the fixed call UUID. Steps capture source invocation order; network completion order is not promised.', caller, target, community, call, cases }, null, 2) + '\n')
     process.stdout.write(`Captured ${cases.length} voice analytics cases\n`)
   } finally { if (pg) await pg.end(); await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`); await admin.end() }
 }

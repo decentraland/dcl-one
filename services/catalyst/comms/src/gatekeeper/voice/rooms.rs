@@ -70,7 +70,7 @@ pub trait VoiceRooms: Send + Sync {
     /// The existing comms presence configuration also governs shared SQL readers.
     fn presence_config(&self) -> super::db::VoiceDbConfig;
 
-    /// Atomically reclaim stale calls and create a pending call unless either party is busy.
+    /// Create a pending call unless either party is busy; expiry belongs to the sweep.
     async fn create_pending_private_call(
         &self,
         caller: &str,

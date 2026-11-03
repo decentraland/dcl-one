@@ -178,9 +178,6 @@ pub fn voice_row(r: &sqlx::postgres::PgRow) -> PrivateVoiceChatRow {
 pub struct StartOutcome {
     /// The new call, or `None` when a participant is busy.
     pub started: Option<Uuid>,
-    /// Expired calls of the two participants reclaimed on the way (the
-    /// caller publishes VOICE_CHAT_EXPIRED for them, as the sweep would have).
-    pub expired: Vec<PrivateVoiceChatRow>,
 }
 
 /// A pending call to delete: one nobody accepted, so it has no participant
@@ -252,60 +249,31 @@ impl VoiceDb {
         Ok(id)
     }
 
-    /// Starts the call unless a participant is busy (upstream #450). Per-
-    /// participant advisory locks taken in sorted order serialise every start
-    /// touching either address, so two concurrent starts sharing a participant
-    /// cannot both pass the busy probe; the participants' expired calls are
-    /// reclaimed in the same transaction, since `private_voice_chats_caller_key`
-    /// / `_callee_key` would otherwise refuse the insert the probe passed.
+    /// Starts the call unless a participant is busy. Sorted per-participant
+    /// advisory locks serialize overlapping starts. Pending calls remain busy
+    /// until the expiry sweep deletes them, including calls older than its TTL.
     pub async fn create_pending_private_call(
         &self,
         caller: &str,
         callee: &str,
-        expiration_ms: i64,
+        _expiration_ms: i64,
     ) -> Result<StartOutcome, sqlx::Error> {
         let caller = caller.to_lowercase();
         let callee = callee.to_lowercase();
         let mut participants = vec![caller.clone(), callee.clone()];
         participants.sort();
-        let now = now_utc();
-        let bound = now - Duration::milliseconds(expiration_ms);
 
         let mut tx = self.pool.begin().await?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext('private-voice:' || p)) FROM unnest($1::text[]) AS t(p)")
             .bind(&participants)
             .execute(&mut *tx)
             .await?;
-        // Serialize reclaim with acceptance before testing participant existence on a
-        // fresh statement snapshot; a DELETE waiting behind acceptance must not use an
-        // older NOT EXISTS result and cascade-delete the accepted participants.
-        let _: Vec<Uuid> = sqlx::query_scalar(
-            "SELECT id FROM social.private_voice_chats WHERE caller_address=ANY($1) OR callee_address=ANY($1) ORDER BY id FOR UPDATE"
-        ).bind(&participants).fetch_all(&mut *tx).await?;
-        // An accepted call (it has participant rows) never expires, and it
-        // keeps both parties busy whatever its age.
-        let expired: Vec<PrivateVoiceChatRow> = sqlx::query(
-            "DELETE FROM social.private_voice_chats \
-             WHERE created_at < $2 AND (caller_address = ANY($1) OR callee_address = ANY($1)) \
-               AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id = private_voice_chats.id) \
-             RETURNING id, caller_address, callee_address",
-        )
-        .bind(&participants)
-        .bind(bound)
-        .fetch_all(&mut *tx)
-        .await?
-        .iter()
-        .map(voice_row)
-        .collect();
         let inserted: Option<Uuid> = sqlx::query_scalar(
             "INSERT INTO social.private_voice_chats (id, caller_address, callee_address) \
              SELECT $1::uuid, $2::text, $3::text \
              WHERE NOT EXISTS ( \
                SELECT 1 FROM social.private_voice_chats \
-               WHERE (caller_address = ANY($4) OR callee_address = ANY($4)) \
-                 AND (created_at >= $5 OR EXISTS ( \
-                   SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id = private_voice_chats.id \
-                 )) \
+               WHERE caller_address = ANY($4) OR callee_address = ANY($4) \
              ) \
              RETURNING id",
         )
@@ -313,14 +281,10 @@ impl VoiceDb {
         .bind(&caller)
         .bind(&callee)
         .bind(&participants)
-        .bind(bound)
         .fetch_optional(&mut *tx)
         .await?;
         tx.commit().await?;
-        Ok(StartOutcome {
-            started: inserted,
-            expired,
-        })
+        Ok(StartOutcome { started: inserted })
     }
 
     /// One bounded batch of expired pending calls, oldest first, deleted and
@@ -1053,7 +1017,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn failed_pending_insert_rolls_back_stale_reclamation() {
+    async fn busy_start_preserves_stale_pending_calls() {
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
@@ -1066,17 +1030,19 @@ mod tests {
             .unwrap();
         sqlx::query("UPDATE social.private_voice_chats SET created_at = created_at - interval '1 day' WHERE id = $1")
             .bind(old).execute(&pool).await.unwrap();
-        // The stale row is deleted before the no-self-call CHECK rejects the insert.
+        let next = format!("0x{}00000000", Uuid::new_v4().simple());
         assert!(
-            db.create_pending_private_call(&caller, &caller, 60_000)
+            db.create_pending_private_call(&caller, &next, 60_000)
                 .await
-                .is_err()
+                .unwrap()
+                .started
+                .is_none()
         );
         let restored = db
             .finish_pending_private_call(PendingPrivateCall::Id(old))
             .await
             .unwrap()
-            .expect("failed insert must roll back stale deletion");
+            .expect("busy start must preserve the stale pending call");
         assert_eq!(restored.caller_address, caller);
         assert_eq!(restored.callee_address, callee);
     }

@@ -854,15 +854,15 @@ impl Db {
     pub async fn are_users_being_called_or_calling_someone(
         &self,
         addresses: &[String],
-        expiration_ms: i64,
+        _expiration_ms: i64,
     ) -> Result<bool, DbError> {
         let normalized: Vec<String> = addresses.iter().map(|a| a.to_lowercase()).collect();
         let busy: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM social.private_voice_chats \
-             WHERE created_at >= $2 AND (caller_address = ANY($1) OR callee_address = ANY($1)))",
+             WHERE (caller_address = ANY($1) OR callee_address = ANY($1)) \
+               AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=private_voice_chats.id))",
         )
         .bind(&normalized)
-        .bind(expiry_bound(now_naive(), expiration_ms))
         .fetch_one(&self.pool)
         .await?;
         Ok(busy)
@@ -886,12 +886,11 @@ impl Db {
         &self,
         caller: &str,
         callee: &str,
-        expiration_ms: i64,
+        _expiration_ms: i64,
         presence: crate::comms::gatekeeper::voice::db::VoiceDbConfig,
     ) -> Result<PrivateVoicePreflight, DbError> {
         let caller = caller.to_lowercase();
         let callee = callee.to_lowercase();
-        let now = now_naive();
         let sql = format!(
             r#"SELECT
                  EXISTS (
@@ -904,8 +903,7 @@ impl Db {
                  (SELECT is_active FROM social.friendships WHERE {PAIR_COND} LIMIT 1) AS friends,
                  EXISTS (
                    SELECT 1 FROM social.private_voice_chats c
-                   WHERE created_at >= $3
-                     AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)
+                   WHERE NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)
                      AND (caller_address IN ($1, $2) OR callee_address IN ($1, $2))
                  ) AS busy,
                  EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $1 AND {live}) AS caller_in_community_voice,
@@ -913,13 +911,12 @@ impl Db {
                  EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $1 AND {live}) AS caller_in_voice,
                  EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $2 AND {live}) AS callee_in_voice"#,
             live =
-                crate::comms::gatekeeper::voice::db::VoiceDbConfig::connected_sql("p", "$4", "$5"),
+                crate::comms::gatekeeper::voice::db::VoiceDbConfig::connected_sql("p", "$3", "$4"),
         );
         let (interrupted, initial) = presence.sql_cutoffs();
         let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(&caller)
             .bind(&callee)
-            .bind(expiry_bound(now, expiration_ms))
             .bind(interrupted)
             .bind(initial)
             .fetch_one(&self.pool)

@@ -41,10 +41,7 @@ impl VoiceRooms for Faulty {
         expiration_ms: i64,
     ) -> Result<StartOutcome, VoiceUnavailable> {
         if self.lose_reservations.load(Ordering::SeqCst) {
-            return Ok(StartOutcome {
-                started: None,
-                expired: Vec::new(),
-            });
+            return Ok(StartOutcome { started: None });
         }
         self.inner
             .create_pending_private_call(caller, callee, expiration_ms)
@@ -586,9 +583,6 @@ async fn voice_analytics_payloads_and_failure_isolation_match_executed_source() 
     assert_eq!(cases.len(), 29);
     let mut paired = 0;
     for case in cases {
-        if !case["lead_only"].is_null() {
-            continue;
-        }
         paired += 1;
         let scenario = case["scenario"].as_str().unwrap();
         let label = case["id"].as_str().unwrap();
@@ -609,7 +603,8 @@ async fn voice_analytics_payloads_and_failure_isolation_match_executed_source() 
         let mut generated = None;
         let mut community_id = None;
         let result: Result<(), String> = if case["kind"] == "private" {
-            let pending = scenario.starts_with("accept")
+            let pending = scenario == "start-expired-pending"
+                || scenario.starts_with("accept")
                 || scenario == "reject"
                 || scenario.starts_with("end-pending")
                 || scenario == "expire"
@@ -617,7 +612,7 @@ async fn voice_analytics_payloads_and_failure_isolation_match_executed_source() 
             let media = scenario.starts_with("end-media") || scenario == "disconnect-accepted";
             if pending || media {
                 sqlx::query("INSERT INTO social.private_voice_chats(id,caller_address,callee_address,created_at) VALUES($1,$2,$3,CURRENT_TIMESTAMP-($4::bigint*interval '1 second'))")
-                    .bind(id).bind(caller).bind(callee).bind(if scenario == "expire" { 120_i64 } else { 0_i64 }).execute(&rig.pool).await.unwrap();
+                    .bind(id).bind(caller).bind(callee).bind(if scenario == "expire" || scenario == "start-expired-pending" { 120_i64 } else { 0_i64 }).execute(&rig.pool).await.unwrap();
             }
             if media {
                 rig.runtime
@@ -628,7 +623,7 @@ async fn voice_analytics_payloads_and_failure_isolation_match_executed_source() 
             }
             use crate::rpc::service::ops;
             let outcome = match scenario {
-                "start" | "self-start" => ops::start_private_voice_chat(
+                "start" | "self-start" | "start-expired-pending" => ops::start_private_voice_chat(
                     &rig.ctx,
                     caller,
                     if scenario == "self-start" {
@@ -718,6 +713,16 @@ async fn voice_analytics_payloads_and_failure_isolation_match_executed_source() 
             }
             .map_err(|error| error.message().to_string())
         };
+        if scenario == "start-expired-pending" {
+            assert_eq!(
+                result.as_ref().unwrap_err(),
+                case["error"].as_str().unwrap()
+            );
+            assert!(
+                call_exists(rig.ctx.db(), id).await,
+                "the busy attempt preserves pending state"
+            );
+        }
         assert_eq!(
             result.is_err(),
             !case["error"].is_null(),
@@ -759,8 +764,8 @@ async fn voice_analytics_payloads_and_failure_isolation_match_executed_source() 
         rig.forget_calls(&[caller, callee]).await;
     }
     assert_eq!(
-        paired, 28,
-        "only the separately recorded TTL enhancement is not replayed yet"
+        paired, 29,
+        "all captured mutation and analytics scenarios are replayed"
     );
     server.abort();
     let _ = std::fs::remove_dir_all(dir);

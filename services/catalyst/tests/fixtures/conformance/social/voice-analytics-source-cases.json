@@ -3,7 +3,7 @@
     "repository": "decentraland/social-service-ea",
     "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
   },
-  "scope": "Actual source voice/community domain and analytics SDK, private voice-db on owned PostgreSQL; media replies and analytics fetch controlled. Random start UUID normalized to the fixed call UUID. Steps capture source invocation order; network completion order is not promised. A tagged lead-only case records a separately pending source mismatch.",
+  "scope": "Actual source voice/community domain and analytics SDK, private voice-db on owned PostgreSQL; media replies and analytics fetch controlled. Random start UUID normalized to the fixed call UUID. Steps capture source invocation order; network completion order is not promised.",
   "caller": "0x1111111111111111111111111111111111111111",
   "target": "0x2222222222222222222222222222222222222222",
   "community": "a3333333-b333-4c33-8d33-e33333333333",
@@ -48,8 +48,7 @@
       "error": "One of the users is busy calling someone else",
       "payloads": [],
       "steps": [],
-      "remaining_rows": 1,
-      "lead_only": "Source busy until expiry sweep; target opportunistic reclaim is a separate pending fix."
+      "remaining_rows": 1
     },
     {
       "id": "private.accept",

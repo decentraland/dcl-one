@@ -109,10 +109,6 @@ pub(crate) async fn start_private_voice_chat(
         ctx.db()
             .note_private_voice_due(chrono::Utc::now().timestamp_millis() + expiration_ms);
     }
-    for expired in &outcome.expired {
-        ctx.publish_private_voice(expired, PrivateVoiceChatStatus::VoiceChatExpired)
-            .await;
-    }
     let Some(id) = outcome.started else {
         return Err(Refusal::Conflict(BUSY.into()));
     };

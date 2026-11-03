@@ -630,29 +630,12 @@ impl Context {
         Ok((cursor, completed))
     }
 
-    /// Upstream #479: without this only the periodic sweep clears a dropped
-    /// user's call, so the other party keeps ringing until the TTL elapses.
-    /// The ENDED notification is symmetric, so the still-online party is told
-    /// regardless of which side dropped.
-    /// An accepted call ends through the voice runtime (row, then room);
-    /// otherwise the address's latest pending call is deleted.
+    /// A Social disconnect ends only its pending call. Accepted media rooms
+    /// have their own lifecycle and survive the Social socket disconnect.
     pub async fn end_private_voice_chat_on_disconnect(&self, address: &str) {
-        let voice = &self.0.voice;
-        let mut accepted = true;
-        let ended = match voice
-            .end_private_voice_chat(None, &address.to_lowercase())
-            .await
-        {
-            Ok(None) => {
-                accepted = false;
-                let pending = crate::comms::gatekeeper::voice::db::PendingPrivateCall::Address(
-                    address.to_string(),
-                );
-                voice.finish_pending_private_call(pending).await
-            }
-            accepted => accepted,
-        };
-        let chat = match ended {
+        let pending =
+            crate::comms::gatekeeper::voice::db::PendingPrivateCall::Address(address.to_string());
+        let chat = match self.0.voice.finish_pending_private_call(pending).await {
             Ok(Some(c)) => c,
             Ok(None) => return,
             Err(e) => {
@@ -661,7 +644,7 @@ impl Context {
             }
         };
         self.publish_private_voice_ended_by(&chat, address).await;
-        if !accepted && let Some(state) = self.communities() {
+        if let Some(state) = self.communities() {
             state.fire_analytics("END_CALL", serde_json::json!({"call_id":chat.id,"user_id":chat.caller_address,"receiver_id":chat.callee_address}));
         }
     }
