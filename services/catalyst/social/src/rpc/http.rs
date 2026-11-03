@@ -991,12 +991,12 @@ async fn update_private_voice_chat(
     path_uuid(&call_id, "callId")?;
     let id = uuid::Uuid::parse_str(&call_id).map_err(failed)?;
     if text(&object, "intention") == Some("rejected") {
-        ops::reject_private_voice_chat(&state.ctx, &me, id)
+        ops::reject_private_voice_chat_with_id(&state.ctx, &me, id, &call_id)
             .await
             .map_err(refused)?;
         return no_content();
     }
-    let connection_url = ops::accept_private_voice_chat(&state.ctx, &me, id)
+    let connection_url = ops::accept_private_voice_chat_with_id(&state.ctx, &me, id, &call_id)
         .await
         .map_err(refused)?;
     data(
@@ -1015,7 +1015,7 @@ async fn end_private_voice_chat(
     let me = signer(&state, &headers, &original, "delete", local).await?;
     path_uuid(&call_id, "callId")?;
     let id = uuid::Uuid::parse_str(&call_id).map_err(failed)?;
-    ops::end_private_voice_chat(&state.ctx, &me, id)
+    ops::end_private_voice_chat_with_id(&state.ctx, &me, id, &call_id)
         .await
         .map_err(refused)?;
     no_content()

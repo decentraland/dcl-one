@@ -37,9 +37,13 @@ pub(crate) mod ops {
     };
     pub(crate) use super::friends::{apply_friendship_action, friendship_status};
     pub(crate) use super::helpers::FRIENDSHIP_REQUEST_MESSAGE_MAX_LENGTH;
+    #[cfg(test)]
     pub(crate) use super::private_voice::{
-        accept_private_voice_chat, end_private_voice_chat, incoming_not_found,
-        reject_private_voice_chat, start_private_voice_chat,
+        accept_private_voice_chat, end_private_voice_chat, reject_private_voice_chat,
+    };
+    pub(crate) use super::private_voice::{
+        accept_private_voice_chat_with_id, end_private_voice_chat_with_id, incoming_not_found,
+        reject_private_voice_chat_with_id, start_private_voice_chat,
     };
     pub(crate) use super::settings::{MAX_USER_ADDRESSES, private_messages_settings};
 }

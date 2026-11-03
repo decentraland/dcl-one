@@ -3,9 +3,9 @@
     "repository": "decentraland/social-service-ea",
     "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
   },
-  "scope": "Actual source voice/community domain and analytics SDK, private voice-db on owned PostgreSQL; media replies and analytics fetch controlled. Random start UUID normalized to the fixed call UUID. Steps capture source invocation order; network completion order is not promised.",
-  "caller": "0x1111111111111111111111111111111111111111",
-  "target": "0x2222222222222222222222222222222222222222",
+  "scope": "Actual source voice/community domain and analytics SDK, private voice-db on owned PostgreSQL; media replies and analytics fetch controlled. RPC mixed-case START invokes the real RPC handler; uppercase private HTTP cases invoke real controllers and error/schema middleware with explicit verified actors (authentication bypassed). Random start UUID normalized to the fixed call UUID. Steps capture source invocation order; network completion order is not promised.",
+  "caller": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+  "target": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
   "community": "a3333333-b333-4c33-8d33-e33333333333",
   "call": "c6666666-6666-4666-8666-666666666666",
   "cases": [
@@ -19,8 +19,8 @@
           "event": "START_CALL",
           "body": {
             "call_id": "c6666666-6666-4666-8666-666666666666",
-            "user_id": "0x1111111111111111111111111111111111111111",
-            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "receiver_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -136,8 +136,8 @@
           "event": "END_CALL",
           "body": {
             "call_id": "c6666666-6666-4666-8666-666666666666",
-            "user_id": "0x1111111111111111111111111111111111111111",
-            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "receiver_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -159,8 +159,8 @@
           "event": "END_CALL",
           "body": {
             "call_id": "c6666666-6666-4666-8666-666666666666",
-            "user_id": "0x1111111111111111111111111111111111111111",
-            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "receiver_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -182,8 +182,8 @@
           "event": "END_CALL",
           "body": {
             "call_id": "c6666666-6666-4666-8666-666666666666",
-            "user_id": "0x1111111111111111111111111111111111111111",
-            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "receiver_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -206,8 +206,8 @@
           "event": "END_CALL",
           "body": {
             "call_id": "c6666666-6666-4666-8666-666666666666",
-            "user_id": "0x2222222222222222222222222222222222222222",
-            "receiver_id": "0x1111111111111111111111111111111111111111",
+            "user_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "receiver_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -262,8 +262,8 @@
           "event": "END_CALL",
           "body": {
             "call_id": "c6666666-6666-4666-8666-666666666666",
-            "user_id": "0x1111111111111111111111111111111111111111",
-            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "receiver_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -285,8 +285,8 @@
           "event": "END_CALL",
           "body": {
             "call_id": "c6666666-6666-4666-8666-666666666666",
-            "user_id": "0x1111111111111111111111111111111111111111",
-            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "receiver_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -308,6 +308,165 @@
       "remaining_rows": 0
     },
     {
+      "id": "private.start-rpc-mixedcase",
+      "kind": "private",
+      "scenario": "start-rpc-mixedcase",
+      "error": null,
+      "payloads": [
+        {
+          "event": "START_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "receiver_id": "0xABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "publish:requested",
+        "analytics:START_CALL"
+      ],
+      "response": {
+        "response": {
+          "$case": "ok",
+          "ok": {
+            "callId": "c6666666-6666-4666-8666-666666666666"
+          }
+        }
+      },
+      "remaining_rows": 1
+    },
+    {
+      "id": "private.self-start-rpc-mixedcase",
+      "kind": "private",
+      "scenario": "self-start-rpc-mixedcase",
+      "error": "The callee or the caller are not accepting voice calls from users that are not friends",
+      "payloads": [],
+      "steps": [],
+      "response": {
+        "response": {
+          "$case": "forbiddenError",
+          "forbiddenError": {
+            "message": "The callee or the caller are not accepting voice calls from users that are not friends"
+          }
+        }
+      },
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.accept-http-uppercase-id",
+      "kind": "private",
+      "scenario": "accept-http-uppercase-id",
+      "error": null,
+      "payloads": [
+        {
+          "event": "ACCEPT_CALL",
+          "body": {
+            "call_id": "C6666666-6666-4666-8666-666666666666",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:credentials",
+        "publish:accepted",
+        "analytics:ACCEPT_CALL"
+      ],
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "callId": "C6666666-6666-4666-8666-666666666666",
+            "connectionUrl": "callee-grant"
+          }
+        }
+      },
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.reject-http-uppercase-id",
+      "kind": "private",
+      "scenario": "reject-http-uppercase-id",
+      "error": null,
+      "payloads": [
+        {
+          "event": "REJECT_CALL",
+          "body": {
+            "call_id": "C6666666-6666-4666-8666-666666666666",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "publish:rejected",
+        "analytics:REJECT_CALL"
+      ],
+      "response": {
+        "status": 204,
+        "body": null
+      },
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.end-pending-http-uppercase-id",
+      "kind": "private",
+      "scenario": "end-pending-http-uppercase-id",
+      "error": null,
+      "payloads": [
+        {
+          "event": "END_CALL",
+          "body": {
+            "call_id": "C6666666-6666-4666-8666-666666666666",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "receiver_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "publish:ended",
+        "analytics:END_CALL"
+      ],
+      "response": {
+        "status": 204,
+        "body": null
+      },
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.end-media-http-uppercase-id",
+      "kind": "private",
+      "scenario": "end-media-http-uppercase-id",
+      "error": null,
+      "payloads": [
+        {
+          "event": "END_CALL",
+          "body": {
+            "call_id": "C6666666-6666-4666-8666-666666666666",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "receiver_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:end",
+        "publish:ended",
+        "analytics:END_CALL"
+      ],
+      "response": {
+        "status": 204,
+        "body": null
+      },
+      "remaining_rows": 0
+    },
+    {
       "id": "community.start",
       "kind": "community",
       "scenario": "start",
@@ -317,7 +476,7 @@
           "event": "START_COMMUNITY_CALL",
           "body": {
             "call_id": "a3333333-b333-4c33-8d33-e33333333333",
-            "user_id": "0x1111111111111111111111111111111111111111",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -351,7 +510,7 @@
           "event": "JOIN_COMMUNITY_CALL",
           "body": {
             "call_id": "a3333333-b333-4c33-8d33-e33333333333",
-            "user_id": "0x1111111111111111111111111111111111111111",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -366,7 +525,7 @@
       "id": "community.join-racing-ban",
       "kind": "community",
       "scenario": "join-racing-ban",
-      "error": "The user 0x1111111111111111111111111111111111111111 is banned from community a3333333-b333-4c33-8d33-e33333333333",
+      "error": "The user 0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1 is banned from community a3333333-b333-4c33-8d33-e33333333333",
       "payloads": [],
       "steps": [
         "media:action",
@@ -383,7 +542,7 @@
           "event": "END_COMMUNITY_CALL",
           "body": {
             "call_id": "a3333333-b333-4c33-8d33-e33333333333",
-            "user_id": "0x1111111111111111111111111111111111111111",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -406,8 +565,8 @@
           "event": "MUTE_SPEAKER_IN_COMMUNITY_CALL",
           "body": {
             "call_id": "a3333333-b333-4c33-8d33-e33333333333",
-            "user_id": "0x1111111111111111111111111111111111111111",
-            "target_user_id": "0x2222222222222222222222222222222222222222",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "target_user_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -428,8 +587,8 @@
           "event": "MUTE_SPEAKER_IN_COMMUNITY_CALL",
           "body": {
             "call_id": "a3333333-b333-4c33-8d33-e33333333333",
-            "user_id": "0x1111111111111111111111111111111111111111",
-            "target_user_id": "0x2222222222222222222222222222222222222222",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "target_user_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -460,7 +619,7 @@
           "event": "START_COMMUNITY_CALL",
           "body": {
             "call_id": "A3333333-B333-4C33-8D33-E33333333333",
-            "user_id": "0x1111111111111111111111111111111111111111",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -484,7 +643,7 @@
           "event": "JOIN_COMMUNITY_CALL",
           "body": {
             "call_id": "A3333333-B333-4C33-8D33-E33333333333",
-            "user_id": "0x1111111111111111111111111111111111111111",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -505,7 +664,7 @@
           "event": "END_COMMUNITY_CALL",
           "body": {
             "call_id": "A3333333-B333-4C33-8D33-E33333333333",
-            "user_id": "0x1111111111111111111111111111111111111111",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -528,8 +687,8 @@
           "event": "MUTE_SPEAKER_IN_COMMUNITY_CALL",
           "body": {
             "call_id": "A3333333-B333-4C33-8D33-E33333333333",
-            "user_id": "0x1111111111111111111111111111111111111111",
-            "target_user_id": "0x2222222222222222222222222222222222222222",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "target_user_id": "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",
             "env": "fixture"
           },
           "context": "social-fixture"
@@ -550,8 +709,8 @@
           "event": "MUTE_SPEAKER_IN_COMMUNITY_CALL",
           "body": {
             "call_id": "a3333333-b333-4c33-8d33-e33333333333",
-            "user_id": "0x1111111111111111111111111111111111111111",
-            "target_user_id": "0X2222222222222222222222222222222222222222",
+            "user_id": "0xa1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1",
+            "target_user_id": "0XABCDEFABCDEFABCDEFABCDEFABCDEFABCDEFABCD",
             "env": "fixture"
           },
           "context": "social-fixture"

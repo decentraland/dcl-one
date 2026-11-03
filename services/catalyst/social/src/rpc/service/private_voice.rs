@@ -1,6 +1,6 @@
 use super::SocialServiceImpl;
 use super::helpers::{
-    Refusal, SocialError, internal_err, normalize, start_voice_conflict, start_voice_forbidden,
+    Refusal, SocialError, internal_err, start_voice_conflict, start_voice_forbidden,
     start_voice_internal, start_voice_invalid,
 };
 use crate::comms::gatekeeper::voice::db::PendingPrivateCall;
@@ -60,7 +60,7 @@ pub(crate) async fn start_private_voice_chat(
     // Upstream `startPrivateVoiceChat` (`src/logic/voice/voice.ts:36-58`): a
     // self-call, a blocked pair and the privacy refusal are all
     // `VoiceChatNotAllowedError`.
-    if callee == me {
+    if callee.eq_ignore_ascii_case(me) {
         return Err(Refusal::Forbidden(VOICE_CHAT_NOT_ALLOWED.into()));
     }
     let expiration_ms = ctx.voice_settings().private_voice_chat_expiration_ms;
@@ -139,6 +139,7 @@ pub(crate) async fn start_private_voice_chat(
 /// Only the callee accepts; the grants come from the voice runtime (a
 /// missing one is an explicit internal error, never an empty URL) and the
 /// caller receives ACCEPTED with their own grant. Answers the callee's URL.
+#[cfg(test)]
 pub(crate) async fn accept_private_voice_chat(
     ctx: &Context,
     me: &str,
@@ -146,7 +147,7 @@ pub(crate) async fn accept_private_voice_chat(
 ) -> Result<String, Refusal> {
     accept_private_voice_chat_with_id(ctx, me, id, &id.to_string()).await
 }
-async fn accept_private_voice_chat_with_id(
+pub(crate) async fn accept_private_voice_chat_with_id(
     ctx: &Context,
     me: &str,
     id: Uuid,
@@ -204,6 +205,7 @@ async fn accept_private_voice_chat_with_id(
 /// Deletes the pending call and tells the caller. Only the callee rejects,
 /// as upstream (`voice.ts:156-157`); anyone else, and an accepted call, get
 /// the unknown call's not-found and nothing changes.
+#[cfg(test)]
 pub(crate) async fn reject_private_voice_chat(
     ctx: &Context,
     me: &str,
@@ -211,7 +213,7 @@ pub(crate) async fn reject_private_voice_chat(
 ) -> Result<(), Refusal> {
     reject_private_voice_chat_with_id(ctx, me, id, &id.to_string()).await
 }
-async fn reject_private_voice_chat_with_id(
+pub(crate) async fn reject_private_voice_chat_with_id(
     ctx: &Context,
     me: &str,
     id: Uuid,
@@ -247,6 +249,7 @@ async fn reject_private_voice_chat_with_id(
 /// (`voice.ts:189-191`); anyone else gets the unknown call's not-found and
 /// nothing changes. An accepted call ends through the voice runtime, which
 /// deletes the row and then the room; a pending one has no room.
+#[cfg(test)]
 pub(crate) async fn end_private_voice_chat(
     ctx: &Context,
     me: &str,
@@ -254,7 +257,7 @@ pub(crate) async fn end_private_voice_chat(
 ) -> Result<(), Refusal> {
     end_private_voice_chat_with_id(ctx, me, id, &id.to_string()).await
 }
-async fn end_private_voice_chat_with_id(
+pub(crate) async fn end_private_voice_chat_with_id(
     ctx: &Context,
     me: &str,
     id: Uuid,
@@ -333,14 +336,14 @@ impl SocialServiceImpl {
     ) -> Result<StartPrivateVoiceChatResponse, SocialError> {
         let me = Self::caller(&context)?;
         let callee = match request.callee.as_ref() {
-            Some(u) if !u.address.trim().is_empty() => normalize(&u.address),
+            Some(u) if !u.address.trim().is_empty() => u.address.as_str(),
             _ => {
                 return Ok(start_voice_invalid(
                     "Callee address is missing in the request payload",
                 ));
             }
         };
-        match start_private_voice_chat(&context.server_context, &me, &callee).await {
+        match start_private_voice_chat(&context.server_context, &me, callee).await {
             Ok(id) => Ok(StartPrivateVoiceChatResponse {
                 response: Some(start_private_voice_chat_response::Response::Ok(
                     start_private_voice_chat_response::Ok {

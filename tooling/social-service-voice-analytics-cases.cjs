@@ -3,10 +3,13 @@
 // capture. Media dependencies and analytics fetch are deterministic local stubs.
 const fs = require('node:fs')
 const { randomUUID } = require('node:crypto')
-const { req, load, logs, caller, target, revision, components } = require('./social-service-voice-source-cases.cjs')
+const { req, load, logs, revision, components } = require('./social-service-voice-source-cases.cjs')
 const { Pool } = req('pg')
 const { createAnalyticsComponent } = req('@dcl/analytics-component')
 const { createRecordConfigComponent } = req('@well-known-components/env-config-provider')
+const caller = '0x' + 'a1'.repeat(20)
+const target = '0xabcdefabcdefabcdefabcdefabcdefabcdefabcd'
+const mixedAddress = address => '0x' + address.slice(2).toUpperCase()
 const community = 'a3333333-b333-4c33-8d33-e33333333333'
 const call = 'c6666666-6666-4666-8666-666666666666'
 async function main() {
@@ -28,7 +31,7 @@ async function main() {
       finally { client.release() }
     }
     const cases = []
-    for (const id of ['start', 'self-start', 'start-expired-pending', 'accept', 'accept-missing-caller', 'accept-missing-callee', 'reject', 'end-pending-caller', 'end-pending-callee', 'end-media-caller', 'end-media-callee', 'end-not-found', 'expire', 'disconnect-pending-caller', 'disconnect-pending-callee', 'disconnect-accepted']) {
+    for (const id of ['start', 'self-start', 'start-expired-pending', 'accept', 'accept-missing-caller', 'accept-missing-callee', 'reject', 'end-pending-caller', 'end-pending-callee', 'end-media-caller', 'end-media-callee', 'end-not-found', 'expire', 'disconnect-pending-caller', 'disconnect-pending-callee', 'disconnect-accepted', 'start-rpc-mixedcase', 'self-start-rpc-mixedcase', 'accept-http-uppercase-id', 'reject-http-uppercase-id', 'end-pending-http-uppercase-id', 'end-media-http-uppercase-id']) {
       await pg.query('TRUNCATE private_voice_chats')
       const steps = [], payloads = []
       const analytics = await createAnalyticsComponent({ logs, config: createRecordConfigComponent({ ANALYTICS_CONTEXT: 'social-fixture', ANALYTICS_API_URL: 'https://analytics.example/events', ANALYTICS_API_TOKEN: 'fixture-token', ENV: 'fixture' }),
@@ -41,11 +44,27 @@ async function main() {
         commsGatekeeper: { isUserInCommunityVoiceChat: async () => false, isUserInAVoiceChat: async () => false,
           getPrivateVoiceChatCredentials: async () => { steps.push('media:credentials'); const grants = {}; if (id !== 'accept-missing-caller') grants[caller] = { connectionUrl: 'caller-grant' }; if (id !== 'accept-missing-callee') grants[target] = { connectionUrl: 'callee-grant' }; return grants },
           endPrivateVoiceChat: async () => { steps.push('media:end'); return id === 'end-not-found' ? [] : [caller, target] } } })
-      const pending = ['start-expired-pending', 'accept', 'accept-missing-caller', 'accept-missing-callee', 'reject', 'end-pending-caller', 'end-pending-callee', 'expire', 'disconnect-pending-caller', 'disconnect-pending-callee'].includes(id)
+      const pending = id.startsWith('accept-http') || id.startsWith('reject-http') || id.startsWith('end-pending-http') || ['start-expired-pending', 'accept', 'accept-missing-caller', 'accept-missing-callee', 'reject', 'end-pending-caller', 'end-pending-callee', 'expire', 'disconnect-pending-caller', 'disconnect-pending-callee'].includes(id)
       if (pending) await pg.query('INSERT INTO private_voice_chats(id,caller_address,callee_address,created_at) VALUES($1,$2,$3,now()-($4::int*interval \'1 second\'))', [call, caller, target, id === 'expire' || id === 'start-expired-pending' ? 60 : 0])
-      let generated, error = null
+      let generated, response, error = null
       try {
-        if (id.startsWith('start') || id === 'self-start') generated = await voice.startPrivateVoiceChat(caller, id === 'self-start' ? caller : target)
+        if (id.endsWith('rpc-mixedcase')) {
+          const handler = load('controllers/handlers/rpc/start-private-voice-chat.ts').startPrivateVoiceChatService({ components: { logs, voice } })
+          response = await handler({ callee: { address: mixedAddress(id.startsWith('self-') ? caller : target) } }, { address: caller })
+          if (response.response.$case === 'ok') generated = response.response.ok.callId
+          else error = response.response[response.response.$case].message
+        } else if (id.endsWith('http-uppercase-id')) {
+          const accept = id.startsWith('accept'), reject = id.startsWith('reject')
+          const method = accept || reject ? 'PATCH' : 'DELETE'
+          const path = `/v1/private-voice-chats/${call.toUpperCase()}`
+          const ctx = { components: { logs, voice }, params: { callId: call.toUpperCase() }, verification: { auth: accept || reject ? target : caller }, request: new Request('https://social.example' + path, { method, ...(method === 'PATCH' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ intention: reject ? 'rejected' : 'accepted' }) } : {}) }) }
+          const { errorHandler } = req('@dcl/http-commons')
+          const { voiceChatsErrorsHandler } = load('controllers/middlewares/voice-chats-errors.ts')
+          const invoke = () => accept || reject ? load('controllers/handlers/http/update-private-voice-chat-handler.ts').updatePrivateVoiceChatHandler(ctx) : load('controllers/handlers/http/end-private-voice-chat-handler.ts').endPrivateVoiceChatHandler(ctx)
+          const run = () => method === 'PATCH' ? req('@dcl/schema-validator-component').createSchemaValidatorComponent({ ensureJsonContentType: false }).withSchemaValidatorMiddleware(load('controllers/handlers/http/schemas.ts').UpdatePrivateVoiceChatSchema)(ctx, invoke) : invoke()
+          const result = await errorHandler(ctx, () => voiceChatsErrorsHandler(ctx, run))
+          response = { status: result.status, body: result.body ?? null }
+        } else if (id.startsWith('start') || id === 'self-start') generated = await voice.startPrivateVoiceChat(caller, id === 'self-start' ? caller : target)
         else if (id.startsWith('accept')) await voice.acceptPrivateVoiceChat(call, target)
         else if (id === 'reject') await voice.rejectPrivateVoiceChat(call, target)
         else if (id.startsWith('end')) await voice.endPrivateVoiceChat(call, id.endsWith('callee') ? target : caller)
@@ -54,7 +73,7 @@ async function main() {
       } catch (caught) { error = caught.message }
       await new Promise(setImmediate)
       let entry = { id: `private.${id}`, kind: 'private', scenario: id, error, payloads, steps,
-        remaining_rows: (await pg.query('SELECT count(*)::int AS n FROM private_voice_chats')).rows[0].n }
+        ...(response ? { response } : {}), remaining_rows: (await pg.query('SELECT count(*)::int AS n FROM private_voice_chats')).rows[0].n }
       if (generated) entry = JSON.parse(JSON.stringify(entry).replaceAll(generated, call))
       cases.push(entry)
     }
@@ -62,6 +81,7 @@ async function main() {
       const steps = [], payloads = []
       const analytics = await createAnalyticsComponent({ logs, config: createRecordConfigComponent({ ANALYTICS_CONTEXT: 'social-fixture', ANALYTICS_API_URL: 'https://analytics.example/events', ANALYTICS_API_TOKEN: 'fixture-token', ENV: 'fixture' }), fetcher: { fetch: async (_url, options) => { const body = JSON.parse(options.body); payloads.push(body); steps.push(`analytics:${body.event}`); return new Response(null) } } })
       const deps = await components('success', id.startsWith('start'))
+      deps.communitiesDb.getCommunityMemberRoles = async () => ({ [caller]: 'owner', [target]: 'member' })
       const requestedId = id.endsWith('uppercase-id') ? community.toUpperCase() : community
       const requestedTarget = id === 'mute-uppercase-target' ? target.toUpperCase() : target
       const getCommunity = deps.communitiesDb.getCommunity
@@ -87,7 +107,7 @@ async function main() {
       await new Promise(setImmediate)
       cases.push({ id: `community.${id}`, kind: 'community', scenario: id, error, payloads, steps })
     }
-    fs.writeFileSync(process.argv[3], JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision }, scope: 'Actual source voice/community domain and analytics SDK, private voice-db on owned PostgreSQL; media replies and analytics fetch controlled. Random start UUID normalized to the fixed call UUID. Steps capture source invocation order; network completion order is not promised.', caller, target, community, call, cases }, null, 2) + '\n')
+    fs.writeFileSync(process.argv[3], JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision }, scope: 'Actual source voice/community domain and analytics SDK, private voice-db on owned PostgreSQL; media replies and analytics fetch controlled. RPC mixed-case START invokes the real RPC handler; uppercase private HTTP cases invoke real controllers and error/schema middleware with explicit verified actors (authentication bypassed). Random start UUID normalized to the fixed call UUID. Steps capture source invocation order; network completion order is not promised.', caller, target, community, call, cases }, null, 2) + '\n')
     process.stdout.write(`Captured ${cases.length} voice analytics cases\n`)
   } finally { if (pg) await pg.end(); await admin.query(`DROP DATABASE IF EXISTS "${name}" WITH (FORCE)`); await admin.end() }
 }
