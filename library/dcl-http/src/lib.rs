@@ -1412,6 +1412,58 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn opt_in_fetch_redirects_preserve_source_analytics_headers_across_public_hosts() {
+        use axum::{Router, extract::Request, response::IntoResponse};
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/social/analytics-source-cases.json"
+        )))
+        .unwrap();
+        let expected = &fixture["cross_host"];
+        let requests = Arc::new(Mutex::new(Vec::<serde_json::Value>::new()));
+        let observed = requests.clone();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().fallback(move |request: Request| {
+            let observed = observed.clone(); async move {
+                let path = request.uri().path().to_string();
+                let method = request.method().to_string();
+                let headers = request.headers().clone();
+                let bytes = axum::body::to_bytes(request.into_body(), 1 << 20).await.unwrap();
+                let header = |name: &str| headers.get(name).map(|value| value.to_str().unwrap().to_string());
+                observed.lock().unwrap().push(serde_json::json!({"path":path,"method":method,"content_type":header("content-type"),"content_length":header("content-length"),"token":header("x-token"),"body":String::from_utf8(bytes.to_vec()).unwrap()}));
+                if path.ends_with("/1") {
+                    (axum::http::StatusCode::TEMPORARY_REDIRECT, [("location", format!("http://other.example.test:{}/jump/307/0",address.port()))]).into_response()
+                } else { "unused".into_response() }
+            }
+        });
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let http = strict(address);
+        let response = http
+            .post(format!(
+                "http://public.example.test:{}/jump/307/1",
+                address.port()
+            ))
+            .header("x-token", "fixture-token")
+            .header("content-type", "application/json")
+            .body(expected["requests"][0]["body"].as_str().unwrap().to_owned())
+            .following_redirects(20)
+            .send()
+            .await
+            .unwrap();
+        drop(response);
+        assert_eq!(
+            *requests.lock().unwrap(),
+            *expected["requests"].as_array().unwrap()
+        );
+        assert_eq!(
+            http.pinned_hosts(),
+            vec!["other.example.test", "public.example.test"]
+        );
+        server.abort();
+    }
+
     fn strict(addr: SocketAddr) -> Outbound {
         Outbound::new(HttpClientCfg::default().following_redirects(2))
             .unwrap()

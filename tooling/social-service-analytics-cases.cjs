@@ -68,26 +68,58 @@ async function main() {
     transport.push({ scenario: 'fire-and-forget', result: result === undefined ? 'undefined' : result, before_release, order })
   } finally { global.fetch = realFetch }
   const redirects = []
+  let activeTrace, crossHost = false, triggerAbort
   const server = http.createServer(async (request, response) => {
     let body = ''
     for await (const chunk of request) body += chunk
     const [kind, code, remaining] = request.url.slice(1).split('/')
-    const trace = redirects.at(-1).requests
+    const trace = activeTrace.requests
     trace.push({ path: request.url, method: request.method, content_type: request.headers['content-type'] ?? null, content_length: request.headers['content-length'] ?? null, token: request.headers['x-token'] ?? null, body })
-    if (kind === 'jump' && +remaining > 0) { response.writeHead(+code, { location: `/jump/${code}/${+remaining - 1}` }); response.end() }
+    if (kind === 'deadline') {
+      if (code === 'start') { response.writeHead(307, { location: '/deadline/end' }); response.end() }
+      else queueMicrotask(() => triggerAbort())
+      return
+    }
+    if (kind === 'jump' && +remaining > 0) { response.writeHead(+code, { location: `${crossHost ? `http://localhost:${server.address().port}` : ''}/jump/${code}/${+remaining - 1}` }); response.end() }
     else { response.writeHead(200); response.end('unused response body') }
   })
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
+  let cross_host, deadline_chain
   try {
     for (const [status, hops] of [[301, 3], [302, 3], [303, 3], [307, 3], [308, 3], [307, 20], [307, 21]]) {
       const logs = []
       const entry = { status, hops, requests: [], logs }
       redirects.push(entry)
+      activeTrace = entry
       const analytics = await createAnalyticsComponent({ config: createRecordConfigComponent({ ...base, ANALYTICS_API_URL: `http://127.0.0.1:${server.address().port}/jump/${status}/${hops}` }), logs: quiet(logs), fetcher: createFetchComponent() })
       await analytics.sendEvent('REDIRECT_FIXTURE', { call_id: 'fixture-call' })
     }
+    cross_host = { status: 307, hops: 1, requests: [], logs: [] }
+    activeTrace = cross_host
+    crossHost = true
+    const analytics = await createAnalyticsComponent({ config: createRecordConfigComponent({ ...base, ANALYTICS_API_URL: `http://127.0.0.1:${server.address().port}/jump/307/1` }), logs: quiet(cross_host.logs), fetcher: createFetchComponent() })
+    await analytics.sendEvent('REDIRECT_FIXTURE', { call_id: 'fixture-call' })
+    deadline_chain = { requests: [], logs: [], timer_ms: null, controlled_timer: true }
+    activeTrace = deadline_chain
+    crossHost = false
+    const realSetTimeout = global.setTimeout
+    let watchdog
+    global.setTimeout = (callback, delay, ...args) => {
+      if (!triggerAbort && delay === 10000) {
+        deadline_chain.timer_ms = delay
+        triggerAbort = () => callback(...args)
+        const held = realSetTimeout(() => {}, 1000000000)
+        held.unref()
+        return held
+      }
+      return realSetTimeout(callback, delay, ...args)
+    }
+    try {
+      const bounded = await createAnalyticsComponent({ config: createRecordConfigComponent({ ...base, ANALYTICS_API_URL: `http://127.0.0.1:${server.address().port}/deadline/start` }), logs: quiet(deadline_chain.logs), fetcher: createFetchComponent() })
+      await Promise.race([bounded.sendEvent('DEADLINE_FIXTURE', {}), new Promise((_resolve, reject) => { watchdog = realSetTimeout(() => reject(Error('source deadline probe stalled')), 2000) })])
+    } finally { global.setTimeout = realSetTimeout; clearTimeout(watchdog) }
   } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)) }
-  fs.writeFileSync(process.argv[3], JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision }, packages: { analytics: req('@dcl/analytics-component/package.json').version, fetch: req('@dcl/fetch-component/package.json').version }, scope: 'Installed upstream analytics SDK, config provider, fetch wrapper and Node timers; controlled fetch/Response streams plus real loopback redirect server. No real analytics endpoint or mutation hooks in this capture.', configuration, timeouts, transport, redirects }, null, 2) + '\n')
+  fs.writeFileSync(process.argv[3], JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision }, packages: { analytics: req('@dcl/analytics-component/package.json').version, fetch: req('@dcl/fetch-component/package.json').version }, scope: 'Installed upstream analytics SDK, config provider, fetch wrapper and Node timers; controlled fetch/Response streams plus real loopback redirect server. No real analytics endpoint or mutation hooks in this capture.', configuration, timeouts, transport, redirects, cross_host, deadline_chain }, null, 2) + '\n')
   process.stdout.write(`Captured analytics configuration${configuration.length}, timeouts${timeouts.length}, transport${transport.length}, redirects${redirects.length}\n`)
 }
 main().catch(error => { console.error(error); process.exitCode = 1 })

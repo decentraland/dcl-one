@@ -210,3 +210,75 @@ async fn a_stalled_analytics_request_times_out_without_holding_the_caller() {
     );
     server.abort();
 }
+
+#[tokio::test]
+async fn analytics_deadline_spans_the_entire_redirect_chain_until_headers() {
+    let fixture = source();
+    assert_eq!(
+        fixture["deadline_chain"]["requests"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        fixture["deadline_chain"]["logs"][0]["data"]["error"],
+        "Request aborted (timed out)"
+    );
+    let (entered, mut entries) = mpsc::unbounded_channel();
+    let release = Arc::new(tokio::sync::Notify::new());
+    let first_release = release.clone();
+    let app = Router::new().fallback(move |request: Request| {
+        let entered = entered.clone();
+        let release = first_release.clone();
+        async move {
+            let first = request.uri().path() == "/deadline/start";
+            entered.send(first).unwrap();
+            if first {
+                release.notified().await;
+                (
+                    axum::http::StatusCode::TEMPORARY_REDIRECT,
+                    [("location", "/deadline/end")],
+                )
+                    .into_response()
+            } else {
+                std::future::pending::<axum::response::Response>().await
+            }
+        }
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut config = settings(format!("http://{address}/deadline/start"));
+    config.request_timeout_ms = Some(1000.0);
+    let analytics = Analytics::new(&crate::http::Outbound::for_tests(), config)
+        .unwrap()
+        .unwrap();
+    let weak = Arc::downgrade(&analytics.0);
+    let started = tokio::time::Instant::now();
+    analytics.fire_event("DEADLINE_FIXTURE", json!({}));
+    drop(analytics);
+    assert_eq!(entries.recv().await, Some(true));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    release.notify_one();
+    assert_eq!(entries.recv().await, Some(false));
+    let elapsed = started.elapsed();
+    assert!(elapsed < Duration::from_millis(900));
+    // Real HTTP establishes the second hop; controlled Tokio time then crosses
+    // the original deadline while staying before a restarted per-hop deadline.
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(1) - elapsed + elapsed / 2).await;
+    for _ in 0..64 {
+        if weak.upgrade().is_none() {
+            break;
+        }
+        tokio::task::yield_now().await;
+    }
+    let released = weak.upgrade().is_none();
+    tokio::time::resume();
+    server.abort();
+    assert!(
+        released,
+        "the second redirect hop cannot restart the timeout"
+    );
+}

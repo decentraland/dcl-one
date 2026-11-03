@@ -176,6 +176,7 @@ async fn announce_started(
     ctx: &Context,
     me: &str,
     cid: Uuid,
+    raw: &str,
     gate: &VoiceGate,
 ) -> Result<(), Refusal> {
     let Some(community) = &gate.community else {
@@ -213,11 +214,7 @@ async fn announce_started(
         community_image: image.clone(),
         worlds,
     };
-    if ctx.db().voice_generation_is(cid, Some(generation)).await? {
-        ctx.pubsub()
-            .community_voice(ctx.db().pool(), cid, update, everyone, Some(me))
-            .await;
-    }
+    let current_generation = ctx.db().voice_generation_is(cid, Some(generation)).await?;
     // upstream `broadcastVoiceChatStarted` (`logic/community/broadcaster.ts`):
     // the online members but the opener
     let online = ctx.topology().snapshot().wallets;
@@ -235,10 +232,30 @@ async fn announce_started(
         online: &online,
         except: me,
     };
-    if let Some(state) = ctx.communities() {
-        state.publish_community_event(&event, &audience).await;
-    }
-    notify(ctx.db().pool(), event, audience).await;
+    // Source Promise.all starts pub/sub and the broadcast before analytics,
+    // without waiting for either notification transport to finish first.
+    let publish = async {
+        if current_generation {
+            ctx.pubsub()
+                .community_voice(ctx.db().pool(), cid, update, everyone, Some(me))
+                .await;
+        }
+    };
+    let broadcast = async {
+        if let Some(state) = ctx.communities() {
+            state.publish_community_event(&event, &audience).await;
+        }
+        notify(ctx.db().pool(), event, audience).await;
+    };
+    let analytics = async {
+        if let Some(state) = ctx.communities() {
+            state.fire_analytics(
+                "START_COMMUNITY_CALL",
+                serde_json::json!({"call_id":raw,"user_id":me}),
+            );
+        }
+    };
+    tokio::join!(publish, broadcast, analytics);
     Ok(())
 }
 
@@ -278,7 +295,7 @@ pub(crate) async fn start_community_voice_chat(
             VoiceUnavailable::NotFound => resource_not_found(raw),
             other => internal("community voice credentials")(other),
         })?;
-    announce_started(ctx, me, cid, &gate).await?;
+    announce_started(ctx, me, cid, raw, &gate).await?;
     Ok(conn)
 }
 
@@ -315,6 +332,12 @@ pub(crate) async fn join_community_voice_chat(
         return Err(Refusal::Forbidden(format!(
             "The user {me} is banned from community {raw}"
         )));
+    }
+    if let Some(state) = ctx.communities() {
+        state.fire_analytics(
+            "JOIN_COMMUNITY_CALL",
+            serde_json::json!({"call_id":raw,"user_id":me}),
+        );
     }
     Ok(conn)
 }
@@ -480,6 +503,12 @@ pub(crate) async fn end_community_voice_chat(
             )
             .await;
     }
+    if let Some(state) = ctx.communities() {
+        state.fire_analytics(
+            "END_COMMUNITY_CALL",
+            serde_json::json!({"call_id":raw,"user_id":me}),
+        );
+    }
     Ok(())
 }
 
@@ -498,6 +527,7 @@ pub(crate) async fn mute_speaker(
     if target.trim().is_empty() {
         return Err(Refusal::Invalid(USER_ADDRESS_REQUIRED.into()));
     }
+    let wire_target = target;
     let target = normalize(target);
     if target != me {
         let cid = community_id(raw, false)?;
@@ -510,7 +540,14 @@ pub(crate) async fn mute_speaker(
     let cid = community_id(raw, true)?;
     gatekeeper_identifiers(raw, Some(&target), false)?;
     let outcome = ctx.voice().mute_speaker(cid, &target, muted).await;
-    runtime("mute speaker", raw, outcome)
+    runtime("mute speaker", raw, outcome)?;
+    if let Some(state) = ctx.communities() {
+        state.fire_analytics(
+            "MUTE_SPEAKER_IN_COMMUNITY_CALL",
+            serde_json::json!({"call_id":raw,"user_id":me,"target_user_id":wire_target}),
+        );
+    }
+    Ok(())
 }
 
 /// The `oneof` arms a community-voice refusal lands in.

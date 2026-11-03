@@ -638,11 +638,13 @@ impl Context {
     /// otherwise the address's latest pending call is deleted.
     pub async fn end_private_voice_chat_on_disconnect(&self, address: &str) {
         let voice = &self.0.voice;
+        let mut accepted = true;
         let ended = match voice
             .end_private_voice_chat(None, &address.to_lowercase())
             .await
         {
             Ok(None) => {
+                accepted = false;
                 let pending = crate::comms::gatekeeper::voice::db::PendingPrivateCall::Address(
                     address.to_string(),
                 );
@@ -659,6 +661,9 @@ impl Context {
             }
         };
         self.publish_private_voice_ended_by(&chat, address).await;
+        if !accepted && let Some(state) = self.communities() {
+            state.fire_analytics("END_CALL", serde_json::json!({"call_id":chat.id,"user_id":chat.caller_address,"receiver_id":chat.callee_address}));
+        }
     }
 
     /// ENDED to the party that did not end the call (upstream
@@ -765,6 +770,9 @@ impl Context {
             for chat in &expired {
                 self.publish_private_voice(chat, PrivateVoiceChatStatus::VoiceChatExpired)
                     .await;
+                if let Some(state) = self.communities() {
+                    state.fire_analytics("EXPIRE_CALL", serde_json::json!({"call_id":chat.id}));
+                }
             }
             total += expired.len();
         }

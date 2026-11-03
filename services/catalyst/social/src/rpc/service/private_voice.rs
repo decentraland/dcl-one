@@ -131,6 +131,12 @@ pub(crate) async fn start_private_voice_chat(
             }),
         )
         .await;
+    if let Some(state) = ctx.communities() {
+        state.fire_analytics(
+            "START_CALL",
+            serde_json::json!({"call_id":id,"user_id":me,"receiver_id":callee}),
+        );
+    }
     Ok(id)
 }
 
@@ -191,6 +197,9 @@ async fn accept_private_voice_chat_with_id(
             }),
         )
         .await;
+    if let Some(state) = ctx.communities() {
+        state.fire_analytics("ACCEPT_CALL", serde_json::json!({"call_id":wire_id}));
+    }
     // Upstream reads the callee's grant after notifying the caller. Preserve
     // that already committed event if only the callee's credential is missing.
     url_of(&chat.callee_address)
@@ -232,6 +241,9 @@ async fn reject_private_voice_chat_with_id(
             }),
         )
         .await;
+    if let Some(state) = ctx.communities() {
+        state.fire_analytics("REJECT_CALL", serde_json::json!({"call_id":wire_id}));
+    }
     Ok(())
 }
 
@@ -264,17 +276,20 @@ async fn end_private_voice_chat_with_id(
         }
     }
 
-    let chat = match ctx.voice().end_private_voice_chat(Some(id), me).await? {
-        Some(chat) => chat,
+    let (chat, accepted) = match ctx.voice().end_private_voice_chat(Some(id), me).await? {
+        Some(chat) => (chat, true),
         None => {
             let pending = PendingPrivateCall::Ended {
                 id,
                 party: me.to_string(),
             };
-            ctx.voice()
-                .finish_pending_private_call(pending)
-                .await?
-                .ok_or_else(|| call_not_found(wire_id))?
+            (
+                ctx.voice()
+                    .finish_pending_private_call(pending)
+                    .await?
+                    .ok_or_else(|| call_not_found(wire_id))?,
+                false,
+            )
         }
     };
     let other = if chat.caller_address.eq_ignore_ascii_case(me) {
@@ -295,6 +310,17 @@ async fn end_private_voice_chat_with_id(
             }),
         )
         .await;
+    if let Some(state) = ctx.communities() {
+        let (user, receiver) = if accepted {
+            (me, other.as_str())
+        } else {
+            (chat.caller_address.as_str(), chat.callee_address.as_str())
+        };
+        state.fire_analytics(
+            "END_CALL",
+            serde_json::json!({"call_id":wire_id,"user_id":user,"receiver_id":receiver}),
+        );
+    }
     Ok(())
 }
 

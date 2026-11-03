@@ -953,5 +953,59 @@
         }
       ]
     }
-  ]
+  ],
+  "cross_host": {
+    "status": 307,
+    "hops": 1,
+    "requests": [
+      {
+        "path": "/jump/307/1",
+        "method": "POST",
+        "content_type": "application/json",
+        "content_length": "105",
+        "token": "fixture-token",
+        "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+      },
+      {
+        "path": "/jump/307/0",
+        "method": "POST",
+        "content_type": "application/json",
+        "content_length": "105",
+        "token": "fixture-token",
+        "body": "{\"event\":\"REDIRECT_FIXTURE\",\"body\":{\"call_id\":\"fixture-call\",\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+      }
+    ],
+    "logs": []
+  },
+  "deadline_chain": {
+    "requests": [
+      {
+        "path": "/deadline/start",
+        "method": "POST",
+        "content_type": "application/json",
+        "content_length": "80",
+        "token": "fixture-token",
+        "body": "{\"event\":\"DEADLINE_FIXTURE\",\"body\":{\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+      },
+      {
+        "path": "/deadline/end",
+        "method": "POST",
+        "content_type": "application/json",
+        "content_length": "80",
+        "token": "fixture-token",
+        "body": "{\"event\":\"DEADLINE_FIXTURE\",\"body\":{\"env\":\"fixture\"},\"context\":\"social-fixture\"}"
+      }
+    ],
+    "logs": [
+      {
+        "level": "error",
+        "message": "Error sending event to Analytics DEADLINE_FIXTURE",
+        "data": {
+          "error": "Request aborted (timed out)"
+        }
+      }
+    ],
+    "timer_ms": 10000,
+    "controlled_timer": true
+  }
 }

@@ -1,0 +1,567 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+  },
+  "scope": "Actual source voice/community domain and analytics SDK, private voice-db on owned PostgreSQL; media replies and analytics fetch controlled. Random start UUID normalized to the fixed call UUID. Steps capture source invocation order; network completion order is not promised. A tagged lead-only case records a separately pending source mismatch.",
+  "caller": "0x1111111111111111111111111111111111111111",
+  "target": "0x2222222222222222222222222222222222222222",
+  "community": "a3333333-b333-4c33-8d33-e33333333333",
+  "call": "c6666666-6666-4666-8666-666666666666",
+  "cases": [
+    {
+      "id": "private.start",
+      "kind": "private",
+      "scenario": "start",
+      "error": null,
+      "payloads": [
+        {
+          "event": "START_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "publish:requested",
+        "analytics:START_CALL"
+      ],
+      "remaining_rows": 1
+    },
+    {
+      "id": "private.self-start",
+      "kind": "private",
+      "scenario": "self-start",
+      "error": "The callee or the caller are not accepting voice calls from users that are not friends",
+      "payloads": [],
+      "steps": [],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.start-expired-pending",
+      "kind": "private",
+      "scenario": "start-expired-pending",
+      "error": "One of the users is busy calling someone else",
+      "payloads": [],
+      "steps": [],
+      "remaining_rows": 1,
+      "lead_only": "Source busy until expiry sweep; target opportunistic reclaim is a separate pending fix."
+    },
+    {
+      "id": "private.accept",
+      "kind": "private",
+      "scenario": "accept",
+      "error": null,
+      "payloads": [
+        {
+          "event": "ACCEPT_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:credentials",
+        "publish:accepted",
+        "analytics:ACCEPT_CALL"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.accept-missing-caller",
+      "kind": "private",
+      "scenario": "accept-missing-caller",
+      "error": "Cannot read properties of undefined (reading 'connectionUrl')",
+      "payloads": [],
+      "steps": [
+        "media:credentials"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.accept-missing-callee",
+      "kind": "private",
+      "scenario": "accept-missing-callee",
+      "error": "Cannot read properties of undefined (reading 'connectionUrl')",
+      "payloads": [
+        {
+          "event": "ACCEPT_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:credentials",
+        "publish:accepted",
+        "analytics:ACCEPT_CALL"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.reject",
+      "kind": "private",
+      "scenario": "reject",
+      "error": null,
+      "payloads": [
+        {
+          "event": "REJECT_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "publish:rejected",
+        "analytics:REJECT_CALL"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.end-pending-caller",
+      "kind": "private",
+      "scenario": "end-pending-caller",
+      "error": null,
+      "payloads": [
+        {
+          "event": "END_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "publish:ended",
+        "analytics:END_CALL"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.end-pending-callee",
+      "kind": "private",
+      "scenario": "end-pending-callee",
+      "error": null,
+      "payloads": [
+        {
+          "event": "END_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "publish:ended",
+        "analytics:END_CALL"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.end-media-caller",
+      "kind": "private",
+      "scenario": "end-media-caller",
+      "error": null,
+      "payloads": [
+        {
+          "event": "END_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:end",
+        "publish:ended",
+        "analytics:END_CALL"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.end-media-callee",
+      "kind": "private",
+      "scenario": "end-media-callee",
+      "error": null,
+      "payloads": [
+        {
+          "event": "END_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "user_id": "0x2222222222222222222222222222222222222222",
+            "receiver_id": "0x1111111111111111111111111111111111111111",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:end",
+        "publish:ended",
+        "analytics:END_CALL"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.end-not-found",
+      "kind": "private",
+      "scenario": "end-not-found",
+      "error": "The voice chat with id c6666666-6666-4666-8666-666666666666 was not found",
+      "payloads": [],
+      "steps": [
+        "media:end"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.expire",
+      "kind": "private",
+      "scenario": "expire",
+      "error": null,
+      "payloads": [
+        {
+          "event": "EXPIRE_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "publish:expired",
+        "analytics:EXPIRE_CALL"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.disconnect-pending-caller",
+      "kind": "private",
+      "scenario": "disconnect-pending-caller",
+      "error": null,
+      "payloads": [
+        {
+          "event": "END_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "publish:ended",
+        "analytics:END_CALL"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.disconnect-pending-callee",
+      "kind": "private",
+      "scenario": "disconnect-pending-callee",
+      "error": null,
+      "payloads": [
+        {
+          "event": "END_CALL",
+          "body": {
+            "call_id": "c6666666-6666-4666-8666-666666666666",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "receiver_id": "0x2222222222222222222222222222222222222222",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "publish:ended",
+        "analytics:END_CALL"
+      ],
+      "remaining_rows": 0
+    },
+    {
+      "id": "private.disconnect-accepted",
+      "kind": "private",
+      "scenario": "disconnect-accepted",
+      "error": null,
+      "payloads": [],
+      "steps": [],
+      "remaining_rows": 0
+    },
+    {
+      "id": "community.start",
+      "kind": "community",
+      "scenario": "start",
+      "error": null,
+      "payloads": [
+        {
+          "event": "START_COMMUNITY_CALL",
+          "body": {
+            "call_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:action",
+        "cache:set",
+        "publish:0",
+        "broadcast",
+        "analytics:START_COMMUNITY_CALL"
+      ]
+    },
+    {
+      "id": "community.start-media-failure",
+      "kind": "community",
+      "scenario": "start-media-failure",
+      "error": "Failed to start community voice chat: synthetic media failure",
+      "payloads": [],
+      "steps": [
+        "media:action"
+      ]
+    },
+    {
+      "id": "community.join",
+      "kind": "community",
+      "scenario": "join",
+      "error": null,
+      "payloads": [
+        {
+          "event": "JOIN_COMMUNITY_CALL",
+          "body": {
+            "call_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:action",
+        "analytics:JOIN_COMMUNITY_CALL"
+      ]
+    },
+    {
+      "id": "community.join-racing-ban",
+      "kind": "community",
+      "scenario": "join-racing-ban",
+      "error": "The user 0x1111111111111111111111111111111111111111 is banned from community a3333333-b333-4c33-8d33-e33333333333",
+      "payloads": [],
+      "steps": [
+        "media:action",
+        "media:action"
+      ]
+    },
+    {
+      "id": "community.end",
+      "kind": "community",
+      "scenario": "end",
+      "error": null,
+      "payloads": [
+        {
+          "event": "END_COMMUNITY_CALL",
+          "body": {
+            "call_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:action",
+        "cache:remove",
+        "publish:1",
+        "analytics:END_COMMUNITY_CALL"
+      ]
+    },
+    {
+      "id": "community.mute",
+      "kind": "community",
+      "scenario": "mute",
+      "error": null,
+      "payloads": [
+        {
+          "event": "MUTE_SPEAKER_IN_COMMUNITY_CALL",
+          "body": {
+            "call_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "target_user_id": "0x2222222222222222222222222222222222222222",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:action",
+        "analytics:MUTE_SPEAKER_IN_COMMUNITY_CALL"
+      ]
+    },
+    {
+      "id": "community.unmute",
+      "kind": "community",
+      "scenario": "unmute",
+      "error": null,
+      "payloads": [
+        {
+          "event": "MUTE_SPEAKER_IN_COMMUNITY_CALL",
+          "body": {
+            "call_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "target_user_id": "0x2222222222222222222222222222222222222222",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:action",
+        "analytics:MUTE_SPEAKER_IN_COMMUNITY_CALL"
+      ]
+    },
+    {
+      "id": "community.mute-media-failure",
+      "kind": "community",
+      "scenario": "mute-media-failure",
+      "error": "synthetic media failure",
+      "payloads": [],
+      "steps": [
+        "media:action"
+      ]
+    },
+    {
+      "id": "community.start-uppercase-id",
+      "kind": "community",
+      "scenario": "start-uppercase-id",
+      "error": null,
+      "payloads": [
+        {
+          "event": "START_COMMUNITY_CALL",
+          "body": {
+            "call_id": "A3333333-B333-4C33-8D33-E33333333333",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:action",
+        "cache:set",
+        "publish:0",
+        "broadcast",
+        "analytics:START_COMMUNITY_CALL"
+      ]
+    },
+    {
+      "id": "community.join-uppercase-id",
+      "kind": "community",
+      "scenario": "join-uppercase-id",
+      "error": null,
+      "payloads": [
+        {
+          "event": "JOIN_COMMUNITY_CALL",
+          "body": {
+            "call_id": "A3333333-B333-4C33-8D33-E33333333333",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:action",
+        "analytics:JOIN_COMMUNITY_CALL"
+      ]
+    },
+    {
+      "id": "community.end-uppercase-id",
+      "kind": "community",
+      "scenario": "end-uppercase-id",
+      "error": null,
+      "payloads": [
+        {
+          "event": "END_COMMUNITY_CALL",
+          "body": {
+            "call_id": "A3333333-B333-4C33-8D33-E33333333333",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:action",
+        "cache:remove",
+        "publish:1",
+        "analytics:END_COMMUNITY_CALL"
+      ]
+    },
+    {
+      "id": "community.mute-uppercase-id",
+      "kind": "community",
+      "scenario": "mute-uppercase-id",
+      "error": null,
+      "payloads": [
+        {
+          "event": "MUTE_SPEAKER_IN_COMMUNITY_CALL",
+          "body": {
+            "call_id": "A3333333-B333-4C33-8D33-E33333333333",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "target_user_id": "0x2222222222222222222222222222222222222222",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:action",
+        "analytics:MUTE_SPEAKER_IN_COMMUNITY_CALL"
+      ]
+    },
+    {
+      "id": "community.mute-uppercase-target",
+      "kind": "community",
+      "scenario": "mute-uppercase-target",
+      "error": null,
+      "payloads": [
+        {
+          "event": "MUTE_SPEAKER_IN_COMMUNITY_CALL",
+          "body": {
+            "call_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_id": "0x1111111111111111111111111111111111111111",
+            "target_user_id": "0X2222222222222222222222222222222222222222",
+            "env": "fixture"
+          },
+          "context": "social-fixture"
+        }
+      ],
+      "steps": [
+        "media:action",
+        "analytics:MUTE_SPEAKER_IN_COMMUNITY_CALL"
+      ]
+    }
+  ]
+}
