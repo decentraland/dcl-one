@@ -264,7 +264,7 @@ where
     F: Fn(&SocialEvent) -> Option<T> + Send + 'static,
 {
     let (generator, yielder) = Generator::create();
-    let mut rx = pubsub.subscribe(address);
+    let mut rx = pubsub.subscribe_updates::<T>(address);
     tokio::spawn(async move {
         loop {
             let event = tokio::select! {

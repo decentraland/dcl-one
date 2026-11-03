@@ -378,10 +378,17 @@ async fn a_send_past_the_backpressure_limit_closes_slow_consumer() {
         ..Settings::default()
     };
     let server = spawn_server_with(None, settings, None).await;
-    let socket = ready(&server, &PrivateKeySigner::random()).await;
+    let me = PrivateKeySigner::random();
+    let address = format!("{:#x}", me.address());
+    let socket = ready(&server, &me).await;
     let (mut sink, mut stream) = socket.split();
-    // Pings until the server stops reading them.
+    // Stop sending once the server retires the session. Writing after the peer
+    // closes can put tungstenite in an error state before its read half exposes
+    // the close frame, which measures a client-side write failure instead.
     for _ in 0..2_000_000 {
+        if server.state.ctx.admission().sockets_of(&address) == 0 {
+            break;
+        }
         let ping = sink.send(WsMessage::Text(r#"{"type":"ping"}"#.into()));
         match tokio::time::timeout(Duration::from_millis(200), ping).await {
             Ok(Ok(())) => continue,

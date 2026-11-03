@@ -1,6 +1,9 @@
 //! Local social subscription fanout. Mutation hints cross the existing core-NATS link;
 //! every replica independently derives Pulse connectivity and never republishes it.
 
+mod queue;
+pub(crate) use queue::{OverflowPolicy, StreamKind};
+
 use crate::rpc::proto::v2::{
     BlockUpdate, CommunityMemberConnectivityUpdate, CommunityVoiceChatUpdate,
     FriendConnectivityUpdate, FriendshipUpdate, PrivateVoiceChatUpdate,
@@ -76,6 +79,7 @@ pub enum SocialEvent {
 #[derive(Clone, Default)]
 pub struct PubSub {
     channels: Arc<DashMap<String, broadcast::Sender<Arc<SocialEvent>>>>,
+    streams: Arc<queue::Registry>,
     outbound: Arc<std::sync::OnceLock<tokio::sync::mpsc::Sender<super::fanout::Event>>>,
 }
 
@@ -165,24 +169,46 @@ impl PubSub {
 
     pub(crate) fn publish_local(&self, address: &str, event: SocialEvent) {
         let key = address.to_lowercase();
-        let Some(sender) = self.channels.get(&key) else {
-            return;
-        };
-        if sender.send(Arc::new(event)).is_err() {
+        let event = Arc::new(event);
+        if let Some(sender) = self.channels.get(&key) {
+            let empty = sender.send(event.clone()).is_err();
             drop(sender);
-            self.channels
-                .remove_if(&key, |_, s| s.receiver_count() == 0);
+            if empty {
+                self.channels
+                    .remove_if(&key, |_, sender| sender.receiver_count() == 0);
+            }
+        }
+        if let Some(queues) = self.streams.get(&key) {
+            queues.lock().retain(|queue| match queue.upgrade() {
+                Some(queue) => {
+                    queue.push(&event);
+                    true
+                }
+                None => false,
+            });
         }
     }
 
-    /// The addresses holding a subscription on this process (upstream
-    /// `getLocalSubscribersAddresses`).
     pub fn subscribed_addresses(&self) -> Vec<String> {
-        self.channels
+        let mut addresses: std::collections::HashSet<_> = self
+            .channels
             .iter()
             .filter(|channel| channel.value().receiver_count() > 0)
             .map(|channel| channel.key().clone())
-            .collect()
+            .collect();
+        addresses.extend(
+            self.streams
+                .iter()
+                .filter(|entry| {
+                    entry
+                        .value()
+                        .lock()
+                        .iter()
+                        .any(|queue| queue.strong_count() > 0)
+                })
+                .map(|entry| entry.key().clone()),
+        );
+        addresses.into_iter().collect()
     }
 
     pub async fn community_member_status(
@@ -372,9 +398,19 @@ impl PubSub {
     /// returned, so a test waits on this before publishing.
     #[cfg(test)]
     pub fn subscriber_count(&self, address: &str) -> usize {
-        self.channels
+        self.streams
             .get(&address.to_lowercase())
-            .map_or(0, |sender| sender.receiver_count())
+            .map_or(0, |queues| {
+                queues
+                    .lock()
+                    .iter()
+                    .filter(|queue| queue.strong_count() > 0)
+                    .count()
+            })
+            + self
+                .channels
+                .get(&address.to_lowercase())
+                .map_or(0, |sender| sender.receiver_count())
     }
 }
 

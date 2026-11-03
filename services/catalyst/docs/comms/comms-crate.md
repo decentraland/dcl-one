@@ -129,6 +129,20 @@ and neither private parties nor closure notices can be added by another arm.
 The NATS subject and payload together are limited to 64 KiB. The outbound and
 inbound application queues each contain at most 256 messages. A full queue or a
 failed publish drops that event and increments `social_event_delivery_dropped`.
+These application queues are separate from client subscription queues.
+
+Each client subscription has its own typed queue of 1,000 pending events. Unrelated
+event types do not consume that queue. RPC discards its oldest pending update at
+the bound; JSON closes its socket with code 1008 on the next update. Dropping a
+subscription clears its queue and unregisters it. The raw 256-slot broadcast
+observer API is used by domain observers and tests, not by socket subscriptions.
+
+Social connectivity RPC permits a single large encoded profile when the guarded
+writer lane is empty. Its actual bytes remain charged until the physical write
+finishes; additional frames wait for the configured socket backpressure budget.
+A stalled write keeps the existing five-second deadline and retires the socket.
+The producer waits for each acknowledgement and rechecks topology and privacy
+before writing. Other domains retain their default 16 KiB guarded-frame limit.
 
 Oversized community voice metadata is stored as one immutable binary protobuf
 snapshot in `social.event_payloads`, with a UUID and a 24-hour expiry, before a

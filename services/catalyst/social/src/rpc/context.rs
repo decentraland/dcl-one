@@ -562,10 +562,14 @@ impl Context {
             if !friends.is_empty() {
                 // Upstream's live loop skips a connectivity update whose
                 // wallet the registry holds no profile for.
-                let Some(profile) = self.0.profiles.existing_friend_profile(&address).await else {
+                let Some(mut profile) = self.0.profiles.existing_friend_profile(&address).await
+                else {
                     cursor.friends_done = true;
                     return Ok((cursor, false));
                 };
+                // Raw topology identity authorizes and routes the actor. RPC
+                // enrichment may expose a historical profile userId alias later.
+                profile.address = address.clone();
                 for friend in &friends {
                     if !self
                         .topology()

@@ -41,7 +41,7 @@ use axum::response::{IntoResponse, Response};
 use futures::stream::{SplitSink, SplitStream};
 use futures::{SinkExt, StreamExt};
 use serde_json::{Map, Value, json};
-use tokio::sync::{broadcast::error::RecvError, mpsc, watch};
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 use crate::rpc::State;
@@ -59,9 +59,6 @@ use crate::shared::rpc::ws::{IdleAction, IdleTimer, SocketClose, close_message};
 
 /// The route upstream signs and serves (`src/adapters/stream-sessions/constants.ts`).
 pub const STREAM_PATH: &str = "/v1/stream";
-/// Events queued per subscription (upstream `MAX_VALUE_QUEUE_SIZE`,
-/// `src/utils/emitterToGenerator.ts:4`, a constant there too).
-const SUBSCRIPTION_QUEUE: usize = 1_000;
 /// How long a closing socket may take to write what is queued before its
 /// close frame; past it the connection is dropped.
 const CLOSE_BUDGET: Duration = Duration::from_secs(10);
@@ -136,6 +133,7 @@ impl Stream {
 
     /// Whether `event` is one this stream listens to, as each upstream
     /// generator listens to its one event: only these fill its queue.
+    #[cfg(test)]
     fn carries(self, event: &SocialEvent) -> bool {
         use SocialEvent as E;
         match self {
@@ -300,14 +298,12 @@ enum Outgoing {
 struct Subscription {
     id: String,
     stream: Stream,
-    tasks: [JoinHandle<()>; 2],
+    tasks: JoinHandle<()>,
 }
 
 impl Drop for Subscription {
     fn drop(&mut self) {
-        for task in &self.tasks {
-            task.abort();
-        }
+        self.tasks.abort();
     }
 }
 
@@ -852,11 +848,9 @@ fn connectivity_name(status: i32) -> Option<&'static str> {
 }
 
 /// One subscription: the address's channel, taken before it returns. A
-/// forwarding task moves the events `stream` listens to into the
-/// subscription's queue of [`SUBSCRIPTION_QUEUE`]; a full queue (or a lagging
-/// channel) closes the socket, as an update cannot be replayed. A second
-/// task maps each to its JSON and hands it to the socket loop once nothing
-/// is waiting to be written.
+/// per-subscription queue holds exactly 1,000 matching events; overflow closes
+/// the socket synchronously, including while its consumer waits for drainage.
+/// One task maps updates to JSON and hands them over once the socket drains.
 fn spawn_stream(
     ctx: Context,
     me: String,
@@ -865,36 +859,26 @@ fn spawn_stream(
     tx: mpsc::Sender<Outgoing>,
     close: Arc<SocketClose>,
     mut buffered: watch::Receiver<usize>,
-) -> [JoinHandle<()>; 2] {
-    let mut events = ctx.pubsub().subscribe(&me);
-    let (queue_tx, mut queue) = mpsc::channel::<Arc<SocialEvent>>(SUBSCRIPTION_QUEUE);
-    let overflow = move || {
-        if !close.is_ended() {
-            metrics::counter!("stream_ws_errors", "type" => "subscription_overflow").increment(1);
-        }
-        close.end(SUBSCRIPTION_OVERFLOW.0, SUBSCRIPTION_OVERFLOW.1);
+) -> JoinHandle<()> {
+    use crate::rpc::pubsub::{OverflowPolicy, StreamKind};
+    let kind = match stream {
+        Stream::Friendships => StreamKind::Friendship,
+        Stream::Blocks => StreamKind::Block,
+        Stream::PrivateVoiceChats => StreamKind::PrivateVoice,
+        Stream::CommunityVoiceChats => StreamKind::CommunityVoice,
+        Stream::FriendConnectivity => StreamKind::FriendConnectivity,
+        Stream::CommunityMemberConnectivity => StreamKind::CommunityMember,
     };
-    let forward = tokio::spawn(async move {
-        loop {
-            let event = match events.recv().await {
-                Ok(event) => event,
-                Err(RecvError::Lagged(skipped)) => {
-                    tracing::warn!(skipped, "stream subscription lagged");
-                    return overflow();
-                }
-                Err(RecvError::Closed) => return,
-            };
-            if !stream.carries(&event) {
-                continue;
-            }
-            match queue_tx.try_send(event) {
-                Ok(()) => {}
-                Err(mpsc::error::TrySendError::Full(_)) => return overflow(),
-                Err(mpsc::error::TrySendError::Closed(_)) => return,
-            }
-        }
-    });
-    let process = tokio::spawn(async move {
+    let mut queue = ctx.pubsub().subscribe_stream(
+        &me,
+        kind,
+        OverflowPolicy::Close {
+            socket: close,
+            code: SUBSCRIPTION_OVERFLOW.0,
+            reason: SUBSCRIPTION_OVERFLOW.1,
+        },
+    );
+    tokio::spawn(async move {
         // Upstream waits for the socket to drain before each event.
         let mut hand_off = async |data: Value| {
             buffered.wait_for(|waiting| *waiting == 0).await.is_ok()
@@ -907,7 +891,7 @@ fn spawn_stream(
                 }
             }
         }
-        while let Some(event) = queue.recv().await {
+        while let Ok(event) = queue.recv().await {
             if matches!(&*event, SocialEvent::ConnectivityResync) {
                 break;
             }
@@ -919,8 +903,7 @@ fn spawn_stream(
             }
         }
         let _ = tx.send(Outgoing::Completed { serial }).await;
-    });
-    [forward, process]
+    })
 }
 
 /// The friends online when the subscription starts, one `online` event each,

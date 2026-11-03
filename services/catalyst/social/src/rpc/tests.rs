@@ -1626,7 +1626,15 @@ async fn ws_handshake_timeout_closes_connection() {
 
 /// The client half of the socket: binary frames are the transport, text,
 /// ping and pong are skipped, a close ends it.
+#[derive(Default)]
+struct SocketReadGate {
+    pause_after_response: std::sync::atomic::AtomicBool,
+    paused: std::sync::atomic::AtomicBool,
+    closed: std::sync::atomic::AtomicBool,
+    resume: tokio::sync::Notify,
+}
 struct TungsteniteTransport {
+    gate: Option<Arc<SocketReadGate>>,
     read: Mutex<futures::stream::SplitStream<WsStream>>,
     write: Mutex<futures::stream::SplitSink<WsStream, WsMessage>>,
 }
@@ -1635,6 +1643,7 @@ impl TungsteniteTransport {
     fn new(socket: WsStream) -> Self {
         let (write, read) = socket.split();
         Self {
+            gate: None,
             read: Mutex::new(read),
             write: Mutex::new(write),
         }
@@ -1645,14 +1654,42 @@ impl TungsteniteTransport {
 impl Transport for TungsteniteTransport {
     async fn receive(&self) -> Result<TransportMessage, TransportError> {
         loop {
+            if let Some(gate) = &self.gate {
+                while gate.paused.load(std::sync::atomic::Ordering::SeqCst) {
+                    gate.resume.notified().await;
+                }
+            }
             match self.read.lock().await.next().await {
-                Some(Ok(WsMessage::Binary(b))) => return Ok(b.to_vec()),
+                Some(Ok(WsMessage::Binary(b))) => {
+                    if let Some(gate) = &self.gate {
+                        if matches!(
+                            crate::rpc::drpc::rpc_protocol::parse::parse_header(&b),
+                            Some((crate::rpc::drpc::rpc_protocol::RpcMessageTypes::Response, _))
+                        ) && gate
+                            .pause_after_response
+                            .swap(false, std::sync::atomic::Ordering::SeqCst)
+                        {
+                            gate.paused.store(true, std::sync::atomic::Ordering::SeqCst);
+                        }
+                    }
+                    return Ok(b.to_vec());
+                }
                 Some(Ok(WsMessage::Ping(_)))
                 | Some(Ok(WsMessage::Pong(_)))
                 | Some(Ok(WsMessage::Text(_))) => continue,
-                Some(Ok(WsMessage::Close(_))) | None => return Err(TransportError::Closed),
+                Some(Ok(WsMessage::Close(_))) | None => {
+                    if let Some(gate) = &self.gate {
+                        gate.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    return Err(TransportError::Closed);
+                }
                 Some(Ok(WsMessage::Frame(_))) => continue,
-                Some(Err(e)) => return Err(TransportError::Internal(Box::new(e))),
+                Some(Err(e)) => {
+                    if let Some(gate) = &self.gate {
+                        gate.closed.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                    return Err(TransportError::Internal(Box::new(e)));
+                }
             }
         }
     }

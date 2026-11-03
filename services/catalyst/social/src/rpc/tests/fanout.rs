@@ -4,6 +4,51 @@ use crate::comms::gatekeeper::bus::{BrokerBus, InProcessBus, NatsBus};
 use crate::rpc::fanout::{Event, Scope};
 use tokio::sync::broadcast;
 
+/// Separate fixtures keep a fake media view from polling another test's rooms.
+struct OwnedDatabase {
+    pool: PgPool,
+    admin: PgPool,
+    name: String,
+}
+impl OwnedDatabase {
+    async fn new() -> Option<Self> {
+        let shared = scratch_pool().await?;
+        let options = shared.connect_options();
+        let admin = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(1)
+            .connect_with((*options).clone().database("postgres"))
+            .await
+            .unwrap();
+        let name = format!(
+            "catalyst_test_lib_{}_fanout_{}",
+            std::process::id(),
+            Uuid::new_v4().simple()
+        );
+        sqlx::query(sqlx::AssertSqlSafe(format!("CREATE DATABASE \"{name}\"")))
+            .execute(&admin)
+            .await
+            .unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .max_connections(8)
+            .connect_with((*options).clone().database(&name))
+            .await
+            .unwrap();
+        crate::db::apply_schema(&pool).await.unwrap();
+        Some(Self { pool, admin, name })
+    }
+    async fn close(self) {
+        self.pool.close().await;
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "DROP DATABASE \"{}\" WITH (FORCE)",
+            self.name
+        )))
+        .execute(&self.admin)
+        .await
+        .unwrap();
+        self.admin.close().await;
+    }
+}
+
 struct Broker(std::process::Child);
 impl Drop for Broker {
     fn drop(&mut self) {
@@ -13,8 +58,8 @@ impl Drop for Broker {
 }
 impl Broker {
     fn start() -> (Self, String) {
-        let binary = std::env::var("PULSE_NATS_SERVER_BIN")
-            .expect("owned broker test requires PULSE_NATS_SERVER_BIN");
+        let binary =
+            std::env::var("PULSE_NATS_SERVER_BIN").unwrap_or_else(|_| "nats-server".to_string());
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
@@ -61,11 +106,11 @@ fn started(community: Uuid, name: &str, image: Option<String>) -> CommunityVoice
     }
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "owns a real NATS server; requires PULSE_NATS_SERVER_BIN and CATALYST_TEST_DATABASE_URL"]
 async fn two_replicas_route_mutations_and_preserve_large_community_snapshots() {
-    let Some(pool) = scratch_pool().await else {
+    let Some(database) = OwnedDatabase::new().await else {
         return;
     };
+    let pool = database.pool.clone();
     let (_broker, url) = Broker::start();
     let left = replica(&pool);
     let right = replica(&pool);
@@ -242,13 +287,15 @@ async fn two_replicas_route_mutations_and_preserve_large_community_snapshots() {
     silent(&mut public).await;
     jobs.shutdown(Duration::from_secs(2)).await;
     drop_community(&pool, community).await;
+    database.close().await;
 }
 
 #[tokio::test]
 async fn notification_generation_survives_context_restart_and_expires_like_source_cache() {
-    let Some(pool) = scratch_pool().await else {
+    let Some(database) = OwnedDatabase::new().await else {
         return;
     };
+    let pool = database.pool.clone();
     let a = addr("scope");
     let public = addr("scope-out");
     let community = seed_community(&pool, true, &a, "owner").await;
@@ -288,6 +335,7 @@ async fn notification_generation_survives_context_restart_and_expires_like_sourc
     silent(&mut rx).await;
     assert!(db.voice_notification(community).await.unwrap().is_none());
     drop_community(&pool, community).await;
+    database.close().await;
 }
 
 #[tokio::test]
@@ -344,11 +392,11 @@ async fn outbound_queue_and_disconnected_bus_are_bounded_best_effort() {
 }
 
 #[tokio::test]
-#[ignore = "isolated EXPLAIN workload; run explicitly with PostgreSQL"]
 async fn notification_and_spill_queries_use_bounded_index_paths() {
-    let Some(pool) = scratch_pool().await else {
+    let Some(database) = OwnedDatabase::new().await else {
         return;
     };
+    let pool = database.pool.clone();
     let mut tx = pool.begin().await.unwrap();
     let owner = addr("plans");
     sqlx::query("INSERT INTO social.communities(id,name,owner_address) SELECT gen_random_uuid(),'plan fixture',$1 FROM generate_series(1,5000)")
@@ -384,4 +432,5 @@ async fn notification_and_spill_queries_use_bounded_index_paths() {
     );
     assert!(cache.join("\n").contains("event_payloads_expiry_idx"));
     tx.rollback().await.unwrap();
+    database.close().await;
 }

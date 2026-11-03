@@ -15,7 +15,7 @@ impl SocialServiceImpl {
     ) -> Result<ServerStreamResponse<FriendshipUpdate>, SocialError> {
         let me = Self::caller(&context)?;
         let ctx = context.server_context.clone();
-        let mut rx = ctx.pubsub().subscribe(&me);
+        let mut rx = ctx.pubsub().subscribe_updates::<FriendshipUpdate>(&me);
         let (generator, yielder) = Generator::create();
         let closed = yielder.clone();
         let updates = async move {
@@ -92,17 +92,19 @@ impl SocialServiceImpl {
     ) -> Result<ServerStreamResponse<FriendConnectivityUpdate>, SocialError> {
         let me = Self::caller(&context)?;
         let ctx = context.server_context.clone();
-        let mut rx = ctx.pubsub().subscribe(&me);
+        let mut rx = ctx
+            .pubsub()
+            .subscribe_updates::<FriendConnectivityUpdate>(&me);
 
-        let (generator, yielder) =
-            Generator::bounded(16, crate::comms::topology::TOPOLOGY_RECEIPT_TTL);
+        let (generator, yielder) = Generator::bounded_with_frame_limit(
+            1,
+            crate::comms::topology::TOPOLOGY_RECEIPT_TTL,
+            usize::MAX,
+        );
         let closed = yielder.clone();
         let updates = async move {
             let mut after = String::new();
             loop {
-                if rx.len() > crate::rpc::pubsub::CHANNEL_CAP {
-                    return;
-                }
                 let Ok(Ok(page)) = tokio::time::timeout(
                     crate::comms::topology::TOPOLOGY_RECEIPT_TTL,
                     ctx.db().connectivity_friends_page(&me, &after, true),
@@ -124,9 +126,6 @@ impl SocialServiceImpl {
                     break;
                 };
                 for friend in profiles {
-                    if rx.len() > crate::rpc::pubsub::CHANNEL_CAP {
-                        return;
-                    }
                     let snapshot = ctx.topology().snapshot();
                     let online = snapshot.is_online(&friend.address);
                     if !online {
@@ -139,12 +138,7 @@ impl SocialServiceImpl {
                         snapshot.generation,
                     );
                     let update = friend_replay_update(friend, online);
-                    if !matches!(
-                        yielder.yield_confirmed(update, guard).await,
-                        Ok(crate::rpc::drpc::stream_protocol::DeliveryCompletion::Acknowledged)
-                    ) {
-                        // A coalesced transient may not produce another live event. Restart
-                        // this replay rather than certifying an omitted current status.
+                    if yielder.yield_confirmed(update, guard).await.is_err() {
                         return;
                     }
                 }
@@ -210,7 +204,7 @@ impl SocialServiceImpl {
                             if !matches!(
                                 tokio::time::timeout(
                                     crate::comms::topology::TOPOLOGY_RECEIPT_TTL,
-                                    yielder.yield_guarded(update, guard)
+                                    yielder.yield_confirmed(update, guard)
                                 )
                                 .await,
                                 Ok(Ok(_))
@@ -265,9 +259,14 @@ impl SocialServiceImpl {
         let me = Self::caller(&context)?;
         let ctx = context.server_context.clone();
         // Install live receiver before any SQL/profile await, including initialization.
-        let mut rx = ctx.pubsub().subscribe(&me);
-        let (generator, yielder) =
-            Generator::bounded(16, crate::comms::topology::TOPOLOGY_RECEIPT_TTL);
+        let mut rx = ctx
+            .pubsub()
+            .subscribe_updates::<CommunityMemberConnectivityUpdate>(&me);
+        let (generator, yielder) = Generator::bounded_with_frame_limit(
+            1,
+            crate::comms::topology::TOPOLOGY_RECEIPT_TTL,
+            usize::MAX,
+        );
         let closed = yielder.clone();
         let updates = async move {
             loop {
@@ -287,7 +286,11 @@ impl SocialServiceImpl {
                                 // always admits it
                                 let admit: crate::rpc::drpc::stream_protocol::DeliveryGuard =
                                     std::sync::Arc::new(|| Box::pin(async { Ok(true) }));
-                                if yielder.yield_guarded(update.clone(), admit).await.is_err() {
+                                if yielder
+                                    .yield_confirmed(update.clone(), admit)
+                                    .await
+                                    .is_err()
+                                {
                                     break;
                                 }
                                 continue;
@@ -297,7 +300,7 @@ impl SocialServiceImpl {
                         let Some(guard) = ctx.event_delivery_guard(&me, &event) else {
                             continue;
                         };
-                        if yielder.yield_guarded(update, guard).await.is_err() {
+                        if yielder.yield_confirmed(update, guard).await.is_err() {
                             break;
                         }
                     }

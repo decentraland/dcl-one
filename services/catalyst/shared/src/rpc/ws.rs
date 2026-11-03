@@ -1,7 +1,9 @@
 //! A WebSocket as a dRPC [`Transport`]: binary frames in and out, ended by
 //! `close` or by its [`SocketClose`] handle with the close frame asked for.
 
+mod byte_budget;
 mod idle;
+use byte_budget::ByteBudget;
 pub use idle::{IdleAction, IdleTimer};
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -81,6 +83,7 @@ pub struct AxumWsTransport {
     inbound_rx: Mutex<UnboundedReceiver<TransportMessage>>,
     outbound_tx: UnboundedSender<TransportMessage>,
     guarded_tx: Sender<GuardedOutbound>,
+    guarded_budget: Arc<ByteBudget>,
     closed: AtomicBool,
     close: Arc<SocketClose>,
     address: String,
@@ -110,6 +113,22 @@ impl AxumWsTransport {
         address: String,
         close: Arc<SocketClose>,
         idle: IdleTimer,
+    ) -> (Self, JoinHandle<()>) {
+        Self::spawn_with_idle_and_backpressure(
+            socket,
+            address,
+            close,
+            idle,
+            GUARDED_CAPACITY * MAX_GUARDED_MESSAGE_BYTES,
+        )
+    }
+
+    pub fn spawn_with_idle_and_backpressure(
+        socket: WebSocket,
+        address: String,
+        close: Arc<SocketClose>,
+        idle: IdleTimer,
+        max_backpressure: usize,
     ) -> (Self, JoinHandle<()>) {
         let (mut sink, mut stream) = socket.split();
         let (inbound_tx, inbound_rx) = unbounded_channel::<TransportMessage>();
@@ -149,6 +168,7 @@ impl AxumWsTransport {
             inbound_rx: Mutex::new(inbound_rx),
             outbound_tx,
             guarded_tx,
+            guarded_budget: ByteBudget::new(max_backpressure),
             closed: AtomicBool::new(false),
             close,
             address,
@@ -194,18 +214,21 @@ impl Transport for AxumWsTransport {
         if self.closed.load(Ordering::Acquire) {
             return Err(TransportError::Closed);
         }
-        if message.len() > MAX_GUARDED_MESSAGE_BYTES {
+        if message.len() > delivery.max_frame_bytes {
             return Ok(GuardedSend::Suppressed);
         }
         let expires_at = delivery.expires_at;
+        let cancelled = delivery.cancel.clone();
         let _cancel_on_drop = delivery.cancel.clone().drop_guard();
         let (completion, receiver) = tokio::sync::oneshot::channel();
-        let envelope = GuardedOutbound {
-            bytes: message,
-            delivery,
-            completion,
-        };
         let exchange = async {
+            let permit = self.guarded_budget.reserve(message.len()).await;
+            let envelope = GuardedOutbound {
+                _permit: Some(permit),
+                bytes: message,
+                delivery,
+                completion,
+            };
             self.guarded_tx
                 .send(envelope)
                 .await
@@ -214,6 +237,7 @@ impl Transport for AxumWsTransport {
         };
         tokio::select! {
             _ = self.close.ended() => Err(TransportError::Closed),
+            _ = cancelled.cancelled() => Ok(GuardedSend::Suppressed),
             result = tokio::time::timeout_at(expires_at, exchange) => result.unwrap_or(Err(TransportError::Closed)),
         }
     }
@@ -230,6 +254,7 @@ impl Transport for AxumWsTransport {
 // Opt-in lane shares the existing writer; ordinary multiplexed procedure behavior stays intact.
 const GUARDED_CAPACITY: usize = 16;
 struct GuardedOutbound {
+    _permit: Option<byte_budget::Permit>,
     bytes: Vec<u8>,
     delivery: GuardedDelivery,
     completion: tokio::sync::oneshot::Sender<Result<GuardedSend, TransportError>>,
@@ -328,6 +353,7 @@ where
         bytes,
         delivery,
         completion,
+        _permit,
     } = envelope;
     if completion.is_closed() || delivery.cancel.is_cancelled() {
         let _ = completion.send(Ok(GuardedSend::Suppressed));
@@ -451,6 +477,7 @@ mod guarded_tests {
             inbound_rx: Mutex::new(inbound_rx),
             outbound_tx,
             guarded_tx,
+            guarded_budget: ByteBudget::new(GUARDED_CAPACITY * MAX_GUARDED_MESSAGE_BYTES),
             closed: AtomicBool::new(false),
             close,
             address: String::new(),
@@ -683,8 +710,10 @@ mod guarded_tests {
             let mut sink = TestSink(state.clone());
             let (completion, receiver) = tokio::sync::oneshot::channel();
             let envelope = GuardedOutbound {
+                _permit: None,
                 bytes: vec![1],
                 delivery: GuardedDelivery {
+                    max_frame_bytes: MAX_GUARDED_MESSAGE_BYTES,
                     guard: Arc::new(|| Box::pin(std::future::pending())),
                     expires_at: tokio::time::Instant::now()
                         + if expired {
@@ -750,6 +779,7 @@ mod guarded_tests {
                     .send_guarded(
                         vec![1],
                         GuardedDelivery {
+                            max_frame_bytes: MAX_GUARDED_MESSAGE_BYTES,
                             guard: guard(
                                 Arc::new(AtomicBool::new(true)),
                                 Arc::new(AtomicUsize::new(0)),
@@ -999,6 +1029,7 @@ mod guarded_tests {
         let first = transport.clone();
         let second = transport.clone();
         let delivery = || GuardedDelivery {
+            max_frame_bytes: MAX_GUARDED_MESSAGE_BYTES,
             guard: guard(
                 Arc::new(AtomicBool::new(true)),
                 Arc::new(AtomicUsize::new(0)),
@@ -1052,5 +1083,54 @@ mod guarded_tests {
         task.abort();
         settle().await;
         assert_eq!(handler.pending_ack_count(), 0);
+    }
+    #[tokio::test(start_paused = true)]
+    async fn large_guarded_frame_holds_byte_admission_until_flush_and_rechecks_next_guard() {
+        let sink = SinkState::new(false);
+        let output = transport(sink.clone());
+        let allowed = Arc::new(AtomicBool::new(true));
+        let first = output.clone();
+        let task = tokio::spawn(async move {
+            first
+                .send_guarded(
+                    vec![1; 300 * 1024],
+                    GuardedDelivery {
+                        max_frame_bytes: 512 * 1024,
+                        guard: guard(
+                            Arc::new(AtomicBool::new(true)),
+                            Arc::new(AtomicUsize::new(0)),
+                        ),
+                        expires_at: tokio::time::Instant::now() + Duration::from_secs(5),
+                        cancel: tokio_util::sync::CancellationToken::new(),
+                    },
+                )
+                .await
+        });
+        settle().await;
+        assert_eq!(output.guarded_budget.used(), 300 * 1024);
+        let second = output.clone();
+        let permission = allowed.clone();
+        let waiting = tokio::spawn(async move {
+            second
+                .send_guarded(
+                    vec![2; 32 * 1024],
+                    GuardedDelivery {
+                        max_frame_bytes: 512 * 1024,
+                        guard: guard(permission, Arc::new(AtomicUsize::new(0))),
+                        expires_at: tokio::time::Instant::now() + Duration::from_secs(5),
+                        cancel: tokio_util::sync::CancellationToken::new(),
+                    },
+                )
+                .await
+        });
+        settle().await;
+        assert_eq!(sink.frames.lock().unwrap().len(), 1);
+        assert_eq!(output.guarded_budget.used(), 300 * 1024);
+        allowed.store(false, Ordering::SeqCst);
+        sink.release();
+        assert_eq!(task.await.unwrap().unwrap(), GuardedSend::Sent);
+        assert_eq!(waiting.await.unwrap().unwrap(), GuardedSend::Suppressed);
+        assert_eq!(sink.frames.lock().unwrap().len(), 1);
+        assert_eq!(output.guarded_budget.used(), 0);
     }
 }
