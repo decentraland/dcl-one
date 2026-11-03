@@ -53,7 +53,7 @@ export async function loader({ request }: Route.LoaderArgs) {
           source: (live.length > 0 ? "live" : "empty") as ScheduleSource,
         }))
         .catch(() => ({ schedules: [] as Schedule[], source: "error" as ScheduleSource })),
-    fetchEvents({ list: "live", limit: 8 }, { signal: request.signal })
+    fetchEvents({ list: "live", limit: 8, with_connected_users: true }, { signal: request.signal })
       .then((r) => r.data)
       .catch(() => [] as Event[]),
     fetchEvents({ list: "active", limit: 100 }, { signal: request.signal })
@@ -67,8 +67,9 @@ export async function loader({ request }: Route.LoaderArgs) {
       new Date(effectiveStartAt(b) ?? 8.64e15).getTime(),
   );
   const liveNow: LiveNowCard[] = liveEvents.map(toLiveNowCard);
+  const liveById = new Map(liveEvents.map((event) => [event.id, event]));
   const { allDays, dayLabels } = groupEventsByDay(
-    sortedActive,
+    sortedActive.map((event) => liveById.get(event.id) ?? event),
     new Set(liveEvents.map((e) => e.id)),
     7,
     now,
