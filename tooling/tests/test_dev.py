@@ -458,6 +458,9 @@ class DevTest(unittest.TestCase):
         self.assertEqual((env['MARKETPLACE_INDEX_CHAIN_ID_MATIC'], env['MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM']), ('80002', '11155111'))
         self.assertEqual(mirror['MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED'], 'false')
         self.assertNotIn('MARKETPLACE_INDEX_CHAIN_ID_MATIC', mirror)
+        # The NFT index knows mainnet's contracts only, so it does not walk the testnets.
+        self.assertEqual(env['MARKETPLACE_NFT_INDEX_ENABLED'], 'false')
+        self.assertEqual(mirror['MARKETPLACE_NFT_INDEX_ENABLED'], 'true')
         self.assertIn('decentraland.zone', env['TRADES_SYNC_UPSTREAM_URL'])
         self.assertIn('decentraland.zone', env['TRANSACTIONS_UPSTREAM_URL'])
         self.assertTrue(env['RPC_ENDPOINT_POLYGON'].endswith('/amoy'))

@@ -374,6 +374,8 @@ def testnet_env():
         'MARKETPLACE_TRADE_EVENTS_INDEX_ENABLED': 'true',
         'MARKETPLACE_INDEX_CHAIN_ID_MATIC': '80002',
         'MARKETPLACE_INDEX_CHAIN_ID_ETHEREUM': '11155111',
+        # The NFT index knows mainnet's contracts only: on Sepolia (ETH_RPC_URL) it would find nothing.
+        'MARKETPLACE_NFT_INDEX_ENABLED': 'false',
         'VITE_SHOP_CHAIN_ID': '80002',
     }
 
