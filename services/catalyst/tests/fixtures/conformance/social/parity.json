@@ -936,8 +936,8 @@
     {
       "id": "api_http:GET:/v1/communities/:id/bans",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -977,18 +977,21 @@
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "v1_member_ban_and_request_pages_omit_missing_profiles_without_changing_totals",
           "scope": "Six paired V1/V2 missing-profile cases in the same 43-case source fixture: V1 omits unresolved profiles while preserving source totals and pagination; V2 retains raw-address rows. Local providers establish this response behavior, not deployed profile-cache continuity."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/member_friendship_fields.rs",
+          "test": "v1_member_and_ban_action_aliases_match_full_source_bodies_with_v2_anonymous_controls",
+          "scope": "Twenty-two independently regenerated actual-source handler/component/SQL cases execute against disposable minimal PostgreSQL tables. Paired candidate tests compare complete status and normalized JSON bodies, including accepted, request-sent, request-received, no-friendship and empty-action-history facts, explicit nulls, V2 omission and anonymous-member controls. Source profiles are local; no deployed profile/cache or arbitrary historical-state equivalence is inferred."
         }
       ],
-      "gaps": [
-        "The source V1 profile mapper preserves raw lastFriendshipAction and actingUser SQL aliases; candidate responses omit them. Signed relationship/null and V2 controls need complete-body source PostgreSQL comparison and correction; source43 field-scoped tests do not close this wire gap."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id/members",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1028,11 +1031,14 @@
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "v1_member_ban_and_request_pages_omit_missing_profiles_without_changing_totals",
           "scope": "Six paired V1/V2 missing-profile cases in the same 43-case source fixture: V1 omits unresolved profiles while preserving source totals and pagination; V2 retains raw-address rows. Local providers establish this response behavior, not deployed profile-cache continuity."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/member_friendship_fields.rs",
+          "test": "v1_member_and_ban_action_aliases_match_full_source_bodies_with_v2_anonymous_controls",
+          "scope": "Twenty-two independently regenerated actual-source handler/component/SQL cases execute against disposable minimal PostgreSQL tables. Paired candidate tests compare complete status and normalized JSON bodies, including accepted, request-sent, request-received, no-friendship and empty-action-history facts, explicit nulls, V2 omission and anonymous-member controls. Source profiles are local; no deployed profile/cache or arbitrary historical-state equivalence is inferred."
         }
       ],
-      "gaps": [
-        "The source V1 profile mapper preserves raw lastFriendshipAction and actingUser SQL aliases; candidate responses omit them. Signed relationship/null and V2 controls need complete-body source PostgreSQL comparison and correction; source43 field-scoped tests do not close this wire gap."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -1704,7 +1710,7 @@
       "id": "api_http:GET:/v2/communities/:id/bans",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1734,6 +1740,11 @@
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
           "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/member_friendship_fields.rs",
+          "test": "v1_member_and_ban_action_aliases_match_full_source_bodies_with_v2_anonymous_controls",
+          "scope": "Twenty-two independently regenerated actual-source handler/component/SQL cases execute against disposable minimal PostgreSQL tables. Paired candidate tests compare complete status and normalized JSON bodies, including accepted, request-sent, request-received, no-friendship and empty-action-history facts, explicit nulls, V2 omission and anonymous-member controls. Source profiles are local; no deployed profile/cache or arbitrary historical-state equivalence is inferred."
         }
       ],
       "gaps": [],
@@ -1743,7 +1754,7 @@
       "id": "api_http:GET:/v2/communities/:id/members",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. Signed V1 members/bans retain lastFriendshipAction and actingUser as source strings or explicit nulls; V2 and anonymous member pages omit those raw fields. Existing relationship facts and SQL are reused.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -1773,6 +1784,11 @@
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
           "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/member_friendship_fields.rs",
+          "test": "v1_member_and_ban_action_aliases_match_full_source_bodies_with_v2_anonymous_controls",
+          "scope": "Twenty-two independently regenerated actual-source handler/component/SQL cases execute against disposable minimal PostgreSQL tables. Paired candidate tests compare complete status and normalized JSON bodies, including accepted, request-sent, request-received, no-friendship and empty-action-history facts, explicit nulls, V2 omission and anonymous-member controls. Source profiles are local; no deployed profile/cache or arbitrary historical-state equivalence is inferred."
         }
       ],
       "gaps": [],
