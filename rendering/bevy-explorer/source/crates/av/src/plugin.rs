@@ -276,10 +276,36 @@ fn should_be_playing_on_add<T: AVPlayer>(
 fn should_be_playing_on_remove<T: AVPlayer>(
     trigger: Trigger<OnRemove, ShouldBePlaying<T>>,
     mut commands: Commands,
+    av_players: Query<(&ContainerEntity, Has<Stream>), With<T>>,
+    mut renderer_scene_contexts: Query<&mut RendererSceneContext>,
+    frame: Res<FrameCount>,
 ) {
     let entity = trigger.target();
     debug!("Stream {} no longer playing.", entity);
     commands.entity(entity).try_remove::<ActiveReceiver>();
+
+    let Ok((container_entity, has_stream)) = av_players.get(entity) else {
+        error!(
+            "Entity which had {} removed did not have ContainerEntity.",
+            disqualified::ShortName::of::<T>()
+        );
+        return;
+    };
+    if !has_stream {
+        return;
+    }
+    let Ok(mut renderer_scene_context) = renderer_scene_contexts.get_mut(container_entity.root)
+    else {
+        debug!("Invalid RendererSceneContext {}.", container_entity.root);
+        return;
+    };
+    push_state_to_crdt::<T>(
+        &mut renderer_scene_context,
+        container_entity,
+        &frame,
+        VideoState::VsPaused,
+        None,
+    );
 }
 
 #[expect(clippy::type_complexity)]
