@@ -164,10 +164,15 @@ async fn active_handler_preserves_empty_error_and_all_settled_source_contracts()
         .await
         .unwrap();
     crate::db::apply_schema(&pool).await.unwrap();
-    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE ROLE {role} LOGIN")))
-        .execute(&pool)
-        .await
-        .unwrap();
+    // The CI database uses SCRAM authentication; local trust must not hide
+    // a fixture role without a usable credential. Generated for this test only.
+    let password = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "CREATE ROLE {role} LOGIN PASSWORD '{password}'"
+    )))
+    .execute(&pool)
+    .await
+    .unwrap();
     for statement in [
         format!("GRANT USAGE ON SCHEMA social TO {role}"),
         format!("GRANT SELECT ON social.community_voice_chat_users TO {role}"),
@@ -179,7 +184,12 @@ async fn active_handler_preserves_empty_error_and_all_settled_source_contracts()
     }
     let limited = sqlx::postgres::PgPoolOptions::new()
         .max_connections(2)
-        .connect_with(options.database(&database).username(&role))
+        .connect_with(
+            options
+                .database(&database)
+                .username(&role)
+                .password(&password),
+        )
         .await
         .unwrap();
     let storage_dir = std::env::temp_dir().join(format!("catalyst-voice-{suffix}"));
