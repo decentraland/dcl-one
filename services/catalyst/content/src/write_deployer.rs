@@ -537,6 +537,9 @@ impl WriteDeployer {
 
         let mut entity: Entity = serde_json::from_slice(&entity_bytes)
             .map_err(|e| vec![format!("There was a problem parsing the entity: {e}")])?;
+        for pointer in &mut entity.pointers {
+            *pointer = pointer.to_lowercase();
+        }
 
         if entity.id.is_empty() {
             entity.id = entity_id.to_string();
@@ -567,7 +570,7 @@ impl WriteDeployer {
             return Err(vec!["The request timestamp is too far in the future.".to_string()].into());
         }
 
-        let pointers_lc: Vec<String> = entity.pointers.iter().map(|p| p.to_lowercase()).collect();
+        let pointers_lc = &entity.pointers;
         let rate_limited_msg = || {
             vec![format!(
                 "Entity rate limited (entityId={} pointers={}).",
@@ -577,20 +580,20 @@ impl WriteDeployer {
         };
         if self
             .rate_limiter
-            .is_rate_limited(entity.entity_type.as_str(), &pointers_lc)
+            .is_rate_limited(entity.entity_type.as_str(), pointers_lc)
         {
             return Err(rate_limited_msg().into());
         }
         let content_unchanged =
             entity.entity_type == EntityType::Profile && self.is_content_unchanged(&entity).await;
-        if content_unchanged && self.rate_limiter.is_unchanged_limited(&pointers_lc) {
+        if content_unchanged && self.rate_limiter.is_unchanged_limited(pointers_lc) {
             return Err(rate_limited_msg().into());
         }
 
         self.rate_limiter
-            .record(entity.entity_type.as_str(), &pointers_lc);
+            .record(entity.entity_type.as_str(), pointers_lc);
         if content_unchanged {
-            self.rate_limiter.record_unchanged(&pointers_lc);
+            self.rate_limiter.record_unchanged(pointers_lc);
         }
 
         let declared: HashSet<&str> = entity
