@@ -528,13 +528,20 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         eip1654.clone(),
         content::validator::Settings::parse(
             config.validator.ignore_blockchain_access_checks,
+            config.writes.content_writes_enabled,
             config.validator.additional_decentraland_address.as_deref(),
             &config.node.eth_network,
             config.content.eth_rpc_url()?,
             config.economy.rpc_endpoint_polygon.as_deref(),
         )
-        .context("ADDITIONAL_DECENTRALAND_ADDRESS configuration")?,
+        .context("content validator configuration")?,
     ));
+    if config.writes.content_writes_enabled && !config.validator.ignore_blockchain_access_checks {
+        content_validator
+            .verify_chain_ids()
+            .await
+            .context("deploy access check RPCs")?;
+    }
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool

@@ -973,6 +973,7 @@ fn settings_keep_https_rpcs_only_and_refuse_bad_addresses() {
     let parse = |l2: Option<&str>, extra: Option<&str>| {
         Settings::parse(
             false,
+            false,
             extra,
             " mainnet ",
             Some("https://l1.example/KEY".into()),
@@ -1009,6 +1010,45 @@ fn settings_keep_https_rpcs_only_and_refuse_bad_addresses() {
     );
     let err = format!("{:#}", parse(None, Some("not-an-address")).unwrap_err());
     assert!(err.contains("ADDITIONAL_DECENTRALAND_ADDRESS"), "{err}");
+}
+
+#[test]
+fn a_node_taking_deploys_needs_both_rpcs_and_a_known_network() {
+    let parse = |ignore: bool, writes: bool, network: &str, l1: Option<&str>, l2: Option<&str>| {
+        Settings::parse(ignore, writes, None, network, l1.map(str::to_string), l2)
+            .map_err(|e| format!("{e:#}"))
+    };
+    let (l1, l2) = (
+        Some("https://l1.example/KEY"),
+        Some("https://l2.example/KEY"),
+    );
+    assert!(parse(false, true, "mainnet", l1, l2).is_ok());
+    assert!(parse(false, true, "sepolia", l1, l2).is_ok());
+    for (network, l1, l2, needle) in [
+        ("goerli", l1, l2, "ETH_NETWORK=goerli"),
+        ("mainnet", None, l2, "ETH_RPC_URL"),
+        ("mainnet", l1, None, "RPC_ENDPOINT_POLYGON"),
+        (
+            "mainnet",
+            l1,
+            Some("http://l2.example/KEY"),
+            "RPC_ENDPOINT_POLYGON",
+        ),
+        ("mainnet", l1, Some("not a url"), "RPC_ENDPOINT_POLYGON"),
+    ] {
+        let err = parse(false, true, network, l1, l2).unwrap_err();
+        assert!(err.contains(needle), "{err}");
+        assert!(err.contains("IGNORE_BLOCKCHAIN_ACCESS_CHECKS"), "{err}");
+        assert!(!err.contains("KEY"), "never the value: {err}");
+        assert!(
+            parse(true, true, network, l1, l2).is_ok(),
+            "ignored checks need no chain"
+        );
+        assert!(
+            parse(false, false, network, l1, l2).is_ok(),
+            "a node without local deploys starts"
+        );
+    }
 }
 
 #[test]

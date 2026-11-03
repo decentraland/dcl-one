@@ -10,7 +10,7 @@
 //! - `island` sends no request to Decentraland or any third party: no sync,
 //!   mirror, index, poll, relay or fallback, and the map URLs are its own.
 //! - `journey` is the scratch-database test stack: an island with every
-//!   write domain open and no restore stamp.
+//!   write domain open, no restore stamp and no chain access checks.
 
 use std::fmt::Write as _;
 
@@ -462,6 +462,14 @@ const ROWS: &[Row] = &[
     write("SOCIAL_WRITES_ENABLED"),
     write("WORLDS_WRITES_ENABLED"),
     write("OPS_WRITES_ENABLED"),
+    // The journey stack reads no chain, so its local deploys skip the chain checks.
+    row(
+        "writes",
+        "IGNORE_BLOCKCHAIN_ACCESS_CHECKS",
+        Is("false"),
+        Is("false"),
+        Is("true"),
+    ),
     // PRESENCE_COLLECTOR_ENABLED stays unset: the headcount archive writes
     // to the database, so it follows DATA_WRITES_ENABLED.
 ];

@@ -383,6 +383,16 @@ fn env_prints_the_named_keys_as_the_posture_sets_them() {
     assert!(err.to_string().contains("NOT_A_KEY is not a key"), "{err}");
     let all = env_file(Posture::Journey, &[]).unwrap();
     assert!(all.contains("CONTENT_WRITES_ENABLED=true\n"), "{all}");
+    assert!(
+        all.contains("IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true\n"),
+        "the journey stack reads no chain: {all}"
+    );
+    for posture in [Posture::Mirror, Posture::Island] {
+        assert_eq!(
+            expanded(posture, &[])["IGNORE_BLOCKCHAIN_ACCESS_CHECKS"],
+            "false"
+        );
+    }
 }
 
 #[test]

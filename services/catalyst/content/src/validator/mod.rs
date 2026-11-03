@@ -103,10 +103,13 @@ impl std::fmt::Debug for Settings {
 impl Settings {
     /// The values as the environment spells them. `l1_rpc_url` is
     /// `Config::eth_rpc_url` (already https); a plaintext L2 endpoint is not
-    /// used for access checks, since its answers decide who may deploy. An
-    /// error names the variable, never the value.
+    /// used for access checks, since its answers decide who may deploy. With
+    /// `content_writes` on and the access checks not ignored, a network
+    /// without checker contracts or a missing or plaintext RPC refuses to
+    /// start. An error names the variable, never the value.
     pub fn parse(
         ignore_blockchain_access: bool,
+        content_writes: bool,
         additional_dcl_address: Option<&str>,
         eth_network: &str,
         l1_rpc_url: Option<String>,
@@ -117,15 +120,35 @@ impl Settings {
                 .filter(|v| !v.is_empty())
                 .map(str::to_string)
         };
-        let l2_rpc_url = clean(l2_rpc_url).filter(|url| {
-            let https = url.starts_with("https://");
-            if !https {
-                tracing::warn!(
-                    "RPC_ENDPOINT_POLYGON is not https: deploy access checks on L2 stay undecidable"
+        let required = content_writes && !ignore_blockchain_access;
+        let eth_network = eth_network.trim().to_string();
+        let l2_raw = clean(l2_rpc_url);
+        let l2_https = l2_raw
+            .as_deref()
+            .is_some_and(|url| url::Url::parse(url).is_ok_and(|u| u.scheme() == "https"));
+        if required {
+            let fix = "or set IGNORE_BLOCKCHAIN_ACCESS_CHECKS=true";
+            if !matches!(eth_network.as_str(), "mainnet" | "sepolia") {
+                bail!(
+                    "ETH_NETWORK={eth_network} has no checker contracts (mainnet|sepolia): \
+                     local deploys could not be checked; set it {fix}"
                 );
             }
-            https
-        });
+            if l1_rpc_url.is_none() {
+                bail!("ETH_RPC_URL is unset: local deploys could not be checked; set it {fix}");
+            }
+            if !l2_https {
+                bail!(
+                    "RPC_ENDPOINT_POLYGON is unset or not an https URL: local deploys could \
+                     not be checked; set it {fix}"
+                );
+            }
+        } else if l2_raw.is_some() && !l2_https {
+            tracing::warn!(
+                "RPC_ENDPOINT_POLYGON is not https: deploy access checks on L2 stay undecidable"
+            );
+        }
+        let l2_rpc_url = l2_raw.filter(|_| l2_https);
         let additional_dcl_address = clean(additional_dcl_address).map(|a| a.to_lowercase());
         if additional_dcl_address
             .as_deref()
@@ -136,7 +159,7 @@ impl Settings {
         Ok(Self {
             ignore_blockchain_access,
             additional_dcl_address,
-            eth_network: eth_network.trim().to_string(),
+            eth_network,
             l1_rpc_url,
             l2_rpc_url,
         })
