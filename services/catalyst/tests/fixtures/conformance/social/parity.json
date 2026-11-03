@@ -552,7 +552,7 @@
       "id": "api_http:GET:/v1/communities",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -571,10 +571,15 @@
         {
           "path": "services/catalyst/social/src/communities/ranking.rs",
           "scope": "Source scoring formula, lifetime counters, daily local score job, local event/photo/stream receipts and legacy event writers are implemented; existing upstream counter baseline is not imported."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
+          "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
+          "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
         }
       ],
       "gaps": [
-        "community-voice-liveness"
+        "Pinned listing handlers catch unexpected dependency failures as 500 {message}; the target core listing SQL still uses the generic CommError envelope. Dedicated injected failure comparisons remain to be completed."
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
@@ -606,7 +611,7 @@
       "id": "api_http:GET:/v1/communities/:id",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -621,10 +626,20 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
+          "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
+          "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
+          "test": "active_handler_preserves_empty_error_and_all_settled_source_contracts",
+          "scope": "Eight executed source cases and real-schema faults cover active empty/error/allSettled/image behavior and v1/v2 core detail SQL message-only 500. Other provider failures remain separately scoped."
         }
       ],
       "gaps": [
-        "Pinned get-community handlers return unexpected dependency failures as 500 {message}; the current generic CommError path returns a different envelope. Dedicated source-executed failure comparisons and scoped fixes are in progress."
+        "Single owner lookup still uses batch-cache semantics at this route; historical aliases and missing/invalid profiles differ from source registry.single. Strict caller wiring is pending."
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
@@ -755,8 +770,8 @@
     {
       "id": "api_http:GET:/v1/community-voice-chats/active",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "status": "reviewed",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -771,11 +786,19 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
+          "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
+          "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
+          "test": "active_handler_preserves_empty_error_and_all_settled_source_contracts",
+          "scope": "Eight executed source cases and real-schema faults cover active empty/error/allSettled/image behavior and v1/v2 core detail SQL message-only 500. Other provider failures remain separately scoped."
         }
       ],
-      "gaps": [
-        "Configured comms liveness cutoffs and the source message-only500 active-room error need to be applied to the community SQL reader."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -834,7 +857,7 @@
       "id": "api_http:GET:/v1/members/:address/requests",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -853,6 +876,11 @@
           "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
+          "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
+          "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
         }
       ],
       "gaps": [],
@@ -1067,7 +1095,7 @@
       "id": "api_http:GET:/v2/communities",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -1086,18 +1114,23 @@
         {
           "path": "services/catalyst/social/src/communities/ranking.rs",
           "scope": "Source scoring formula, lifetime counters, daily local score job, local event/photo/stream receipts and legacy event writers are implemented; existing upstream counter baseline is not imported."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
+          "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
+          "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
         }
       ],
       "gaps": [
-        "community-voice-liveness"
+        "Pinned listing handlers catch unexpected dependency failures as 500 {message}; the target core listing SQL still uses the generic CommError envelope. Dedicated injected failure comparisons remain to be completed."
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
       "id": "api_http:GET:/v2/communities/:id",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -1112,11 +1145,19 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
+          "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
+          "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
+          "test": "active_handler_preserves_empty_error_and_all_settled_source_contracts",
+          "scope": "Eight executed source cases and real-schema faults cover active empty/error/allSettled/image behavior and v1/v2 core detail SQL message-only 500. Other provider failures remain separately scoped."
         }
       ],
-      "gaps": [
-        "Pinned get-community handlers return unexpected dependency failures as 500 {message}; the current generic CommError path returns a different envelope. Dedicated source-executed failure comparisons and scoped fixes are in progress."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -1271,7 +1312,7 @@
       "id": "api_http:GET:/v2/members/:address/requests",
       "owner": "community-http",
       "status": "reviewed",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1290,6 +1331,11 @@
           "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
+          "test": "configured_comms_presence_drives_detail_lists_requests_and_active_handler",
+          "scope": "Actual PostgreSQL and real handlers cover configured liveness across seven GET operations; source companion component supplies the inactive-object contract."
         }
       ],
       "gaps": [],
@@ -5652,7 +5698,9 @@
         "rpc_unary:RPC:getMutualFriends",
         "rpc_unary:RPC:getPendingFriendshipRequests",
         "rpc_unary:RPC:getSentFriendshipRequests",
-        "rpc_unary:RPC:unblockUser"
+        "rpc_unary:RPC:unblockUser",
+        "api_http:GET:/v1/communities/:id",
+        "api_http:POST:/v1/communities"
       ],
       "description": "RPC and community adapters now share one source registry reader and600-second SQL cache facts over the existing pool, preserving single/batch keys across independent replicas and content updates. Core alias/TTL/error/upgrade/cleanup regressions pass. Community single owner route callsites still need the strict API wiring; import or drain of existing Redis cache values and remaining TTL is unverified at cutover."
     },
@@ -5660,10 +5708,10 @@
       "id": "community-dependency-error-boundaries",
       "status": "known_gap",
       "operations": [
-        "api_http:GET:/v1/communities/:id",
-        "api_http:GET:/v2/communities/:id"
+        "api_http:GET:/v1/communities",
+        "api_http:GET:/v2/communities"
       ],
-      "description": "Static comparison confirms get-community v1/v2 catch unexpected dependency failures as 500 {message}, while the generic target path emits another envelope. Other community CRUD/list handlers have handler-specific catches that require individual failure injection; successful DTO comparisons do not establish those boundaries. Voice mutation error middleware remains separate. Evidence: pinned src/controllers/handlers/http/get-community-handler.ts and get-community-v2-handler.ts against services/catalyst/social/src/communities/http.rs."
+      "description": "Core v1/v2 detail SQL failures now preserve source message-only 500 with executed-source/local regressions. Static comparison still confirms listing handlers catch unexpected dependency failures as 500 {message} while the candidate core listing SQL uses the generic envelope. Other community CRUD/list catches require individual failure injection; voice mutation error middleware remains separate."
     },
     {
       "id": "rpc-ordinary-transport-backpressure",
@@ -5705,6 +5753,19 @@
         "websocket:UPGRADE:/"
       ],
       "description": "Pinned src/utils/UWebSocketTransport.ts bounds ordinary pending RPC frames with an adaptive queue (default 128), exposes WS_TRANSPORT queue/retry settings, closes on queue overflow and retries native DROPPED results with backoff/drain handling. The current shared target ordinary outbound channel is unbounded; guarded connectivity has a separate byte budget. Matching individual responses and guarded large-profile tests does not establish this ordinary transport contract. Executed-source transport scenarios and a scoped implementation comparison remain required."
+    },
+    {
+      "id": "community-voice-status-failure-degradation",
+      "status": "known_gap",
+      "operations": [
+        "api_http:GET:/v1/communities",
+        "api_http:GET:/v1/communities/:id",
+        "api_http:GET:/v1/members/:address/requests",
+        "api_http:GET:/v2/communities",
+        "api_http:GET:/v2/communities/:id",
+        "api_http:GET:/v2/members/:address/requests"
+      ],
+      "description": "Pinned decentraland/comms-gatekeeper@be6a4b97a2189157884503485892ff46d0ac68da voice.ts catches single/bulk status database errors and returns idle status objects. Candidate community status currently participates in the main SQL statement, so a status-only SQL fault can abort that request instead of degrading. Normal liveness/count proofs and core community SQL error tests do not close this separate dependency-failure boundary."
     }
   ]
 }
