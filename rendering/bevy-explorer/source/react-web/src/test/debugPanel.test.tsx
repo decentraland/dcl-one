@@ -53,7 +53,10 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
     expect(screen.getByRole('button', { name: 'Transport' })).toHaveAttribute('aria-expanded', 'false')
     expect(command.mock.calls).toEqual([['/debug_panel --dev-build'], ['/debug_panel']])
     const clock = screen.getByRole('button', { name: 'Clock' })
+    const sectionHeaders = () => screen.getAllByRole('button', { name: /^(Transport|Clock|Session)$/ })
+    const originalOrder = sectionHeaders()
     await act(async () => { fireEvent.click(clock) })
+    expect(sectionHeaders()).toEqual(originalOrder)
     expect(screen.getByText('1')).toBeInTheDocument()
     seconds = 2
     await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
@@ -63,6 +66,7 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
     await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
     expect(screen.getByText('12')).toBeInTheDocument()
     fireEvent.click(clock)
+    expect(sectionHeaders()).toEqual(originalOrder)
     command.mockClear()
     await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
     expect(command).not.toHaveBeenCalled()

@@ -211,7 +211,7 @@ function DebugPanel({ run, close, initial }: { run: RunCommand; close: () => voi
         !sections ? <p>Loading debug sections…</p> :
         sections.length === 0 ? <p>No plugins registered debug sections.</p> :
         matches?.length === 0 ? <p>No matching controls.</p> :
-          matches?.sort((a, b) => Number(isOpen(b)) - Number(isOpen(a))).map((section) =>
+          matches?.map((section) =>
             <SectionRow key={section.title} section={section} run={run} open={isOpen(section)} toggle={() => toggle(section)} />)}
     </ModalShell>
   )

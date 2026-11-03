@@ -88,7 +88,7 @@ The room, voice, rendering, media and avatar sections appear with the plugins th
 supply them. A missing reading displays **Unavailable**. Development-only mutations
 require preview mode. To add a section, follow the [plugin recipe](recipes.md#a-plugin-section-in-the-runtime-debug-panel).
 
-![Performance and World sections open in the Windows development build, with the bug button in the lower-right corner](runtime-debug-panel.png)
+![Audio settings expanded between Analytics and Avatar in the Windows development build, with the bug button in the lower-right corner](runtime-debug-panel.png)
 
 ## Test commands
 
