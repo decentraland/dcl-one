@@ -289,6 +289,33 @@ Catalogue-scale capacity is not established by
 bounded result sizes alone. See the
 [event notification ADR](docs/adr/2026-11-01-event-notification-delivery.md).
 
+Event RSVP state in `explore.event_attendance_local` is authoritative for that
+wallet: cancellation markers override mirrored attendee previews in reads,
+personal filters and attendee listings, and survive mirror refreshes. Counts
+apply a signed local delta to the mirrored aggregate, deduplicating wallets
+known in the mirrored preview. The preview is incomplete: an additional local
+going wallet may already be included in the upstream aggregate. Without an
+authoritative upstream membership list, the combined total remains an estimate;
+it does not guarantee exact deduplication outside the known preview. Local-only
+events do not have this ambiguity.
+The read projection materializes the normalized preview once per event row and
+excludes SQL-null preview entries. Local membership probes retain the
+`event_attendance_local` primary-key lookup; cancellation and going deltas share
+that preview instead of expanding its JSON separately for every local RSVP.
+
+Event authoring distinguishes generated posters from explicit images and clears
+inside the existing event document. Generated images may follow location
+changes; an explicit clear must survive later edits. Missing profile or place
+lookups must not erase stored facts on an unrelated edit. Location-derived facts
+must be refreshed or cleared when their source location changes. This metadata
+does not establish owner identity or grant permissions. Existing nonempty posters
+without authoring provenance remain explicit: their source cannot be inferred
+reliably from the URL alone. There is no historical provenance backfill.
+The internal `_image_source` key can travel with raw document copies. Public API
+and export paths must use an explicit field projection instead of publishing the
+stored document unfiltered. `EventRecord` omits this key, and notification
+snapshots use their own allowlist.
+
 For Shop: keep explicit asset/chain/order identities, separate accounting
 facts from rebuildable projections, bound reconciliation, use exact currency
 units, reserve atomically with external work outside the transaction. The

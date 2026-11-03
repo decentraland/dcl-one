@@ -150,6 +150,13 @@ npm test --prefix react-web           # HUD, deterministic (vitest, no engine)
 npm run test:e2e --prefix react-web   # HUD against a real engine (playwright, needs a GPU)
 ```
 
+CI's Test Suite builds the engine tests with the `ci-test` profile. The scene tests spawn the `dcl_deno_ipc` sidecar from the same profile directory, so build it first:
+
+```bash
+cargo build --package dcl_deno_ipc --profile ci-test --locked
+cargo test --all --profile ci-test --locked -- --test-threads=1
+```
+
 `react-web/review.md` is the pre-merge checklist for anything under `react-web/`.
 
 ## Agents and tests
