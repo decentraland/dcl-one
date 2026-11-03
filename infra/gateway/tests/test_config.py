@@ -85,3 +85,15 @@ class ConfigurationTest(unittest.TestCase):
             self.assertNotIn(f"location ^~ {path}/", config)
         self.assertIn("location ^~ /places/api/ {\nproxy_pass http://apis;", config)
         self.assertIn("location /places/ {\nproxy_pass http://sites;", config)
+
+    def test_bundled_event_image_uses_api_without_claiming_other_event_assets(self):
+        path = "/events/assets/event-default.webp"
+        routes = (Path(__file__).parents[1] / "routes.nix").read_text()
+        self.assertRegex(routes, r'path = "/events/assets/event-default\.webp";\s+probe = "/events/assets/event-default\.webp";\s+exact = true;')
+        cfg = gateway.settings({"GATEWAY_RESOLVERS": "127.0.0.1"})
+        table = {"sites": ["events.tsx"], "internal": [], "deploy": [], "aliases": [],
+                 "node": [{"path": path, "exact": True}]}
+        config = gateway.render(table, cfg, "/mime.types")
+        self.assertIn(f"location = {path} {{\nproxy_pass http://apis;", config)
+        self.assertNotIn("location ^~ /events/assets/", config)
+        self.assertIn("location /events/ {\nproxy_pass http://sites;", config)

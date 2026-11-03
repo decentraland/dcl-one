@@ -33,7 +33,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 use crate::shared::errors::ApiError;
 
 /// The old admin patch body.
-#[derive(Debug, Default, Deserialize, serde::Serialize)]
+#[derive(Debug, Default, Clone, Deserialize, serde::Serialize)]
 pub struct AdminPatch {
     #[serde(default)]
     pub action: Option<String>,
@@ -55,6 +55,80 @@ pub struct AdminPatch {
     /// The old HTTP admin path's audit actor (the console passes its wallet instead).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub actor: Option<String>,
+}
+
+/// Both HTTP and console moderation accept the historical reason spelling.
+/// An explicit `reason` key takes precedence, including an explicit null.
+pub fn parse_admin_patch(mut value: Value) -> Result<AdminPatch, ApiError> {
+    if let Some(fields) = value.as_object_mut() {
+        normalize_admin_reason(fields);
+    }
+    serde_json::from_value(value)
+        .map_err(|error| ApiError::bad_request(format!("invalid patch body: {error}")))
+}
+
+pub(crate) fn normalize_admin_reason(fields: &mut Map<String, Value>) {
+    if fields.contains_key("reason") {
+        fields.remove("rejection_reason");
+    }
+}
+
+impl AdminPatch {
+    /// Resolve actions once for both moderation-only and content edits.
+    /// Explicit approval follows the action, then rejection, then feature flags.
+    pub(crate) fn resolved(&self) -> Result<Self, ApiError> {
+        if self
+            .reason
+            .as_ref()
+            .is_some_and(|reason| reason.chars().count() > 500)
+        {
+            return Err(ApiError::bad_request("reason too long"));
+        }
+        let mut resolved = Self {
+            name: self.name.clone(),
+            description: self.description.clone(),
+            reason: self.reason.clone(),
+            actor: self.actor.clone(),
+            ..Self::default()
+        };
+        match self.action.as_deref() {
+            Some("approve") => {
+                resolved.approved = Some(true);
+                resolved.rejected = Some(false);
+            }
+            Some("reject" | "archive") => {
+                resolved.approved = Some(false);
+                resolved.rejected = Some(true);
+            }
+            Some("feature") => resolved.highlighted = Some(true),
+            Some("unfeature") => resolved.highlighted = Some(false),
+            Some(other) => {
+                return Err(ApiError::bad_request(format!(
+                    "unknown action \"{other}\" (expected approve|reject|feature|unfeature|archive)"
+                )));
+            }
+            None => {}
+        }
+        if let Some(approved) = self.approved {
+            resolved.approved = Some(approved);
+            if approved {
+                resolved.rejected = Some(false);
+            }
+        }
+        if let Some(rejected) = self.rejected {
+            resolved.rejected = Some(rejected);
+            if rejected {
+                resolved.approved = Some(false);
+            }
+        }
+        if self.highlighted.is_some() {
+            resolved.highlighted = self.highlighted;
+        }
+        if self.trending.is_some() {
+            resolved.trending = self.trending;
+        }
+        Ok(resolved)
+    }
 }
 
 fn set_approved(raw: &mut Map<String, Value>, actor: &str) {
@@ -83,38 +157,9 @@ pub fn apply_admin_state(
     body: &AdminPatch,
     actor: &str,
 ) -> Result<(), ApiError> {
-    if body
-        .reason
-        .as_ref()
-        .is_some_and(|r| r.chars().count() > 500)
-    {
-        return Err(ApiError::bad_request("reason too long"));
-    }
+    let resolved = body.resolved()?;
+    let body = &resolved;
     let mut handled = false;
-    match body.action.as_deref() {
-        Some("approve") => {
-            set_approved(raw, actor);
-            handled = true;
-        }
-        Some("reject") | Some("archive") => {
-            set_rejected(raw, actor, body.reason.clone());
-            handled = true;
-        }
-        Some("feature") => {
-            raw.insert("highlighted".into(), json!(true));
-            handled = true;
-        }
-        Some("unfeature") => {
-            raw.insert("highlighted".into(), json!(false));
-            handled = true;
-        }
-        Some(other) => {
-            return Err(ApiError::bad_request(format!(
-                "unknown action \"{other}\" (expected approve|reject|feature|unfeature|archive)"
-            )));
-        }
-        None => {}
-    }
     if let Some(v) = body.approved {
         if v {
             set_approved(raw, actor);
@@ -192,7 +237,7 @@ pub async fn moderate(
     event_id: &str,
     body: &AdminPatch,
     actor: &str,
-    settings: &crate::Settings,
+    _settings: &crate::Settings,
 ) -> Result<bool, ApiError> {
     super::mirror::reclaim_local(pool).await?;
     let mut tx = pool.begin().await?;
@@ -218,12 +263,6 @@ pub async fn moderate(
         return Err(mirrored_event(pool, event_id).await);
     }
     apply_admin_state(&mut raw, body, actor)?;
-    if raw.get("image").and_then(Value::as_str) == Some(super::posters::DEFAULT_EVENT_IMAGE) {
-        raw.insert(
-            "image".into(),
-            json!(super::posters::default_image_url(settings)),
-        );
-    }
     let decision = mirrored.then(|| Decision::of(body, &raw));
     raw.insert("updated_at".into(), json!(Utc::now().to_rfc3339()));
     let name = raw
@@ -1007,6 +1046,26 @@ mod tests {
             .as_object()
             .unwrap()
             .clone()
+    }
+
+    #[test]
+    fn shared_admin_parser_gives_reason_precedence_including_null() {
+        for (reason, expected) in [(json!("primary"), Some("primary")), (Value::Null, None)] {
+            let parsed = parse_admin_patch(
+                json!({"action":"reject","reason":reason,"rejection_reason":"alias"}),
+            )
+            .unwrap();
+            assert_eq!(parsed.reason.as_deref(), expected);
+            let mut raw = json!({"rejected":true,"rejection_reason":"old"})
+                .as_object()
+                .unwrap()
+                .clone();
+            apply_admin_state(&mut raw, &parsed, "operator").unwrap();
+            assert_eq!(raw["rejection_reason"], json!(expected));
+        }
+        let parsed =
+            parse_admin_patch(json!({"action":"reject","rejection_reason":"alias"})).unwrap();
+        assert_eq!(parsed.reason.as_deref(), Some("alias"));
     }
 
     #[test]

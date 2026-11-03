@@ -792,7 +792,10 @@
             }
           }
         },
-        "description": "Signed wallets may edit authorized native event fields. Bearer admins may also use action, actor and reason. Moderation-only bearer requests use the mirrored overlay; native content changes to mirrored events return 409. Unknown bearer fields are ignored for compatibility; unknown wallet fields are rejected."
+        "description": "Signed-wallet callers use the strict UpdateEventBody request schema shown here. Authorized bearer operators may instead submit AdminEventPatch, including action/actor/reason and legacy extra fields. The bearer extension does not broaden signed-wallet validation.",
+        "x-bearer-request-schema": {
+          "$ref": "#/components/schemas/AdminEventPatch"
+        }
       }
     },
     "/api/events/{event_id}/attendees": {
@@ -4357,6 +4360,246 @@
               "null"
             ],
             "format": "int32"
+          }
+        },
+        "additionalProperties": false,
+        "description": "Strict signed-wallet event edit body. Unknown fields, including bearer-only action, actor and reason, are rejected. Authorized bearer operators use the separate AdminEventPatch schema."
+      },
+      "V1EventRecord": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EventRecord"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "destination": {
+                "type": [
+                  "object",
+                  "null"
+                ]
+              },
+              "destination_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            }
+          }
+        ]
+      },
+      "AdminEventPatch": {
+        "type": "object",
+        "properties": {
+          "all_day": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "approved": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "categories": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "community_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "contact": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "details": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "featured_item": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "highlighted": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "image": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local uploaded image from POST /api/poster; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
+          },
+          "image_vertical": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Local uploaded image from POST /api/poster-vertical; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement."
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrent": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "recurrent_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "recurrent_frequency": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrent_interval": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "recurrent_month_mask": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "recurrent_monthday": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "recurrent_setpos": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "recurrent_until": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "recurrent_weekday_mask": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "rejected": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "rejection_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "schedules": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "server": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "start_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "trending": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "world": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "x": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "y": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
           },
           "action": {
             "type": [
@@ -4392,31 +4635,7 @@
           }
         },
         "additionalProperties": true,
-        "description": "Signed wallets may edit authorized native event fields. Bearer admins may also use action, actor and reason. Moderation-only bearer requests use the mirrored overlay; native content changes to mirrored events return 409. Unknown bearer fields are ignored for compatibility; unknown wallet fields are rejected."
-      },
-      "V1EventRecord": {
-        "allOf": [
-          {
-            "$ref": "#/components/schemas/EventRecord"
-          },
-          {
-            "type": "object",
-            "properties": {
-              "destination": {
-                "type": [
-                  "object",
-                  "null"
-                ]
-              },
-              "destination_id": {
-                "type": [
-                  "string",
-                  "null"
-                ]
-              }
-            }
-          }
-        ]
+        "description": "Bearer-only event edit and moderation body. Unknown fields are ignored for legacy compatibility. Moderation-only requests apply overlays on mirrored events; native content edits of mirrored events return 409. Explicit reason takes precedence over rejection_reason, including null."
       }
     }
   }

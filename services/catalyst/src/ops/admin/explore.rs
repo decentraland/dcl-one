@@ -62,7 +62,7 @@ use super::console::{
     str_field, valid_path_segment,
 };
 use crate::explore::api::{denylist, feature_flags, lists};
-use crate::explore::events::moderation::{self as event_moderation, AdminPatch, CreateEvent};
+use crate::explore::events::moderation::{self as event_moderation, CreateEvent};
 use crate::explore::places::moderation::{self as place_moderation, Decision, Target};
 use crate::explore::places::reports::{self, ReportPatch, ReportQuery};
 
@@ -708,9 +708,9 @@ pub async fn event_moderate(
             patch_body[key] = json!(b);
         }
     }
-    let patch = match super::console::body_as::<AdminPatch>(patch_body.clone()) {
+    let patch = match event_moderation::parse_admin_patch(patch_body.clone()) {
         Ok(p) => p,
-        Err(resp) => return resp,
+        Err(error) => return error.into_response(),
     };
     let explore = match explore_for(&state) {
         Ok(e) => e,

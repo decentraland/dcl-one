@@ -34,9 +34,12 @@ pub(super) fn normalize_image_input(
     } else {
         let url = url::Url::parse(image)
             .map_err(|_| ApiError::bad_request("Upload the image through the poster endpoint"))?;
-        let own_origin = [&settings.events_base_url, &settings.content_public_url]
-            .iter()
-            .any(|base| url::Url::parse(base).is_ok_and(|base| base.origin() == url.origin()));
+        let own_origin = [
+            &settings.events_asset_base_url,
+            &settings.content_public_url,
+        ]
+        .iter()
+        .any(|base| url::Url::parse(base).is_ok_and(|base| base.origin() == url.origin()));
         if !own_origin
             || !matches!(url.scheme(), "http" | "https")
             || !url.username().is_empty()
@@ -49,22 +52,25 @@ pub(super) fn normalize_image_input(
             ));
         }
         let path = url.path();
-        [&settings.events_base_url, &settings.content_public_url]
-            .iter()
-            .filter_map(|base| url::Url::parse(base).ok())
-            .filter(|base| base.origin() == url.origin())
-            .filter_map(|base| {
-                let prefix = base.path().trim_end_matches('/');
-                (!prefix.is_empty())
-                    .then(|| path.strip_prefix(prefix))
-                    .flatten()
-                    .filter(|candidate| {
-                        *candidate == DEFAULT_EVENT_IMAGE || poster_key(candidate).is_some()
-                    })
-                    .map(str::to_owned)
-            })
-            .next()
-            .unwrap_or_else(|| path.to_owned())
+        [
+            &settings.events_asset_base_url,
+            &settings.content_public_url,
+        ]
+        .iter()
+        .filter_map(|base| url::Url::parse(base).ok())
+        .filter(|base| base.origin() == url.origin())
+        .filter_map(|base| {
+            let prefix = base.path().trim_end_matches('/');
+            (!prefix.is_empty())
+                .then(|| path.strip_prefix(prefix))
+                .flatten()
+                .filter(|candidate| {
+                    *candidate == DEFAULT_EVENT_IMAGE || poster_key(candidate).is_some()
+                })
+                .map(str::to_owned)
+        })
+        .next()
+        .unwrap_or_else(|| path.to_owned())
     };
     if path == DEFAULT_EVENT_IMAGE
         || poster_key(&path).is_some_and(|(kind, _)| kind == expected_kind)
@@ -124,10 +130,11 @@ pub fn absolute_default_image(image: &str, events_base_url: &str) -> String {
     }
 }
 
+#[cfg(test)]
 pub(super) fn default_image_url(settings: &Settings) -> String {
     format!(
         "{}{}",
-        settings.events_base_url.trim_end_matches('/'),
+        settings.events_asset_base_url.trim_end_matches('/'),
         DEFAULT_EVENT_IMAGE
     )
 }
@@ -441,7 +448,7 @@ mod tests {
     #[test]
     fn configured_origins_and_field_kinds_are_preserved_during_normalization() {
         let settings = Settings {
-            events_base_url: "https://native.example.org/events".into(),
+            events_asset_base_url: "https://native.example.org/events".into(),
             content_public_url: "https://content.example.org".into(),
             ..Settings::for_tests()
         };

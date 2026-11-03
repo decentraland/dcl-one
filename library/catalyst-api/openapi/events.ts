@@ -29,7 +29,7 @@ export interface paths {
         delete: operations["delete_event"];
         options?: never;
         head?: never;
-        /** @description Signed wallets may edit authorized native event fields. Bearer admins may also use action, actor and reason. Moderation-only bearer requests use the mirrored overlay; native content changes to mirrored events return 409. Unknown bearer fields are ignored for compatibility; unknown wallet fields are rejected. */
+        /** @description Signed-wallet callers use the strict UpdateEventBody request schema shown here. Authorized bearer operators may instead submit AdminEventPatch, including action/actor/reason and legacy extra fields. The bearer extension does not broaden signed-wallet validation. */
         patch: operations["patch_event"];
         trace?: never;
     };
@@ -421,6 +421,63 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Bearer-only event edit and moderation body. Unknown fields are ignored for legacy compatibility. Moderation-only requests apply overlays on mirrored events; native content edits of mirrored events return 409. Explicit reason takes precedence over rejection_reason, including null. */
+        AdminEventPatch: {
+            /**
+             * @description Bearer admin only. Applied before explicit approved/rejected/highlighted/trending fields; signed-wallet edits reject this field.
+             * @enum {string|null}
+             */
+            action?: "approve" | "reject" | "archive" | "feature" | "unfeature" | null;
+            /** @description Bearer admin only. Audit actor; defaults to admin. Signed-wallet edits reject this field. */
+            actor?: string | null;
+            all_day?: boolean | null;
+            approved?: boolean | null;
+            categories?: string[] | null;
+            community_id?: string | null;
+            contact?: string | null;
+            description?: string | null;
+            details?: string | null;
+            /** Format: int64 */
+            duration?: number | null;
+            featured_item?: string | null;
+            highlighted?: boolean | null;
+            /** @description Local uploaded image from POST /api/poster; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement. */
+            image?: string | null;
+            /** @description Local uploaded image from POST /api/poster-vertical; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement. */
+            image_vertical?: string | null;
+            name?: string | null;
+            /** @description Bearer admin only. Moderation rejection reason; rejection_reason is also accepted. Signed-wallet edits use rejection_reason. */
+            reason?: string | null;
+            recurrent?: boolean | null;
+            /** Format: int64 */
+            recurrent_count?: number | null;
+            recurrent_frequency?: string | null;
+            /** Format: int64 */
+            recurrent_interval?: number | null;
+            /** Format: int64 */
+            recurrent_month_mask?: number | null;
+            /** Format: int64 */
+            recurrent_monthday?: number | null;
+            /** Format: int64 */
+            recurrent_setpos?: number | null;
+            recurrent_until?: string | null;
+            /** Format: int64 */
+            recurrent_weekday_mask?: number | null;
+            rejected?: boolean | null;
+            rejection_reason?: string | null;
+            schedules?: string[] | null;
+            server?: string | null;
+            start_at?: string | null;
+            trending?: boolean | null;
+            url?: string | null;
+            world?: boolean | null;
+            /** Format: int32 */
+            x?: number | null;
+            /** Format: int32 */
+            y?: number | null;
+        } & {
+            [key: string]: unknown;
+        };
         ApiErrorBody: {
             error: string;
             federation_adr?: string | null;
@@ -856,15 +913,8 @@ export interface components {
             signed_at: number;
             theme?: string | null;
         };
-        /** @description Signed wallets may edit authorized native event fields. Bearer admins may also use action, actor and reason. Moderation-only bearer requests use the mirrored overlay; native content changes to mirrored events return 409. Unknown bearer fields are ignored for compatibility; unknown wallet fields are rejected. */
+        /** @description Strict signed-wallet event edit body. Unknown fields, including bearer-only action, actor and reason, are rejected. Authorized bearer operators use the separate AdminEventPatch schema. */
         UpdateEventBody: {
-            /**
-             * @description Bearer admin only. Applied before explicit approved/rejected/highlighted/trending fields; signed-wallet edits reject this field.
-             * @enum {string|null}
-             */
-            action?: "approve" | "reject" | "archive" | "feature" | "unfeature" | null;
-            /** @description Bearer admin only. Audit actor; defaults to admin. Signed-wallet edits reject this field. */
-            actor?: string | null;
             all_day?: boolean | null;
             approved?: boolean | null;
             categories?: string[] | null;
@@ -881,8 +931,6 @@ export interface components {
             /** @description Local uploaded image from POST /api/poster-vertical; the upload kind must match this field. Configured same-origin URLs normalize to local paths. An unchanged stored image may be resent without becoming an explicit replacement. */
             image_vertical?: string | null;
             name?: string | null;
-            /** @description Bearer admin only. Moderation rejection reason; rejection_reason is also accepted. Signed-wallet edits use rejection_reason. */
-            reason?: string | null;
             recurrent?: boolean | null;
             /** Format: int64 */
             recurrent_count?: number | null;
@@ -910,8 +958,6 @@ export interface components {
             x?: number | null;
             /** Format: int32 */
             y?: number | null;
-        } & {
-            [key: string]: unknown;
         };
         V1EventRecord: components["schemas"]["EventRecord"] & {
             destination?: Record<string, never> | null;

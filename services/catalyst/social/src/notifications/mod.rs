@@ -83,7 +83,7 @@ impl Default for Settings {
             first_wear: FirstWearSettings::default(),
             delivery_interval: Duration::from_secs(15),
             events_base_url: "https://decentraland.org".into(),
-            events_asset_base_url: "https://events.decentraland.org".into(),
+            events_asset_base_url: "http://localhost/events".into(),
         }
     }
 }

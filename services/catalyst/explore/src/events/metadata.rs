@@ -51,12 +51,7 @@ fn location_changed(raw: &Map<String, Value>, previous: &Map<String, Value>) -> 
         .any(|key| raw.get(*key) != previous.get(*key))
 }
 
-fn refresh_poster(
-    raw: &mut Map<String, Value>,
-    place: Option<&Value>,
-    creating: bool,
-    settings: &crate::Settings,
-) {
+fn refresh_poster(raw: &mut Map<String, Value>, place: Option<&Value>, creating: bool) {
     // Provenance is local authoring metadata in the existing document, never
     // inferred from a poster URL that an organizer may have chosen explicitly.
     let generated = text(raw, "_image_source") == Some("generated")
@@ -69,7 +64,7 @@ fn refresh_poster(
         .and_then(Value::as_str)
         .filter(|image| crate::sanitize::sanitize_asset_url(image).is_ok())
         .map(str::to_owned)
-        .unwrap_or_else(|| super::posters::default_image_url(settings));
+        .unwrap_or_else(|| super::posters::DEFAULT_EVENT_IMAGE.to_owned());
     raw.insert("image".into(), json!(fallback));
     raw.insert("_image_source".into(), json!("generated"));
 }
@@ -79,7 +74,7 @@ pub(super) async fn enrich(
     raw: &mut Map<String, Value>,
     previous: Option<&Map<String, Value>>,
     refresh_url: bool,
-    settings: &crate::Settings,
+    _settings: &crate::Settings,
 ) -> Result<(), ApiError> {
     if refresh_url && let Some(previous) = previous {
         refresh_target(raw, previous);
@@ -126,14 +121,7 @@ pub(super) async fn enrich(
     // A transient catalogue miss must not remove an already generated scene
     // poster on an unrelated edit. A move must discard that stale fallback.
     if previous.is_none() || moved || place.is_some() {
-        refresh_poster(raw, place.as_ref(), previous.is_none(), settings);
-    }
-    // Upgrade the earlier local fallback even when a missing catalogue source skips refresh.
-    if text(raw, "image") == Some(super::posters::DEFAULT_EVENT_IMAGE) {
-        raw.insert(
-            "image".into(),
-            json!(super::posters::default_image_url(settings)),
-        );
+        refresh_poster(raw, place.as_ref(), previous.is_none());
     }
 
     Ok(())
@@ -231,7 +219,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             raw["image"],
-            super::super::posters::default_image_url(&crate::Settings::for_tests()),
+            super::super::posters::DEFAULT_EVENT_IMAGE,
             "a move cannot retain the previous scene poster"
         );
     }
@@ -300,14 +288,14 @@ mod tests {
         );
     }
     #[tokio::test]
-    async fn an_existing_relative_default_is_upgraded_when_catalogue_metadata_is_missing() {
+    async fn a_relative_default_remains_origin_independent_when_catalogue_metadata_is_missing() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
         let mut raw = json!({"image":super::super::posters::DEFAULT_EVENT_IMAGE,"_image_source":"generated","x":1,"y":2}).as_object().unwrap().clone();
         let previous = raw.clone();
         let settings = crate::Settings {
-            events_base_url: "https://native.example.org/events".into(),
+            events_asset_base_url: "https://native.example.org/events".into(),
             ..crate::Settings::for_tests()
         };
         enrich(
@@ -319,9 +307,6 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(
-            raw["image"],
-            "https://native.example.org/events/assets/event-default.webp"
-        );
+        assert_eq!(raw["image"], super::super::posters::DEFAULT_EVENT_IMAGE);
     }
 }

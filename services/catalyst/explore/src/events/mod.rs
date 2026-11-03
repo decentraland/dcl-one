@@ -172,7 +172,7 @@ pub struct NextEvent {
 pub struct EventsComponent {
     pool: PgPool,
     rewrite_domain: Option<String>,
-    events_base_url: String,
+    events_asset_base_url: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -257,11 +257,15 @@ struct EventRow {
 impl EventsComponent {
     /// `rewrite_domain`: the deployment's own domain, swapped into mirrored
     /// `events-assets-*.decentraland.org` poster URLs (`None` keeps them).
-    pub fn new(pool: PgPool, rewrite_domain: Option<String>, events_base_url: String) -> Self {
+    pub fn new(
+        pool: PgPool,
+        rewrite_domain: Option<String>,
+        events_asset_base_url: String,
+    ) -> Self {
         Self {
             pool,
             rewrite_domain,
-            events_base_url,
+            events_asset_base_url,
         }
     }
 
@@ -457,7 +461,7 @@ impl EventsComponent {
                     r,
                     user,
                     self.rewrite_domain.as_deref(),
-                    &self.events_base_url,
+                    &self.events_asset_base_url,
                 )
             })
             .collect();
@@ -486,7 +490,7 @@ impl EventsComponent {
                 r,
                 None,
                 self.rewrite_domain.as_deref(),
-                &self.events_base_url,
+                &self.events_asset_base_url,
             )
         }))
     }
@@ -513,7 +517,7 @@ impl EventsComponent {
                 r,
                 Some(viewer),
                 self.rewrite_domain.as_deref(),
-                &self.events_base_url,
+                &self.events_asset_base_url,
             )
         }))
     }
@@ -531,7 +535,7 @@ impl EventsComponent {
                     r,
                     Some(&user_lc),
                     self.rewrite_domain.as_deref(),
-                    &self.events_base_url,
+                    &self.events_asset_base_url,
                 )
             })
             .collect())
@@ -557,7 +561,7 @@ impl EventsComponent {
                     r,
                     None,
                     self.rewrite_domain.as_deref(),
-                    &self.events_base_url,
+                    &self.events_asset_base_url,
                 )
             })
             .collect())
@@ -933,7 +937,7 @@ fn event_row_to_record(
     r: EventRow,
     verified_viewer: Option<&str>,
     rewrite_domain: Option<&str>,
-    events_base_url: &str,
+    events_asset_base_url: &str,
 ) -> EventRecord {
     let raw = &r.raw;
     let start_at = r.start_at.map(|n| n.and_utc());
@@ -946,14 +950,17 @@ fn event_row_to_record(
         .and_then(|s| sanitize_asset_url(s).ok())
         .map(|s| {
             rewrite_asset_url(
-                &posters::absolute_default_image(&s, events_base_url),
+                &posters::absolute_default_image(&s, events_asset_base_url),
                 rewrite_domain,
             )
         });
     let image_vertical = raw.get("image_vertical").cloned().and_then(|v| match v {
-        Value::String(s) => sanitize_asset_url(&s)
-            .ok()
-            .map(|safe| Value::String(rewrite_asset_url(&safe, rewrite_domain))),
+        Value::String(s) => sanitize_asset_url(&s).ok().map(|safe| {
+            Value::String(rewrite_asset_url(
+                &posters::absolute_default_image(&safe, events_asset_base_url),
+                rewrite_domain,
+            ))
+        }),
         other => Some(other),
     });
     let server = raw_str(raw, "server");

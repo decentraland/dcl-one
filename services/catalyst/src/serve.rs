@@ -377,6 +377,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .events_base_url
             .trim_end_matches('/')
             .to_string(),
+        events_asset_base_url: explore::Settings::events_asset_base_for(&config.node.own_url()),
         realm_name: config
             .node
             .realm_name
@@ -1882,7 +1883,7 @@ fn social_states(
         notifications::Settings {
             admin_token: non_empty(&config.social.catalyrst_notifications_admin_token),
             events_base_url: public_url.clone(),
-            events_asset_base_url: explore.settings.events_base_url.clone(),
+            events_asset_base_url: explore.settings.events_asset_base_url.clone(),
             email: notifications::EmailConfig {
                 sendgrid_api_key: non_empty(&config.social.sendgrid_api_key),
                 from_email: non_empty(&config.social.sendgrid_from_email),

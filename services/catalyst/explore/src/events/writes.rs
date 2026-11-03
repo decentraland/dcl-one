@@ -39,40 +39,19 @@ use crate::shared::errors::{ApiData, ApiError};
 const APPROVAL_FIELDS: &[&str] = &["approved", "rejected", "rejection_reason"];
 const ADMIN_CONTROL_FIELDS: &[&str] = &["action", "actor", "reason"];
 fn fold_admin_action(fields: &mut Map<String, Value>, patch: &AdminPatch) -> Result<(), ApiError> {
-    let mut defaults = Map::new();
-    match patch.action.as_deref() {
-        Some("approve") => {
-            defaults.insert("approved".into(), json!(true));
-            defaults.insert("rejected".into(), json!(false));
+    let patch = patch.resolved()?;
+    for (key, value) in [
+        ("approved", patch.approved),
+        ("rejected", patch.rejected),
+        ("highlighted", patch.highlighted),
+        ("trending", patch.trending),
+    ] {
+        if let Some(value) = value {
+            fields.insert(key.into(), json!(value));
         }
-        Some("reject" | "archive") => {
-            defaults.insert("approved".into(), json!(false));
-            defaults.insert("rejected".into(), json!(true));
-        }
-        Some("feature") => {
-            defaults.insert("highlighted".into(), json!(true));
-        }
-        Some("unfeature") => {
-            defaults.insert("highlighted".into(), json!(false));
-        }
-        Some(_) => return Err(ApiError::bad_request("unknown moderation action")),
-        None => {}
     }
-    // Legacy precedence: action, then explicit approval, then explicit rejection.
-    if fields.get("approved") == Some(&json!(true)) {
-        defaults.insert("rejected".into(), json!(false));
-    }
-    if fields.get("rejected") == Some(&json!(true)) {
-        fields.insert("approved".into(), json!(false));
-    }
-    for (key, value) in defaults {
-        fields.entry(key).or_insert(value);
-    }
-    if let Some(reason) = &patch.reason {
-        if reason.chars().count() > 500 {
-            return Err(ApiError::bad_request("reason too long"));
-        }
-        fields.entry("rejection_reason").or_insert(json!(reason));
+    if patch.rejected == Some(true) || patch.reason.is_some() {
+        fields.insert("rejection_reason".into(), json!(patch.reason));
     }
     Ok(())
 }
@@ -585,12 +564,8 @@ pub async fn patch_event(
         state.operator_writes()?;
         let mut fields: Map<String, Value> = serde_json::from_slice(&body)
             .map_err(|error| ApiError::bad_request(format!("invalid patch body: {error}")))?;
-        // Keep legacy unknown admin keys ignored and accept both reason spellings.
-        if fields.contains_key("reason") {
-            fields.remove("rejection_reason");
-        }
-        let patch: AdminPatch = serde_json::from_value(json!(fields))
-            .map_err(|error| ApiError::bad_request(format!("invalid patch body: {error}")))?;
+        moderation::normalize_admin_reason(&mut fields);
+        let patch = moderation::parse_admin_patch(json!(fields))?;
         let actor = patch
             .actor
             .as_deref()
@@ -799,7 +774,11 @@ pub async fn patch_event(
             }
         }
         if moderation::flag(&raw, "rejected") {
-            set_opt(&mut raw, "rejection_reason", &edit.rejection_reason);
+            if admin && edit.rejected == Some(true) {
+                raw.insert("rejection_reason".into(), json!(edit.rejection_reason));
+            } else {
+                set_opt(&mut raw, "rejection_reason", &edit.rejection_reason);
+            }
         }
     }
     if moderation::flag(&raw, "rejected") {
@@ -1231,45 +1210,60 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn generated_defaults_are_absolute_in_responses_and_notification_snapshots() {
+    async fn generated_defaults_use_the_node_asset_mount_without_persisting_its_origin() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
         };
         let settings = Settings {
-            events_base_url: "https://native.example.org/events/".into(),
+            events_asset_base_url: Settings::events_asset_base_for("http://localhost:8080"),
             user_writes_enabled: true,
             operator_writes_enabled: true,
             events_admin_token: Some("admin-test".into()),
             ..Settings::for_tests()
         };
-        let app = router(Arc::new(ExploreState::new(
-            pool.clone(),
-            settings.clone(),
-            None,
-        )));
-        let (_, created) = call(
+        assert_eq!(settings.events_base_url, "https://events.decentraland.org");
+        let app = axum::Router::new().nest(
+            "/events",
+            router(Arc::new(ExploreState::new(
+                pool.clone(),
+                settings.clone(),
+                None,
+            ))),
+        );
+        let (status, created) = call(
             &app,
             "POST",
-            "/api/events",
+            "/events/api/events",
             Some("signed"),
             Some(new_event()),
         )
         .await;
-        let expected = "https://native.example.org/events/assets/event-default.webp";
+        assert_eq!(status, StatusCode::OK, "{created}");
+        let expected = "http://localhost:8080/events/assets/event-default.webp";
         assert_eq!(created["data"]["image"], expected);
-        let id = created["data"]["id"].as_str().unwrap();
-        let path = format!("/api/events/{id}");
-        // Old local rows may still contain the relative default. Reads and pure moderation
-        // must repair the projection without a historical data migration.
-        sqlx::query("UPDATE explore.event SET raw=jsonb_set(raw,'{image}',$2) WHERE id=$1")
-            .bind(id)
-            .bind(json!(super::super::posters::DEFAULT_EVENT_IMAGE))
-            .execute(&pool)
+        let image_path = url::Url::parse(expected).unwrap();
+        let asset = app
+            .clone()
+            .oneshot(
+                Request::get(image_path.path())
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
             .await
             .unwrap();
-        let (status, legacy) = call(&app, "GET", &path, Some("signed"), None).await;
-        assert_eq!(status, StatusCode::OK, "{legacy}");
-        assert_eq!(legacy["data"]["image"], expected);
+        assert_eq!(asset.status(), StatusCode::OK);
+        assert_eq!(asset.headers()["content-type"], "image/webp");
+        assert!(
+            !axum::body::to_bytes(asset.into_body(), 1 << 20)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let id = created["data"]["id"].as_str().unwrap();
+        let path = format!("/events/api/events/{id}");
+        let (status, projected) = call(&app,"PATCH",&path,Some("signed"),Some(json!({"image":expected,"image_vertical":super::super::posters::DEFAULT_EVENT_IMAGE}))).await;
+        assert_eq!(status, StatusCode::OK, "{projected}");
+        assert_eq!(projected["data"]["image_vertical"], expected);
         let (status, approved) = call(
             &app,
             "PATCH",
@@ -1279,25 +1273,49 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{approved}");
+        let raw: Value = sqlx::query_scalar("SELECT raw FROM explore.event WHERE id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(raw["image"], super::super::posters::DEFAULT_EVENT_IMAGE);
+        assert_eq!(raw["_image_source"], "generated");
         let image: String = sqlx::query_scalar("SELECT event->>'image' FROM social.event_notification_intents WHERE event_id=$1 AND kind='event_approved'").bind(id).fetch_one(&pool).await.unwrap();
-        assert_eq!(image, expected);
-        // The fully qualified default returned by this deployment remains an unchanged value.
-        let (status, _) = call(
-            &app,
-            "PATCH",
-            &path,
+        assert_eq!(image, super::super::posters::DEFAULT_EVENT_IMAGE);
+        let changed = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                events_asset_base_url: Settings::events_asset_base_for("http://localhost:9090"),
+                ..settings
+            },
+            None,
+        )));
+        let (status, response) = call(
+            &changed,
+            "GET",
+            &format!("/api/events/{id}"),
             Some("signed"),
-            Some(json!({"image":expected})),
+            None,
         )
         .await;
-        assert_eq!(status, StatusCode::OK);
-        let source: String =
-            sqlx::query_scalar("SELECT raw->>'_image_source' FROM explore.event WHERE id=$1")
-                .bind(id)
-                .fetch_one(&pool)
-                .await
-                .unwrap();
-        assert_eq!(source, "generated");
+        assert_eq!(status, StatusCode::OK, "{response}");
+        assert_eq!(
+            response["data"]["image"],
+            "http://localhost:9090/events/assets/event-default.webp"
+        );
+        assert_eq!(
+            response["data"]["image_vertical"],
+            "http://localhost:9090/events/assets/event-default.webp"
+        );
+        let unchanged: Value = sqlx::query_scalar("SELECT raw FROM explore.event WHERE id=$1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            unchanged, raw,
+            "a read/base change must not rewrite authoring data"
+        );
     }
 
     #[tokio::test]
@@ -1346,6 +1364,28 @@ mod tests {
         )
         .await;
         let local = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+        let (status, _) = call(
+            &app,
+            "PATCH",
+            &local,
+            Some("admin-test"),
+            Some(json!({"action":"reject","reason":"A"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let (status, cleared) = call(
+            &app,
+            "PATCH",
+            &local,
+            Some("admin-test"),
+            Some(json!({"name":"reject again","action":"reject"})),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{cleared}");
+        assert!(cleared["data"]["rejection_reason"].is_null());
+        let (status, cleared) = call(&app,"PATCH",&local,Some("admin-test"),Some(json!({"name":"explicit null wins","action":"reject","reason":null,"rejection_reason":"alias"}))).await;
+        assert_eq!(status, StatusCode::OK, "{cleared}");
+        assert!(cleared["data"]["rejection_reason"].is_null());
         for (body, approved, rejected) in [
             (
                 json!({"name":"one","action":"reject","approved":true}),
@@ -1375,6 +1415,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn content_and_moderation_only_admin_requests_share_action_precedence() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let app = router(Arc::new(ExploreState::new(
+            pool,
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                events_admin_token: Some("admin-test".into()),
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        for body in [
+            json!({"action":"reject"}),
+            json!({"action":"reject","approved":true}),
+            json!({"action":"approve","approved":false}),
+            json!({"action":"reject","rejected":false}),
+            json!({"approved":true,"rejected":true,"highlighted":true,"trending":true}),
+            json!({"action":"reject","reason":null,"rejection_reason":"alias"}),
+        ] {
+            let mut results = Vec::new();
+            for content in [false, true] {
+                let (_, created) = call(
+                    &app,
+                    "POST",
+                    "/api/events",
+                    Some("signed"),
+                    Some(new_event()),
+                )
+                .await;
+                let path = format!("/api/events/{}", created["data"]["id"].as_str().unwrap());
+                let (status, seed) = call(
+                    &app,
+                    "PATCH",
+                    &path,
+                    Some("admin-test"),
+                    Some(json!({"action":"reject","reason":"old"})),
+                )
+                .await;
+                assert_eq!(status, StatusCode::OK, "{seed}");
+                let mut request = body.clone();
+                if content {
+                    request["name"] = json!("content edit");
+                }
+                let (status, response) =
+                    call(&app, "PATCH", &path, Some("admin-test"), Some(request)).await;
+                assert_eq!(status, StatusCode::OK, "{response}");
+                results.push(response["data"].clone());
+            }
+            for field in [
+                "approved",
+                "rejected",
+                "rejection_reason",
+                "highlighted",
+                "trending",
+            ] {
+                assert_eq!(
+                    results[0][field], results[1][field],
+                    "field {field}, body {body}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn unchanged_legacy_posters_keep_their_provenance_and_equivalent_absolute_spelling() {
         let Some(pool) = crate::db::scratch::pool(4).await else {
             return;
@@ -1383,7 +1490,7 @@ mod tests {
             pool.clone(),
             Settings {
                 user_writes_enabled: true,
-                events_base_url: "https://native.example.org/events".into(),
+                events_asset_base_url: "https://native.example.org/events".into(),
                 ..Settings::for_tests()
             },
             None,
@@ -1444,7 +1551,7 @@ mod tests {
             user_writes_enabled: true,
             operator_writes_enabled: true,
             events_admin_token: Some("native-admin".into()),
-            events_base_url: "https://native.example.org".into(),
+            events_asset_base_url: "https://native.example.org".into(),
             content_public_url: "https://content.example.org".into(),
             ..Settings::for_tests()
         };
