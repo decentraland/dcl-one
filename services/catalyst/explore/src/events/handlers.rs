@@ -40,6 +40,7 @@ pub struct EventListQuery {
     pub highlighted: Option<String>,
     pub creator: Option<String>,
     pub world: Option<String>,
+    pub recurrent: Option<String>,
     pub world_names: Option<Vec<String>>,
     pub position: Option<String>,
     pub positions: Option<Vec<String>>,
@@ -73,6 +74,7 @@ impl EventListQuery {
                 "highlighted" => q.highlighted = Some(v.clone()),
                 "creator" => q.creator = Some(v.clone()),
                 "world" => q.world = Some(v.clone()),
+                "recurrent" => q.recurrent = Some(v.clone()),
                 "position" => q.position = Some(v.clone()),
                 "estate_id" => q.estate_id = Some(v.clone()),
                 "community_id" => q.community_id = Some(v.clone()),
@@ -128,6 +130,15 @@ fn parse_filters(
     admin: bool,
     include_unapproved: bool,
 ) -> Result<Option<EventListFilters>, ApiError> {
+    let recurrent = q
+        .recurrent
+        .as_deref()
+        .map(|value| {
+            parse_bool(value)
+                .ok_or_else(|| ApiError::bad_request("recurrent must be true, false, 1 or 0"))
+        })
+        .transpose()?;
+
     let with_recurrent_dates = q
         .with_recurrent_dates
         .as_deref()
@@ -238,6 +249,7 @@ fn parse_filters(
         highlighted,
         creator,
         world: q.world.as_deref().and_then(parse_bool),
+        recurrent,
         world_names: q.world_names.clone().unwrap_or_default(),
         positions,
         estate_id,
@@ -772,5 +784,18 @@ mod tests {
         assert!(is_inside_world_limits(151, 151));
         assert!(!is_inside_world_limits(151, 159));
         assert!(!is_inside_world_limits(200, 0));
+    }
+    #[test]
+    fn invalid_recurrent_filters_are_rejected_instead_of_ignored() {
+        let query = EventListQuery {
+            recurrent: Some("yes".into()),
+            ..Default::default()
+        };
+        assert!(parse_filters(&query, Vec::new(), None, None, false, false).is_err());
+        let query = EventListQuery {
+            search: Some("x".into()),
+            ..query
+        };
+        assert!(parse_filters(&query, Vec::new(), None, None, false, false).is_err());
     }
 }
