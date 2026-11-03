@@ -1950,6 +1950,12 @@ fn social_states(
             ),
             referral: communities::referral::Settings {
                 max_ip_matches: config.social.referral_max_ip_matches,
+                suspicious_window_ms: config.social.referral_suspicious_window_ms,
+                slack: communities::referral::SlackSettings {
+                    token: config.social.referral_slack_token.clone(),
+                    dashboard: config.social.referral_metabase_dashboard.clone(),
+                    environment: config.social.social_environment.clone(),
+                },
                 denylist_url: (!config.explore.explorer_denylist_source_url.is_empty())
                     .then(|| config.explore.explorer_denylist_source_url.clone()),
                 min_login_days: config.social.referral_min_login_days,

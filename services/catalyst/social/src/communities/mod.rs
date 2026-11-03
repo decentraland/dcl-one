@@ -52,6 +52,7 @@ mod mutes;
 mod places;
 mod posts;
 pub mod referral;
+mod referral_slack;
 mod requests;
 pub(crate) mod voice;
 mod write_support;

@@ -167,7 +167,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 71] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 72] {
         [
             (
                 "CATALYRST_CONTENT_ADMIN_TOKEN",
@@ -175,6 +175,7 @@ impl Config {
             ),
             ("LIVEKIT_API_KEY", &mut self.social.livekit_api_key),
             ("LIVEKIT_API_SECRET", &mut self.social.livekit_api_secret),
+            ("SLACK_BOT_TOKEN", &mut self.social.referral_slack_token),
             (
                 "OPEN_AI_API_KEY",
                 &mut self.social.community_compliance_api_key,

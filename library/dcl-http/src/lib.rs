@@ -671,6 +671,7 @@ impl Outbound {
         GuardedRequest {
             outbound: self.clone(),
             builder: self.shared.request(method, url),
+            max_redirects: None,
         }
     }
 
@@ -685,18 +686,31 @@ impl Outbound {
     /// Sends `req` through the guard, following up to `max_redirects` hops
     /// with the guard re-run on each. A body that cannot be cloned (a
     /// stream) is sent once and its redirect, if any, returned as is.
-    pub async fn execute(&self, mut req: reqwest::Request) -> Result<reqwest::Response, SendError> {
-        if self.allow_private {
+    pub async fn execute(&self, req: reqwest::Request) -> Result<reqwest::Response, SendError> {
+        self.execute_with_redirect_limit(req, self.max_redirects)
+            .await
+    }
+
+    async fn execute_with_redirect_limit(
+        &self,
+        mut req: reqwest::Request,
+        max_redirects: usize,
+    ) -> Result<reqwest::Response, SendError> {
+        if self.allow_private && max_redirects == self.max_redirects {
             return Ok(self.shared.execute(req).await?);
         }
-        for hop in 0..=self.max_redirects {
-            let client = self.client_for(req.url()).await?;
+        for hop in 0..=max_redirects {
+            let client = if self.allow_private {
+                self.direct.clone()
+            } else {
+                self.client_for(req.url()).await?
+            };
             let resp = match req.try_clone() {
                 Some(copy) => client.execute(copy).await?,
                 None => return Ok(client.execute(req).await?),
             };
             let status = resp.status();
-            if !status.is_redirection() || hop == self.max_redirects {
+            if !status.is_redirection() || hop == max_redirects {
                 return Ok(resp);
             }
             let Some(location) = resp
@@ -826,6 +840,7 @@ impl Outbound {
 pub struct GuardedRequest {
     outbound: Outbound,
     builder: reqwest::RequestBuilder,
+    max_redirects: Option<usize>,
 }
 
 impl GuardedRequest {
@@ -852,6 +867,13 @@ impl GuardedRequest {
         self.map(|b| b.timeout(timeout))
     }
 
+    /// Restricts this request's manual redirect loop without changing its
+    /// host guard, pinned clients or the defaults of other requests.
+    pub fn max_redirects(mut self, maximum: usize) -> Self {
+        self.max_redirects = Some(maximum.min(self.outbound.max_redirects));
+        self
+    }
+
     pub fn json<T: serde::Serialize + ?Sized>(self, json: &T) -> Self {
         self.map(|b| b.json(json))
     }
@@ -862,7 +884,12 @@ impl GuardedRequest {
 
     pub async fn send(self) -> Result<reqwest::Response, SendError> {
         let req = self.builder.build()?;
-        self.outbound.execute(req).await
+        self.outbound
+            .execute_with_redirect_limit(
+                req,
+                self.max_redirects.unwrap_or(self.outbound.max_redirects),
+            )
+            .await
     }
 }
 
@@ -1236,6 +1263,51 @@ mod tests {
             );
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         addr
+    }
+
+    #[tokio::test]
+    async fn a_request_redirect_limit_keeps_other_requests_defaults() {
+        use axum::{Router, routing::get};
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let hits = Arc::new(AtomicUsize::new(0));
+        let count = hits.clone();
+        let app = Router::new()
+            .route(
+                "/jump",
+                get(|| async { (axum::http::StatusCode::FOUND, [("location", "/answer")]) }),
+            )
+            .route(
+                "/answer",
+                get(move || {
+                    let count = count.clone();
+                    async move {
+                        count.fetch_add(1, Ordering::SeqCst);
+                        "ok"
+                    }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let http = Outbound::new(HttpClientCfg::default().following_redirects(2))
+            .unwrap()
+            .allowing_private_hosts();
+        let url = format!("http://{address}/jump");
+        let response = http.get(&url).max_redirects(0).send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            0,
+            "the override must not make a second request"
+        );
+        let response = http.get(&url).send().await.unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            hits.load(Ordering::SeqCst),
+            1,
+            "the next request keeps the configured default"
+        );
+        server.abort();
     }
 
     fn strict(addr: SocketAddr) -> Outbound {

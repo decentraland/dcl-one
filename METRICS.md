@@ -118,3 +118,15 @@ show the selected access paths and bounded cleanup output; they do not establish
 production latency, a sustained 1,000-key-per-second reclamation rate or storage
 capacity. Production key distributions, concurrent writers, repeated percentiles,
 cold-cache costs and the existing source-cache cutover remain unmeasured.
+
+## Referral recent-invitation read
+
+A 2026-11-03 PostgreSQL 18.6 TEMP fixture held 100,000 referral rows with the current
+`(referrer,status)` index. The new post-insert query orders one referrer's history
+by creation time and returns at most two rows. Single local
+`EXPLAIN (ANALYZE, BUFFERS)` samples used a bitmap index/heap scan and top-N heapsort:
+90 matching rows took 0.086 ms; a skewed referrer with 10,000 matching rows took
+0.870 ms. These are query execution observations from a developer machine during
+a build. They do not include HTTP/Slack time, prove sustained throughput or bound
+scan work as one referrer's history grows. No additional index is inferred from
+these samples.

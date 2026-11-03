@@ -495,3 +495,13 @@ Production new-key rates and sustained reclamation capacity remain unmeasured.
 An authoritative cutover must import cached values with their remaining TTL or
 drain the source cache before switching readers; this runtime procedure is not
 established by the local reader and migration tests.
+
+A newly inserted referral performs one recent-invitation query by referrer,
+ordered by `created_at DESC` with a result limit of two. The existing
+`referral_progress_referrer_idx(referrer,status)` supports its equality filter;
+the database sorts matching history to select the two newest rows. The result is
+bounded, while the scanned history grows with that referrer. A query failure after
+the insert retains attribution and reaches the source handler's error boundary.
+Configured timing/IP Slack calls occur after insertion and the hundred-invite
+alert after the grant and accepted notification; no external await holds an SQL
+transaction. Same-referrer retries exit before recent reads or alert delivery.

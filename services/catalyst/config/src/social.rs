@@ -114,7 +114,7 @@ pub struct SocialConfig {
     #[arg(long, env = "FF_DAPPS_REFERRAL_REGISTRATION_DISABLED")]
     pub social_referral_registration_disabled_override: Option<String>,
 
-    /// Source environment: AI compliance runs for `prd` or its DAPPS dev flag.
+    /// Source environment for AI compliance and the Slack development channel.
     #[arg(long, env = "ENV", default_value = "")]
     pub social_environment: String,
 
@@ -206,6 +206,14 @@ pub struct SocialConfig {
     pub legacy_sns_endpoint: Option<String>,
     #[arg(long, env = "AWS_SNS_ARN")]
     pub legacy_sns_arn: Option<String>,
+    /// Optional source Slack producer; supports SLACK_BOT_TOKEN_FILE.
+    #[arg(long, env = "SLACK_BOT_TOKEN", hide_env_values = true)]
+    pub referral_slack_token: Option<String>,
+    #[arg(long, env = "REFERRAL_METABASE_DASHBOARD", default_value = "")]
+    pub referral_metabase_dashboard: String,
+    #[arg(long, env = "REFERRAL_FIVE_MINUTES_IN_MS", default_value_t = 300_000.0,
+        value_parser = source_number, allow_hyphen_values = true)]
+    pub referral_suspicious_window_ms: f64,
     #[arg(long, env = "REFERRAL_MAX_IP_MATCHES", default_value_t = 2)]
     pub referral_max_ip_matches: i64,
     #[arg(long, env = "REFERRAL_MIN_LOGIN_DAYS", default_value_t = 3)]
@@ -770,6 +778,34 @@ mod tests {
             ),
             (-1.0, 0.0, 2.5)
         );
+    }
+
+    #[test]
+    fn referral_slack_uses_source_configuration_and_numeric_window() {
+        let defaults = social(&[]).unwrap();
+        assert!(defaults.referral_slack_token.is_none());
+        assert_eq!(defaults.referral_suspicious_window_ms, 300_000.0);
+        let configured = social(&[
+            ("SLACK_BOT_TOKEN", "fixture-token"),
+            (
+                "REFERRAL_METABASE_DASHBOARD",
+                "https://dashboard.example.org",
+            ),
+            ("REFERRAL_FIVE_MINUTES_IN_MS", " 1.5e3ms"),
+            ("ENV", "dev"),
+        ])
+        .unwrap();
+        assert_eq!(
+            configured.referral_slack_token.as_deref(),
+            Some("fixture-token")
+        );
+        assert_eq!(
+            configured.referral_metabase_dashboard,
+            "https://dashboard.example.org"
+        );
+        assert_eq!(configured.referral_suspicious_window_ms, 1500.0);
+        assert_eq!(configured.social_environment, "dev");
+        assert!(social(&[("REFERRAL_FIVE_MINUTES_IN_MS", "NaN")]).is_err());
     }
 
     #[test]

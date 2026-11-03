@@ -18,6 +18,7 @@ use std::sync::OnceLock;
 use crate::Address;
 
 use super::http::CommError;
+pub use super::referral_slack::Settings as SlackSettings;
 use super::{SharedState, signed_path};
 
 /// These referral handlers catch unexpected dependency errors themselves and
@@ -39,6 +40,8 @@ fn database_error(error: sqlx::Error) -> CommError {
 pub struct Settings {
     pub max_ip_matches: i64,
     pub min_login_days: i64,
+    pub suspicious_window_ms: f64,
+    pub slack: SlackSettings,
     pub profile_url: String,
     pub denylist_url: Option<String>,
     pub reward_server_url: Option<String>,
@@ -49,6 +52,8 @@ impl Default for Settings {
         Self {
             max_ip_matches: 2,
             min_login_days: 3,
+            suspicious_window_ms: 300_000.0,
+            slack: Default::default(),
             profile_url: "https://decentraland.org".into(),
             denylist_url: None,
             reward_server_url: None,
@@ -69,18 +74,25 @@ pub struct Referral {
     pool: sqlx::PgPool,
     http: Outbound,
     settings: Settings,
+    slack: super::referral_slack::Adapter,
     mailer: OnceLock<crate::notifications::email::EmailSender>,
     publisher: OnceLock<std::sync::Arc<crate::legacy_events::LegacyEvents>>,
 }
 impl Referral {
     pub fn new(pool: sqlx::PgPool, http: Outbound, settings: Settings) -> Self {
+        let slack = super::referral_slack::Adapter::new(http.clone(), settings.slack.clone());
         Self {
             pool,
             http,
             settings,
+            slack,
             mailer: OnceLock::new(),
             publisher: OnceLock::new(),
         }
+    }
+    #[cfg(test)]
+    pub(super) fn set_test_slack_endpoint(&mut self, endpoint: String) {
+        self.slack.set_test_endpoint(endpoint);
     }
     pub fn set_mailer(&self, mailer: crate::notifications::email::EmailSender) {
         let _ = self.mailer.set(mailer);
@@ -163,12 +175,8 @@ impl Referral {
         self.assert_not_banned(referrer.as_str(), Some(ip)).await?;
         let status: Option<String> = sqlx::query_scalar("WITH other_users_invited AS (SELECT count(*) AS count FROM social.referral_progress WHERE referrer=$1 AND invited_user_ip=$3) INSERT INTO social.referral_progress(referrer,invited_user,invited_user_ip,status) SELECT $1,$2,$3,CASE WHEN count < $4 THEN 'pending' ELSE 'rejected_ip_match' END FROM other_users_invited ON CONFLICT(invited_user) DO NOTHING RETURNING status")
             .bind(referrer).bind(invited).bind(ip).bind(self.settings.max_ip_matches).fetch_optional(&self.pool).await.map_err(database_error)?;
-        match status.as_deref() {
-            Some("rejected_ip_match") => Err(CommError::bad_request(format!(
-                "Invited user has already reached the maximum number of {} referrals from the same IP: {ip}",
-                self.settings.max_ip_matches
-            ))),
-            Some(_) => Ok(()),
+        let status = match status {
+            Some(status) => status,
             None => {
                 let existing: String = sqlx::query_scalar(
                     "SELECT referrer FROM social.referral_progress WHERE invited_user=$1",
@@ -178,10 +186,41 @@ impl Referral {
                 .await
                 .map_err(database_error)?;
                 resolve_existing(&existing, referrer, invited)?;
-                Ok(())
+                return Ok(());
+            }
+        };
+        // Source queries recent rows after its committed INSERT, even if the
+        // Slack sender is unavailable. Query errors therefore retain the insert
+        // and reach the handler; notification errors are awaited and swallowed.
+        let recent: Vec<chrono::NaiveDateTime> = sqlx::query_scalar(
+            "SELECT created_at FROM social.referral_progress WHERE referrer=$1 ORDER BY created_at DESC LIMIT 2"
+        ).bind(referrer).fetch_all(&self.pool).await.map_err(database_error)?;
+        if let [newest, previous, ..] = recent.as_slice() {
+            let newest = newest.and_utc().timestamp_millis();
+            let previous = previous.and_utc().timestamp_millis();
+            if ((newest - previous) as f64) < self.settings.suspicious_window_ms {
+                self.slack
+                    .send(self.slack.timing(referrer.as_str(), newest, previous))
+                    .await;
             }
         }
+        if status == "rejected_ip_match" {
+            self.slack
+                .send(self.slack.ip(
+                    referrer.as_str(),
+                    invited.as_str(),
+                    ip,
+                    self.settings.max_ip_matches,
+                ))
+                .await;
+            return Err(CommError::bad_request(format!(
+                "Invited user has already reached the maximum number of {} referrals from the same IP: {ip}",
+                self.settings.max_ip_matches
+            )));
+        }
+        Ok(())
     }
+
     pub async fn signed_up(&self, invited: &Address) -> Result<(), CommError> {
         let progress: Option<(String,Option<String>,String)> = sqlx::query_as("SELECT referrer,invited_user_ip,status FROM social.referral_progress WHERE invited_user=$1").bind(invited).fetch_optional(&self.pool).await.map_err(database_error)?;
         let Some((referrer, ip, current)) = progress else {
@@ -293,6 +332,9 @@ impl Referral {
             let image = reward["image"].as_str().ok_or(CommError::Internal)?;
             sqlx::query("INSERT INTO social.referral_reward_images(referrer,reward_image_url,tier) VALUES($1,$2,$3)")
                 .bind(&referrer).bind(image).bind(total as i32).execute(&self.pool).await.map_err(database_error)?;
+        }
+        if total == TIERS_IRL_SWAG {
+            self.slack.send(self.slack.milestone(&referrer)).await;
         }
         Ok(())
     }

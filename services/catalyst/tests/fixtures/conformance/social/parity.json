@@ -2144,7 +2144,7 @@
       "id": "api_http:POST:/v1/referral-progress",
       "owner": "friends-settings-blocks-referrals",
       "status": "known_gap",
-      "result": "Source-reviewed schema/auth/IP priority, first-wins retries, direct/one-hop denylist and persisted rejected-IP responses; registration kill flag uses the shared DAPPS snapshot. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
+      "result": "Source-reviewed schema/auth/IP priority, first-wins retries, direct/one-hop denylist and persisted rejected-IP responses; registration kill flag uses the shared DAPPS snapshot. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy. Configured Slack sends timing/IP alerts after insertion and 100-invite alerts after grant/notification, awaiting and swallowing Slack failures; same-referrer retries emit no duplicate alerts.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/referral.rs",
@@ -2175,10 +2175,26 @@
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
           "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
           "scope": "Five executed source handlers with real PostgreSQL errors, replayed through isolated candidate SQLx HTTP routes; native client connection-failure wording remains unverified."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral_slack.rs",
+          "test": "referral_slack_payloads_and_forms_match_the_executed_source_sdk",
+          "scope": "Six actual source payload builders and installed Slack SDK produce development/production messages, form/auth fields and the default retry schedule with deterministic random input. Local loopback captures compare decoded form fields, preserving JSON block contents without requiring object property order."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral_slack.rs",
+          "test": "referral_slack_transport_matches_the_executed_sdk_retry_classifications",
+          "scope": "Eight actual SDK cases replay against a loopback HTTP/connection-drop stub: success, platform rejection, HTTP retry,429valid/missing Retry-After, transport retry,11-attempt exhaustion and redirects. Test retry waits are shortened; source default jitter formula is separately captured."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral_slack.rs",
+          "test": "referral_slack_failures_preserve_rejection_milestone_and_retry_side_effects",
+          "scope": "Real PostgreSQL attribution, rejected-IP insertion, duplicate no-op and100th grant survive an awaited Slack ok:false response; no external Slack request is sent."
         }
       ],
       "gaps": [
-        "Source suspicious-timing/IP-rejection/100-invite Slack alert payloads are not yet emitted."
+        "Slack preserves the source form fields and tested retry/error classification through the existing Outbound, whose8s connect/25s read deadlines and host guard differ from the source SDK with timeout0. Deployed Slack success and exhausted concurrent rate-limit ordering are unverified.",
+        "REFERRAL_MAX_IP_MATCHES and REFERRAL_MIN_LOGIN_DAYS still use integer configuration parsing rather than source parseFloat semantics; default integral configuration is the tested scope."
       ],
       "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. SDK tests use local stubs, so real AWS credentials,subscriptions,cutover state and delivery remain unverified."
     },
@@ -5616,7 +5632,7 @@
     {
       "id": "referral-lifecycle",
       "status": "known_gap",
-      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork and email have source-paired/local regressions and optional official SQS/SNS transport. Referral/privacy PostgreSQL handler error envelopes are now source-replayed. Slack alert payloads/delivery and fractional numeric settings remain under correction; stateful cutover is unverified.",
+      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific database errors and configured Slack effects have source-paired/local regressions and optional real SQS/SNS SDK transport. Slack retains the existing Outbound8s connect/25s read limits and host guard instead of the source SDK timeout0; nonintegral/prefix referral max-IP/min-login configuration still differs. Stateful deployed cutover remains unverified.",
       "operations": [
         "api_http:GET:/v1/referral-progress",
         "api_http:PATCH:/v1/referral-progress",
