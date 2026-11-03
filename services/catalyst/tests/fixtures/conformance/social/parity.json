@@ -72,57 +72,173 @@
     },
     {
       "id": "api_http:DELETE:/v1/communities/:id",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "community-http",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/communities.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/communities.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
+      "gaps": [
+        "community-moderator-feature-variants"
+      ],
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
       "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress/bans",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:DELETE:/v1/communities/:id/places/:placeId",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/places.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/places.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:DELETE:/v1/communities/:id/posts/:postId",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/posts.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/posts.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:DELETE:/v1/communities/:id/posts/:postId/like",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/posts.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/posts.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId",
@@ -238,75 +354,202 @@
     },
     {
       "id": "api_http:GET:/v1/communities",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "community-http",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/communities.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/communities.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
+      "gaps": [
+        "community-ranking-writer",
+        "community-voice-liveness"
+      ],
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
       "id": "api_http:GET:/v1/communities/:address/managed",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/communities.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/communities.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id/bans",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id/members",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id/places",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/places.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/places.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id/posts",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/posts.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/posts.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id/requests",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/requests.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/requests.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/request_lifecycle.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/community-voice-chats/active",
@@ -319,39 +562,104 @@
     },
     {
       "id": "api_http:GET:/v1/members/:address/communities",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/members/:address/invites",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/requests.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/requests.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/request_lifecycle.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/members/:address/requests",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/requests.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/requests.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/request_lifecycle.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/moderation/communities",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "community-http",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/admin.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/communities.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        }
+      ],
+      "gaps": [
+        "community-moderator-feature-variants"
+      ],
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
       "id": "api_http:GET:/v1/mutes",
@@ -488,57 +796,154 @@
     },
     {
       "id": "api_http:GET:/v2/communities",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "community-http",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/communities.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/communities.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
+      "gaps": [
+        "community-ranking-writer",
+        "community-voice-liveness"
+      ],
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
       "id": "api_http:GET:/v2/communities/:id",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/communities.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/communities.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v2/communities/:id/bans",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v2/communities/:id/members",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v2/communities/:id/posts",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/posts.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/posts.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v2/communities/:id/requests",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/requests.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/requests.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/request_lifecycle.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v2/friends",
@@ -590,12 +995,31 @@
     },
     {
       "id": "api_http:GET:/v2/members/:address/requests",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/requests.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/requests.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/request_lifecycle.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v2/users/:address/mutual-friends",
@@ -623,30 +1047,93 @@
     },
     {
       "id": "api_http:PATCH:/v1/communities/:id",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "community-http",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/communities.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/communities.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
+      "gaps": [
+        "community-moderator-feature-variants"
+      ],
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
       "id": "api_http:PATCH:/v1/communities/:id/members/:address",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:PATCH:/v1/communities/:id/requests/:requestId",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/requests.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/requests.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/request_lifecycle.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:PATCH:/v1/community-voice-chats/:communityId/speakers/:address",
@@ -749,66 +1236,205 @@
     },
     {
       "id": "api_http:POST:/v1/communities",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "community-http",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/communities.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/communities.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
+      "gaps": [
+        "community-ai-compliance-enabled"
+      ],
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
       "id": "api_http:POST:/v1/communities/:id/members",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/communities/:id/places",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/places.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/places.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/communities/:id/posts",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/posts.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/posts.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/communities/:id/posts/:postId/like",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/posts.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/posts.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/communities/:id/requests",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/requests.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/requests.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/request_lifecycle.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/upstream_rules.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "request_listings_show_pending_rows_of_live_communities_that_admit_the_wallet"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/community-voice-chats",
@@ -863,12 +1489,31 @@
     },
     {
       "id": "api_http:POST:/v1/members/:address/communities",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "community-http",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/members.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/members.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/mutes",
@@ -918,12 +1563,33 @@
     },
     {
       "id": "api_http:PUT:/v1/communities/:id",
-      "owner": "communities",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "community-http",
+      "status": "known_gap",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/communities.rs",
+          "scope": "Handler and domain branches compared with the pinned service source; source paths: src/controllers/routes/http.routes.ts, src/logic/community/communities.ts, src/adapters/communities-db.ts, src/controllers/handlers/http/schemas.ts."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
+          "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
+          "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        }
+      ],
+      "gaps": [
+        "community-ai-compliance-enabled"
+      ],
+      "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
       "id": "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address",
@@ -3576,6 +4242,81 @@
       ],
       "status": "unverified",
       "description": "Local friendship notification persistence reaches the existing local inbox/outbox. Existing external SNS consumers and migration/cutover delivery have not been inventoried or demonstrated by these tests."
+    },
+    {
+      "id": "cross-replica-social-events",
+      "status": "known_gap",
+      "description": "Social mutation events are process-local; delivery to consumers connected to another serve replica is not equivalent to upstream shared Redis pubsub.",
+      "operations": [
+        "json_stream:SUBSCRIBE:block_updates",
+        "json_stream:SUBSCRIBE:community_member_connectivity_updates",
+        "json_stream:SUBSCRIBE:community_voice_chat_updates",
+        "json_stream:SUBSCRIBE:friend_connectivity_updates",
+        "json_stream:SUBSCRIBE:friendship_updates",
+        "json_stream:SUBSCRIBE:private_voice_chat_updates",
+        "rpc_stream:RPC:subscribeToBlockUpdates",
+        "rpc_stream:RPC:subscribeToCommunityMemberConnectivityUpdates",
+        "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
+        "rpc_stream:RPC:subscribeToFriendConnectivityUpdates",
+        "rpc_stream:RPC:subscribeToFriendshipUpdates",
+        "rpc_stream:RPC:subscribeToPrivateVoiceChatUpdates"
+      ]
+    },
+    {
+      "id": "community-started-audience-lifetime",
+      "status": "known_gap",
+      "description": "Community STARTED audience metadata is process-local rather than shared with the upstream 24-hour refreshed lifetime; restart and replica behavior remain different.",
+      "operations": [
+        "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
+        "rpc_unary:RPC:demoteSpeakerInCommunityVoiceChat",
+        "rpc_unary:RPC:endCommunityVoiceChat",
+        "rpc_unary:RPC:joinCommunityVoiceChat",
+        "rpc_unary:RPC:kickPlayerFromCommunityVoiceChat",
+        "rpc_unary:RPC:muteSpeakerFromCommunityVoiceChat",
+        "rpc_unary:RPC:promoteSpeakerInCommunityVoiceChat",
+        "rpc_unary:RPC:rejectSpeakRequestInCommunityVoiceChat",
+        "rpc_unary:RPC:requestToSpeakInCommunityVoiceChat",
+        "rpc_unary:RPC:startCommunityVoiceChat"
+      ]
+    },
+    {
+      "id": "referral-lifecycle",
+      "status": "known_gap",
+      "description": "Referral registration is present, but source login-event finalization, rewards, artwork and legacy queue ingress have not yet been implemented and verified as a complete lifecycle.",
+      "operations": [
+        "api_http:GET:/v1/referral-progress",
+        "api_http:PATCH:/v1/referral-progress",
+        "api_http:POST:/v1/referral-email",
+        "api_http:POST:/v1/referral-progress"
+      ]
+    },
+    {
+      "id": "community-ranking-and-configured-moderation",
+      "status": "known_gap",
+      "description": "Lifetime ranking producers, enabled AI compliance and dynamic moderator feature variants remain under implementation; affected HTTP rows retain their own gaps.",
+      "operations": [
+        "api_http:DELETE:/v1/communities/:id",
+        "api_http:GET:/v1/communities",
+        "api_http:GET:/v1/moderation/communities",
+        "api_http:GET:/v2/communities",
+        "api_http:PATCH:/v1/communities/:id",
+        "api_http:POST:/v1/communities",
+        "api_http:PUT:/v1/communities/:id"
+      ]
+    },
+    {
+      "id": "shared-fixed-window-friendship-limit",
+      "status": "known_gap",
+      "description": "The current friendship limiter does not yet implement upstream shared fixed-window counters, per-actor/pair ordering and configuration edge behavior.",
+      "operations": [
+        "rpc_unary:RPC:upsertFriendship"
+      ]
+    },
+    {
+      "id": "cutover-with-existing-state",
+      "status": "unverified",
+      "description": "No nonempty migration snapshot, deployed provider/edge configuration, active LiveKit call continuity, running-client comparison or rollback rehearsal has been supplied or executed. These are replacement acceptance requirements, separate from local contract tests.",
+      "operations": []
     }
   ]
 }
