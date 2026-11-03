@@ -27,7 +27,9 @@
     "WKC_METRICS_RESET_AT_NIGHT=true is accepted but the social view does not reset; the global recorder is preserved for other domains.",
     "Node/V8/process default collectors are not fabricated by the Rust exporter. Their runtime-specific families are outside this declared-family inventory.",
     "The filtered shared recorder can include shared-family labels emitted by other domains; source-compatible per-family instrumentation and labels require review.",
-    "Families with no samples may be absent instead of the initialized zero series emitted by the source registry."
+    "The Social view renders all 44 source HELP/TYPE declarations and seeds only the 16 captured unlabelled counter/gauge zeros; the other 28 declarations have no invented initial samples. Registration and literal presence do not prove event or value equality.",
+    "Portable ordinary/guarded acceptance is observed after the Tokio sink accepts a frame, before flush. Native uWS backpressure/drop/drain/buffer observations remain unavailable; the success label does not establish native buffering equivalence.",
+    "Source logger event coverage and LOG_LEVEL filtering remain incomplete. Source authentication-race completion, stale subscriber reconciliation, and stream producer errors represented as ordinary Generator termination remain explicit event gaps."
   ],
   "metrics": [
     {
@@ -39,8 +41,20 @@
         "method"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 261,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "handler",
+            "method"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "http_requests_total",
@@ -51,8 +65,20 @@
         "method"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 260,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "handler",
+            "method"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "http_request_size_bytes",
@@ -63,8 +89,20 @@
         "method"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "line": 209,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "handler",
+            "method"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "wkc_logger_logs_total",
@@ -74,8 +112,23 @@
         "logger"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 265,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "debug",
+            "error",
+            "info",
+            "level",
+            "logger",
+            "warn"
+          ]
+        }
+      ],
+      "status": "literal_type_or_labels_differ"
     },
     {
       "name": "ws_active_connections_by_protocol",
@@ -87,7 +140,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 120,
+          "line": 121,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -96,7 +149,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 208,
+          "line": 224,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -128,7 +181,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/context.rs",
-          "line": 121,
+          "line": 137,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -159,7 +212,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 176,
+          "line": 182,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -217,40 +270,136 @@
       "type": "gauge",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 120,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 230,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 235,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_connections_rejected",
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 219,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 236,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_messages_received",
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/shared/src/rpc/ws.rs",
+          "line": 216,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/shared/src/rpc/ws.rs",
+          "line": 222,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 237,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "line": 129,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "line": 130,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_messages_sent",
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/shared/src/rpc/ws.rs",
+          "line": 463,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 238,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_errors",
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 239,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_close_codes",
@@ -259,16 +408,50 @@
         "code"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 132,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code"
+          ]
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "line": 75,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_transport_errors",
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
+          "line": 149,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 240,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_auth_errors",
@@ -277,24 +460,50 @@
         "type"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "line": 188,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "type"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_auth_race_condition_aborted",
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 241,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_idle_timeouts",
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 242,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_connection_duration_seconds",
@@ -313,8 +522,16 @@
         7200,
         14400
       ],
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 134,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "rpc_procedure_call_total",
@@ -324,8 +541,19 @@
         "procedure"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 331,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "procedure"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "rpc_procedure_call_duration_seconds",
@@ -344,8 +572,19 @@
         5,
         10
       ],
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 333,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "procedure"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "rpc_in_procedure_call_size_bytes",
@@ -364,8 +603,18 @@
         8192,
         16384
       ],
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 324,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "procedure"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "rpc_out_procedure_call_size_bytes",
@@ -385,8 +634,19 @@
         8192,
         16384
       ],
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 361,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "code",
+            "procedure"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "rpc_updates_sent_on_subscription",
@@ -395,8 +655,18 @@
         "event"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 382,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "event"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "stream_ws_messages_received",
@@ -457,7 +727,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "line": 109,
+          "line": 121,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -539,8 +809,16 @@
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 243,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "ws_backpressure_events",
@@ -559,8 +837,8 @@
       "source_buckets": null,
       "candidate": [
         {
-          "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 352,
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 244,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -588,7 +866,7 @@
       "candidate": [
         {
           "path": "services/catalyst/comms/src/metrics.rs",
-          "line": 89,
+          "line": 113,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -597,7 +875,16 @@
         },
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 196,
+          "line": 210,
+          "kind": "histogram",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "result"
+          ]
+        },
+        {
+          "path": "services/catalyst/shared/src/rpc/ws.rs",
+          "line": 464,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -615,7 +902,14 @@
       "candidate": [
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 185,
+          "line": 198,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 245,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -628,32 +922,78 @@
       "type": "gauge",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 309,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 246,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "subscribers_generators_count",
       "type": "gauge",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/context.rs",
+          "line": 310,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 247,
+          "kind": "gauge",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "subscribers_stale_cleaned",
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 248,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "subscribers_stale_connections_cleaned",
       "type": "counter",
       "source_labels": [],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 249,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "subscription_duplicates_total",
@@ -662,8 +1002,18 @@
         "event"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/mod.rs",
+          "line": 179,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "event"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "subscription_updates_dropped_total",
@@ -672,8 +1022,18 @@
         "event"
       ],
       "source_buckets": null,
-      "candidate": [],
-      "status": "missing_literal_instrumentation"
+      "candidate": [
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "line": 111,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": [
+            "event"
+          ]
+        }
+      ],
+      "status": "literal_shape_present_runtime_unverified"
     },
     {
       "name": "friendship_rate_limiter_unavailable",
@@ -691,6 +1051,13 @@
         {
           "path": "services/catalyst/social/src/rpc/limits.rs",
           "line": 151,
+          "kind": "counter",
+          "scope": "production_file_inline_test_possible",
+          "labels": []
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "line": 250,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []

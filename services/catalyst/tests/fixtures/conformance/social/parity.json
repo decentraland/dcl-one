@@ -3477,7 +3477,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -3522,7 +3522,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -3567,7 +3567,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -3641,7 +3641,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -3686,7 +3686,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -3731,7 +3731,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -3776,7 +3776,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -3831,7 +3831,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -3886,7 +3886,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -3970,7 +3970,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -4040,7 +4040,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -4095,7 +4095,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
-          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "test": "rpc_queue_metrics_match_source_latest_thousand_drop_observations",
           "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
         },
         {
@@ -5589,7 +5589,7 @@
       "id": "uws_http:GET:/metrics",
       "owner": "inventory-auxiliary",
       "status": "known_gap",
-      "result": "GET uses source WKC_METRICS_PUBLIC_PATH, empty/default path fallback and optional case-sensitive Bearer gate. Literal-space token parsing accepts the source extra-token case and rejects lowercase/double-space variants before rendering. The route has no CORS and reads a44-family filtered view of the existing process recorder; no new listener/recorder. The emitted message-size distribution now exports the source histogram TYPE, finite buckets, labels, cumulative counts and sum, paired with84 actual source-component observations and the real candidate exporter.",
+      "result": "GET uses source WKC_METRICS_PUBLIC_PATH, empty/default path fallback and optional case-sensitive Bearer gate. Literal-space token parsing accepts the source extra-token case and rejects lowercase/double-space variants before rendering. The route has no CORS and reads a44-family filtered view of the existing process recorder; no new listener/recorder. The emitted message-size distribution now exports the source histogram TYPE, finite buckets, labels, cumulative counts and sum, paired with84 actual source-component observations and the real candidate exporter. Application registration now preserves all44 HELP/TYPE declarations, exactly16 initial scalar zeros and28 metadata-only families. All nine histogram vectors and bounded HTTP/RPC/socket/subscriber event boundaries have actual-source comparisons; ordinary and guarded accepted frames share one observer without admission double-counting.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
@@ -5602,7 +5602,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/metrics.rs",
-          "test": "the_view_names_pinned_source_families_and_excludes_other_domains",
+          "test": "source_registration_has_exact_metadata_and_only_sixteen_initial_zeros",
           "scope": "Checks source declared-family set and exclusion of other domain names, including histogram sample suffixes."
         },
         {
@@ -5617,12 +5617,36 @@
         {
           "path": "services/catalyst/shared/src/rpc/ws.rs",
           "scope": "Production path review distinguishes ordinary sends from guarded RPC frames. Source native send-result/drain callbacks and candidate physical flush/byte-budget-release events have different measurement boundaries; neither existing literal sites nor this code review proves event-count parity."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "test": "source_registration_has_exact_metadata_and_only_sixteen_initial_zeros",
+          "scope": "Actual source registry metadata and initial samples; no invented labelled/histogram zeros."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/metrics.rs",
+          "test": "ordinary_social_api_metrics_match_actual_source_listener_boundaries",
+          "scope": "Nine real source HTTP listener cases,72route catalog and candidate router observations; preflight/early oversize remain outside instrumentation, actual native envelopes excluded by internal response marker."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/service/metrics_json.rs",
+          "test": "decoded_payload_json_matches_every_captured_source_type_and_variant",
+          "scope": "293 source-decoded variants across107 protocol types compare JSON sizes; source dependencies controlled."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/subscription_lifecycle.rs",
+          "test": "duplicate_rpc_streams_send_the_pinned_final_notice_and_source_metrics",
+          "scope": "Actual source wrapper/subscriber duplicate/drop/update observations pair local in-memory dRPC; no broker/kernel/deployed timing claim."
+        },
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json",
+          "scope": "Independently regenerated byte-exact through actual pinned source registry, wrappers, subscription components and loopback HTTP listener. Controlled wall-clock/provider inputs; no deployed/runtime identity claim."
         }
       ],
       "gaps": [
-        "WKC_METRICS_RESET_AT_NIGHT=true does not reset the social view; the shared global recorder is preserved.",
-        "The committed44-family inventory records literal names/type/labels and missing-site review candidates; entire production files are scanned, so inline-test sites are possible. Runtime event mapping,buckets,initialization and Node/V8 defaults remain outside that static evidence.",
-        "Source registration and event coverage still differ: the source component registers44 families and initializes16 unlabelled zero series; the candidate filter alone does not register those values. Dynamic-name review identifies three emitters beyond the14 literal names, not17 passing families;27 declared names have no identified production emitter in that review. Guarded RPC sends bypass ordinary send/size measurements, and byte-budget releases are not native drain callbacks. Runtime-specific Node/V8 collectors remain separate."
+        "WKC_METRICS_RESET_AT_NIGHT=true still does not rotate the Social view; the existing global lifetime recorder is retained. The ordinary source HTTP metrics listener also has an unimplemented reset schedule.",
+        "Node/V8 default collectors and native uWS buffer/drop/drain observations are different. Tokio Sink::start_send acceptance is observed before flush; it is not a native uWS send-result or buffer measurement.",
+        "Auth completion after disconnect, forwarding exceptions, subscriber stale reconciliation, source LOG_LEVEL filtering and producer failures represented as ordinary generator termination have unmatched or incomplete event boundaries. Declarations/initial zeros do not prove production emitters."
       ],
       "remaining_verification": "Provider-specific default collectors, night reset semantics, actual disconnected scrape, runtime label/event interpretation and arbitrary wildcard/custom-path collisions remain unverified. Global sample values across processes are not compared."
     },
@@ -7773,7 +7797,7 @@
         "api_http:PATCH:/v1/friendship-requests/:address"
       ],
       "status": "unverified",
-      "description": "Configured friendship and all twelve community SNS producers preserve source raw fields, keys and recipient policies through the existing official SDK publisher. Source/local stub tests cover 100-recipient pages/messages, ten-message requests, failure isolation, opt-out independence and HTTP background versus voice-awaited execution. Existing deployed topic subscriptions, downstream consumers, retry timing and migration/cutover delivery remain unverified."
+      "description": "Configured friendship and all twelve community SNS producers preserve source raw fields, keys and recipient policies through the existing official SDK publisher. Source/local stub tests cover 100-recipient pages/messages, ten-message requests, failure isolation, opt-out independence and HTTP background versus voice-awaited execution. Existing deployed topic subscriptions, downstream consumers, retry timing and migration/cutover delivery remain unverified. Candidate SNS scheduling now permits at most eight in-flight ten-entry requests per publish_batch invocation; source dispatches chunks without that concurrency bound. Result order, complete awaiting and failed-chunk isolation have real SDK/HTTP regressions."
     },
     {
       "id": "cross-replica-social-events",
@@ -7814,7 +7838,7 @@
     {
       "id": "referral-lifecycle",
       "status": "unverified",
-      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific SQL errors and configured Slack effects have source-paired/local regressions. Slack now uses a retained provider profile matching timeout0 and empty-token serialization. Sixteen executed numeric configurations cover source parser values, bigint rejection/overflow and login-day comparisons. Live providers, concurrent rate-limit ordering and stateful deployed cutover remain unverified.",
+      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork, email, handler-specific SQL errors and configured Slack effects have source-paired/local regressions. Slack now uses a retained provider profile matching timeout0 and empty-token serialization. Sixteen executed numeric configurations cover source parser values, bigint rejection/overflow and login-day comparisons. Live providers, concurrent rate-limit ordering and stateful deployed cutover remain unverified. Referrer/IP quotas and milestone counts are serialized in SQL; tier-image and tier-notification work retain independent fail-fast completion. Actual source partial-failure receipts and local concurrent PostgreSQL cases are compared; simultaneous decision ordering is strengthened beyond source.",
       "operations": [
         "api_http:GET:/v1/referral-progress",
         "api_http:PATCH:/v1/referral-progress",
@@ -8252,6 +8276,12 @@
         "json_stream:SUBSCRIBE:community_voice_chat_updates"
       ],
       "description": "One authoritative case-sensitive raw-key relation now preserves independent alias scopes, generation CAS and exact expirations; canonical UUID remains media/membership identity. Four independently regenerated source lifecycles and four PostgreSQL-backed regressions cover raw RPC/JSON/SNS identity, restarts, expiry, stale-generation interleavings and bounded polling; actual Comms presence checks active aliases. The composed schema3 release shares canonical table/index DDL and accepts shipped main-v2 without0020 or genuinely prepared v2 with its unchanged real receipt. It atomically transfers/verifies/retires legacy facts when present, creates replacement indexes before stamp3 and never fabricates a retired receipt. Owned-database tests cover both genuine origins, refusal, connection-loss rollback/retry, executor/indexes/bootstrap, all five retired objects and immutable ledgers. Original raw aliases cannot be recovered from older UUID-only facts; production Redis import/drain, room continuity and cutover/rollback are unverified. No architecture or deployment acceptance is inferred."
+    },
+    {
+      "id": "community-recipient-pagination-and-exclusions",
+      "status": "unverified",
+      "operations": [],
+      "description": "SNS recipient pagination orders role,joined_at,member_address, giving tied rows a deterministic final order beyond source. The generic helper excludes every address with ALL; the pinned source ANY predicate differs for2+ distinct exclusions. Current production post/voice strategies each provide one exclusion, so no current public operation with that multi-exclusion difference is asserted. A real PostgreSQL230-member tied-page case verifies complete unique delivery; concurrent membership changes across pages remain unverified."
     }
   ]
 }

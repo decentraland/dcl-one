@@ -741,3 +741,19 @@ index or pool. Anonymous members omit the aliases and relationship read, and V2
 returns only the numeric status. The pinned source's complete response bodies
 are compared for accepted, sent/received requests, absent friendship and empty
 history, with V2 and anonymous controls; no performance change was measured.
+
+Referral attribution serializes quota decisions with a transaction-scoped
+referrer/IP advisory key; count and insertion share that transaction. Finalizing
+a referral serializes its referrer and counts the milestone before committing
+the grant. External Slack, SNS and reward requests occur after commit. A failed
+notification or reward request retains the committed tier as the pinned source
+does; no automatic retry receipt or outbox is added. Tier image persistence and
+its notification start independently, so either may finish after the other has
+already failed. SNS publishing admits at most eight ten-entry requests per
+invocation; it awaits every admitted delivery and retains input result order.
+
+Community SNS recipient pages order role, join time and member address. This
+makes tied pages deterministic; live membership changes across pages do not have
+a shared snapshot. The generic helper excludes every supplied address. The
+pinned source's multiple-exclusion predicate differs; current post and voice
+producers each supply a single excluded address.
