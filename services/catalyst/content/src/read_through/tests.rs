@@ -226,7 +226,12 @@ impl Node {
         attach: bool,
         entity_types: Option<&[&str]>,
     ) -> Option<Self> {
-        Self::with_sources(tag, fake, wait, attach, entity_types, Vec::new()).await
+        Self::with_sources(tag, fake, wait, attach, entity_types, Vec::new(), false).await
+    }
+
+    /// As [`Self::new`], with the content validator judging what is copied.
+    async fn validated(tag: &str, fake: &Fake, wait: Duration, attach: bool) -> Option<Self> {
+        Self::with_sources(tag, fake, wait, attach, None, Vec::new(), true).await
     }
 
     async fn with_sources(
@@ -236,9 +241,21 @@ impl Node {
         attach: bool,
         entity_types: Option<&[&str]>,
         file_sources: Vec<String>,
+        validated: bool,
     ) -> Option<Self> {
         let pool = test_pool(8).await?;
         let (storage, tmp) = temp_storage(tag).await;
+        let validation = if validated {
+            SyncValidation::Content(Arc::new(crate::validator::Sources::new(
+                pool.clone(),
+                storage.clone(),
+                crate::http::Outbound::for_tests(),
+                None,
+                crate::validator::Settings::default(),
+            )))
+        } else {
+            SyncValidation::AuthChainOnly
+        };
         let state = Arc::new(ContentState::new(
             pool.clone(),
             Settings::for_tests(),
@@ -251,6 +268,7 @@ impl Node {
             vec![fake.source.clone()],
             entity_types.map(|types| types.iter().map(|t| t.to_string()).collect()),
             Fills::with_negative_ttl(4, wait, TEST_NEGATIVE_TTL),
+            validation,
         )
         .with_file_sources(file_sources));
         if attach {
@@ -480,15 +498,7 @@ async fn an_entity_whose_signature_does_not_verify_is_refused_and_nothing_is_sto
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn an_entity_the_content_validator_refuses_is_not_copied_and_nothing_is_stored() {
     let fake = start_fake().await;
-    require_test_db!(Some(node) = Node::new("invalid", &fake, HANG_GUARD, true).await);
-    node.read_through
-        .attach_validator(Arc::new(crate::validator::Sources::new(
-            node.pool.clone(),
-            node.storage.clone(),
-            crate::http::Outbound::for_tests(),
-            None,
-            crate::validator::Settings::default(),
-        )));
+    require_test_db!(Some(node) = Node::validated("invalid", &fake, HANG_GUARD, true).await);
     // Correctly signed, but a wearable with no thumbnail on an off-chain pointer.
     let fx = Fixture::new("wearable", &pointer(), now_ms());
     fake.publish(&fx, &signed_chain(&fx.id).await);
@@ -557,7 +567,8 @@ async fn a_file_the_peers_lack_is_read_from_a_file_source_which_is_never_asked_f
             HANG_GUARD,
             true,
             None,
-            vec![worlds.source.clone()]
+            vec![worlds.source.clone()],
+            false
         )
         .await
     );
@@ -823,6 +834,13 @@ async fn read_through_is_off_by_default_and_needs_a_source() {
             pool.clone(),
             storage.clone(),
             reqwest::Client::new(),
+            Arc::new(crate::validator::Sources::new(
+                pool.clone(),
+                storage.clone(),
+                crate::http::Outbound::for_tests(),
+                None,
+                crate::validator::Settings::default(),
+            )),
         )
     };
 

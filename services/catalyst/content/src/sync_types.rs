@@ -59,6 +59,11 @@ pub struct SyncDeployment {
 pub enum FailureReason {
     DeploymentError,
     NoEntity,
+    /// The validator could not reach a verdict: retried with backoff, never counted against
+    /// the retry cap, never given up on.
+    ValidationUndecided,
+    /// The validator refused the entity: recorded, never retried.
+    Rejected,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -117,6 +122,17 @@ pub enum SyncError {
 
     #[error("{0}")]
     Other(String),
+}
+
+impl SyncError {
+    /// The reason a failed deployment is recorded under.
+    pub fn failure_reason(&self) -> FailureReason {
+        match self {
+            SyncError::ValidationUndecided(_) => FailureReason::ValidationUndecided,
+            SyncError::DeploymentRejected(_) => FailureReason::Rejected,
+            _ => FailureReason::DeploymentError,
+        }
+    }
 }
 
 impl From<crate::storage::StorageError> for SyncError {

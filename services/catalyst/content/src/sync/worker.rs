@@ -26,8 +26,9 @@ use crate::sync::{
     RetryFailedDeployments, SyncOrchestrator, SyncOrchestratorConfig, SyncState, SyncStatus,
     names_a_source, parse_entity_types, parse_sync_sources,
 };
-use crate::sync_deployer::{LiveFailedDeploymentsStore, LiveSyncDeployer, SyncMemoryLimits};
-use crate::validator::Sources;
+use crate::sync_deployer::{
+    LiveFailedDeploymentsStore, LiveSyncDeployer, SyncMemoryLimits, SyncValidation,
+};
 
 /// The memory limits `SyncSettings::from_config` validated, read back by [`start`]. They ride
 /// beside `SyncSettings` rather than in it: the integration tests build the settings by
@@ -58,8 +59,10 @@ pub fn memory_limits_from_config(config: &Config) -> anyhow::Result<SyncMemoryLi
 
 /// The peer-sync configuration after validation: peers parsed and checked
 /// against this node's own URLs, the entity-type subset resolved. Contract-wallet
-/// links in synced chains are asked of the validator's EIP-1654 RPC; without
-/// `ETH_RPC_URL` such an entity stays in the retry queue.
+/// links in synced chains are asked of the validator's EIP-1654 RPC at the
+/// entity's block; without `ETH_RPC_URL`, or with an RPC that lacks that block's
+/// state, the entity is recorded as undecided and retried with backoff, without
+/// counting against `MAX_FAILED_DEPLOYMENT_RETRIES` and without being given up on.
 #[derive(Debug, Clone)]
 pub struct SyncSettings {
     pub peers: Vec<String>,
@@ -203,7 +206,7 @@ pub async fn start(
     storage: Arc<Storage>,
     status: Arc<SyncStatus>,
     client: reqwest::Client,
-    validator: Option<Arc<Sources>>,
+    validation: SyncValidation,
     jobs: &Arc<Jobs>,
 ) -> anyhow::Result<SyncHandles> {
     let control = SyncControl::default();
@@ -211,7 +214,7 @@ pub async fn start(
         settings: settings.clone(),
         pool,
         storage,
-        validator,
+        validation,
         status,
         client,
         control: control.clone(),
@@ -236,8 +239,8 @@ struct Leader {
     settings: SyncSettings,
     pool: PgPool,
     storage: Arc<Storage>,
-    /// The content validator synced and retried entities pass (`None`: the auth chain only).
-    validator: Option<Arc<Sources>>,
+    /// How synced and retried entities are judged.
+    validation: SyncValidation,
     status: Arc<SyncStatus>,
     client: reqwest::Client,
     control: SyncControl,
@@ -257,10 +260,8 @@ impl Leader {
             self.pool.clone(),
             settings.flush_concurrency,
             limits,
+            self.validation.clone(),
         ));
-        if let Some(validator) = &self.validator {
-            deployer.attach_validator(validator.clone());
-        }
         deployer.spawn_flush_ticker(&self.jobs, &ctx);
         tracing::info!(
             inflight_bytes_max = limits.inflight_bytes_max,

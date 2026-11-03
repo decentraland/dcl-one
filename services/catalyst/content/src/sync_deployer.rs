@@ -14,12 +14,11 @@
 //! source unset or failing, no EIP-1654 validator, an RPC without that block's
 //! state) as
 //! [`SyncError::ValidationUndecided`]. The callers record both in
-//! `content.failed_deployments`, where the retry worker re-attempts them with
-//! backoff. A deployer without the validator attached checks the auth chain
-//! only.
+//! `content.failed_deployments`: the retry worker re-attempts an undecided
+//! entity with backoff, outside the retry cap, and never retries a refusal.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use serde_json::Value;
 use sqlx::PgPool;
@@ -31,7 +30,7 @@ use super::sync_types::{
     AuthChain, DeploymentContext, FailedDeployment, FailureReason, SyncError, Timestamp,
 };
 use super::write_deployer::lock_deployment_pointers;
-use crate::auth::verify::{ChainVerdict, verify_peer_auth_chain};
+use crate::auth::verify::ChainVerdict;
 use crate::validator::{Sources, SyncedContent, ValidationError, validate_synced};
 
 mod scene_parcels;
@@ -100,15 +99,23 @@ fn reason_label(reason: &FailureReason) -> &'static str {
     match reason {
         FailureReason::DeploymentError => "Deployment error",
         FailureReason::NoEntity => "No entity",
+        FailureReason::ValidationUndecided => VALIDATION_UNDECIDED,
+        FailureReason::Rejected => DEPLOYMENT_REJECTED,
     }
 }
 
 fn reason_from_label(label: &str) -> FailureReason {
     match label {
         "No entity" => FailureReason::NoEntity,
+        VALIDATION_UNDECIDED => FailureReason::ValidationUndecided,
+        DEPLOYMENT_REJECTED => FailureReason::Rejected,
         _ => FailureReason::DeploymentError,
     }
 }
+
+/// The `reason` labels the retry worker branches on (the column is free text).
+pub const VALIDATION_UNDECIDED: &str = "Validation undecided";
+pub const DEPLOYMENT_REJECTED: &str = "Deployment rejected";
 
 fn parse_entity_for_deploy(
     entity_data: &[u8],
@@ -188,15 +195,25 @@ fn parse_entity_for_deploy(
     })
 }
 
-/// The auth-chain check of a deployer without the validator attached (the tests build it so):
-/// ECDSA links recovered, ephemeral expiry against the entity timestamp, contract-wallet links
-/// and expirations no known date shape parses kept as the peer's verdict.
+/// How a [`LiveSyncDeployer`] judges an entity before it buffers it.
+#[derive(Clone)]
+pub enum SyncValidation {
+    /// The content validator the local write path runs, in its synced form.
+    Content(Arc<Sources>),
+    /// The auth chain only: ECDSA links recovered, ephemeral expiry against the entity
+    /// timestamp, contract-wallet links and unparsed expirations kept as the peer's verdict.
+    /// For tests whose fixtures are not valid entities.
+    #[cfg(any(test, feature = "test-support"))]
+    AuthChainOnly,
+}
+
+#[cfg(any(test, feature = "test-support"))]
 async fn verify_entity_auth_chain(
     entity_id: &str,
     auth_chain: &AuthChain,
     entity_timestamp_ms: i64,
 ) -> Result<ChainVerdict, SyncError> {
-    verify_peer_auth_chain(auth_chain, entity_id, entity_timestamp_ms)
+    crate::auth::verify::verify_peer_auth_chain(auth_chain, entity_id, entity_timestamp_ms)
         .await
         .map_err(|e| {
             SyncError::DeploymentRejected(format!(
@@ -270,8 +287,8 @@ pub struct LiveSyncDeployer {
     backlog: Arc<Semaphore>,
     flush_backlog_max: usize,
     inflight_bytes: Arc<ByteBudget>,
-    /// The content validator every entity passes before it is buffered; set once by `serve`.
-    validator: Arc<OnceLock<Arc<Sources>>>,
+    /// How every entity is judged before it is buffered.
+    validation: SyncValidation,
 }
 
 fn spawn_flush(
@@ -341,11 +358,23 @@ fn spawn_flush(
 impl LiveSyncDeployer {
     /// `flush_concurrency` bounds concurrent batch flushes ([`DEFAULT_FLUSH_CONCURRENCY`]);
     /// the memory limits are the defaults.
-    pub fn new(pool: PgPool, flush_concurrency: usize) -> Self {
-        Self::with_limits(pool, flush_concurrency, SyncMemoryLimits::default())
+    pub fn new(pool: PgPool, flush_concurrency: usize, validation: SyncValidation) -> Self {
+        Self::with_limits(
+            pool,
+            flush_concurrency,
+            SyncMemoryLimits::default(),
+            validation,
+        )
     }
 
-    pub fn with_limits(pool: PgPool, flush_concurrency: usize, limits: SyncMemoryLimits) -> Self {
+    /// `validation` is how every entity is judged before it is buffered (in `serve`, the
+    /// content validator of the local write path, so its caches are shared).
+    pub fn with_limits(
+        pool: PgPool,
+        flush_concurrency: usize,
+        limits: SyncMemoryLimits,
+        validation: SyncValidation,
+    ) -> Self {
         let flush_backlog_max = limits.flush_backlog_max.max(1);
         Self {
             pool,
@@ -358,14 +387,8 @@ impl LiveSyncDeployer {
             backlog: Arc::new(Semaphore::new(flush_backlog_max)),
             flush_backlog_max,
             inflight_bytes: Arc::new(ByteBudget::new(limits.inflight_bytes_max)),
-            validator: Arc::new(OnceLock::new()),
+            validation,
         }
-    }
-
-    /// Attaches the content validator (the one the local write path uses, so its caches are
-    /// shared). Every clone of this deployer sees it; a second attach is ignored.
-    pub fn attach_validator(&self, sources: Arc<Sources>) {
-        let _ = self.validator.set(sources);
     }
 
     /// What [`Self::deploy_entity`] checks before it buffers, without buffering. `Fetched` once
@@ -378,11 +401,14 @@ impl LiveSyncDeployer {
         auth_chain: &AuthChain,
         content: SyncedContent,
     ) -> Result<ChainVerdict, SyncError> {
-        match self.validator.get() {
-            Some(sources) => validate_synced(sources, entity_data, entity_id, auth_chain, content)
-                .await
-                .map_err(|errors| validation_failure(entity_id, errors)),
-            None => {
+        match &self.validation {
+            SyncValidation::Content(sources) => {
+                validate_synced(sources, entity_data, entity_id, auth_chain, content)
+                    .await
+                    .map_err(|errors| validation_failure(entity_id, errors))
+            }
+            #[cfg(any(test, feature = "test-support"))]
+            SyncValidation::AuthChainOnly => {
                 let parsed = parse_entity_for_deploy(entity_data, entity_id, auth_chain)?;
                 verify_entity_auth_chain(entity_id, auth_chain, parsed.entity_timestamp as i64)
                     .await
@@ -918,6 +944,20 @@ macro_rules! failed_columns {
     };
 }
 
+/// A record the worker retries: never a refusal, and under the cap unless it is undecided.
+macro_rules! retryable {
+    () => {
+        "(retry_count < $2 OR reason = 'Validation undecided') AND reason <> 'Deployment rejected'"
+    };
+}
+
+/// A record the cap may evict: neither undecided nor a recorded refusal.
+macro_rules! evictable {
+    () => {
+        "reason NOT IN ('Validation undecided', 'Deployment rejected')"
+    };
+}
+
 /// A record the worker may act on: its auth chain is a non-empty JSON array. The CASE keeps
 /// `json_array_length` off any non-array value, whatever order the planner evaluates the quals in.
 macro_rules! has_auth_chain {
@@ -1041,7 +1081,8 @@ impl LiveFailedDeploymentsStore {
         Ok(rows.into_iter().map(FailedDeployment::from).collect())
     }
 
-    /// The next `limit` records that are due at `now_ms` and still under the retry cap, in the
+    /// The next `limit` records that are due at `now_ms` and still under the retry cap (an
+    /// undecided record always is; a refusal never is due), in the
     /// due order `(next_retry_at, entity_id)`, continuing after `after` when the caller is paging
     /// through one cycle's due set. Records whose auth chain is an empty array are left out in
     /// SQL: they can never be retried, so they must not take a slot of the batch cycle after
@@ -1057,7 +1098,9 @@ impl LiveFailedDeploymentsStore {
             "SELECT ",
             failed_columns!(),
             " FROM content.failed_deployments
-             WHERE next_retry_at <= $1 AND retry_count < $2 AND ",
+             WHERE next_retry_at <= $1 AND ",
+            retryable!(),
+            " AND ",
             has_auth_chain!(),
             " ORDER BY failed_deployments.next_retry_at, failed_deployments.entity_id
              LIMIT $3"
@@ -1066,7 +1109,9 @@ impl LiveFailedDeploymentsStore {
             "SELECT ",
             failed_columns!(),
             " FROM content.failed_deployments
-             WHERE next_retry_at <= $1 AND retry_count < $2 AND ",
+             WHERE next_retry_at <= $1 AND ",
+            retryable!(),
+            " AND ",
             has_auth_chain!(),
             " AND (next_retry_at, entity_id) > ($4, $5)
              ORDER BY failed_deployments.next_retry_at, failed_deployments.entity_id
@@ -1098,7 +1143,7 @@ impl LiveFailedDeploymentsStore {
     }
 
     /// Drops up to `limit` records that are due at `now_ms` and at or over the retry cap, oldest
-    /// deadline first, answering which ones went. A record at the cap is shed once its deadline
+    /// deadline first, answering which ones went; undecided records and refusals stay. A record at the cap is shed once its deadline
     /// passes, so the give-up walks the same due prefix of `failed_deployments_due_idx` as
     /// [`Self::select_due`] instead of scanning the whole table for the cap. Records without an
     /// auth chain are never evicted here (nor retried); the TTL prune takes them. The outer
@@ -1115,10 +1160,14 @@ impl LiveFailedDeploymentsStore {
              WHERE entity_id IN (
                  SELECT entity_id FROM content.failed_deployments
                  WHERE next_retry_at <= $1 AND retry_count >= $2 AND ",
+            evictable!(),
+            " AND ",
             has_auth_chain!(),
             "    ORDER BY next_retry_at, entity_id
                  LIMIT $3)
-               AND retry_count >= $2
+               AND retry_count >= $2 AND ",
+            evictable!(),
+            "
              RETURNING entity_id, entity_type, retry_count"
         ))
         .bind(naive_utc(now_ms))
@@ -1165,7 +1214,11 @@ impl LiveFailedDeploymentsStore {
         let mut removed = Vec::new();
         for chunk in entity_ids.chunks(EXHAUSTED_DELETE_BATCH_SIZE) {
             let rows: Vec<(String,)> = sqlx::query_as(
-                "DELETE FROM content.failed_deployments WHERE entity_id = ANY($1::text[]) AND retry_count >= $2 RETURNING entity_id",
+                concat!(
+                    "DELETE FROM content.failed_deployments WHERE entity_id = ANY($1::text[]) AND retry_count >= $2 AND ",
+                    evictable!(),
+                    " RETURNING entity_id"
+                ),
             )
             .bind(chunk)
             .bind(min_retry_count as i32)

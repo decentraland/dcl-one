@@ -308,6 +308,39 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     .collect();
     let local: Vec<&str> = local_urls.iter().map(String::as_str).collect();
 
+    // ONE EIP-1654 validator (contract-wallet signatures): explore, the
+    // social routes and the social socket share it.
+    let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
+        .content
+        .eth_rpc_url()?
+        .map(|url| crate::auth::cached_rpc_validator(url, http_client.raw().clone()));
+
+    // The content validator of the local write path (src/content/validator):
+    // the old catalyrst-validator rules over the ONE pool (the escrow
+    // overlay), store and client, the shared EIP-1654 validator and the
+    // chain access checks over ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
+    let content_validator = Arc::new(content::validator::Sources::new(
+        pool.clone(),
+        storage.clone(),
+        http_client.clone(),
+        eip1654.clone(),
+        content::validator::Settings::parse(
+            config.validator.ignore_blockchain_access_checks,
+            config.writes.content_writes_enabled,
+            config.validator.additional_decentraland_address.as_deref(),
+            &config.node.eth_network,
+            config.content.eth_rpc_url()?,
+            config.economy.rpc_endpoint_polygon.as_deref(),
+        )
+        .context("content validator configuration")?,
+    ));
+    if config.writes.content_writes_enabled && !config.validator.ignore_blockchain_access_checks {
+        content_validator
+            .verify_chain_ids()
+            .await
+            .context("deploy access check RPCs")?;
+    }
+
     // READ_THROUGH_ENABLED: a local miss (entities, content files, profiles) is
     // filled from SYNC_SOURCE, verified and stored as a synced deployment; a
     // world not held is mirrored on first read when the worlds mirror is on.
@@ -317,6 +350,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         pool.clone(),
         storage.clone(),
         http_client.raw().clone(),
+        content_validator.clone(),
     )?
     .map(Arc::new);
     if let Some(read_through) = &read_through {
@@ -388,12 +422,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
             .unwrap_or("main")
             .to_string(),
     };
-    // ONE EIP-1654 validator (contract-wallet signatures): explore, the
-    // social routes and the social socket share it.
-    let eip1654: Option<Arc<dyn crate::auth::eip1654::Eip1654Validator>> = config
-        .content
-        .eth_rpc_url()?
-        .map(|url| crate::auth::cached_rpc_validator(url, http_client.raw().clone()));
     let explore = Arc::new(
         explore::ExploreState::new(pool.clone(), explore_settings, eip1654.clone())
             .with_storage(storage.clone()),
@@ -517,36 +545,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         Some(market.index.clone()),
     ));
     explore.places.set_land_authz(land.clone());
-
-    // The content validator of the local write path (src/content/validator):
-    // the old catalyrst-validator rules over the ONE pool (the escrow
-    // overlay), store and client, the shared EIP-1654 validator and the
-    // chain access checks over ETH_RPC_URL and RPC_ENDPOINT_POLYGON.
-    let content_validator = Arc::new(content::validator::Sources::new(
-        pool.clone(),
-        storage.clone(),
-        http_client.clone(),
-        eip1654.clone(),
-        content::validator::Settings::parse(
-            config.validator.ignore_blockchain_access_checks,
-            config.writes.content_writes_enabled,
-            config.validator.additional_decentraland_address.as_deref(),
-            &config.node.eth_network,
-            config.content.eth_rpc_url()?,
-            config.economy.rpc_endpoint_polygon.as_deref(),
-        )
-        .context("content validator configuration")?,
-    ));
-    if config.writes.content_writes_enabled && !config.validator.ignore_blockchain_access_checks {
-        content_validator
-            .verify_chain_ids()
-            .await
-            .context("deploy access check RPCs")?;
-    }
-    // Entities copied from peers pass the same validator (sync attaches it below).
-    if let Some(read_through) = &read_through {
-        read_through.attach_validator(content_validator.clone());
-    }
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool
@@ -1044,7 +1042,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
                 storage.clone(),
                 sync_status,
                 http_client.raw().clone(),
-                Some(content_validator.clone()),
+                content::sync_deployer::SyncValidation::Content(content_validator.clone()),
                 &jobs,
             )
             .await

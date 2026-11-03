@@ -50,6 +50,8 @@ ts = ["catalyst-shared/ts", "catalyst-config/ts", "catalyst-storage/ts", "cataly
 test-support = ["catalyst-shared/test-support", "catalyst-config/test-support", "catalyst-storage/test-support", "catalyst-chain-index/test-support", "catalyst-land-authz/test-support"]
 
 [dev-dependencies]
+# Its own test-support items for the integration tests under tests/.
+catalyst-content = { path = ".", features = ["test-support"] }
 catalyst-shared = { path = "../shared", features = ["test-support"] }
 catalyst-config = { path = "../config", features = ["test-support"] }
 catalyst-storage = { path = "../storage", features = ["test-support"] }

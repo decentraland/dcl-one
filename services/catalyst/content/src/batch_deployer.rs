@@ -18,7 +18,7 @@ use super::sync_deployer::{
     LiveFailedDeploymentsStore, LiveSyncDeployer, deployed_entity_ids, is_entity_deployed,
 };
 use super::sync_types::{
-    DeploymentContext, FailedDeployment, FailureReason, SyncDeployment, SyncError, Timestamp,
+    DeploymentContext, FailedDeployment, SyncDeployment, SyncError, Timestamp,
 };
 use super::wire_types::TimeRange;
 use crate::storage::Storage;
@@ -374,7 +374,7 @@ impl BatchDeployer {
                         .report_failure(FailedDeployment {
                             entity_type: entity.entity_type.clone(),
                             entity_id: entity.entity_id.clone(),
-                            reason: FailureReason::DeploymentError,
+                            reason: e.failure_reason(),
                             auth_chain: entity.auth_chain.clone(),
                             error_description: e.to_string(),
                             failure_timestamp: chrono::Utc::now().timestamp_millis(),
@@ -520,7 +520,11 @@ mod tests {
         let entity_id = hash_bytes_v1(&body);
         let (base, server) = spawn_content_server(body, None).await;
         let (storage, tmp) = temp_storage("batch").await;
-        let deployer = Arc::new(LiveSyncDeployer::new(pool.clone(), 2));
+        let deployer = Arc::new(LiveSyncDeployer::new(
+            pool.clone(),
+            2,
+            crate::sync_deployer::SyncValidation::AuthChainOnly,
+        ));
         let batch = BatchDeployer::new(
             BatchDeployerConfig {
                 ignored_types: HashSet::from(["outfits".to_string()]),
@@ -580,7 +584,7 @@ mod tests {
         };
         let failed = recorded().await;
         assert_eq!(failed.len(), 1);
-        assert_eq!(failed[0].0, "Deployment error");
+        assert_eq!(failed[0].0, "Deployment rejected");
         assert!(
             failed[0].1.contains("auth chain verification failed"),
             "{}",
@@ -738,14 +742,19 @@ mod tests {
             .unwrap();
         let (base, server) = spawn_content_server(body, None).await;
         let (storage, tmp) = temp_storage("validated").await;
-        let deployer = Arc::new(LiveSyncDeployer::new(pool.clone(), 2));
-        deployer.attach_validator(Arc::new(crate::validator::Sources::new(
+        let deployer = Arc::new(LiveSyncDeployer::new(
             pool.clone(),
-            storage.clone(),
-            crate::http::Outbound::for_tests(),
-            eip1654,
-            settings,
-        )));
+            2,
+            crate::sync_deployer::SyncValidation::Content(Arc::new(
+                crate::validator::Sources::new(
+                    pool.clone(),
+                    storage.clone(),
+                    crate::http::Outbound::for_tests(),
+                    eip1654,
+                    settings,
+                ),
+            )),
+        ));
         let batch = BatchDeployer::new(
             BatchDeployerConfig::default(),
             reqwest::Client::new(),
@@ -827,6 +836,7 @@ mod tests {
         };
         assert!(!outcome.deployed);
         assert_eq!(outcome.active, None);
+        assert!(!outcome.due, "a refusal is never retried");
         let (retry_count, description) = outcome.failure.expect("recorded as failed");
         assert_eq!(retry_count, 0);
         assert!(

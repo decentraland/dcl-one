@@ -13,7 +13,7 @@ use tokio::sync::Semaphore;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, error, info, warn};
 
-use super::{DeploymentContext, FailedDeployment, SyncError};
+use super::{DeploymentContext, FailedDeployment, FailureReason, SyncError};
 use crate::deploy_remote_entity::{ContentSource, RemoteDeployment, deploy_entity_streaming};
 use crate::storage::Storage;
 use crate::sync_deployer::{DueCursor, LiveFailedDeploymentsStore, LiveSyncDeployer};
@@ -74,6 +74,19 @@ fn next_attempt(failure: &FailedDeployment) -> (u32, u64) {
     (failure.retry_count + 1, backoff_ms(failure.retry_count))
 }
 
+/// An undecided attempt spends nothing against the cap; its wait doubles from the last one.
+fn undecided_attempt(failure: &FailedDeployment) -> (u32, u64) {
+    let last_wait = failure.next_retry_at - failure.failure_timestamp;
+    let wait = if last_wait < BASE_RETRY_INTERVAL_MS as i64 {
+        BASE_RETRY_INTERVAL_MS
+    } else {
+        (last_wait as u64)
+            .saturating_mul(2)
+            .min(MAX_RETRY_INTERVAL_MS)
+    };
+    (failure.retry_count, wait)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RetryDisposition {
     Due,
@@ -86,7 +99,7 @@ fn classify(failure: &FailedDeployment, max_retries: u32, now_ms: i64) -> RetryD
     if failure.auth_chain.is_empty() {
         return RetryDisposition::NoAuthChain;
     }
-    if failure.retry_count >= max_retries {
+    if failure.retry_count >= max_retries && failure.reason != FailureReason::ValidationUndecided {
         return RetryDisposition::Exhausted;
     }
     let remaining_ms = failure.next_retry_at - now_ms;
@@ -268,11 +281,24 @@ impl RetryFailedDeployments {
                             }
                             Err(e) => {
                                 debug!(entity_id = %failure.entity_id, error = %e, "Retry still failing");
+                                let reason = e.failure_reason();
+                                let (retry_count, wait_ms) = match reason {
+                                    FailureReason::ValidationUndecided => undecided_attempt(failure),
+                                    _ => attempt,
+                                };
+                                let now_ms = chrono::Utc::now().timestamp_millis();
                                 let deferred = FailedDeployment {
+                                    // An undecided record's time is its last attempt, so its next
+                                    // wait doubles from the one it just served.
+                                    failure_timestamp: if reason == FailureReason::ValidationUndecided {
+                                        now_ms
+                                    } else {
+                                        failure.failure_timestamp
+                                    },
+                                    reason,
                                     error_description: e.to_string(),
-                                    retry_count: attempt.0,
-                                    next_retry_at: chrono::Utc::now().timestamp_millis()
-                                        + attempt.1 as i64,
+                                    retry_count,
+                                    next_retry_at: now_ms + wait_ms as i64,
                                     ..failure.clone()
                                 };
                                 if let Err(report_err) = self.failed_store.report_failure(deferred).await {
@@ -365,13 +391,15 @@ pub struct RetryStats {
 }
 
 /// One pass of the old daily prune: records whose first failure is older than `ttl_days`.
+/// Undecided records stay: they wait for a verdict, not for a cap.
 pub async fn prune_failed_deployments(
     pool: &sqlx::PgPool,
     ttl_days: i64,
 ) -> Result<u64, SyncError> {
     let result = sqlx::query(
         "DELETE FROM content.failed_deployments
-         WHERE failure_time < timezone('UTC', now()) - make_interval(days => $1)",
+         WHERE failure_time < timezone('UTC', now()) - make_interval(days => $1)
+           AND reason <> 'Validation undecided'",
     )
     .bind(ttl_days as i32)
     .execute(pool)
@@ -414,7 +442,7 @@ pub async fn run_prune_loop(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::sync::{AuthLink, AuthLinkType, FailureReason};
+    use crate::sync::{AuthLink, AuthLinkType};
 
     fn failure(retry_count: u32, next_retry_at: i64) -> FailedDeployment {
         FailedDeployment {

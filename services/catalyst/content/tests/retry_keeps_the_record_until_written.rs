@@ -73,7 +73,11 @@ async fn a_retried_deployment_keeps_its_record_until_its_write_commits() {
         uuid::Uuid::new_v4().simple()
     ));
     let storage = catalyst_storage::Storage::from_config(&tmp).await.unwrap();
-    let deployer = Arc::new(LiveSyncDeployer::new(pool.clone(), 1));
+    let deployer = Arc::new(LiveSyncDeployer::new(
+        pool.clone(),
+        1,
+        catalyst_content::sync_deployer::SyncValidation::AuthChainOnly,
+    ));
     let retry = RetryFailedDeployments::new(
         RetryFailedConfig::default(),
         reqwest::Client::new(),

@@ -35,7 +35,7 @@ use super::deploy_remote_entity::{
 };
 use super::queries::{self, EntityDoc};
 use super::sync::{parse_entity_types, parse_sync_sources};
-use super::sync_deployer::LiveSyncDeployer;
+use super::sync_deployer::{LiveSyncDeployer, SyncValidation};
 use super::sync_types::{AuthChain, DeploymentContext, SyncError};
 use super::validator::{Sources, SyncedContent};
 use crate::auth::is_canonical_cid;
@@ -378,8 +378,9 @@ impl ReadThrough {
         sources: Vec<String>,
         entity_types: Option<HashSet<String>>,
         fills: Fills,
+        validation: SyncValidation,
     ) -> Self {
-        let deployer = LiveSyncDeployer::new(pool.clone(), FLUSH_CONCURRENCY);
+        let deployer = LiveSyncDeployer::new(pool.clone(), FLUSH_CONCURRENCY, validation);
         let downloads = Downloads::new(MAX_CONCURRENT_DOWNLOADS, deployer.inflight_bytes().clone());
         Self {
             upstream: Arc::new(Upstream {
@@ -405,6 +406,7 @@ impl ReadThrough {
         pool: PgPool,
         storage: Arc<Storage>,
         client: reqwest::Client,
+        validator: Arc<Sources>,
     ) -> anyhow::Result<Option<Self>> {
         if !config.content.read_through_enabled {
             return Ok(None);
@@ -428,6 +430,7 @@ impl ReadThrough {
                 sources,
                 entity_types,
                 Fills::new(MAX_CONCURRENT_FILLS, DEFAULT_WAIT),
+                SyncValidation::Content(validator),
             )
             .with_file_sources(file_sources),
         ))
@@ -440,11 +443,6 @@ impl ReadThrough {
             .expect("file sources are set before the read-through is shared")
             .file_sources = file_sources;
         self
-    }
-
-    /// Attaches the content validator every copied entity passes before it is stored.
-    pub fn attach_validator(&self, sources: Arc<Sources>) {
-        self.upstream.deployer.attach_validator(sources);
     }
 
     pub fn fills(&self) -> &Fills {
