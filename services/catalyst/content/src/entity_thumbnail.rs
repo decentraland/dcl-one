@@ -191,10 +191,10 @@ async fn serve_content_blob(
             Ok(response)
         }
         Some(ParsedRange::Range { start, end }) => {
-            let body: Bytes = if *method == Method::HEAD {
-                Bytes::new()
+            let body = if *method == Method::HEAD {
+                Body::empty()
             } else {
-                opened.read_range(start, end).await?
+                opened.into_range_body(start, end).await?
             };
             let mut response = (StatusCode::PARTIAL_CONTENT, body).into_response();
             apply(&mut response, &base_headers);

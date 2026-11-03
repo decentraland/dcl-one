@@ -46,6 +46,9 @@ pub fn parse_range_header(
     let total = total_size?;
 
     if let Some(rest) = header.strip_prefix("bytes=") {
+        if total == 0 {
+            return Some(ParsedRange::Unsatisfiable);
+        }
         if let Some(suffix) = rest.strip_prefix('-') {
             let suffix_len: u64 = suffix.parse().ok()?;
             if suffix_len == 0 || total == 0 {
@@ -186,6 +189,16 @@ mod tests {
                 assert_eq!(end, 499);
             }
             _ => panic!("Expected Range"),
+        }
+    }
+
+    #[test]
+    fn parse_range_on_empty_file_is_unsatisfiable() {
+        for header in ["bytes=0-", "bytes=0-0", "bytes=-1"] {
+            assert!(matches!(
+                parse_range_header(Some(header), Some(0)),
+                Some(ParsedRange::Unsatisfiable)
+            ));
         }
     }
 

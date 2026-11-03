@@ -134,20 +134,15 @@ pub async fn get_content(
             return Ok(response);
         }
         Some(ParsedRange::Range { start, end }) => {
-            let content = if method == Method::HEAD && query.include_mime_type.is_none() {
-                Bytes::new()
-            } else {
-                opened.read_range(start, end).await?
-            };
-
             if query.include_mime_type.is_some() {
-                set_content_type(&mut base_headers, detect_content_type(&content));
+                let sniff = opened.read_range(start, end.min(start + 31)).await?;
+                set_content_type(&mut base_headers, detect_content_type(&sniff));
             }
 
-            let body: Bytes = if method == Method::HEAD {
-                Bytes::new()
+            let body = if method == Method::HEAD {
+                Body::empty()
             } else {
-                content
+                opened.into_range_body(start, end).await?
             };
 
             let content_len = end - start + 1;

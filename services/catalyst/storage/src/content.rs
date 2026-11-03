@@ -365,6 +365,23 @@ impl OpenedContent {
         Ok(Bytes::from(buf))
     }
 
+    /// Streams the bytes in `start..=end` clamped to the file, without buffering the window.
+    pub async fn into_range_body(
+        mut self,
+        start: u64,
+        end: u64,
+    ) -> Result<axum::body::Body, StorageError> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+
+        if start >= self.size {
+            return Ok(axum::body::Body::empty());
+        }
+        let len = end.min(self.size - 1) - start + 1;
+        self.file.seek(std::io::SeekFrom::Start(start)).await?;
+        let stream = tokio_util::io::ReaderStream::with_capacity(self.file.take(len), 64 * 1024);
+        Ok(axum::body::Body::from_stream(stream))
+    }
+
     /// Streams the file from the start; `consumed` is whatever a preceding `read_range(0, ..)`
     /// took off the front, replayed instead of re-read.
     pub fn into_body(self, consumed: Bytes) -> axum::body::Body {
