@@ -72,16 +72,42 @@ pub(super) async fn record(
             );
         }
     }
-    // The caller holds the event row lock. Check the actual last minute as
-    // well as the unique bucket, so crossing a minute boundary cannot send
-    // two edit notices seconds apart. The bucket prefix bounds this probe.
-    sqlx::query("WITH stamp AS (SELECT clock_timestamp() AT TIME ZONE 'UTC' AS at) \
-        INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event,edit_bucket,created_at) \
-        SELECT $1,$2,$3,$4,CASE WHEN $3='edited' THEN date_trunc('minute',at) END,at FROM stamp \
-        WHERE $3<>'edited' OR NOT EXISTS (SELECT 1 FROM explore.event_moderation_hooks h \
-            WHERE h.event_id=$2 AND h.kind='edited' AND h.edit_bucket >= date_trunc('minute',at)-interval '1 minute' \
-              AND h.created_at > at-interval '60 seconds') ON CONFLICT DO NOTHING")
-        .bind(Uuid::new_v4()).bind(event_id).bind(kind).bind(Value::Object(event)).execute(&mut **tx).await?;
+    // Use the same database clock for capture and activation, in the author's
+    // transaction. The first leader tick cannot discard already queued work.
+    let at: NaiveDateTime = sqlx::query_scalar("SELECT clock_timestamp() AT TIME ZONE 'UTC'")
+        .fetch_one(&mut **tx)
+        .await?;
+    sqlx::query("INSERT INTO explore.event_moderation_hook_activation(activated_at) VALUES($1) ON CONFLICT DO NOTHING")
+        .bind(at).execute(&mut **tx).await?;
+    let creator = after
+        .get("user")
+        .and_then(Value::as_str)
+        .unwrap_or(event_id)
+        .to_ascii_lowercase();
+    if kind == "edited" || kind == "submitted" {
+        // Serialize per creator across different event row locks. Administrative
+        // transitions never wait behind this throttle or lose their alert.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 7421))")
+            .bind(&creator)
+            .execute(&mut **tx)
+            .await?;
+        if kind == "edited" {
+            let updated = sqlx::query("UPDATE explore.event_moderation_hooks SET event=$2 WHERE event_id=$1 AND kind='edited' AND completed_at IS NULL AND attempts=0")
+                .bind(event_id).bind(Value::Object(event.clone())).execute(&mut **tx).await?.rows_affected();
+            if updated > 0 {
+                return Ok(());
+            }
+        }
+    }
+    sqlx::query("INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event,creator_address,edit_bucket,created_at,next_attempt_at) \
+        SELECT $1,$2,$3,$4,$5,CASE WHEN $3='edited' THEN date_trunc('minute',$6::timestamp) END,$6,$6 \
+        WHERE ($3 NOT IN ('submitted','edited') OR (SELECT count(*) FROM explore.event_moderation_hooks \
+            WHERE creator_address=$5 AND kind IN ('submitted','edited') AND created_at>$6-interval '1 minute')<2) \
+        AND ($3<>'edited' OR NOT EXISTS (SELECT 1 FROM explore.event_moderation_hooks h \
+            WHERE h.event_id=$2 AND h.kind='edited' AND h.edit_bucket>=date_trunc('minute',$6::timestamp)-interval '1 minute' \
+              AND h.created_at>$6-interval '60 seconds')) ON CONFLICT DO NOTHING")
+        .bind(Uuid::new_v4()).bind(event_id).bind(kind).bind(Value::Object(event))
+        .bind(creator).bind(at).execute(&mut **tx).await?;
     Ok(())
 }
 
@@ -145,22 +171,33 @@ pub(super) async fn run_once(
     let Some(endpoint) = endpoint.filter(|endpoint| !endpoint.trim().is_empty()) else {
         return Ok(0);
     };
-    let activated=sqlx::query("INSERT INTO explore.event_moderation_hook_activation (activated_at) VALUES ($1) ON CONFLICT DO NOTHING")
-        .bind(now).execute(pool).await?.rows_affected()>0;
-    if activated {
+    if !sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM explore.event_moderation_hook_activation)",
+    )
+    .fetch_one(pool)
+    .await?
+    {
         return Ok(0);
     }
     let mut sent = 0;
     for _ in 0..10 {
         let claim = Uuid::new_v4();
+        let mut tx = pool.begin().await?;
+        sqlx::query("SET LOCAL statement_timeout='2s'")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("SET LOCAL lock_timeout='100ms'")
+            .execute(&mut *tx)
+            .await?;
         let row:Option<(Uuid,String,String,Value,i32)>=sqlx::query_as(
             "WITH due AS (SELECT id FROM explore.event_moderation_hooks \
              WHERE completed_at IS NULL AND attempts<6 AND next_attempt_at<=$1 \
                AND created_at >= (SELECT activated_at FROM explore.event_moderation_hook_activation WHERE singleton) \
-             ORDER BY next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED) \
+             ORDER BY CASE WHEN kind='edited' THEN 1 ELSE 0 END,next_attempt_at,id LIMIT 1 FOR UPDATE SKIP LOCKED) \
              UPDATE explore.event_moderation_hooks h SET claim=$2,attempts=attempts+1,next_attempt_at=$1+interval '1 minute' \
              FROM due WHERE h.id=due.id RETURNING h.id,h.event_id,h.kind,h.event,h.attempts")
-            .bind(now).bind(claim).fetch_optional(pool).await?;
+            .bind(now).bind(claim).fetch_optional(&mut *tx).await?;
+        tx.commit().await?;
         let Some((id, event_id, kind, event, attempts)) = row else {
             break;
         };
@@ -171,7 +208,7 @@ pub(super) async fn run_once(
             .send()
             .await
             .is_ok_and(|response| response.status().is_success());
-        sqlx::query("UPDATE explore.event_moderation_hooks SET completed_at=CASE WHEN $3 OR attempts>=6 THEN $4 ELSE NULL END,next_attempt_at=$4 + $5::int4*interval '1 second',claim=NULL WHERE id=$1 AND claim=$2")
+        sqlx::query("UPDATE explore.event_moderation_hooks SET completed_at=CASE WHEN $3 THEN $4 ELSE NULL END,next_attempt_at=$4 + $5::int4*interval '1 second',claim=NULL WHERE id=$1 AND claim=$2")
             .bind(id).bind(claim).bind(success).bind(now).bind(30_i32 * (1 << attempts.min(6))).execute(pool).await?;
         if success {
             sent += 1
@@ -219,6 +256,217 @@ mod tests {
     };
 
     static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    #[tokio::test]
+    async fn capture_activates_with_the_database_clock_before_the_first_worker_tick() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let id = Uuid::new_v4().to_string();
+        let mut tx = pool.begin().await.unwrap();
+        record(
+            &mut tx,
+            &id,
+            &Value::Null,
+            &json!({"name":"First captured alert"}),
+            true,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        let (created,activated):(NaiveDateTime,NaiveDateTime)=sqlx::query_as("SELECT h.created_at,a.activated_at FROM explore.event_moderation_hooks h CROSS JOIN explore.event_moderation_hook_activation a WHERE h.event_id=$1")
+            .bind(&id).fetch_one(&pool).await.unwrap();
+        assert_eq!(created, activated);
+        run_once(
+            &pool,
+            &crate::http::Outbound::for_tests(),
+            Some("http://127.0.0.1:1/unreachable"),
+            "https://example.org",
+            Utc::now().naive_utc() + chrono::Duration::minutes(1),
+        )
+        .await
+        .unwrap();
+        let (attempts, completed): (i32, Option<NaiveDateTime>) = sqlx::query_as(
+            "SELECT attempts,completed_at FROM explore.event_moderation_hooks WHERE event_id=$1",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            attempts, 1,
+            "first captured intent is not discarded on leader activation"
+        );
+        assert_eq!(completed, None);
+        sqlx::query("DELETE FROM explore.event_moderation_hooks WHERE event_id=$1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn moderation_alerts_are_delivered_before_an_edit_backlog() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let captured = Arc::new(tokio::sync::Mutex::new(Vec::<Value>::new()));
+        let copy = captured.clone();
+        let app = axum::Router::new().route(
+            "/hook",
+            axum::routing::post(move |axum::Json(body): axum::Json<Value>| {
+                let copy = copy.clone();
+                async move {
+                    copy.lock().await.push(body);
+                    axum::http::StatusCode::NO_CONTENT
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!("http://{}/hook", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let prefix = Uuid::new_v4().to_string();
+        let mut tx = pool.begin().await.unwrap();
+        for index in 0..12 {
+            record(
+                &mut tx,
+                &format!("{prefix}-{index}"),
+                &json!({"name":"Before"}),
+                &json!({"name":"Edited"}),
+                true,
+            )
+            .await
+            .unwrap();
+        }
+        record(
+            &mut tx,
+            &format!("{prefix}-submitted"),
+            &Value::Null,
+            &json!({"name":"New submission"}),
+            true,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        assert_eq!(
+            run_once(
+                &pool,
+                &crate::http::Outbound::for_tests(),
+                Some(&endpoint),
+                "https://example.org",
+                Utc::now().naive_utc() + chrono::Duration::seconds(1)
+            )
+            .await
+            .unwrap(),
+            10
+        );
+        let payloads = captured.lock().await;
+        assert!(
+            payloads[0]["blocks"][0]["text"]["text"]
+                .as_str()
+                .unwrap()
+                .starts_with("Event submitted:")
+        );
+        assert_eq!(payloads[0]["blocks"][1]["text"]["text"], "New submission");
+        sqlx::query("DELETE FROM explore.event_moderation_hooks WHERE event_id LIKE $1")
+            .bind(format!("{prefix}-%"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        server.abort();
+    }
+
+    #[tokio::test]
+    async fn creator_throttle_and_edit_coalescing_bound_non_admin_alerts() {
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let actor = Uuid::new_v4().to_string();
+        let mut tx = pool.begin().await.unwrap();
+        for i in 0..5 {
+            record(
+                &mut tx,
+                &format!("{actor}-{i}"),
+                &Value::Null,
+                &json!({"name":"Submission","user":actor}),
+                true,
+            )
+            .await
+            .unwrap();
+        }
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore.event_moderation_hooks WHERE creator_address=$1",
+        )
+        .bind(&actor)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(
+            count, 2,
+            "a creator cannot flood the queue with distinct events"
+        );
+        let id = format!("{actor}-admin");
+        record(
+            &mut tx,
+            &id,
+            &json!({"approved":false}),
+            &json!({"name":"Moderated","user":actor,"approved":true}),
+            true,
+        )
+        .await
+        .unwrap();
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM explore.event_moderation_hooks WHERE creator_address=$1",
+        )
+        .bind(&actor)
+        .fetch_one(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(count, 3, "operator transitions bypass user throttles");
+        let other = Uuid::new_v4().to_string();
+        let before = json!({"name":"Before","user":other});
+        record(
+            &mut tx,
+            &other,
+            &before,
+            &json!({"name":"Edit one","user":other}),
+            true,
+        )
+        .await
+        .unwrap();
+        record(
+            &mut tx,
+            &other,
+            &before,
+            &json!({"name":"Edit two","user":other}),
+            true,
+        )
+        .await
+        .unwrap();
+        let names: Vec<String> = sqlx::query_scalar(
+            "SELECT event->>'name' FROM explore.event_moderation_hooks WHERE event_id=$1",
+        )
+        .bind(&other)
+        .fetch_all(&mut *tx)
+        .await
+        .unwrap();
+        assert_eq!(
+            names,
+            vec!["Edit two"],
+            "an unsent edit retains the latest public labels"
+        );
+        tx.rollback().await.unwrap();
+    }
 
     #[tokio::test]
     async fn disabled_hook_capture_keeps_the_optional_outbox_empty() {
@@ -378,7 +626,10 @@ mod tests {
         .fetch_one(&mut *tx)
         .await
         .unwrap();
-        assert_eq!(two, 2, "a new edit can notify after 60 seconds");
+        assert_eq!(
+            two, 1,
+            "an unsent edit is coalesced even after the throttle window"
+        );
         tx.rollback().await.unwrap();
     }
 
@@ -442,8 +693,8 @@ mod tests {
         .unwrap();
         assert_eq!(queued, 2, "owner edits are throttled once per event/minute");
         // Any pre-existing disabled backlog remains behind the activation cutoff.
-        sqlx::query("INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event,created_at) VALUES ($1,'old-hook','submitted','{}',$2)")
-            .bind(Uuid::new_v4()).bind(now-chrono::Duration::days(1)).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event,created_at) VALUES ($1,'old-hook','submitted','{}',(SELECT activated_at-interval '1 day' FROM explore.event_moderation_hook_activation WHERE singleton))")
+            .bind(Uuid::new_v4()).execute(&pool).await.unwrap();
         assert_eq!(
             run_once(
                 &pool,
@@ -503,7 +754,10 @@ mod tests {
         .unwrap();
         assert_eq!(exhausted, 0);
         let pending:i64=sqlx::query_scalar("SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id='hook-event' AND completed_at IS NULL").fetch_one(&pool).await.unwrap();
-        assert_eq!(pending, 0);
+        assert_eq!(
+            pending, 2,
+            "exhausted failures are distinct from successful completion"
+        );
         let mut tx = pool.begin().await.unwrap();
         let mut state = raw.clone();
         record(&mut tx, "hook-lifecycle", &Value::Null, &state, true)
