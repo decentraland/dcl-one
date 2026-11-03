@@ -134,8 +134,8 @@ conventions, not ours.
 
 ## Scene Fetch
 
-Scene-script HTTP requests are scheduled per scene. Each client scene can send
-five at a time, and each hosted scene can send 32. See the
+Each client or hosted scene has five concurrent slots shared by Fetch and signedFetch.
+Once all five are in use, further requests wait for a slot in that scene. See the
 [scene Fetch limits ADR](../../../../docs/adr/2026-11-03-explorer-scene-fetch-limits.md)
 for queue limits, deadlines and response streaming.
 

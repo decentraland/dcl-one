@@ -82,12 +82,22 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
 
   await t.test('client and server capacity, recoverable errors and request options', async () => {
     const serverScene = await spawn('server')
-    for (const [worker, expected] of [[a, 5], [b, 5], [serverScene, 32]]) {
+    const otherServerScene = await spawn('server')
+    for (const worker of [a, b, serverScene, otherServerScene]) {
       const state = await worker.evaluate(async () => {
         self.requests = Array.from({length: 33}, () => fetch('/held').catch(e => e.name))
         return { admitted: held.length, excess: await Promise.race([requests[32], new Promise(r => setTimeout(() => r('pending'), 20))]) }
       })
-      assert.deepEqual(state, { admitted: expected, excess: 'QuotaExceededError' })
+      assert.deepEqual(state, { admitted: 5, excess: 'QuotaExceededError' })
+    }
+    // The sixth call starts as soon as a hosted scene receives one response's headers.
+    for (const worker of [serverScene, otherServerScene]) {
+      const dispatched = await worker.evaluate(async () => {
+        held[0]()
+        await requests[0]
+        return held.length
+      })
+      assert.equal(dispatched, 6)
     }
     await a.evaluate(() => { setTimeout(() => { throw new Error('recoverable exception') }) })
     await page.waitForFunction(() => window.workerError?.includes('recoverable exception'))

@@ -12,11 +12,11 @@ other scenes free to send requests.
 
 ## Decision
 
-Each scene may have 32 outstanding Fetch or signedFetch calls in total. An
-additional call fails immediately. A client scene sends up to five at once and
-queues the rest in arrival order. A hosted scene can send all 32 at once. The
-native isolate owns its counters in Deno's `OpState`. Each browser sandbox
-owns its queue for the worker's lifetime.
+Each client or hosted scene may send five Fetch or signedFetch requests at once.
+The two APIs share those slots. Additional eligible calls wait in arrival order.
+A scene can have 32 outstanding calls in total, including the five active requests.
+The 33rd call fails immediately. The native isolate owns its counters in Deno's
+`OpState`, and each browser sandbox owns its queue for the worker's lifetime.
 
 Client requests have a 30-second deadline and hosted requests have 15 seconds.
 On native, calls awaiting permission count as outstanding. The deadline starts

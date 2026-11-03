@@ -5,12 +5,12 @@ use tokio::{
     time::{error::Elapsed, timeout},
 };
 
-const CLIENT_CONCURRENT_FETCHES: usize = 5;
+const MAX_CONCURRENT_FETCHES: usize = 5;
 const MAX_OUTSTANDING_FETCHES: u32 = 32;
 
 pub(super) struct SceneRequestBudget {
     outstanding: Cell<u32>,
-    client_slots: Option<Semaphore>,
+    slots: Semaphore,
     timeout: Duration,
 }
 
@@ -18,7 +18,7 @@ impl SceneRequestBudget {
     pub(super) fn for_scene(is_server: bool) -> Self {
         Self {
             outstanding: Cell::new(0),
-            client_slots: (!is_server).then(|| Semaphore::new(CLIENT_CONCURRENT_FETCHES)),
+            slots: Semaphore::new(MAX_CONCURRENT_FETCHES),
             timeout: Duration::from_secs(if is_server { 15 } else { 30 }),
         }
     }
@@ -37,10 +37,7 @@ impl SceneRequestBudget {
 
     pub(super) async fn run<F: Future>(&self, request: F) -> Result<F::Output, Elapsed> {
         timeout(self.timeout, async {
-            let _slot = match &self.client_slots {
-                Some(slots) => Some(slots.acquire().await.expect("scene budget closed")),
-                None => None,
-            };
+            let _slot = self.slots.acquire().await.expect("scene budget closed");
             request.await
         })
         .await
@@ -76,7 +73,7 @@ mod tests {
 
     #[tokio::test]
     async fn busy_scenes_keep_their_own_capacity() {
-        for (is_server, expected) in [(false, 5), (true, 32)] {
+        for is_server in [false, true] {
             let a = SceneRequestBudget::for_scene(is_server);
             let b = SceneRequestBudget::for_scene(is_server);
             let sends_a = Cell::new(0);
@@ -85,7 +82,7 @@ mod tests {
             let mut busy_b = Box::pin(saturate(&b, &sends_b));
             assert!(poll!(&mut busy_a).is_pending());
             assert!(poll!(&mut busy_b).is_pending());
-            assert_eq!((sends_a.get(), sends_b.get()), (expected, expected));
+            assert_eq!((sends_a.get(), sends_b.get()), (5, 5));
             assert!(a.try_start().is_none() && b.try_start().is_none());
 
             drop(busy_a);

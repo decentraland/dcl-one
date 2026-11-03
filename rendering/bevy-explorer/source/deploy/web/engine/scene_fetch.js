@@ -33,7 +33,7 @@ async function cancelUpload(request, error) {
 }
 
 export function createSceneFetch(nativeFetch, isServer, timeoutMs = isServer ? 15_000 : 30_000) {
-  const limit = isServer ? 32 : 5;
+  const limit = 5;
   const lifetime = new NativeController();
   const lifetimeSignal = controllerSignal(lifetime);
   const queue = new Set();
