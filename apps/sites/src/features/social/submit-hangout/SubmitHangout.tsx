@@ -182,7 +182,7 @@ function SubmitHangoutInner({
 
   const isForm = !needsSignIn && uiStateFor(value) === "form";
   const formStepIndex = FORM_ORDER.indexOf(value);
-  const communityAllowed = !d.communityId || (mode === "edit" && d.communityId === draft?.communityId) || Boolean(options?.communities.some((community) => community.id === d.communityId));
+  const communityAllowed = !options || Boolean(options.communitiesError) || !d.communityId || (mode === "edit" && d.communityId === draft?.communityId) || Boolean(options?.communities.some((community) => community.id === d.communityId));
   const canAdvanceForm = !uploading && (value === "cover" || (isStepValid(value, d) && (value !== "details" || communityAllowed)));
 
   return (

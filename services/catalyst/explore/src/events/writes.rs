@@ -203,6 +203,7 @@ fn content_touched(body: &UpdateEventBody) -> bool {
         || body.categories.is_some()
         || body.community_id.is_some()
         || location_touched(body)
+        || recurrence_touched(body)
 }
 
 fn moderated_content_changed(before: &Map<String, Value>, after: &Map<String, Value>) -> bool {
@@ -214,6 +215,17 @@ fn moderated_content_changed(before: &Map<String, Value>, after: &Map<String, Va
         "url",
         "categories",
         "community_id",
+        "start_at",
+        "duration",
+        "recurrent",
+        "recurrent_frequency",
+        "recurrent_interval",
+        "recurrent_weekday_mask",
+        "recurrent_month_mask",
+        "recurrent_setpos",
+        "recurrent_monthday",
+        "recurrent_count",
+        "recurrent_until",
         "x",
         "y",
         "server",
@@ -490,6 +502,7 @@ pub async fn create_event(
             .edit_any
     {
         body.schedules = None;
+        body.url = None;
     }
     let id = moderation::create_as(&state.pool, &body, &signer, &signer, &state.settings).await?;
     answer(&state, &id, Some(&signer)).await
@@ -709,6 +722,33 @@ pub async fn patch_event(
         }
     }
     apply_owner_edit(&mut raw, &edit, dates_present)?;
+    // A new schedule cannot mint historical occurrence facts. Duration-only
+    // corrections keep the same occurrence keys and remain reconcilable.
+    if [
+        "start_at",
+        "recurrent",
+        "recurrent_frequency",
+        "recurrent_interval",
+        "recurrent_weekday_mask",
+        "recurrent_month_mask",
+        "recurrent_setpos",
+        "recurrent_monthday",
+        "recurrent_count",
+        "recurrent_until",
+    ]
+    .iter()
+    .any(|key| before.get(*key) != raw.get(*key))
+    {
+        let cutoff: chrono::NaiveDateTime =
+            sqlx::query_scalar("SELECT clock_timestamp() AT TIME ZONE 'UTC'")
+                .fetch_one(&mut *tx)
+                .await?;
+        raw.insert(
+            "_metrics_schedule_after".into(),
+            json!(cutoff.and_utc().to_rfc3339()),
+        );
+    }
+
     let mut changed_references = Map::new();
     for (key, changed) in [
         ("categories", edit.categories.is_some()),
@@ -2593,6 +2633,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn custom_create_links_require_the_same_editor_grant_as_patch() {
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let owner = alloy::signers::local::PrivateKeySigner::random();
+        let address = format!("{:#x}", owner.address());
+        let app = router(Arc::new(ExploreState::new(
+            pool.clone(),
+            Settings {
+                user_writes_enabled: true,
+                operator_writes_enabled: true,
+                ..Settings::for_tests()
+            },
+            None,
+        )));
+        let mut body = new_event();
+        body["url"] = json!("https://example.org/custom-join");
+        let (status, ordinary) = call_as(&app, "POST", "/api/events", &owner, body.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{ordinary}");
+        assert_ne!(ordinary["data"]["url"], body["url"]);
+        sqlx::query("INSERT INTO explore.event_profile_settings(\"user\",permissions_granted,permissions) VALUES($1,true,'[\"edit_any_event\"]')")
+            .bind(&address).execute(&pool).await.unwrap();
+        let (status, privileged) = call_as(&app, "POST", "/api/events", &owner, body.clone()).await;
+        assert_eq!(status, StatusCode::OK, "{privileged}");
+        assert_eq!(privileged["data"]["url"], body["url"]);
+    }
+
+    #[tokio::test]
     async fn http_patch_permissions_preserve_rejection_provenance_and_remoderate_changed_communities()
      {
         let Some(pool) = crate::db::scratch::pool(1).await else {
@@ -2640,7 +2708,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{date}");
-        assert_eq!(date["data"]["approved"], true);
+        assert_eq!(
+            date["data"]["approved"], false,
+            "owner reschedules require review"
+        );
         let (_, renamed) = call_as(
             &app,
             "PATCH",
@@ -3391,12 +3462,13 @@ mod tests {
     }
 
     #[test]
-    fn schedule_edits_and_content_roundtrips_do_not_require_new_moderation() {
+    fn schedule_changes_require_moderation_but_content_roundtrips_do_not() {
         let before = json!({"name":"Event", "description":"text", "categories":["art","music"],"start_at":"2099-01-01T00:00:00Z"}).as_object().unwrap().clone();
         let mut after = before.clone();
-        after.insert("start_at".into(), json!("2099-01-02T00:00:00Z"));
         after.insert("categories".into(), json!(["music", "art"]));
         assert!(!moderated_content_changed(&before, &after));
+        after.insert("start_at".into(), json!("2099-01-02T00:00:00Z"));
+        assert!(moderated_content_changed(&before, &after));
         after.insert("name".into(), json!("Changed"));
         assert!(moderated_content_changed(&before, &after));
     }

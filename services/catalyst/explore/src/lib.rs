@@ -114,7 +114,7 @@ impl MirrorSource {
 /// EVENTS_MIRROR_UPSTREAM/EVENTS_UPSTREAM_URL/EVENTS_MIRROR_INTERVAL_SECS,
 /// CATALYRST_EVENTS_ADMIN_TOKEN, CONTENT_PUBLIC_URL and HTTP_BASE_URL (the
 /// asset rewrite domain, derived from PUBLIC_URL here).
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Settings {
     /// The node's content base URL; thumbnails from it pass the image filter.
     pub content_public_url: String,
@@ -155,6 +155,20 @@ pub struct Settings {
     /// This node's realm name, the `serverName` a place's `realms_detail`
     /// carries.
     pub realm_name: String,
+}
+
+impl std::fmt::Debug for Settings {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Settings")
+            .field("content_public_url", &self.content_public_url)
+            .field("user_writes_enabled", &self.user_writes_enabled)
+            .field("operator_writes_enabled", &self.operator_writes_enabled)
+            .field(
+                "events_slack_webhook",
+                &self.events_slack_webhook.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish_non_exhaustive()
+    }
 }
 
 impl Settings {
@@ -774,6 +788,17 @@ pub fn router(state: SharedState) -> Router {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn settings_debug_redacts_the_optional_webhook_and_other_credentials() {
+        let mut settings = super::Settings::for_tests();
+        settings.events_slack_webhook = Some("https://example.org/secret-webhook".into());
+        settings.events_admin_token = Some("secret-admin".into());
+        let debug = format!("{settings:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains("secret-webhook"));
+        assert!(!debug.contains("secret-admin"));
+    }
+
     #[test]
     fn event_assets_use_the_node_mount_independently_of_the_website() {
         assert_eq!(

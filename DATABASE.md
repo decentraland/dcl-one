@@ -260,8 +260,15 @@ comes from explicit local attendance, and its community must resolve to an
 active, unsuspended local community. The fact and community metric contribution
 commit together. Removing a catalogue event does not erase facts; deleting a community removes its aggregate. The first scan starts at
 activation and does not import historical endings. Each subsequent pass reconciles
-currently ended occurrences against the immutable fact keys, so schedule edits
-that move an end behind an earlier scan are reconsidered. Each pass handles
+currently ended occurrences against the immutable fact keys. Duration-only edits
+that move an end behind an earlier scan are reconsidered. A DTSTART or recurrence
+change records a private database-clock cutoff in the authoring transaction;
+new historical start times before that edit cannot contribute again. Ordinary
+owners must obtain moderation again after changing dates or durations. Recovery
+is limited to the latest 30 days: older unrecorded endings require a separate
+backfill, and existing immutable facts remain untouched. The approved
+`(finish_at,id)` index prefilters series before date expansion; attendance and
+community resolution occur after the candidate LIMIT. Each pass handles
 at most 100 occurrences with transaction-local statement and lock timeouts and
 an independent scan budget, so metric contention cannot stop notification
 delivery. Expected workload is one periodic scan per minute; throughput at
@@ -270,7 +277,11 @@ production catalogue size remains unmeasured.
 The optional event moderation webhook uses an Explore-owned transactional
 outbox with public labels and moderation reasons only. Delivery is at least
 once, bounded to six attempts with five-second HTTP timeouts, and starts at its
-first activation cutoff. Deployment configuration supplies the secret endpoint;
+first capture cutoff, written atomically with the intent using the database clock.
+Exhausted delivery attempts remain distinct from successful completion. A creator
+can enqueue at most two submission/edit notices per rolling minute; unsent edits
+coalesce per event, and submissions or administrative transitions take priority
+over edits. Deployment configuration supplies the secret endpoint;
 operator writes and deployment posture gate outbound delivery. Unconfigured or
 operator-write-disabled authoring captures no webhook intent. The same worker
 performs bounded cleanup even when its endpoint is disabled: at most 1000 rows
