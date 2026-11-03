@@ -14,6 +14,7 @@ import {
   type DayEvent,
   type Event,
 } from "@/data/lib/catalyst/places/events";
+import { fetchEventCalendar } from "@/data/lib/catalyst/places/event-calendar.server";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
@@ -73,7 +74,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     fetchEventPage({ ...filters, list: "active", limit: UPCOMING_LIMIT, offset }, { signal: request.signal })
       .then((result) => ({ ...result, unavailable: false }))
       .catch(() => ({ data: [] as Event[], hasMore: false, copy: null, unavailable: true })),
-    fetchEvents({ ...filters, list: "active", from: filters.from ?? new Date(dayStart).toISOString(), to: filters.to ?? new Date(dayStart + 28 * 86_400_000).toISOString(), limit: CALENDAR_LIMIT }, { signal: request.signal })
+    fetchEventCalendar({ ...filters, from: filters.from ?? new Date(dayStart).toISOString(), to: filters.to ?? new Date(dayStart + 28 * 86_400_000).toISOString() }, { signal: request.signal })
       .then((result) => ({ ...result, unavailable: false }))
       .catch(() => ({ data: [] as Event[], copy: null, unavailable: true })),
   ]);
@@ -227,7 +228,7 @@ function WhatsOnFeed({
         {calendarUnavailable && <p>The hangout calendar is temporarily unavailable.</p>}
         {calendarLimited && <p>The calendar shows the first 500 matching hangouts. Narrow your search to see more.</p>}
         {invalidCount > 0 && <p>Some hangouts could not be displayed.</p>}
-        {(unavailable || liveUnavailable || calendarUnavailable || invalidCount > 0) && <button onClick={() => { void revalidator.revalidate(); }}>Retry</button>}
+        {(unavailable || liveUnavailable || calendarUnavailable) && <button onClick={() => { void revalidator.revalidate(); }}>Retry</button>}
       </div> : undefined}
       liveNow={liveCards}
       upcoming={upcomingCards}

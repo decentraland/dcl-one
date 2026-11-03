@@ -90,6 +90,7 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
     : null;
   const scheduleIds = draft.scheduleIds ?? original?.schedules ?? [];
   const joinUrl = draft.joinUrl?.trim() || null;
+  const originalJoinUrl = original ? customJoinUrl(original) || null : null;
   const schedulesChanged = !original || JSON.stringify([...scheduleIds].sort()) !== JSON.stringify([...original.schedules].sort());
   return {
     name: draft.name.trim(),
@@ -118,7 +119,7 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
     ...(!original || own ? { contact: draft.contact.trim() || null, details: draft.details.trim() || null } : {}),
     featured_item: draft.featuredItem?.trim() || null,
     ...(privileged && schedulesChanged ? { schedules: scheduleIds } : {}),
-    ...(privileged && (!original || joinUrl !== original.url) ? { url: joinUrl } : {}),
+    ...(privileged && (!original || joinUrl !== originalJoinUrl) ? { url: joinUrl } : {}),
   };
 }
 
@@ -127,6 +128,21 @@ export type EditableHangout = z.infer<typeof EventRecordSchema>;
 
 export async function loadEditableHangout(identity: AuthIdentity, id: string, signal?: AbortSignal): Promise<EditableHangout> {
   return EventEnvelope.parse(await signedGetJSON(`/events/api/events/${encodeURIComponent(id)}`, { identity, signal })).data;
+}
+
+// Match only the exact canonical or legacy target recognized by metadata::refresh_target.
+// Other play links may be deliberate custom destinations and must remain editable.
+function customJoinUrl(event: EditableHangout): string {
+  if (!event.url) return "";
+  const server = event.world && event.server ? event.server : null;
+  const encodedWorld = server
+    ? encodeURIComponent(server).replace(/[!'()*]/g, (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`)
+    : null;
+  const generated = server
+    ? `https://decentraland.org/play/?realm=${encodedWorld}`
+    : `https://decentraland.org/play/?position=${event.x}%2C${event.y}`;
+  const legacy = server ? `https://decentraland.org/play/?realm=${server}` : null;
+  return event.url === generated || event.url === legacy ? "" : event.url;
 }
 
 export function eventToDraft(event: EditableHangout): HangoutDraft {
@@ -138,7 +154,7 @@ export function eventToDraft(event: EditableHangout): HangoutDraft {
     recurrence: Object.entries(RECURRENCE_FREQUENCIES).find(([, frequency]) => frequency === event.recurrent_frequency)?.[0] ?? event.recurrent_frequency ?? "every_week",
     recurrentUntil: event.recurrent_until?.slice(0, 10) ?? "", recurrentCount: event.recurrent_count, category: event.categories[0] ?? "", communityId: event.community_id ?? "",
     imagePreviewUrl: event.image, verticalImagePreviewUrl: event.image_vertical,
-    contact: event.contact ?? "", details: event.details ?? "", featuredItem: event.featured_item ?? "", scheduleIds: event.schedules, joinUrl: event.url ?? "",
+    contact: event.contact ?? "", details: event.details ?? "", featuredItem: event.featured_item ?? "", scheduleIds: event.schedules, joinUrl: customJoinUrl(event),
   };
 }
 

@@ -8,7 +8,7 @@ export interface paths {
         };
         get: operations["get_event_list"];
         put?: never;
-        /** @description Calendar assignments require bearer administration or the current edit_any_event grant; assignments sent by other signed creators are ignored. */
+        /** @description Calendar assignments require bearer administration or the current edit_any_event grant; assignments sent by other signed creators are ignored. Custom join URLs require bearer administration or edit_any_event permission; URLs supplied by other signed creators are ignored and replaced with a generated venue link. */
         post: operations["create_event"];
         delete?: never;
         options?: never;
@@ -753,6 +753,7 @@ export interface components {
             schedules?: string[] | null;
             server?: string | null;
             start_at: string;
+            /** @description Custom join URL. Accepted for bearer administrators or wallets with edit_any_event permission; ignored for other signed creators, which receive a generated venue link. Omit or set null to use the generated venue link. */
             url?: string | null;
             world?: boolean | null;
             /** Format: int32 */
