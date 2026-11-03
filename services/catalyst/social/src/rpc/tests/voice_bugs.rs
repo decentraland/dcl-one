@@ -340,8 +340,52 @@ async fn a_failed_room_delete_still_removes_the_call() {
     );
     assert!(!kept, "the refused room delete left the call row");
     assert!(asked, "the room delete was never asked for");
-    assert!(
-        heard.0.contains(&ended) && !heard.1.contains(&ended),
-        "{heard:?}"
-    );
+    assert!(heard.0.contains(&ended) && heard.1.is_empty(), "{heard:?}");
+}
+
+/// Unlike the gatekeeper's direct create endpoint, social acceptance must not recreate a
+/// rejected intent or accept an already accepted one. The call-row lock chooses one winner.
+#[tokio::test]
+async fn accept_and_reject_race_has_one_winner_without_resurrection() {
+    let Some(rig) = Rig::new().await else {
+        return;
+    };
+    let _turn = VOICE_TABLE.lock().await;
+    let (caller, callee) = (addr("arace1"), addr("arace2"));
+    let caller_address = crate::shared::identity::Address::parse(&caller).unwrap();
+    let callee_address = crate::shared::identity::Address::parse(&callee).unwrap();
+    let voice_db = VoiceDb::new(rig.db.pool().clone(), Default::default());
+    for _ in 0..8 {
+        let id = voice_db
+            .seed_pending_private_call(&caller, &callee)
+            .await
+            .unwrap();
+        let (accepted, rejected) = tokio::join!(
+            voice_db.accept_pending_private_call(id, &caller_address, &callee_address),
+            voice_db.finish_pending_private_call(PendingPrivateCall::Rejected {
+                id,
+                callee: callee.clone()
+            }),
+        );
+        assert_ne!(accepted.unwrap(), rejected.unwrap().is_some());
+        assert!(
+            !voice_db
+                .accept_pending_private_call(id, &caller_address, &callee_address)
+                .await
+                .unwrap()
+        );
+        assert!(
+            rig.db
+                .incoming_private_voice_chat(&callee)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        sqlx::query("DELETE FROM social.private_voice_chats WHERE id=$1")
+            .bind(id)
+            .execute(rig.db.pool())
+            .await
+            .unwrap();
+    }
+    rig.finish(&[&caller, &callee]).await;
 }

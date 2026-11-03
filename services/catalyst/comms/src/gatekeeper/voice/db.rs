@@ -254,6 +254,12 @@ impl VoiceDb {
             .bind(&participants)
             .execute(&mut *tx)
             .await?;
+        // Serialize reclaim with acceptance before testing participant existence on a
+        // fresh statement snapshot; a DELETE waiting behind acceptance must not use an
+        // older NOT EXISTS result and cascade-delete the accepted participants.
+        let _: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM social.private_voice_chats WHERE caller_address=ANY($1) OR callee_address=ANY($1) ORDER BY id FOR UPDATE"
+        ).bind(&participants).fetch_all(&mut *tx).await?;
         // An accepted call (it has participant rows) never expires, and it
         // keeps both parties busy whatever its age.
         let expired: Vec<PrivateVoiceChatRow> = sqlx::query(
@@ -302,17 +308,19 @@ impl VoiceDb {
         expiration_ms: i64,
         limit: i64,
     ) -> Result<Vec<PrivateVoiceChatRow>, sqlx::Error> {
+        let mut txn = self.pool.begin().await?;
+        let ids: Vec<Uuid> = sqlx::query_scalar(
+            "SELECT id FROM social.private_voice_chats WHERE created_at < $1 \
+             AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=private_voice_chats.id) \
+             ORDER BY created_at, id LIMIT $2 FOR UPDATE SKIP LOCKED"
+        ).bind(now_utc() - Duration::milliseconds(expiration_ms)).bind(limit)
+            .fetch_all(&mut *txn).await?;
         let rows = sqlx::query(
-            "DELETE FROM social.private_voice_chats WHERE id IN ( \
-               SELECT id FROM social.private_voice_chats WHERE created_at < $1 \
-                 AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id = private_voice_chats.id) \
-               ORDER BY created_at ASC LIMIT $2 \
-             ) RETURNING id, caller_address, callee_address",
-        )
-        .bind(now_utc() - Duration::milliseconds(expiration_ms))
-        .bind(limit)
-        .fetch_all(&self.pool)
-        .await?;
+            "DELETE FROM social.private_voice_chats WHERE id=ANY($1) \
+             AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=private_voice_chats.id) \
+             RETURNING id, caller_address, callee_address"
+        ).bind(ids).fetch_all(&mut *txn).await?;
+        txn.commit().await?;
         Ok(rows.iter().map(voice_row).collect())
     }
 
@@ -323,22 +331,39 @@ impl VoiceDb {
         &self,
         call: PendingPrivateCall,
     ) -> Result<Option<PrivateVoiceChatRow>, sqlx::Error> {
+        let mut txn = self.pool.begin().await?;
+        match &call {
+            PendingPrivateCall::Address(address) => {
+                let _: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM social.private_voice_chats WHERE caller_address=$1 OR callee_address=$1 ORDER BY id FOR UPDATE")
+                    .bind(address.to_lowercase()).fetch_all(&mut *txn).await?;
+            }
+            PendingPrivateCall::Id(id)
+            | PendingPrivateCall::Rejected { id, .. }
+            | PendingPrivateCall::Ended { id, .. } => {
+                let _: Option<Uuid> = sqlx::query_scalar(
+                    "SELECT id FROM social.private_voice_chats WHERE id=$1 FOR UPDATE",
+                )
+                .bind(id)
+                .fetch_optional(&mut *txn)
+                .await?;
+            }
+        }
         let row = match call {
             PendingPrivateCall::Id(id) => sqlx::query(
                 "DELETE FROM social.private_voice_chats WHERE id = $1 \
                    AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id = private_voice_chats.id) \
                  RETURNING id, caller_address, callee_address",
-            ).bind(id).fetch_optional(&self.pool).await?,
+            ).bind(id).fetch_optional(&mut *txn).await?,
             PendingPrivateCall::Rejected { id, callee } => sqlx::query(
                 "DELETE FROM social.private_voice_chats WHERE id = $1 AND callee_address = $2 \
                    AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id = private_voice_chats.id) \
                  RETURNING id, caller_address, callee_address",
-            ).bind(id).bind(callee.to_lowercase()).fetch_optional(&self.pool).await?,
+            ).bind(id).bind(callee.to_lowercase()).fetch_optional(&mut *txn).await?,
             PendingPrivateCall::Ended { id, party } => sqlx::query(
                 "DELETE FROM social.private_voice_chats WHERE id = $1 AND (caller_address = $2 OR callee_address = $2) \
                    AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id = private_voice_chats.id) \
                  RETURNING id, caller_address, callee_address",
-            ).bind(id).bind(party.to_lowercase()).fetch_optional(&self.pool).await?,
+            ).bind(id).bind(party.to_lowercase()).fetch_optional(&mut *txn).await?,
             PendingPrivateCall::Address(address) => sqlx::query(
                 "DELETE FROM social.private_voice_chats WHERE id = ( \
                    SELECT id FROM social.private_voice_chats \
@@ -346,13 +371,51 @@ impl VoiceDb {
                      AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id = private_voice_chats.id) \
                    ORDER BY created_at DESC LIMIT 1 \
                  ) RETURNING id, caller_address, callee_address",
-            ).bind(address.to_lowercase()).fetch_optional(&self.pool).await?,
+            ).bind(address.to_lowercase()).fetch_optional(&mut *txn).await?,
         };
+        txn.commit().await?;
         Ok(row.as_ref().map(voice_row))
     }
 
     pub fn config(&self) -> VoiceDbConfig {
         self.cfg
+    }
+
+    /// Accept only an existing pending intent. Holding its row lock makes acceptance and
+    /// rejection mutually exclusive and prevents a late credentials request resurrecting a call.
+    pub async fn accept_pending_private_call(
+        &self,
+        call_id: Uuid,
+        caller: &Address,
+        callee: &Address,
+    ) -> Result<bool, sqlx::Error> {
+        let mut txn = self.pool.begin().await?;
+        let pending: Option<(String, String)> = sqlx::query_as(
+            "SELECT caller_address, callee_address FROM social.private_voice_chats WHERE id=$1 FOR UPDATE"
+        ).bind(call_id).fetch_optional(&mut *txn).await?;
+        if pending
+            .as_ref()
+            .is_none_or(|(a, b)| a != caller.as_str() || b != callee.as_str())
+        {
+            return Ok(false);
+        }
+        let accepted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM social.private_voice_chat_participants WHERE call_id=$1)",
+        )
+        .bind(call_id)
+        .fetch_one(&mut *txn)
+        .await?;
+        if accepted {
+            return Ok(false);
+        }
+        let now = now_utc();
+        sqlx::query(
+            "INSERT INTO social.private_voice_chat_participants (call_id, address, status, joined_at, status_updated_at) \
+             SELECT $1, address, 'not_connected', $3, $3 FROM unnest($2::text[]) AS address"
+        ).bind(call_id).bind(vec![caller.as_str(), callee.as_str()]).bind(now)
+            .execute(&mut *txn).await?;
+        txn.commit().await?;
+        Ok(true)
     }
 
     /// Opens (or re-opens) the call `call_id` between the two wallets with

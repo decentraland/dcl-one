@@ -341,6 +341,20 @@ async fn each_party_gets_its_own_grant_and_the_callee_sees_the_incoming_call() {
     );
     let url = &updates[0].credentials.as_ref().unwrap().connection_url;
     assert!(url.ends_with(&format!("for={caller}")), "{url}");
+    assert!(updates[0].caller.is_none());
+    assert!(updates[0].callee.is_none());
+    assert!(matches!(
+        rig.incoming(&callee).await,
+        get_incoming_private_voice_chat_request_response::Response::NotFound(_)
+    ));
+    assert!(matches!(
+        rig.accept(&callee, &call_id).await,
+        accept_private_voice_chat_response::Response::NotFound(_)
+    ));
+    assert!(matches!(
+        rig.reject(&callee, &call_id).await,
+        reject_private_voice_chat_response::Response::NotFound(_)
+    ));
     rig.forget(&[&caller, &callee]).await;
 }
 

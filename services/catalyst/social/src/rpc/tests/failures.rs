@@ -166,7 +166,11 @@ async fn an_internal_refusal_carries_no_database_text() {
             procedure_ctx(&ctx, &me, 69),
         )
         .await
-        .unwrap_err();
+        .unwrap();
+    assert!(matches!(
+        end.response,
+        Some(end_private_voice_chat_response::Response::InternalServerError(_))
+    ));
     let community = svc
         .start_community_voice_chat(
             StartCommunityVoiceChatPayload {
@@ -176,7 +180,7 @@ async fn an_internal_refusal_carries_no_database_text() {
         )
         .await
         .unwrap_err();
-    for (name, refusal) in [("end", end), ("community", community)] {
+    for (name, refusal) in [("community", community)] {
         let remote = RemoteError::from(refusal);
         assert_eq!(remote.error_code, 500, "{name}");
         assert_eq!(remote.error_message, "Internal Server Error", "{name}");

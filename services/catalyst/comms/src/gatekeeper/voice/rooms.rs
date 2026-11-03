@@ -30,8 +30,8 @@ use super::db::{PendingPrivateCall, PrivateVoiceChatRow, StartOutcome};
 
 use super::{
     CommunityVoiceChatBody, community_status, community_voice_credentials_for,
-    destroy_community_voice_chat, end_private_call, get_private_voice_chat_room_credentials,
-    kick_from_community_room, merge_metadata, patch, require_livekit, set_speaker,
+    destroy_community_voice_chat, end_private_call, kick_from_community_room, merge_metadata,
+    patch, pending_private_voice_chat_room_credentials, require_livekit, set_speaker,
 };
 use crate::gatekeeper::CommsState;
 use crate::gatekeeper::errors::ApiError;
@@ -285,7 +285,9 @@ impl VoiceRooms for NoVoiceRuntime {
 }
 
 fn unavailable(e: ApiError) -> VoiceUnavailable {
-    if e.code == 503 {
+    if e.code == 404 {
+        VoiceUnavailable::NotFound
+    } else if e.code == 503 {
         VoiceUnavailable::NotConfigured
     } else {
         VoiceUnavailable::Failed(e.to_string())
@@ -362,7 +364,7 @@ impl VoiceRooms for CommsState {
         require_livekit(self).map_err(unavailable)?;
         let participants = [address(caller)?, address(callee)?];
         let grants =
-            get_private_voice_chat_room_credentials(self, &call_id.to_string(), &participants)
+            pending_private_voice_chat_room_credentials(self, &call_id.to_string(), &participants)
                 .await
                 .map_err(unavailable)?;
         Ok(grants

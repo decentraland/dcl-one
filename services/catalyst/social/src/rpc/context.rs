@@ -640,12 +640,8 @@ impl Context {
             stream_closed: None,
             call_id: chat.id.to_string(),
             status: PrivateVoiceChatStatus::VoiceChatEnded as i32,
-            caller: Some(User {
-                address: chat.caller_address.clone(),
-            }),
-            callee: Some(User {
-                address: chat.callee_address.clone(),
-            }),
+            caller: None,
+            callee: None,
             credentials: None,
         };
         for party in [&chat.caller_address, &chat.callee_address] {
@@ -667,12 +663,8 @@ impl Context {
             stream_closed: None,
             call_id: chat.id.to_string(),
             status: status as i32,
-            caller: Some(User {
-                address: chat.caller_address.clone(),
-            }),
-            callee: Some(User {
-                address: chat.callee_address.clone(),
-            }),
+            caller: None,
+            callee: None,
             credentials: None,
         };
         self.0.pubsub.publish(

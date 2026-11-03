@@ -4,6 +4,7 @@ use super::helpers::{
     start_voice_forbidden, start_voice_internal, start_voice_invalid,
 };
 use crate::comms::gatekeeper::voice::db::PendingPrivateCall;
+use crate::comms::gatekeeper::voice::rooms::VoiceUnavailable;
 use crate::rpc::context::Context;
 use crate::rpc::drpc::service_module_definition::ProcedureContext;
 use crate::rpc::proto::errors::{ForbiddenError, InternalServerError, NotFoundError};
@@ -105,9 +106,7 @@ pub(crate) async fn start_private_voice_chat(
             caller: Some(User {
                 address: me.to_string(),
             }),
-            callee: Some(User {
-                address: callee.to_string(),
-            }),
+            callee: None,
             credentials: None,
         }),
     );
@@ -132,7 +131,10 @@ pub(crate) async fn accept_private_voice_chat(
         .voice()
         .private_voice_credentials(id, &chat.callee_address, &chat.caller_address)
         .await
-        .map_err(|e| Refusal::Internal(format!("private voice credentials: {e}")))?;
+        .map_err(|e| match e {
+            VoiceUnavailable::NotFound => call_not_found(id),
+            other => Refusal::Internal(format!("private voice credentials: {other}")),
+        })?;
     let url_of = |address: &str| {
         urls.get(&address.to_lowercase())
             .cloned()
@@ -144,12 +146,8 @@ pub(crate) async fn accept_private_voice_chat(
             stream_closed: None,
             call_id: id.to_string(),
             status: PrivateVoiceChatStatus::VoiceChatAccepted as i32,
-            caller: Some(User {
-                address: chat.caller_address.clone(),
-            }),
-            callee: Some(User {
-                address: chat.callee_address.clone(),
-            }),
+            caller: None,
+            callee: None,
             credentials: Some(PrivateVoiceChatCredentials {
                 connection_url: url_of(&chat.caller_address),
             }),
@@ -179,12 +177,8 @@ pub(crate) async fn reject_private_voice_chat(
             stream_closed: None,
             call_id: id.to_string(),
             status: PrivateVoiceChatStatus::VoiceChatRejected as i32,
-            caller: Some(User {
-                address: chat.caller_address.clone(),
-            }),
-            callee: Some(User {
-                address: chat.callee_address.clone(),
-            }),
+            caller: None,
+            callee: None,
             credentials: None,
         }),
     );
@@ -327,7 +321,9 @@ impl SocialServiceImpl {
                     message: Some(m),
                 })
             }
-            Err(refusal) => return Err(SocialError::Internal(refusal.message().to_string())),
+            Err(refusal) => reject_private_voice_chat_response::Response::InternalServerError(
+                internal_err(refusal.message()),
+            ),
         };
         Ok(RejectPrivateVoiceChatResponse {
             response: Some(response),
@@ -364,7 +360,9 @@ impl SocialServiceImpl {
                     message: Some(m),
                 })
             }
-            Err(refusal) => return Err(SocialError::Internal(refusal.message().to_string())),
+            Err(refusal) => end_private_voice_chat_response::Response::InternalServerError(
+                internal_err(refusal.message()),
+            ),
         };
         Ok(EndPrivateVoiceChatResponse {
             response: Some(response),

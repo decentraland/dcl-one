@@ -108,6 +108,17 @@ pub mod fake {
             caller: &str,
         ) -> Result<HashMap<String, String>, VoiceUnavailable> {
             self.note(format!("private-credentials {call_id} {callee} {caller}"));
+            let caller_address = crate::shared::identity::Address::parse(caller)
+                .map_err(|e| VoiceUnavailable::Failed(e.to_string()))?;
+            let callee_address = crate::shared::identity::Address::parse(callee)
+                .map_err(|e| VoiceUnavailable::Failed(e.to_string()))?;
+            if !self
+                .db
+                .accept_pending_private_call(call_id, &caller_address, &callee_address)
+                .await?
+            {
+                return Err(VoiceUnavailable::NotFound);
+            }
             Ok([callee, caller]
                 .into_iter()
                 .map(|a| {
@@ -119,8 +130,7 @@ pub mod fake {
                 .collect())
         }
 
-        /// Records the ask; a fake call has no participant rows, so it is
-        /// never accepted and ends as a pending call.
+        /// Records the ask and ends an accepted call through the same persistence owner.
         async fn end_private_voice_chat(
             &self,
             call_id: Option<Uuid>,
@@ -131,7 +141,21 @@ pub mod fake {
         > {
             let call = call_id.map_or_else(|| "latest".to_string(), |id| id.to_string());
             self.note(format!("end-private {call} {address}"));
-            Ok(None)
+            let address = crate::shared::identity::Address::parse(address)
+                .map_err(|e| VoiceUnavailable::Failed(e.to_string()))?;
+            match self
+                .db
+                .delete_private_call_if_member(call_id, &address)
+                .await
+            {
+                Ok(ended) => Ok(Some(ended.call)),
+                Err(crate::comms::gatekeeper::voice::db::DeleteRoomError::RoomDoesNotExist) => {
+                    Ok(None)
+                }
+                Err(crate::comms::gatekeeper::voice::db::DeleteRoomError::Db(error)) => {
+                    Err(error.into())
+                }
+            }
         }
 
         async fn community_voice_credentials(

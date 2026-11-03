@@ -1009,7 +1009,7 @@ async fn blocked_pair_cannot_start_call_and_friends_can() {
         matches!(&*event, super::pubsub::SocialEvent::PrivateVoice(u) if u.status == PrivateVoiceChatStatus::VoiceChatAccepted as i32 && u.credentials.is_some())
     );
 
-    // Ending tears the room down through the runtime and tells both parties.
+    // Ending tears the room down through the runtime and tells the other party.
     let response = SocialServiceImpl
         .end_private_voice_chat(
             EndPrivateVoiceChatPayload {

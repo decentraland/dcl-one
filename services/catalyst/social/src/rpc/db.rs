@@ -974,7 +974,7 @@ impl Db {
         &self,
         call_id: Uuid,
     ) -> Result<Option<PrivateVoiceChatRow>, DbError> {
-        let row = sqlx::query("SELECT id, caller_address, callee_address FROM social.private_voice_chats WHERE id = $1")
+        let row = sqlx::query("SELECT id, caller_address, callee_address FROM social.private_voice_chats c WHERE id = $1 AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)")
             .bind(call_id)
             .fetch_optional(&self.pool)
             .await?;
@@ -987,7 +987,7 @@ impl Db {
     ) -> Result<Option<PrivateVoiceChatRow>, DbError> {
         let row = sqlx::query(
             "SELECT id, caller_address, callee_address FROM social.private_voice_chats \
-             WHERE callee_address = $1 ORDER BY created_at DESC LIMIT 1",
+             WHERE callee_address = $1 AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=private_voice_chats.id) ORDER BY created_at DESC LIMIT 1",
         )
         .bind(callee.to_lowercase())
         .fetch_optional(&self.pool)
@@ -1002,7 +1002,7 @@ impl Db {
     ) -> Result<Option<PrivateVoiceChatRow>, DbError> {
         let row = sqlx::query(
             "SELECT id, caller_address, callee_address FROM social.private_voice_chats \
-             WHERE caller_address = $1 OR callee_address = $1 ORDER BY created_at DESC LIMIT 1",
+             WHERE (caller_address = $1 OR callee_address = $1) AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=private_voice_chats.id) ORDER BY created_at DESC LIMIT 1",
         )
         .bind(address.to_lowercase())
         .fetch_optional(&self.pool)
