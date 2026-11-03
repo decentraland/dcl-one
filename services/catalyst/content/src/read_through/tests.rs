@@ -478,6 +478,29 @@ async fn an_entity_whose_signature_does_not_verify_is_refused_and_nothing_is_sto
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn an_entity_the_content_validator_refuses_is_not_copied_and_nothing_is_stored() {
+    let fake = start_fake().await;
+    require_test_db!(Some(node) = Node::new("invalid", &fake, HANG_GUARD, true).await);
+    node.read_through
+        .attach_validator(Arc::new(crate::validator::Sources::new(
+            node.pool.clone(),
+            node.storage.clone(),
+            crate::http::Outbound::for_tests(),
+            None,
+            crate::validator::Settings::default(),
+        )));
+    // Correctly signed, but a wearable with no thumbnail on an off-chain pointer.
+    let fx = Fixture::new("wearable", &pointer(), now_ms());
+    fake.publish(&fx, &signed_chain(&fx.id).await);
+
+    assert!(node.active(json!({"ids": [fx.id]})).await.is_empty());
+    assert_eq!(fake.active_calls(), 1);
+    assert_eq!(node.deployments(&fx.id).await, 0);
+    assert!(!node.holds(&fx.id).await);
+    assert!(!node.holds(&fx.file_hash).await);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_content_file_that_does_not_hash_to_its_name_is_refused() {
     let fake = start_fake().await;
     require_test_db!(Some(node) = Node::new("forged-file", &fake, HANG_GUARD, true).await);

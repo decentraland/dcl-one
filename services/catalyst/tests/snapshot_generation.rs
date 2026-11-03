@@ -906,6 +906,7 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         node_a.storage.clone(),
         node_a.sync.clone(),
         reqwest::Client::new(),
+        None,
         &jobs_a,
     )
     .await
@@ -936,6 +937,7 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         node_b.storage.clone(),
         node_b.sync.clone(),
         reqwest::Client::new(),
+        None,
         &jobs_b,
     )
     .await
@@ -1026,6 +1028,7 @@ async fn a_second_node_syncs_from_the_first_nodes_snapshots_and_pointer_changes(
         node_b.storage.clone(),
         node_b.sync.clone(),
         reqwest::Client::new(),
+        None,
         &jobs_b,
     )
     .await
@@ -1183,6 +1186,7 @@ async fn an_unpublished_local_scene_is_left_out_of_what_a_peer_replays() {
         node_b.storage.clone(),
         node_b.sync.clone(),
         reqwest::Client::new(),
+        None,
         &jobs_b,
     )
     .await

@@ -551,7 +551,7 @@ fn entity_parse_error(
 pub(crate) const PROFILE_RENDER_FILES: &[&str] =
     &["face.png", "face128.png", "face256.png", "body.png"];
 
-fn is_profile_render_file(file: &str) -> bool {
+pub(crate) fn is_profile_render_file(file: &str) -> bool {
     let file = file.strip_prefix("./").unwrap_or(file);
     PROFILE_RENDER_FILES
         .iter()

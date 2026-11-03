@@ -445,7 +445,8 @@ mod tests {
     use super::*;
     use crate::auth::hash_bytes_v1;
     use crate::sync_test_support::{
-        signed_chain, spawn_content_server, temp_storage, test_pool, unique,
+        signed_chain, signed_chain_behind_contract, spawn_content_server, temp_storage, test_pool,
+        unique,
     };
 
     #[test]
@@ -638,5 +639,160 @@ mod tests {
         cleanup(&pool, &prefix).await;
         let _ = tokio::fs::remove_dir_all(&tmp).await;
         pool.close().await;
+    }
+
+    /// The address of the sync tests' signing key.
+    const TEST_SIGNER: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+    const CONTRACT_SIGNER: &str = "0x0000000000000000000000000000000000000002";
+
+    enum Chain {
+        Signed,
+        BehindContract,
+    }
+
+    struct SyncOutcome {
+        deployed: bool,
+        active: Option<String>,
+        failure: Option<(i32, String)>,
+    }
+
+    /// Syncs one outfits entity on `owner`'s pointer, signed as `chain` says, through a
+    /// deployer with the content validator attached (no EIP-1654 validator configured).
+    async fn sync_outfits(owner: &str, chain: Chain) -> Option<SyncOutcome> {
+        let pool = test_pool(3).await?;
+        let pointer = format!("{owner}:outfits");
+        let body = serde_json::to_vec(&serde_json::json!({
+            "version": "v3", "type": "outfits", "pointers": [pointer], "timestamp": 1_700_000_000_000i64,
+            "content": [], "metadata": {"outfits": [], "namesForExtraSlots": [], "tag": unique()}
+        }))
+        .unwrap();
+        let entity_id = hash_bytes_v1(&body);
+        let auth_chain = match chain {
+            Chain::Signed => signed_chain(&entity_id).await,
+            Chain::BehindContract => {
+                signed_chain_behind_contract(&entity_id, "2099-01-01T00:00:00.000Z").await
+            }
+        };
+        sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
+            .bind(&pointer)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (base, server) = spawn_content_server(body, None).await;
+        let (storage, tmp) = temp_storage("validated").await;
+        let deployer = Arc::new(LiveSyncDeployer::new(pool.clone(), 2));
+        deployer.attach_validator(Arc::new(crate::validator::Sources::new(
+            pool.clone(),
+            storage.clone(),
+            crate::http::Outbound::for_tests(),
+            None,
+            crate::validator::Settings::default(),
+        )));
+        let batch = BatchDeployer::new(
+            BatchDeployerConfig::default(),
+            reqwest::Client::new(),
+            storage,
+            pool.clone(),
+            deployer,
+            Arc::new(LiveFailedDeploymentsStore::new(pool.clone())),
+            BloomFilter::with_capacity(100),
+        );
+        batch
+            .schedule_entity_deployment(
+                SyncDeployment {
+                    entity_id: entity_id.clone(),
+                    entity_type: "outfits".into(),
+                    pointers: vec![],
+                    auth_chain,
+                    entity_timestamp: 1_700_000_000_000,
+                    local_timestamp: None,
+                },
+                std::slice::from_ref(&base),
+                None,
+            )
+            .await
+            .unwrap();
+        batch.on_idle().await.unwrap();
+
+        let outcome = SyncOutcome {
+            deployed: is_entity_deployed(&pool, &entity_id, 0).await.unwrap(),
+            active: sqlx::query_scalar(
+                "SELECT entity_id FROM content.active_pointers WHERE pointer = $1",
+            )
+            .bind(&pointer)
+            .fetch_optional(&pool)
+            .await
+            .unwrap(),
+            failure: sqlx::query_as(
+                "SELECT retry_count, error_description FROM content.failed_deployments \
+                 WHERE entity_id = $1",
+            )
+            .bind(&entity_id)
+            .fetch_optional(&pool)
+            .await
+            .unwrap(),
+        };
+        let active_is_this = outcome.active.as_deref() == Some(entity_id.as_str());
+
+        server.abort();
+        for sql in [
+            "DELETE FROM content.active_pointers WHERE entity_id = $1",
+            "DELETE FROM content.deployments WHERE entity_id = $1",
+            "DELETE FROM content.failed_deployments WHERE entity_id = $1",
+        ] {
+            sqlx::query(sql)
+                .bind(&entity_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let _ = tokio::fs::remove_dir_all(&tmp).await;
+        pool.close().await;
+        Some(SyncOutcome {
+            active: active_is_this.then_some(entity_id),
+            ..outcome
+        })
+    }
+
+    #[tokio::test]
+    async fn a_synced_entity_refused_by_its_access_rule_is_a_failed_deployment_never_active() {
+        let other = format!("0x{}", "ab".repeat(20));
+        let Some(outcome) = sync_outfits(&other, Chain::Signed).await else {
+            return;
+        };
+        assert!(!outcome.deployed);
+        assert_eq!(outcome.active, None);
+        let (retry_count, description) = outcome.failure.expect("recorded as failed");
+        assert_eq!(retry_count, 0);
+        assert!(
+            description.starts_with("Deployment rejected:")
+                && description.contains("You can only alter your own outfits"),
+            "{description}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_valid_synced_entity_is_deployed_and_active() {
+        let Some(outcome) = sync_outfits(TEST_SIGNER, Chain::Signed).await else {
+            return;
+        };
+        assert!(outcome.deployed);
+        assert!(outcome.active.is_some());
+        assert!(outcome.failure.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallet_link_without_an_eip1654_validator_is_retried_not_accepted() {
+        let Some(outcome) = sync_outfits(CONTRACT_SIGNER, Chain::BehindContract).await else {
+            return;
+        };
+        assert!(!outcome.deployed);
+        assert_eq!(outcome.active, None);
+        let (retry_count, description) = outcome.failure.expect("queued for a retry");
+        assert_eq!(retry_count, 0);
+        assert!(
+            description.starts_with("Validation undecided:"),
+            "{description}"
+        );
     }
 }

@@ -535,6 +535,10 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         )
         .context("ADDITIONAL_DECENTRALAND_ADDRESS configuration")?,
     ));
+    // Entities copied from peers pass the same validator (sync attaches it below).
+    if let Some(read_through) = &read_through {
+        read_through.attach_validator(content_validator.clone());
+    }
 
     // The content server's local write path (src/content/{create_entity,
     // unpublish_scene,land_publish}): the write deployer over the ONE pool
@@ -1032,6 +1036,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
                 storage.clone(),
                 sync_status,
                 http_client.raw().clone(),
+                Some(content_validator.clone()),
                 &jobs,
             )
             .await

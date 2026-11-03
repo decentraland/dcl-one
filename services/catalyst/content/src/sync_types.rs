@@ -102,6 +102,10 @@ pub enum SyncError {
     #[error("Deployment rejected: {0}")]
     DeploymentRejected(String),
 
+    /// The validation could not be decided (a source unset or failing); retried, never a verdict.
+    #[error("Validation undecided: {0}")]
+    ValidationUndecided(String),
+
     #[error("Entity not found in storage: {entity_id}")]
     EntityNotFound { entity_id: String },
 

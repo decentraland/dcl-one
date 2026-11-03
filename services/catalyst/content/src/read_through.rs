@@ -1,9 +1,10 @@
 //! Read-through (`READ_THROUGH_ENABLED`): a read that misses locally asks the sync sources
 //! (`SYNC_SOURCE`, in order) and keeps a verified copy. An entity goes through the sync write
-//! path: its file must hash to its id and its auth chain (the peer's `/audit`) must pass the
-//! validator sync uses before anything is stored; its content files are hash-verified as sync
-//! downloads them, and [`LiveSyncDeployer`] writes the row as a synced deployment (the newest
-//! timestamp wins, nothing is marked local). What sync skips is skipped here too: entity types
+//! path: its file must hash to its id and the entity, under its auth chain (the peer's
+//! `/audit`), must pass the content validator sync runs before anything is stored; its content
+//! files are hash-verified as sync downloads them, the validator runs again over them (a refusal
+//! then removes the entity file), and [`LiveSyncDeployer`] writes the row as a synced
+//! deployment (the newest timestamp wins, nothing is marked local). What sync skips is skipped here too: entity types
 //! outside `SYNC_ENTITY_TYPES` (only `SYNC_PROFILE_MAX_AGE_DAYS` is not applied, so an old
 //! profile is still found), and a content file every local reference to which is a profile
 //! render (`social::profile_images` draws those). Any other content file is stored once it
@@ -34,8 +35,9 @@ use super::deploy_remote_entity::{
 };
 use super::queries::{self, EntityDoc};
 use super::sync::{parse_entity_types, parse_sync_sources};
-use super::sync_deployer::{LiveSyncDeployer, verify_synced_entity};
+use super::sync_deployer::LiveSyncDeployer;
 use super::sync_types::{AuthChain, DeploymentContext, SyncError};
+use super::validator::{Sources, SyncedContent};
 use crate::auth::is_canonical_cid;
 use crate::storage::{Denylist, Storage};
 
@@ -440,6 +442,11 @@ impl ReadThrough {
         self
     }
 
+    /// Attaches the content validator every copied entity passes before it is stored.
+    pub fn attach_validator(&self, sources: Arc<Sources>) {
+        self.upstream.deployer.attach_validator(sources);
+    }
+
     pub fn fills(&self) -> &Fills {
         &self.fills
     }
@@ -733,9 +740,9 @@ impl Upstream {
         Err(last)
     }
 
-    /// One entity, verified before anything is stored: the file hashes to `id` and the chain
-    /// passes the sync validator; then sync's own path downloads its content files and queues
-    /// the row. Answers the pointers the verified file claims.
+    /// One entity, verified before anything is stored: the file hashes to `id` and the entity
+    /// passes the content validator; then sync's own path downloads its content files, validates
+    /// again with them and queues the row. Answers the pointers the verified file claims.
     async fn copy_entity(
         &self,
         source: usize,
@@ -770,12 +777,14 @@ impl Upstream {
             }
         }
         let (bytes, hold) = fetched?;
-        verify_synced_entity(&bytes, id, &chain).await?;
+        self.deployer
+            .verify_entity(&bytes, id, &chain, SyncedContent::Pending)
+            .await?;
         let pointers = entity_pointers(&serde_json::from_slice(&bytes)?);
         self.storage.store(id, bytes.into()).await?;
         drop((hold, slot));
 
-        deploy_entity_streaming(
+        let deployed = deploy_entity_streaming(
             ContentSource {
                 client: &self.client,
                 storage: self.storage.clone(),
@@ -791,7 +800,17 @@ impl Upstream {
                 retry_state: None,
             },
         )
-        .await?;
+        .await;
+        if let Err(e @ (SyncError::DeploymentRejected(_) | SyncError::ValidationUndecided(_))) =
+            deployed
+        {
+            // Refused once its content was in: the entity file goes too.
+            if let Err(evict) = self.storage.delete(id).await {
+                tracing::warn!(entity_id = id, error = %evict, "read-through: refused entity file not removed");
+            }
+            return Err(e);
+        }
+        deployed?;
         Ok(pointers)
     }
 

@@ -45,6 +45,7 @@ pub mod onchain;
 pub mod rules;
 mod scene_parcels;
 mod spring_bones;
+pub mod synced;
 pub mod third_party;
 pub mod types;
 
@@ -66,6 +67,7 @@ pub use chain::DECENTRALAND_ADDRESS;
 pub use error::{ValidationError, ValidationResponse, ValidatorError};
 pub use rules::{ContentValidator, ExternalCalls};
 pub use spring_bones::validate_spring_bones_metadata;
+pub use synced::{SyncedContent, validate_synced};
 pub use types::{Deployment, Entity, EntityType};
 
 /// The validator's configuration, under the old environment names.
@@ -184,6 +186,10 @@ impl Sources {
     /// itself (peer sync): every check takes the entity timestamp.
     pub fn access(&self) -> Arc<onchain::OnChainAccess> {
         self.access.clone()
+    }
+
+    fn eip1654(&self) -> Option<&dyn Eip1654Validator> {
+        self.eip1654.as_deref()
     }
 }
 

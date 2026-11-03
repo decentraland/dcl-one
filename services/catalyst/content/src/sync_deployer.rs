@@ -1,28 +1,24 @@
 //! The write path peer sync drives: entity files that already passed the
-//! content-hash check are verified (auth chain), buffered, and flushed in
-//! batches of up to [`BATCH_SIZE`] rows into `content.deployments`,
-//! `content.content_files` and `content.active_pointers` under the same pointer
-//! locks the local deploy function takes. A flush that fails re-reports every
-//! entity it carried to `content.failed_deployments`, where the retry worker
-//! owns it.
+//! content-hash check are validated, buffered, and flushed in batches of up
+//! to [`BATCH_SIZE`] rows into `content.deployments`, `content.content_files`
+//! and `content.active_pointers` under the same pointer locks the local deploy
+//! function takes. A flush that fails re-reports every entity it carried to
+//! `content.failed_deployments`, where the retry worker owns it.
 //!
-//! The old node relied on migration 0007's `dcl_auth_chain_consistent` CHECK
-//! (a Postgres extension, absent in production: the check was a no-op there)
-//! to refuse an inconsistent auth chain at insert time; it recovered ECDSA
-//! links and passed EIP-1654 links through. v2 has no extension:
-//! [`LiveSyncDeployer::deploy_entity`] runs `verify_peer_auth_chain` with the
-//! same rule -- ECDSA recovered locally, ephemeral expiry against the entity
-//! timestamp, contract-wallet links accepted as the peer validated them
-//! ([`crate::auth::PeerValidated`]), an expiration that parses as no known date
-//! accepted as the peer's verdict too (the old node read it with `new Date`;
-//! 2020 history carries `Date.toString()` payloads) -- before an entity is
-//! buffered, so sync never depends on an RPC and a contract's answer today
-//! never refuses the peer's history. A failed verification comes back as
-//! [`SyncError::DeploymentRejected`], which the callers record as a failed
-//! deployment with that reason.
+//! [`LiveSyncDeployer::deploy_entity`] runs the content validator the local
+//! write path runs, in its synced form ([`crate::validator::synced`]): no
+//! request-recency, rate-limit or newer-entity checks, the auth chain and the
+//! access rules judged at the entity timestamp, contract-wallet links asked of
+//! the EIP-1654 validator. A refusal comes back as
+//! [`SyncError::DeploymentRejected`]; a verdict the node could not reach (a
+//! source unset or failing, no EIP-1654 validator) as
+//! [`SyncError::ValidationUndecided`]. The callers record both in
+//! `content.failed_deployments`, where the retry worker re-attempts them with
+//! backoff. A deployer without the validator attached checks the auth chain
+//! only.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use serde_json::Value;
 use sqlx::PgPool;
@@ -35,6 +31,7 @@ use super::sync_types::{
 };
 use super::write_deployer::lock_deployment_pointers;
 use crate::auth::verify::{ChainVerdict, verify_peer_auth_chain};
+use crate::validator::{Sources, SyncedContent, ValidationError, validate_synced};
 
 mod scene_parcels;
 
@@ -190,10 +187,9 @@ fn parse_entity_for_deploy(
     })
 }
 
-/// The ephemeral links are checked against the entity timestamp, as upstream does: a key
-/// that expired after signing still signed a valid deployment. Contract-wallet links and
-/// expirations no known date shape parses are the peer's verdict (the verdict lists the
-/// latter); every other failure is a rejection the callers record.
+/// The auth-chain check of a deployer without the validator attached (the tests build it so):
+/// ECDSA links recovered, ephemeral expiry against the entity timestamp, contract-wallet links
+/// and expirations no known date shape parses kept as the peer's verdict.
 async fn verify_entity_auth_chain(
     entity_id: &str,
     auth_chain: &AuthChain,
@@ -208,17 +204,21 @@ async fn verify_entity_auth_chain(
         })
 }
 
-/// What [`LiveSyncDeployer::deploy_entity`] checks before it buffers, without buffering: the
-/// read-through path runs it before it stores the entity file, so a forged chain leaves nothing
-/// behind.
-pub async fn verify_synced_entity(
-    entity_data: &[u8],
-    entity_id: &str,
-    auth_chain: &AuthChain,
-) -> Result<(), SyncError> {
-    let parsed = parse_entity_for_deploy(entity_data, entity_id, auth_chain)?;
-    verify_entity_auth_chain(entity_id, auth_chain, parsed.entity_timestamp as i64).await?;
-    Ok(())
+/// A refused validation as the callers record it: undecided when any error is.
+fn validation_failure(entity_id: &str, errors: Vec<ValidationError>) -> SyncError {
+    let undecided = errors.iter().any(ValidationError::is_unavailable);
+    let messages = errors
+        .into_iter()
+        .map(|e| match e {
+            ValidationError::Rejected(m) | ValidationError::Unavailable(m) => m,
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    if undecided {
+        SyncError::ValidationUndecided(format!("{entity_id}: {messages}"))
+    } else {
+        SyncError::DeploymentRejected(format!("{entity_id}: {messages}"))
+    }
 }
 
 pub const BATCH_SIZE: usize = 500;
@@ -269,6 +269,8 @@ pub struct LiveSyncDeployer {
     backlog: Arc<Semaphore>,
     flush_backlog_max: usize,
     inflight_bytes: Arc<ByteBudget>,
+    /// The content validator every entity passes before it is buffered; set once by `serve`.
+    validator: Arc<OnceLock<Arc<Sources>>>,
 }
 
 fn spawn_flush(
@@ -355,6 +357,35 @@ impl LiveSyncDeployer {
             backlog: Arc::new(Semaphore::new(flush_backlog_max)),
             flush_backlog_max,
             inflight_bytes: Arc::new(ByteBudget::new(limits.inflight_bytes_max)),
+            validator: Arc::new(OnceLock::new()),
+        }
+    }
+
+    /// Attaches the content validator (the one the local write path uses, so its caches are
+    /// shared). Every clone of this deployer sees it; a second attach is ignored.
+    pub fn attach_validator(&self, sources: Arc<Sources>) {
+        let _ = self.validator.set(sources);
+    }
+
+    /// What [`Self::deploy_entity`] checks before it buffers, without buffering. `Fetched` once
+    /// the content files are in the store; `Pending` before (the read-through's check before it
+    /// stores anything).
+    pub async fn verify_entity(
+        &self,
+        entity_data: &[u8],
+        entity_id: &str,
+        auth_chain: &AuthChain,
+        content: SyncedContent,
+    ) -> Result<ChainVerdict, SyncError> {
+        match self.validator.get() {
+            Some(sources) => validate_synced(sources, entity_data, entity_id, auth_chain, content)
+                .await
+                .map_err(|errors| validation_failure(entity_id, errors)),
+            None => {
+                let parsed = parse_entity_for_deploy(entity_data, entity_id, auth_chain)?;
+                verify_entity_auth_chain(entity_id, auth_chain, parsed.entity_timestamp as i64)
+                    .await
+            }
         }
     }
 
@@ -757,7 +788,7 @@ async fn flush_batch(pool: &PgPool, entities: &[ParsedEntity]) -> Result<(), Syn
 }
 
 impl LiveSyncDeployer {
-    /// Verifies the auth chain, then buffers the entity; returns once it is buffered, so the
+    /// Validates the entity ([`Self::verify_entity`]), then buffers it; returns once it is buffered, so the
     /// write itself is asynchronous (see [`LiveSyncDeployer::flush`]). `retry_state` is the
     /// (attempts spent, backoff) of the retry worker's attempt, kept for the failure record a
     /// failed flush writes.
@@ -771,8 +802,9 @@ impl LiveSyncDeployer {
         retry_state: Option<(u32, u64)>,
     ) -> Result<(), SyncError> {
         let mut parsed = parse_entity_for_deploy(entity_data, entity_id, auth_chain)?;
-        let verdict =
-            verify_entity_auth_chain(entity_id, auth_chain, parsed.entity_timestamp as i64).await?;
+        let verdict = self
+            .verify_entity(entity_data, entity_id, auth_chain, SyncedContent::Fetched)
+            .await?;
         scene_parcels::report_drift(
             &parsed.entity_type,
             entity_id,
