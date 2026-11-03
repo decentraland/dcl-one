@@ -29,6 +29,26 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   Scene roots and avatars register their hashes through component hooks; the publisher writes
   the values in place. See the
   [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+- **Pulse only.** unity-explorer falls back to LiveKit-only after five failed start-up attempts,
+  through dual-transport proxies and LiveKit broadcast targeting. Here Pulse is the only
+  avatar-state transport and none of that exists, so a retryable failure is retried without limit.
+- **Pulse refusals set a floor under the next wait.** Server full (disconnect code 6) waits at least
+  60 s, the pre-auth limits (7, 8) and the per-IP connection cap (17) at least 10 s, the per-IP
+  scene-listener cap (18) 10 s doubling to 5 minutes, and all five are retried, as the Pulse
+  server documents. unity-explorer applies its 10 s and 60 s waits only to a session that was
+  already accepted, and ends Pulse on codes 17 and 18, which it does not know (`reconnect.rs`).
+- **A rejected Pulse handshake is retried, and a realm change ends a terminal stop.** A rejection,
+  or no answer within 10 s, closes the connection and the next attempt is a new one on the
+  backoff; a ban, an eviction, misbehaviour or an unknown code stops Pulse until the realm changes.
+  unity-explorer stops Pulse in all of these cases until a new sign-in, which has no counterpart
+  here: the account is fixed once in the world.
+- **Teleports and emotes are paced.** The client lets out 10 a second with a burst of 8, half of
+  what both servers allow for them, and keeps only the latest teleport and the latest emote command
+  while that is spent. Overrunning the servers' budget ends the session for good, and a scene that
+  repositions the player every frame would do it; unity-explorer has no limiter (`pacing.rs`).
+- **IPv6 when no IPv4 address resolves.** The native driver connects to the first IPv4 address and
+  falls back to the first IPv6 one, on an IPv6 socket, only when there is none. unity-explorer
+  fails without an IPv4 address, and the servers bind IPv4 by default.
 
 ## Deliberate choices that look like mistakes
 
