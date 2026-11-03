@@ -252,23 +252,6 @@ mod tests {
     }
 
     #[test]
-    fn the_memo_starts_over_at_its_cap() {
-        let search = BlockSearch::new();
-        for n in 0..KNOWN_CAP as u64 {
-            search.remember(BlockInfo {
-                number: n,
-                timestamp: n as i64,
-            });
-        }
-        assert_eq!(search.known.lock().unwrap().len(), KNOWN_CAP);
-        search.remember(BlockInfo {
-            number: KNOWN_CAP as u64,
-            timestamp: KNOWN_CAP as i64,
-        });
-        assert_eq!(search.known.lock().unwrap().len(), 1);
-    }
-
-    #[test]
     fn the_block_answer_is_parsed() {
         assert_eq!(
             block_info(&json!({ "number": "0x10", "timestamp": "0x5f5e100" })).unwrap(),

@@ -209,7 +209,6 @@ impl Sources {
 
     /// The chain access checks, for entities this node did not validate
     /// itself (peer sync): every check takes the entity timestamp.
-    #[allow(dead_code)] // peer sync validation reads it
     pub(crate) fn access(&self) -> Arc<onchain::OnChainAccess> {
         self.access.clone()
     }
