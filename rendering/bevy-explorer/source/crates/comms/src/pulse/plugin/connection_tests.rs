@@ -67,16 +67,37 @@ fn handshake_response(success: bool) -> pulse::server_message::Message {
 
 /// `wallet` entering `HOME` as `subject_id`.
 fn joined(subject_id: u32, wallet: &str) -> pulse::server_message::Message {
+    joined_at(subject_id, wallet, 0)
+}
+
+/// `wallet` entering `HOME` as `subject_id`, in the parcel the servers index as `parcel_index`.
+fn joined_at(subject_id: u32, wallet: &str, parcel_index: i32) -> pulse::server_message::Message {
     pulse::server_message::Message::PlayerJoined(pulse::PlayerJoined {
         user_id: wallet.to_owned(),
         profile_version: 1,
         state: Some(pulse::PlayerStateFull {
             subject_id,
-            state: Some(pulse::PlayerState::default()),
+            state: Some(pulse::PlayerState {
+                parcel_index,
+                ..default()
+            }),
             ..default()
         }),
         realm: HOME.to_owned(),
     })
+}
+
+/// The departures reported to `updates` since the last look: each peer, with the transport it left.
+fn departures(updates: &mut mpsc::Receiver<NetworkUpdate>) -> Vec<(Entity, Address)> {
+    std::iter::from_fn(|| updates.try_recv().ok())
+        .filter_map(|update| match update {
+            NetworkUpdate::PlayerLeft {
+                transport_id,
+                address,
+            } => Some((transport_id, address)),
+            _ => None,
+        })
+        .collect()
 }
 
 /// When a `Down` connection is dialled again; `None` in any other state.
@@ -209,6 +230,49 @@ impl Harness {
         harness.receive(handshake_response(true));
         harness.pump_at(now);
         harness
+    }
+
+    /// A scene listener in the player's place, its handshake accepted, hosting a scene of `HOME` at
+    /// each of `parcels`. Each scene has a Pulse transport of its own, and the receiver behind
+    /// each one's sink, which stands in for that scene's crdt context, comes back with the
+    /// transport, in the order of `parcels`.
+    fn listener<const N: usize>(
+        parcels: [IVec2; N],
+    ) -> (Self, [(Entity, mpsc::Receiver<NetworkUpdate>); N]) {
+        let mut harness = Self::player(Connection::Established);
+        let scenes = parcels.map(|_| {
+            let (sink, updates) = mpsc::channel(64);
+            (harness.world.spawn(PulseSink(sink)).id(), updates)
+        });
+        let hosted = parcels
+            .iter()
+            .zip(&scenes)
+            .map(|(parcel, (transport, _))| (*parcel, *transport))
+            .collect();
+        // What its handshake announced: a rect for each scene.
+        let aoi = vec![pulse::SceneListenerAoi {
+            realm: HOME.to_owned(),
+            parcel_rects: parcels
+                .iter()
+                .map(|parcel| pulse::ParcelRect {
+                    min_x: parcel.x,
+                    min_z: parcel.y,
+                    max_x: parcel.x,
+                    max_z: parcel.y,
+                })
+                .collect(),
+        }];
+        let (mut session, driver) = session_with_link(PulseRole::Listener(ListenerRole {
+            transport_by_parcel: [(HOME.to_owned(), hosted)].into_iter().collect(),
+            announced: aoi.clone(),
+            aoi,
+            ..default()
+        }));
+        session.state = Connection::Established;
+        session.accepted = true;
+        harness.world.insert_resource(session);
+        harness.driver = driver;
+        (harness, scenes)
     }
 
     /// A player at `Idle`, ready to sign: the wallet has an identity, and the profile is at 7.
@@ -357,16 +421,11 @@ impl Harness {
 
     /// The peers reported as left since the last look, every one of them on the routing transport.
     fn left(&mut self) -> Vec<Address> {
-        std::iter::from_fn(|| self.updates.try_recv().ok())
-            .filter_map(|update| match update {
-                NetworkUpdate::PlayerLeft {
-                    transport_id,
-                    address,
-                } => {
-                    assert_eq!(transport_id, self.routing);
-                    Some(address)
-                }
-                _ => None,
+        departures(&mut self.updates)
+            .into_iter()
+            .map(|(transport, address)| {
+                assert_eq!(transport, self.routing);
+                address
             })
             .collect()
     }
@@ -398,6 +457,23 @@ fn a_server_restart_drops_peers_and_reconnects_after_three_seconds() {
 
     assert_eq!(harness.left(), [address(W1)]);
     assert_eq!(respawn_at(harness.session()), Some(53.0));
+}
+
+/// A scene listener routes each peer to the scene it stands in, so a drop reports each departure
+/// on that scene's own transport: presence is per context.
+#[test]
+fn a_listeners_peers_leave_their_scene_transports_on_a_drop() {
+    let (mut harness, [(first, mut first_updates), (second, mut second_updates)]) =
+        Harness::listener([IVec2::new(0, 0), IVec2::new(5, 0)]);
+    harness.receive(joined_at(1, W1, parcel_index(0)));
+    harness.receive(joined_at(2, W2, parcel_index(5)));
+    harness.pump_at(5.0);
+
+    harness.report(PulseStatus::Disconnected(PulseDisconnect::Graceful));
+    harness.pump_at(10.0);
+
+    assert_eq!(departures(&mut first_updates), [(first, address(W1))]);
+    assert_eq!(departures(&mut second_updates), [(second, address(W2))]);
 }
 
 /// The servers refuse at connect, before any handshake, where unity-explorer's 60 s never applies.
@@ -478,6 +554,34 @@ fn acceptance_resets_the_backoff() {
     harness.report(PulseStatus::Failed("reset".to_owned()));
     harness.pump_at(31.0);
     assert_eq!(respawn_at(harness.session()), Some(32.0));
+}
+
+/// The attempts that failed before a terminal stop are forgiven when a realm change ends it: the
+/// next failure is the first of a new run, which waits the first second again.
+#[test]
+fn a_realm_change_out_of_a_terminal_stop_starts_the_backoff_over() {
+    let mut harness = Harness::player(Connection::Connecting);
+
+    harness.report(PulseStatus::Failed("no route".to_owned()));
+    harness.pump_at(10.0);
+    harness.redial(Connection::Connecting);
+    harness.report(PulseStatus::Failed("no route".to_owned()));
+    harness.pump_at(20.0);
+    assert_eq!(respawn_at(harness.session()), Some(22.0));
+
+    harness.redial(Connection::Connecting);
+    harness.report(PulseStatus::Disconnected(PulseDisconnect::Banned));
+    harness.pump_at(30.0);
+    assert!(matches!(harness.session().state, Connection::Dead));
+
+    harness.world.insert_resource(realm("away"));
+    harness.follow_realm();
+    assert_eq!(respawn_at(harness.session()), Some(0.0));
+
+    harness.redial(Connection::Connecting);
+    harness.report(PulseStatus::Failed("no route".to_owned()));
+    harness.pump_at(40.0);
+    assert_eq!(respawn_at(harness.session()), Some(41.0));
 }
 
 #[test]
@@ -685,6 +789,22 @@ fn an_emote_is_kept_from_its_start_to_its_stop() {
     assert_eq!(kinds, [FrameKind::Emote]);
 }
 
+/// An emote the bucket allows leaves in its place in the queue. A start carries the pose it was
+/// made in, so behind a newer movement it would step the avatar back.
+#[test]
+fn an_emote_queued_before_a_movement_leaves_before_it() {
+    let mut harness = Harness::player(Connection::Established);
+    // The player has moved before, so the emote has a pose to start from.
+    harness.session_mut().last_state = Some(pose());
+
+    harness.broadcast(emote(false));
+    harness.broadcast(movement());
+    harness.drain_at(10.0);
+
+    let kinds: Vec<_> = harness.sent().iter().map(|(kind, _)| *kind).collect();
+    assert_eq!(kinds, [FrameKind::Emote, FrameKind::Input]);
+}
+
 /// The whole way: a player that has sent a pose and an emote connects, and its handshake says where
 /// it is and what it plays; the server accepts that as placing it in the realm.
 #[test]
@@ -763,6 +883,40 @@ fn a_teleport_made_while_the_handshake_is_in_flight_goes_out_on_acceptance() {
     };
     assert_eq!(teleport.realm, HOME);
     assert_eq!(teleport.parcel_index, parcel_index(3));
+    assert_eq!(*announcement, profile_announcement(7));
+}
+
+/// The handshake carries the loop playing when it was signed, and the server plays it from the
+/// acceptance on. A stop made while the handshake is in flight goes out after the acceptance, or
+/// every observer would see the loop until the player emoted again.
+#[test]
+fn an_emote_stopped_while_the_handshake_is_in_flight_stops_on_acceptance() {
+    let mut harness = Harness::idle();
+    harness.session_mut().last_state = Some(pose());
+    harness.session_mut().local_emote = Some(LocalEmote {
+        urn: "wave".to_owned(),
+        duration_ms: None,
+        mask: Some(1),
+        started_at: 2.0,
+    });
+
+    let initial = harness.signed_handshake(4.5).initial_state.unwrap();
+    assert_eq!(initial.emote_id.as_deref(), Some("wave"));
+    assert_eq!(initial.emote_duration_ms, None);
+
+    harness.broadcast(emote(true));
+    harness.drain_at(4.6);
+    assert!(harness.sent().is_empty());
+
+    harness.receive(handshake_response(true));
+    harness.pump_at(5.0);
+
+    let sent = harness.sent();
+    let [(FrameKind::Emote, pulse::client_message::Message::EmoteStop(_)), announcement] =
+        sent.as_slice()
+    else {
+        panic!("{sent:?}")
+    };
     assert_eq!(*announcement, profile_announcement(7));
 }
 

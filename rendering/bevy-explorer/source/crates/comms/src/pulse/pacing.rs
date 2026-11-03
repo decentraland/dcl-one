@@ -19,7 +19,7 @@ use std::collections::VecDeque;
 
 use common::util::dcl_assert;
 
-use super::transport::PulseFrame;
+use super::transport::{FrameKind, PulseFrame};
 
 /// How many events a second the pacer lets out: half of the servers' 20
 /// (Pulse `src/DCLPulse/appsettings.json:44-47`).
@@ -42,13 +42,15 @@ pub struct DiscreteEventPacer {
 }
 
 impl DiscreteEventPacer {
+    /// Whether frames of `kind` wait for the bucket: teleports and emotes.
+    pub fn paces(kind: FrameKind) -> bool {
+        matches!(kind, FrameKind::Teleport | FrameKind::Emote)
+    }
+
     /// Hold a `Teleport` or `Emote` frame; it replaces a waiting frame of the same kind.
     pub fn offer(&mut self, frame: PulseFrame) {
         dcl_assert!(
-            matches!(
-                frame.kind,
-                super::transport::FrameKind::Teleport | super::transport::FrameKind::Emote
-            ),
+            Self::paces(frame.kind),
             "only teleports and emotes are paced, not {:?}",
             frame.kind
         );

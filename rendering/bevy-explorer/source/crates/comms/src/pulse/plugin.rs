@@ -148,8 +148,9 @@ pub(crate) struct PulseSession {
     /// connection to send it on.
     local_emote: Option<LocalEmote>,
     /// Teleports and emotes waiting for the servers' event budget. They are let out only while
-    /// `Established`, so a teleport made while the handshake is in flight waits here for the
-    /// acceptance. A new driver starts with none: what waited was meant for the last connection.
+    /// `Established`, so a teleport or an emote made while the handshake is in flight waits here
+    /// for the acceptance. A new driver starts with none: what waited was meant for the last
+    /// connection.
     pacer: DiscreteEventPacer,
     /// When to connect again after a failure, and when to stop.
     policy: ReconnectPolicy,
@@ -748,7 +749,8 @@ fn follow_realm(
 /// event budget with the teleports. Messages with no Pulse form (e.g. byte-only chat/profile that
 /// happened onto this transport) yield `None` and are dropped. The conversion happens whatever the
 /// state of the connection, because it keeps the session's caches current; only an `Established`
-/// session sends. Last of all, what the pacer allows now goes out.
+/// session sends, and an emote made while the handshake is in flight waits for its acceptance.
+/// Last of all, what the pacer allows now goes out.
 fn drain_pulse_outbox(
     session: Option<ResMut<PulseSession>>,
     time: Res<Time>,
@@ -763,10 +765,7 @@ fn drain_pulse_outbox(
     // subject, and the server refuses every message it could send anyway. Its outboxes are still
     // drained — a transport that silently backs up is worse than one that visibly discards.
     let player = matches!(session.role, PulseRole::Player(_));
-    let transmitting =
-        player && matches!(session.state, Connection::Established) && session.link.is_some();
     let grid = session.grid;
-    let link = session.link.as_ref();
     for mut outbox in outboxes.iter_mut() {
         while let Ok(message) = outbox.0.try_recv() {
             if !player {
@@ -778,16 +777,27 @@ fn drain_pulse_outbox(
                 local_emote: &mut session.local_emote,
                 now,
             };
-            let frame = message.message.to_pulse(&mut ctx);
-            if !transmitting {
+            let (Some(frame), Some(link)) = (message.message.to_pulse(&mut ctx), &session.link)
+            else {
                 continue;
-            }
-            if let (Some(frame), Some(link)) = (frame, link) {
-                if frame.kind == FrameKind::Emote {
-                    session.pacer.offer(frame);
-                } else {
+            };
+            let paced = DiscreteEventPacer::paces(frame.kind);
+            match session.state {
+                Connection::Established if !paced => {
                     let _ = link.outbound.try_send(frame);
                 }
+                // Out at once if the bucket allows, ahead of what was queued after it.
+                Connection::Established => {
+                    session.pacer.offer(frame);
+                    release_paced(session, now);
+                }
+                // The handshake in flight carries what the player was doing when it was signed,
+                // and the acceptance seeds that: a teleport or an emote made since waits for it.
+                // An input is superseded by the next one anyway.
+                Connection::Signing(_) | Connection::AwaitingResponse { .. } if paced => {
+                    session.pacer.offer(frame);
+                }
+                _ => {}
             }
         }
     }
@@ -1361,7 +1371,8 @@ fn on_handshake_response(
         send_teleport(session, realm, player);
     }
     // A fresh connection has its whole budget, so that teleport goes now, and ahead of the
-    // announcement; so does one the player made while the handshake was in flight.
+    // announcement; so does a teleport or an emote the player made while the handshake was in
+    // flight.
     release_paced(session, now);
     // The servers ignore the version the handshake carries, so it is announced as a message of its
     // own. Until the profile loads there is none, and the periodic announce (`profile::mod`) takes
@@ -1847,7 +1858,7 @@ fn send_teleport_at(session: &mut PulseSession, realm: &CurrentRealm, world: Vec
         reliability: PulseReliability::Reliable,
         kind: FrameKind::Teleport,
     });
-    info!("pulse: teleport queued (realm {realm_name}, parcel {parcel_index})");
+    debug!("pulse: teleport queued (realm {realm_name}, parcel {parcel_index})");
 }
 
 /// Send a `ProfileVersionAnnouncement` for `version`, reliably: peers fetch the profile when it is
