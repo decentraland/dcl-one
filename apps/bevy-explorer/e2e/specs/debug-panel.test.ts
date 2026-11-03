@@ -15,8 +15,14 @@ scenario('the debug panel shows live plugin data and can play an avatar emote', 
   const waitTarget = (fps: number) => until(() => explorer.hud.get(panel),
     (read) => read.text.includes('Target frame rate (FPS) ' + fps),
     { timeoutMs: 10_000, what: 'the open panel to show a target of ' + fps + ' FPS' })
-  await explorer.hud.click(button('Sidebar settings'))
-  await explorer.hud.click(button('Debug panel'))
+  const launcher = button('Toggle debug panel')
+  if (await explorer.json<boolean>('/debug_panel --dev-build')) {
+    await explorer.hud.click(launcher)
+  } else {
+    assert.equal(await explorer.hud.isVisible(launcher), false)
+    await explorer.hud.click(button('Sidebar settings'))
+    await explorer.hud.click(button('Debug panel'))
+  }
   try {
     await explorer.hud.wait(panel)
     await expand('World')

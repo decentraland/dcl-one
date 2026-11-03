@@ -76,7 +76,8 @@ not the shell page: pick the app frame in the DevTools context selector first.
 
 ## Runtime debug panel
 
-In world, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
+In a development engine build, click the bug button in the lower-right corner of the in-world HUD to toggle the panel.
+In any build, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
 Use `/debug help` to list the sections available in this client and `/debug <section>`
 to open one directly. Search matches both section titles and controls. Expand the
 sections you want to watch. Collapsing a section stops its queries.
@@ -87,7 +88,7 @@ The room, voice, rendering, media and avatar sections appear with the plugins th
 supply them. A missing reading displays **Unavailable**. Development-only mutations
 require preview mode. To add a section, follow the [plugin recipe](recipes.md#a-plugin-section-in-the-runtime-debug-panel).
 
-![Performance and World sections open in the Windows Explorer at Genesis Plaza](runtime-debug-panel.png)
+![Performance and World sections open in the Windows development build, with the bug button in the lower-right corner](runtime-debug-panel.png)
 
 ## Test commands
 

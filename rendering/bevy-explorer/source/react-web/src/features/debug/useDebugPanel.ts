@@ -1,7 +1,7 @@
-import { useCallback, useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { bugReportUrl } from '../../lib/bugReport'
 import type { EngineSession } from '../session/useEngineSession'
-import { openDebugPanel, type DebugSection } from './DebugPanel'
+import { openDebugPanel, useCommandResult, type DebugSection } from './DebugPanel'
 
 const sessionSection: DebugSection = {
   title: 'Session', query: 'hud/session', fields: [['Phase', 'phase'], ['Engine ready', 'ready']],
@@ -20,6 +20,7 @@ export function useDebugPanel(session: EngineSession) {
   const current = useRef(session)
   current.current = session
   const popup = useRef<(() => void) | null>(null)
+  const [launcherLayer, setLauncherLayer] = useState<HTMLDivElement | null>(null)
   const run = useCallback(async (line: string) => {
     const s = current.current
     switch (line) {
@@ -34,10 +35,11 @@ export function useDebugPanel(session: EngineSession) {
       default: return s.runDebugCommand(line)
     }
   }, [])
+  const { value: developmentBuild } = useCommandResult<boolean>(run, '/debug_panel --dev-build', false)
   const toggle = useCallback((target = '') => {
     const alreadyOpen = popup.current != null
     popup.current?.()
-    if (!alreadyOpen || target) popup.current = openDebugPanel(run, target, () => { popup.current = null })
+    if (!alreadyOpen || target) popup.current = openDebugPanel(run, target, () => { popup.current = null }, setLauncherLayer)
   }, [run])
   useEffect(() => {
     const onRequest = (event: Event) => {
@@ -50,5 +52,5 @@ export function useDebugPanel(session: EngineSession) {
     window.addEventListener(REQUEST, onRequest)
     return () => { window.removeEventListener(REQUEST, onRequest); popup.current?.() }
   }, [run, toggle])
-  return toggle
+  return { toggle, developmentBuild: developmentBuild === true, launcherLayer }
 }

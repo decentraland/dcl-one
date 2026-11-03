@@ -88,13 +88,22 @@ impl AddDebugSection for App {
 /// List the running build's debug panel sections, fields and actions as JSON.
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/debug_panel")]
-pub(crate) struct DebugPanelCommand;
+pub(crate) struct DebugPanelCommand {
+    /// Report whether this engine was compiled with debug assertions.
+    #[arg(long)]
+    dev_build: bool,
+}
 
 pub(crate) fn debug_panel(
     mut input: ConsoleCommand<DebugPanelCommand>,
     sections: Res<DebugSections>,
 ) {
-    if let Some(Ok(_)) = input.take() {
-        input.reply_ok(serde_json::to_string(&sections.0.values().collect::<Vec<_>>()).unwrap());
+    if let Some(Ok(command)) = input.take() {
+        if command.dev_build {
+            input.reply_ok(cfg!(debug_assertions).to_string());
+        } else {
+            input
+                .reply_ok(serde_json::to_string(&sections.0.values().collect::<Vec<_>>()).unwrap());
+        }
     }
 }

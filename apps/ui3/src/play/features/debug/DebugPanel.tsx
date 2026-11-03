@@ -21,7 +21,7 @@ interface WidgetInput {
     | { type: 'select'; options: [label: string, argument: string][] }
 }
 
-function useCommandResult<T>(run: RunCommand, line: string, repeat: boolean) {
+export function useCommandResult<T>(run: RunCommand, line: string, repeat: boolean) {
   const [value, setValue] = useState<T>()
   const [error, setError] = useState('')
   useEffect(() => {
@@ -217,6 +217,10 @@ function DebugPanel({ run, close, initial }: { run: RunCommand; close: () => voi
   )
 }
 
-export function openDebugPanel(run: RunCommand, initial: string, onClose: () => void): () => void {
-  return openPopup((close) => <DebugPanel run={run} close={close} initial={initial} />, { dim: false, onClose })
+export function openDebugPanel(run: RunCommand, initial: string, onClose: () => void,
+  launcherLayer: (element: HTMLDivElement | null) => void): () => void {
+  return openPopup((close) => <>
+    <div className={styles.launcherLayer} ref={launcherLayer} />
+    <DebugPanel run={run} close={close} initial={initial} />
+  </>, { dim: false, onClose })
 }

@@ -1,9 +1,33 @@
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { PopupHost, resetPopups } from '../design/popups'
 import { Sidebar } from '../features/sidebar/Sidebar'
 import { requestDebugPanel } from '../features/debug/useDebugPanel'
 import { fakeSession } from './harness'
+
+it.each([true, false])('gates the direct debug launcher on the engine development build (%s)', async (development) => {
+  const session = fakeSession()
+  session.runDebugCommand = vi.fn(async (line: string) =>
+    line === '/debug_panel --dev-build' ? String(development) : '[]')
+  render(<><Sidebar session={session} /><PopupHost /></>)
+  await waitFor(() => expect(session.runDebugCommand).toHaveBeenCalledWith('/debug_panel --dev-build'))
+  const button = { name: 'Toggle debug panel' }
+  if (!development) {
+    expect(screen.queryByRole('button', button)).toBeNull()
+    return
+  }
+  const launcher = () => screen.getByRole('button', button)
+  expect(await screen.findByRole('button', button)).toHaveAttribute('aria-pressed', 'false')
+  await act(async () => { fireEvent.click(launcher()) })
+  expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
+  expect(launcher()).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(launcher())
+  expect(screen.queryByRole('dialog', { name: 'Debug panel' })).toBeNull()
+  await act(async () => requestDebugPanel('', vi.fn()))
+  expect(launcher()).toHaveAttribute('aria-pressed', 'true')
+  fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+  expect(launcher()).toHaveAttribute('aria-pressed', 'false')
+})
 
 it('discovers plugin sections, samples expanded sections and dispatches their actions', async () => {
   vi.useFakeTimers()
@@ -14,6 +38,7 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
   ]
   let seconds = 1
   const command = vi.fn(async (line: string) => {
+    if (line === '/debug_panel --dev-build') return 'false'
     if (line === '/debug_panel') return JSON.stringify(sections)
     if (line === '/clock_test') return JSON.stringify({ seconds })
     if (line === '/advance_test') { seconds += 10; return 'Clock advanced' }
@@ -26,7 +51,7 @@ it('discovers plugin sections, samples expanded sections and dispatches their ac
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Debug panel' })) })
     expect(screen.getByRole('dialog', { name: 'Debug panel' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Transport' })).toHaveAttribute('aria-expanded', 'false')
-    expect(command.mock.calls).toEqual([['/debug_panel']])
+    expect(command.mock.calls).toEqual([['/debug_panel --dev-build'], ['/debug_panel']])
     const clock = screen.getByRole('button', { name: 'Clock' })
     await act(async () => { fireEvent.click(clock) })
     expect(screen.getByText('1')).toBeInTheDocument()

@@ -12,6 +12,10 @@
   padding: 8px 0;
   border-top: 1px solid var(--line);
 }
+/* Leave room for the development build's lower-right toggle while the panel scrolls. */
+.launcherLayer:not(:empty) + .panel {
+  max-height: calc((100dvh - 20px) / var(--ui-scale) - 44px);
+}
 .chart { margin: 0; font-size: var(--fs-xs); }
 .chart svg { width: 100%; height: 32px; display: block; color: var(--brand); }
 .actions {
