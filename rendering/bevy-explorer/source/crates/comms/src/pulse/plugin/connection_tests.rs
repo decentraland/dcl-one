@@ -1,10 +1,14 @@
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use bevy::ecs::system::RunSystemOnce;
+use bevy::tasks::TaskPool;
 use tokio::sync::mpsc::error::TryRecvError;
 
 use super::*;
+use crate::profile::UserProfile;
+use crate::pulse::from_movement;
 use crate::pulse::transport::{PulseDisconnect, PulseDriverChannels};
+use crate::{Broadcast, Emote, NetworkMessageRecipient};
 
 const HOME: &str = "home";
 const W1: &str = "0x0000000000000000000000000000000000000001";
@@ -34,8 +38,10 @@ fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverChannels) {
         },
         server_id: String::new(),
         last_state: None,
+        local_emote: None,
         policy: ReconnectPolicy::default(),
         accepted: false,
+        initial_realm: None,
         state: Connection::Connecting,
     };
     (session, driver)
@@ -80,14 +86,61 @@ fn respawn_at(session: &PulseSession) -> Option<f64> {
     }
 }
 
+/// A pose the player could have sent last.
+fn pose() -> pulse::PlayerState {
+    pulse::PlayerState {
+        parcel_index: 7,
+        ..default()
+    }
+}
+
+/// The local movement the engine broadcasts, at a spot of its own.
+fn movement() -> rfc4::Movement {
+    rfc4::Movement {
+        position_x: 8.0,
+        position_y: 1.0,
+        position_z: 8.0,
+        ..default()
+    }
+}
+
+/// The local emote the engine broadcasts: a one-shot of 1.5 s on the upper body.
+fn emote(stopping: bool) -> Emote {
+    Emote {
+        urn: "wave".to_owned(),
+        incremental_id: 1,
+        timestamp: 0.0,
+        duration_ms: Some(1500),
+        stopping,
+        mask: EmoteMask::UpperBody,
+    }
+}
+
+/// A frame the server was sent: the kind it rode in, and the message.
+type Sent = (FrameKind, pulse::client_message::Message);
+
+/// The announcement of a profile `version`, as it goes out.
+fn profile_announcement(version: i32) -> Sent {
+    (
+        FrameKind::Control,
+        pulse::client_message::Message::ProfileAnnouncement(pulse::ProfileVersionAnnouncement {
+            version,
+        }),
+    )
+}
+
 /// A player's session in a world on `HOME`. The test holds the far end of each of its channels: the
-/// driver's end of the link, and the receiver behind the routing transport's sink, which stands in
-/// for the engine. No wallet is signed in, so nothing here dials a real server.
+/// driver's end of the link, the receiver behind the routing transport's sink, which stands in for
+/// the engine, and the sender behind its outbox, where the engine queues what it broadcasts. The
+/// player stands in the world. No wallet is signed in, except by `idle` for a connection that never
+/// goes `Down`, so nothing here dials a real server.
 struct Harness {
     world: World,
     driver: PulseDriverChannels,
     updates: mpsc::Receiver<NetworkUpdate>,
+    broadcasts: mpsc::Sender<NetworkMessage>,
     routing: Entity,
+    user: Entity,
 }
 
 impl Harness {
@@ -95,9 +148,12 @@ impl Harness {
     fn player(state: Connection) -> Self {
         let mut world = World::new();
         let (sink, updates) = mpsc::channel(64);
-        let (_, outbox) = mpsc::channel(1);
+        let (broadcasts, outbox) = mpsc::channel(8);
         let routing = world
             .spawn((PulseOutbox(outbox), PulseSink(sink.clone())))
+            .id();
+        let user = world
+            .spawn((PrimaryUser::default(), GlobalTransform::default()))
             .id();
         let (mut session, driver) = session_with_link(PulseRole::Player(PlayerRole {
             context: Entity::PLACEHOLDER,
@@ -115,7 +171,9 @@ impl Harness {
             world,
             driver,
             updates,
+            broadcasts,
             routing,
+            user,
         }
     }
 
@@ -129,8 +187,98 @@ impl Harness {
         harness
     }
 
+    /// A player at `Idle`, ready to sign: the wallet has an identity, and the profile is at 7.
+    fn idle() -> Self {
+        IoTaskPool::get_or_init(TaskPool::default);
+        let mut harness = Self::player(Connection::Idle);
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest();
+        harness.world.insert_resource(wallet);
+        harness.profile(7);
+        harness
+    }
+
     fn session(&self) -> &PulseSession {
         self.world.resource::<PulseSession>()
+    }
+
+    fn session_mut(&mut self) -> Mut<'_, PulseSession> {
+        self.world.resource_mut::<PulseSession>()
+    }
+
+    /// The session dials again and comes up in `state` on a fresh link, whose driver end replaces
+    /// the harness's.
+    fn redial(&mut self, state: Connection) {
+        let (link, driver) = transport::pulse_channels(16);
+        let mut session = self.world.resource_mut::<PulseSession>();
+        session.link = Some(link);
+        session.state = state;
+        self.driver = driver;
+    }
+
+    /// The profile has loaded, at `version`.
+    fn profile(&mut self, version: u32) {
+        self.world.insert_resource(CurrentUserProfile {
+            profile: Some(UserProfile {
+                version,
+                ..default()
+            }),
+            ..default()
+        });
+    }
+
+    /// The player is behind the loading screen.
+    fn leave_world(&mut self) {
+        self.world.entity_mut(self.user).insert(OutOfWorld);
+    }
+
+    /// The player is placed in the world.
+    fn enter_world(&mut self) {
+        self.world.entity_mut(self.user).remove::<OutOfWorld>();
+    }
+
+    /// Pumps at `now` until the handshake is signed and sent — the IO pool does that off this
+    /// thread — and returns what it asks.
+    fn signed_handshake(&mut self, now: f64) -> pulse::HandshakeRequest {
+        let deadline = Instant::now() + Duration::from_secs(30);
+        self.pump_at(now);
+        while !matches!(self.session().state, Connection::AwaitingResponse { .. }) {
+            assert!(Instant::now() < deadline, "the handshake was never sent");
+            std::thread::sleep(Duration::from_millis(1));
+            self.pump_at(now);
+        }
+        let sent = self.sent();
+        let [(FrameKind::Control, pulse::client_message::Message::Handshake(handshake))] =
+            sent.as_slice()
+        else {
+            panic!("{sent:?}")
+        };
+        handshake.clone()
+    }
+
+    /// The engine broadcasts `message` on the routing transport.
+    fn broadcast(&self, message: impl Broadcast + 'static) {
+        self.broadcasts
+            .try_send(NetworkMessage {
+                message: Box::new(message),
+                unreliable: false,
+                recipient: NetworkMessageRecipient::All,
+                topic: None,
+            })
+            .unwrap();
+    }
+
+    /// What the driver was handed since the last look.
+    fn sent(&mut self) -> Vec<Sent> {
+        std::iter::from_fn(|| self.driver.outbound.try_recv().ok())
+            .map(|frame| {
+                let message = pulse::ClientMessage::decode(frame.bytes.as_slice())
+                    .unwrap()
+                    .message
+                    .unwrap();
+                (frame.kind, message)
+            })
+            .collect()
     }
 
     /// The server sends `message`.
@@ -147,12 +295,22 @@ impl Harness {
         self.driver.status.try_send(status).unwrap();
     }
 
-    /// One `pump_pulse`, with the engine's clock at `now`.
-    fn pump_at(&mut self, now: f64) {
+    fn advance_to(&mut self, now: f64) {
         self.world
             .resource_mut::<Time>()
             .advance_to(Duration::from_secs_f64(now));
+    }
+
+    /// One `pump_pulse`, with the engine's clock at `now`.
+    fn pump_at(&mut self, now: f64) {
+        self.advance_to(now);
         self.world.run_system_once(pump_pulse).unwrap();
+    }
+
+    /// One `drain_pulse_outbox`, with the engine's clock at `now`.
+    fn drain_at(&mut self, now: f64) {
+        self.advance_to(now);
+        self.world.run_system_once(drain_pulse_outbox).unwrap();
     }
 
     fn follow_realm(&mut self) {
@@ -249,10 +407,296 @@ fn a_terminal_reason_parks_until_the_next_realm_change() {
     harness.pump_at(2.0);
     assert!(matches!(harness.session().state, Connection::Dead));
 
+    // The routing entity is lost and built again in the same realm: no way out of `Dead`.
+    harness.world.despawn(harness.routing);
     harness.follow_realm();
     assert!(matches!(harness.session().state, Connection::Dead));
 
     harness.world.insert_resource(realm("away"));
     harness.follow_realm();
     assert_eq!(respawn_at(harness.session()), Some(0.0));
+}
+
+/// The attempts that failed before an accepted connection are forgiven: the next failure is the
+/// first of a new run, which waits the first second again.
+#[test]
+fn acceptance_resets_the_backoff() {
+    let mut harness = Harness::player(Connection::Connecting);
+
+    harness.report(PulseStatus::Failed("no route".to_owned()));
+    harness.pump_at(10.0);
+    assert_eq!(respawn_at(harness.session()), Some(11.0));
+
+    harness.redial(Connection::Connecting);
+    harness.report(PulseStatus::Failed("no route".to_owned()));
+    harness.pump_at(20.0);
+    assert_eq!(respawn_at(harness.session()), Some(22.0));
+
+    harness.redial(Connection::AwaitingResponse { timeout_at: 40.0 });
+    harness.receive(handshake_response(true));
+    harness.pump_at(30.0);
+    assert!(matches!(harness.session().state, Connection::Established));
+
+    harness.report(PulseStatus::Failed("reset".to_owned()));
+    harness.pump_at(31.0);
+    assert_eq!(respawn_at(harness.session()), Some(32.0));
+}
+
+#[test]
+fn no_initial_state_out_of_world_or_without_a_realm_or_pose() {
+    let pose = pose();
+
+    assert_eq!(
+        initial_state(Some(&pose), None, Some(HOME), false, 1.0),
+        None
+    );
+    assert_eq!(initial_state(Some(&pose), None, None, true, 1.0), None);
+    assert_eq!(initial_state(None, None, Some(HOME), true, 1.0), None);
+}
+
+#[test]
+fn the_initial_state_carries_the_realm_and_the_last_pose() {
+    let pose = pose();
+
+    assert_eq!(
+        initial_state(Some(&pose), None, Some(HOME), true, 1.0),
+        Some(pulse::PlayerInitialState {
+            state: Some(pose),
+            realm: HOME.to_owned(),
+            ..default()
+        })
+    );
+}
+
+#[test]
+fn a_looping_emote_is_carried_with_its_elapsed_time() {
+    let emote = LocalEmote {
+        urn: "wave".to_owned(),
+        duration_ms: None,
+        mask: Some(1),
+        started_at: 10.0,
+    };
+
+    let initial = initial_state(Some(&pose()), Some(&emote), Some(HOME), true, 12.5).unwrap();
+
+    assert_eq!(initial.emote_id.as_deref(), Some("wave"));
+    assert_eq!(initial.emote_start_offset_ms, Some(2500));
+    assert_eq!(initial.emote_duration_ms, None);
+    assert_eq!(initial.emote_mask, Some(1));
+}
+
+/// Still playing: it goes with its duration, and with no offset until some time has passed.
+#[test]
+fn a_one_shot_emote_within_its_duration_is_carried_with_it() {
+    let emote = LocalEmote {
+        urn: "wave".to_owned(),
+        duration_ms: Some(3000),
+        mask: None,
+        started_at: 10.0,
+    };
+
+    let at_the_start = initial_state(Some(&pose()), Some(&emote), Some(HOME), true, 10.0).unwrap();
+    assert_eq!(at_the_start.emote_id.as_deref(), Some("wave"));
+    assert_eq!(at_the_start.emote_duration_ms, Some(3000));
+    assert_eq!(at_the_start.emote_start_offset_ms, None);
+    assert_eq!(at_the_start.emote_mask, None);
+
+    let later = initial_state(Some(&pose()), Some(&emote), Some(HOME), true, 11.0).unwrap();
+    assert_eq!(later.emote_id.as_deref(), Some("wave"));
+    assert_eq!(later.emote_duration_ms, Some(3000));
+    assert_eq!(later.emote_start_offset_ms, Some(1000));
+}
+
+#[test]
+fn a_finished_one_shot_emote_is_not_carried() {
+    let pose = pose();
+    let emote = LocalEmote {
+        urn: "wave".to_owned(),
+        duration_ms: Some(1000),
+        mask: Some(1),
+        started_at: 10.0,
+    };
+
+    assert_eq!(
+        initial_state(Some(&pose), Some(&emote), Some(HOME), true, 11.5),
+        Some(pulse::PlayerInitialState {
+            state: Some(pose),
+            realm: HOME.to_owned(),
+            ..default()
+        })
+    );
+}
+
+#[test]
+fn an_accepted_initial_state_sends_no_teleport_and_announces_the_version() {
+    let mut harness = Harness::player(Connection::AwaitingResponse { timeout_at: 15.0 });
+    harness.session_mut().initial_realm = Some(HOME.to_owned());
+    harness.profile(7);
+
+    harness.receive(handshake_response(true));
+    harness.pump_at(5.0);
+
+    assert!(matches!(harness.session().state, Connection::Established));
+    assert_eq!(harness.sent(), [profile_announcement(7)]);
+}
+
+#[test]
+fn a_realm_change_while_signing_sends_a_teleport_on_acceptance() {
+    let mut harness = Harness::player(Connection::AwaitingResponse { timeout_at: 15.0 });
+    harness.session_mut().initial_realm = Some(HOME.to_owned());
+    harness.world.insert_resource(realm("away"));
+    harness.profile(7);
+
+    harness.receive(handshake_response(true));
+    harness.pump_at(5.0);
+
+    let sent = harness.sent();
+    let [(FrameKind::Teleport, pulse::client_message::Message::Teleport(teleport)), announcement] =
+        sent.as_slice()
+    else {
+        panic!("{sent:?}")
+    };
+    assert_eq!(teleport.realm, "away");
+    assert_eq!(*announcement, profile_announcement(7));
+}
+
+/// Out of the world the position is provisional, so the teleport waits for the player to be
+/// placed; the version is no position, and goes out.
+#[test]
+fn an_acceptance_out_of_world_defers_the_teleport_but_announces_the_version() {
+    let mut harness = Harness::player(Connection::AwaitingResponse { timeout_at: 15.0 });
+    harness.leave_world();
+    harness.profile(7);
+
+    harness.receive(handshake_response(true));
+    harness.pump_at(5.0);
+
+    assert_eq!(harness.sent(), [profile_announcement(7)]);
+}
+
+#[test]
+fn no_announcement_before_the_profile_loads() {
+    let mut harness = Harness::player(Connection::AwaitingResponse { timeout_at: 15.0 });
+    harness.world.insert_resource(CurrentUserProfile::default());
+
+    harness.receive(handshake_response(true));
+    harness.pump_at(5.0);
+
+    let sent = harness.sent();
+    assert!(
+        matches!(sent.as_slice(), [(FrameKind::Teleport, _)]),
+        "{sent:?}"
+    );
+}
+
+#[test]
+fn the_outbox_keeps_the_caches_while_disconnected() {
+    // A link that is up but has not been accepted yet carries nothing either.
+    for state in [
+        Connection::Down { respawn_at: 100.0 },
+        Connection::AwaitingResponse { timeout_at: 100.0 },
+    ] {
+        let mut harness = Harness::player(state);
+
+        harness.broadcast(movement());
+        harness.drain_at(5.0);
+
+        assert_eq!(
+            harness.session().last_state,
+            Some(from_movement(&movement(), &PulseParcelGrid::default()))
+        );
+        assert_eq!(
+            harness.driver.outbound.try_recv().unwrap_err(),
+            TryRecvError::Empty
+        );
+    }
+}
+
+/// An emote is kept from its start to its stop, so a handshake in between can say what is playing.
+#[test]
+fn an_emote_is_kept_from_its_start_to_its_stop() {
+    let mut harness = Harness::established(10.0);
+    // Acceptance sent its teleport; the frames below are the ones to look at.
+    harness.sent();
+
+    // Before any pose is sent there is nothing to start it from: no frame, and nothing kept.
+    harness.broadcast(emote(false));
+    harness.drain_at(11.0);
+    assert_eq!(harness.session().local_emote, None);
+    assert!(harness.sent().is_empty());
+
+    harness.broadcast(movement());
+    harness.broadcast(emote(false));
+    harness.drain_at(12.0);
+    assert_eq!(
+        harness.session().local_emote,
+        Some(LocalEmote {
+            urn: "wave".to_owned(),
+            duration_ms: Some(1500),
+            mask: Some(1),
+            started_at: 12.0,
+        })
+    );
+    let kinds: Vec<_> = harness.sent().iter().map(|(kind, _)| *kind).collect();
+    assert_eq!(kinds, [FrameKind::Input, FrameKind::Emote]);
+
+    harness.broadcast(emote(true));
+    harness.drain_at(13.0);
+    assert_eq!(harness.session().local_emote, None);
+    let kinds: Vec<_> = harness.sent().iter().map(|(kind, _)| *kind).collect();
+    assert_eq!(kinds, [FrameKind::Emote]);
+}
+
+/// The whole way: a player that has sent a pose and an emote connects, and its handshake says where
+/// it is and what it plays; the server accepts that as placing it in the realm.
+#[test]
+fn a_handshake_carries_the_players_state_and_the_acceptance_trusts_it() {
+    let mut harness = Harness::idle();
+    harness.session_mut().last_state = Some(pose());
+    harness.session_mut().local_emote = Some(LocalEmote {
+        urn: "wave".to_owned(),
+        duration_ms: None,
+        mask: Some(1),
+        started_at: 2.0,
+    });
+
+    let handshake = harness.signed_handshake(4.5);
+    assert_eq!(handshake.profile_version, 7);
+    assert_eq!(
+        handshake.initial_state,
+        Some(pulse::PlayerInitialState {
+            state: Some(pose()),
+            realm: HOME.to_owned(),
+            emote_id: Some("wave".to_owned()),
+            emote_start_offset_ms: Some(2500),
+            emote_mask: Some(1),
+            ..default()
+        })
+    );
+
+    harness.receive(handshake_response(true));
+    harness.pump_at(5.0);
+    assert_eq!(harness.sent(), [profile_announcement(7)]);
+}
+
+/// Connecting behind the loading screen: the handshake carries nothing, and the realm the
+/// connection before it carried is no reason to skip the teleport once the player is placed.
+#[test]
+fn a_handshake_out_of_world_carries_nothing_and_the_acceptance_teleports() {
+    let mut harness = Harness::idle();
+    harness.session_mut().last_state = Some(pose());
+    harness.session_mut().initial_realm = Some(HOME.to_owned());
+    harness.leave_world();
+
+    let handshake = harness.signed_handshake(4.5);
+    assert_eq!(handshake.initial_state, None);
+
+    harness.enter_world();
+    harness.receive(handshake_response(true));
+    harness.pump_at(5.0);
+    let sent = harness.sent();
+    let [(FrameKind::Teleport, _), announcement] = sent.as_slice() else {
+        panic!("{sent:?}")
+    };
+    assert_eq!(*announcement, profile_announcement(7));
 }

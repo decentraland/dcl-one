@@ -191,12 +191,28 @@ pub enum PulseEvent {
     Resync(pulse::ResyncRequest),
 }
 
+/// The local emote as last sent, for the next handshake's initial state.
+#[derive(Debug, PartialEq)]
+pub struct LocalEmote {
+    pub urn: String,
+    /// `Some` for a one-shot, as sent; `None` for a loop.
+    pub duration_ms: Option<u32>,
+    /// The wire mask, as sent.
+    pub mask: Option<i32>,
+    /// The engine clock when it was sent.
+    pub started_at: f64,
+}
+
 /// Borrowed context handed to `Broadcast::to_pulse` so an outbound message can build its Pulse frame:
 /// the parcel grid (to encode world position) and the last `PlayerState` we sent (movement caches it
-/// here so an emote can attach the full state the server requires on an `EmoteStart`).
+/// here so an emote can attach the full state the server requires on an `EmoteStart`). The emote
+/// last sent is cached here too, stamped with `now`, the engine clock; both go into the next
+/// handshake's initial state.
 pub struct PulseCtx<'a> {
     pub grid: &'a PulseParcelGrid,
     pub last_state: &'a mut Option<pulse::PlayerState>,
+    pub local_emote: &'a mut Option<LocalEmote>,
+    pub now: f64,
 }
 
 /// Per-subject baseline. Pulse sends field-masked deltas against the last sequence we acked, so we

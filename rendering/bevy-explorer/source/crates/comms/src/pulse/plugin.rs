@@ -7,10 +7,12 @@
 //!
 //! Connect sequence, mirroring the Unity reference client: once the driver reports
 //! [`PulseStatus::Connected`] we send a [`pulse::HandshakeRequest`] (a signed auth chain, identical
-//! in shape to the platform's `x-identity-*` header dictionary but delivered as protobuf bytes);
-//! on the server's `HandshakeResponse` we send the first gameplay message, a
-//! [`pulse::TeleportRequest`] announcing our realm + position so the server starts streaming
-//! same-realm peers.
+//! in shape to the platform's `x-identity-*` header dictionary but delivered as protobuf bytes,
+//! with the player's last state as its initial state when it has sent one); on the server's
+//! `HandshakeResponse` we send the first gameplay message, a [`pulse::TeleportRequest`] announcing
+//! our realm + position so the server starts streaming same-realm peers — unless the initial state
+//! already carried this realm — and then the profile version, which the servers ignore in the
+//! handshake.
 //!
 //! Reconnection model: a driver runs exactly one connection attempt and, when that attempt ends,
 //! drops its channel ends. Its last status (the server's `Disconnected(reason)`, or a failure of its
@@ -43,7 +45,7 @@ use super::transport::{
     self, FrameKind, PulseDriverHandle, PulseFrame, PulseLink, PulseReliability, PulseStatus,
     PulseTransportConfig,
 };
-use super::{PulseCtx, PulseDecoder, PulseEvent, PulseParcelGrid};
+use super::{LocalEmote, PulseCtx, PulseDecoder, PulseEvent, PulseParcelGrid};
 use crate::global_crdt::{
     CrdtContexts, GlobalCrdtState, NetworkUpdate, PlayerMessage, PlayerUpdate, SceneRealms,
 };
@@ -86,7 +88,7 @@ enum Connection {
     Signing(Task<Result<Vec<u8>, String>>),
     /// Handshake sent; awaiting the server's `HandshakeResponse` until `timeout_at`.
     AwaitingResponse { timeout_at: f64 },
-    /// Handshake accepted and the realm teleport sent; steady state.
+    /// Handshake accepted and the realm announced, by its initial state or a teleport; steady state.
     Established,
     /// Terminally disconnected (banned, evicted by a newer session, flagged for misbehaviour, or a
     /// code this build doesn't know) — no reconnect attempted. A realm change while here sets
@@ -134,14 +136,21 @@ pub(crate) struct PulseSession {
     /// Server instance id, folded into the connect signature (re-signed on each attempt).
     server_id: String,
     /// Last `PlayerState` we sent, cached by movement's `Broadcast::to_pulse`. An outbound
-    /// `EmoteStart` attaches this — the server rejects an emote with a null `player_state`. One
-    /// connection, one outbound stream, so it lives with the session rather than with any one of
-    /// the transports feeding it.
+    /// `EmoteStart` attaches this — the server rejects an emote with a null `player_state` — and
+    /// the next handshake carries it. One connection, one outbound stream, so it lives with the
+    /// session rather than with any one of the transports feeding it.
     last_state: Option<pulse::PlayerState>,
+    /// The emote we last started, cached by the emote's `Broadcast::to_pulse` until it is stopped,
+    /// for the next handshake's initial state. Kept like `last_state`: whether or not there is a
+    /// connection to send it on.
+    local_emote: Option<LocalEmote>,
     /// When to connect again after a failure, and when to stop.
     policy: ReconnectPolicy,
     /// Whether the current connection's handshake was accepted.
     accepted: bool,
+    /// The realm the pending or accepted handshake's initial state carried. The server holds the
+    /// player there, so acceptance needs no teleport into it.
+    initial_realm: Option<String>,
     state: Connection,
 }
 
@@ -324,12 +333,19 @@ impl PulseRole {
 
     /// What this role announces itself as at handshake. `None` when there is nothing to announce
     /// yet (see [`Self::wants_connection`]).
-    fn announcement(&self, profile_version: i32) -> Option<Announcement> {
+    fn announcement(
+        &self,
+        profile_version: i32,
+        initial_state: Option<pulse::PlayerInitialState>,
+    ) -> Option<Announcement> {
         if !self.wants_connection() {
             return None;
         }
         Some(match self {
-            Self::Player(_) => Announcement::Player { profile_version },
+            Self::Player(_) => Announcement::Player {
+                profile_version,
+                initial_state,
+            },
             Self::Listener(listener) => Announcement::Listener {
                 aoi: listener.aoi.clone(),
             },
@@ -368,19 +384,28 @@ fn describe_aoi(aoi: &[pulse::SceneListenerAoi]) -> String {
 }
 
 /// A pending handshake's contents, before it is signed. Both variants carry the same auth chain;
-/// they differ in what they assert about the peer — a player its profile version, a listener the
-/// parcels it wants to observe.
+/// they differ in what they assert about the peer — a player its profile version and, once it has
+/// been somewhere, where it is, a listener the parcels it wants to observe.
 enum Announcement {
-    Player { profile_version: i32 },
-    Listener { aoi: Vec<pulse::SceneListenerAoi> },
+    Player {
+        profile_version: i32,
+        initial_state: Option<pulse::PlayerInitialState>,
+    },
+    Listener {
+        aoi: Vec<pulse::SceneListenerAoi>,
+    },
 }
 
 impl Announcement {
     /// Sign and encode into the `ClientMessage` that opens the session.
     async fn into_message(self, wallet: Wallet, server_id: String) -> Result<Vec<u8>, String> {
         let message = match self {
-            Self::Player { profile_version } => pulse::client_message::Message::Handshake(
-                build_handshake_request(&wallet, &server_id, profile_version).await?,
+            Self::Player {
+                profile_version,
+                initial_state,
+            } => pulse::client_message::Message::Handshake(
+                build_handshake_request(&wallet, &server_id, profile_version, initial_state)
+                    .await?,
             ),
             Self::Listener { aoi } => pulse::client_message::Message::SceneListenerHandshake(
                 build_listener_handshake_request(&wallet, &server_id, aoi).await?,
@@ -607,8 +632,10 @@ fn connect_pulse(
         transport_config: config.transport.clone(),
         server_id: config.server_id.clone(),
         last_state: None,
+        local_emote: None,
         policy: ReconnectPolicy::default(),
         accepted: false,
+        initial_realm: None,
         state: Connection::Down { respawn_at: 0.0 },
     });
 
@@ -710,33 +737,43 @@ fn follow_realm(
 /// Drain the Pulse routing entity's channel each frame and convert each queued message to a Pulse
 /// frame via [`Broadcast::to_pulse`] — movement → `PlayerStateInput`, emote → `EmoteStart`/`EmoteStop`
 /// — sending what comes back. Messages with no Pulse form (e.g. byte-only chat/profile that happened
-/// onto this transport) yield `None` and are dropped. No-op until the session is `Established`.
+/// onto this transport) yield `None` and are dropped. The conversion happens whatever the state of
+/// the connection, because it keeps the session's caches current; only an `Established` session
+/// sends.
 fn drain_pulse_outbox(
     session: Option<ResMut<PulseSession>>,
+    time: Res<Time>,
     mut outboxes: Query<&mut PulseOutbox>,
 ) {
     let Some(session) = session else {
         return;
     };
     let session = session.into_inner();
-    // Only a player transmits: a listener is never a subject, and the server refuses every message
-    // it could send anyway. Its outboxes are still drained — a transport that silently backs up is
-    // worse than one that visibly discards.
-    let transmitting = matches!(session.role, PulseRole::Player(_))
-        && matches!(session.state, Connection::Established)
-        && session.link.is_some();
+    let now = time.elapsed_secs_f64();
+    // Only a player transmits, and keeps the caches a handshake is built from: a listener is never a
+    // subject, and the server refuses every message it could send anyway. Its outboxes are still
+    // drained — a transport that silently backs up is worse than one that visibly discards.
+    let player = matches!(session.role, PulseRole::Player(_));
+    let transmitting =
+        player && matches!(session.state, Connection::Established) && session.link.is_some();
     let grid = session.grid;
     let link = session.link.as_ref();
     for mut outbox in outboxes.iter_mut() {
         while let Ok(message) = outbox.0.try_recv() {
-            if !transmitting {
+            if !player {
                 continue;
             }
             let mut ctx = PulseCtx {
                 grid: &grid,
                 last_state: &mut session.last_state,
+                local_emote: &mut session.local_emote,
+                now,
             };
-            if let (Some(frame), Some(link)) = (message.message.to_pulse(&mut ctx), link) {
+            let frame = message.message.to_pulse(&mut ctx);
+            if !transmitting {
+                continue;
+            }
+            if let (Some(frame), Some(link)) = (frame, link) {
                 let _ = link.outbound.try_send(frame);
             }
         }
@@ -773,12 +810,22 @@ fn pump_pulse(
         session,
         &sinks,
         &wallet,
+        &realm,
+        in_world,
         world_hold.is_some(),
         profile_version,
         now,
     );
     flush_replay(session, &sinks, &realm);
-    drain_inbound(session, &sinks, &realm, &player, in_world, now);
+    drain_inbound(
+        session,
+        &sinks,
+        &realm,
+        &player,
+        in_world,
+        profile_version,
+        now,
+    );
     flush_listener_aoi(session, now);
 }
 
@@ -920,10 +967,13 @@ fn drain_status(session: &mut PulseSession, sinks: &Query<&PulseSink>, now: f64)
 /// the transport-up status; signing waits additionally for an identity (`PulseConfig` may be present
 /// before login). A connection carries one handshake: a sign error or a response timeout closes it,
 /// as a rejection does, and the next attempt is a new connection.
+#[allow(clippy::too_many_arguments)]
 fn drive_connection(
     session: &mut PulseSession,
     sinks: &Query<&PulseSink>,
     wallet: &Wallet,
+    realm: &CurrentRealm,
+    in_world: bool,
     world_held: bool,
     profile_version: i32,
     now: f64,
@@ -956,17 +1006,30 @@ fn drive_connection(
             if wallet.address().is_none() {
                 return;
             }
+            // Where the player already is, for a handshake that follows a pose sent before. The
+            // realm is named silently: the teleport after acceptance is the one to warn about it.
+            let initial = initial_state(
+                session.last_state.as_ref(),
+                session.local_emote.as_ref(),
+                realm_name(session, realm).as_deref(),
+                in_world,
+                now,
+            );
             // Nothing to announce means nothing to connect for — a listener with no scenes yet
             // would only earn a rejection for an empty AoI.
-            let Some(announcement) = session.role.announcement(profile_version) else {
+            let Some(announcement) = session.role.announcement(profile_version, initial) else {
                 return;
             };
             // What the handshake carries is what the server will hold once it is accepted; a
-            // change that lands while it is in flight goes out as an update afterwards.
+            // change that lands while it is in flight goes out as an update afterwards — a
+            // listener's AoI as one, a player's realm as a teleport on acceptance.
             if let (Announcement::Listener { aoi }, Some(listener)) =
                 (&announcement, session.role.listener_mut())
             {
                 listener.announced = aoi.clone();
+            }
+            if let Announcement::Player { initial_state, .. } = &announcement {
+                session.initial_realm = initial_state.as_ref().map(|state| state.realm.clone());
             }
             let wallet = wallet.clone();
             let server_id = session.server_id.clone();
@@ -1014,6 +1077,7 @@ fn drain_inbound(
     realm: &CurrentRealm,
     player: &Query<(&GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
     in_world: bool,
+    profile_version: i32,
     now: f64,
 ) {
     // A player's realm is its whole area of interest, so a peer the server places anywhere else is
@@ -1039,7 +1103,15 @@ fn drain_inbound(
             match event {
                 // The handshake ack drives the connect sequence.
                 PulseEvent::Connected { success, error } => on_handshake_response(
-                    session, sinks, realm, player, in_world, now, success, error,
+                    session,
+                    sinks,
+                    realm,
+                    player,
+                    in_world,
+                    profile_version,
+                    now,
+                    success,
+                    error,
                 ),
                 PulseEvent::Movement {
                     address,
@@ -1200,7 +1272,12 @@ fn lost_connection(
             Connection::Down { respawn_at }
         }
         Next::Dead => {
-            warn!("pulse: terminal disconnect — not reconnecting until the realm changes");
+            // Only a player follows a realm, so only for a player does a realm change end the stop.
+            let until = match session.role {
+                PulseRole::Player(_) => "the realm changes",
+                PulseRole::Listener(_) => "restart",
+            };
+            warn!("pulse: terminal disconnect — not reconnecting until {until}");
             Connection::Dead
         }
     };
@@ -1208,7 +1285,8 @@ fn lost_connection(
 
 /// Handle the server's `HandshakeResponse`. On success, send the first gameplay message — a
 /// `TeleportRequest` announcing our realm + position, so the server begins streaming same-realm
-/// peers (peers in different realms never see each other).
+/// peers (peers in different realms never see each other) — unless the handshake's initial state
+/// has put us in this realm already. Then announce the profile version, once there is one.
 #[allow(clippy::too_many_arguments)]
 fn on_handshake_response(
     session: &mut PulseSession,
@@ -1216,6 +1294,7 @@ fn on_handshake_response(
     realm: &CurrentRealm,
     player: &Query<(&GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
     in_world: bool,
+    profile_version: i32,
     now: f64,
     success: bool,
     error: Option<String>,
@@ -1240,11 +1319,23 @@ fn on_handshake_response(
     }
     // Suppress the connect-time teleport while out of world — our position is provisional behind the
     // loading screen. The teleport sent when the player is placed in-world (`PlayerTeleported`, via
-    // `pulse_teleport_on_local_move`) announces the real position + realm once we have one.
-    if in_world {
-        send_teleport(session, realm, player);
-    } else {
+    // `pulse_teleport_on_local_move`) announces the real position + realm once we have one. Nor is
+    // it needed when the initial state carried this realm: the server has us there already, and
+    // the inputs that follow move us on. A handshake without one carried no realm.
+    let carried =
+        session.initial_realm.is_some() && session.initial_realm == realm_name(session, realm);
+    if !in_world {
         debug!("pulse: out of world at handshake, deferring teleport to spawn");
+    } else if carried {
+        debug!("pulse: the handshake's initial state carried the realm, no teleport");
+    } else {
+        send_teleport(session, realm, player);
+    }
+    // The servers ignore the version the handshake carries, so it is announced as a message of its
+    // own. Until the profile loads there is none, and the periodic announce (`profile::mod`) takes
+    // it from there.
+    if profile_version > 0 {
+        send_profile_version(session, profile_version);
     }
 }
 
@@ -1721,6 +1812,25 @@ fn send_teleport_at(session: &PulseSession, realm: &CurrentRealm, world: Vec3) {
     info!("pulse: teleport sent (realm {realm_name}, parcel {parcel_index})");
 }
 
+/// Send a `ProfileVersionAnnouncement` for `version`, reliably: peers fetch the profile when it is
+/// newer than the one they hold. No-op without a live link.
+fn send_profile_version(session: &PulseSession, version: i32) {
+    let Some(link) = session.link.as_ref() else {
+        return;
+    };
+    let message = pulse::ClientMessage {
+        message: Some(pulse::client_message::Message::ProfileAnnouncement(
+            pulse::ProfileVersionAnnouncement { version },
+        )),
+    };
+    let _ = link.outbound.try_send(PulseFrame {
+        bytes: message.encode_to_vec(),
+        reliability: PulseReliability::Reliable,
+        kind: FrameKind::Control,
+    });
+    info!("pulse: profile version {version} announced");
+}
+
 /// The local player was instantly repositioned (durationless `move_player_to`, `teleport_player`, a
 /// spawn snap). Announce it to the Pulse server as a `TeleportRequest` so peers snap to the new
 /// position instead of interpolating across the jump. The event carries the final world position, so
@@ -1746,6 +1856,41 @@ fn pulse_teleport_on_local_move(
     }
 }
 
+/// What a handshake says about where the player already is, as unity-explorer's `WriteInitialState`
+/// (`PulseMultiplayerBus.LastState.cs:58-102`) does: the last pose sent, the realm it is in and, if
+/// one is still playing, the emote — a loop, or a one-shot within its duration — with how long ago
+/// it started. `None` unless in world, with a realm and a pose sent before: a position behind the
+/// loading screen is provisional, and with no pose there is nothing to restore.
+fn initial_state(
+    last_state: Option<&pulse::PlayerState>,
+    emote: Option<&LocalEmote>,
+    realm: Option<&str>,
+    in_world: bool,
+    now: f64,
+) -> Option<pulse::PlayerInitialState> {
+    if !in_world {
+        return None;
+    }
+    let mut initial = pulse::PlayerInitialState {
+        state: Some(last_state?.clone()),
+        realm: realm?.to_owned(),
+        ..default()
+    };
+
+    if let Some(emote) = emote {
+        // As in unity-explorer, a duration of 0 is none: the emote loops.
+        let duration_ms = emote.duration_ms.filter(|&duration| duration > 0);
+        let elapsed_ms = ((now - emote.started_at) * 1000.0) as u32;
+        if duration_ms.is_none_or(|duration| elapsed_ms < duration) {
+            initial.emote_id = Some(emote.urn.clone());
+            initial.emote_duration_ms = duration_ms;
+            initial.emote_start_offset_ms = Some(elapsed_ms).filter(|&elapsed| elapsed > 0);
+            initial.emote_mask = emote.mask;
+        }
+    }
+    Some(initial)
+}
+
 /// Build a `SceneListenerHandshakeRequest`: the same signed-fetch auth chain as the player handshake
 /// (the server authenticates both through one pipeline), plus the announced AoI — the parcels this
 /// server hosts, per realm. No initial state — a listener is never a subject.
@@ -1765,16 +1910,18 @@ async fn build_listener_handshake_request(
 /// the resulting auth chain into the platform's canonical `x-identity-*` dictionary (JSON object,
 /// every value a string), serialized as UTF-8 bytes — identical in shape to the HTTP signed-fetch
 /// headers, just carried in a protobuf `bytes` field. Mirrors Unity's `BuildAuthChain`.
+/// `initial_state` is where the player already is, when it has been anywhere (see [`initial_state`]).
 async fn build_handshake_request(
     wallet: &Wallet,
     server_id: &str,
     profile_version: i32,
+    initial_state: Option<pulse::PlayerInitialState>,
 ) -> Result<pulse::HandshakeRequest, String> {
     Ok(pulse::HandshakeRequest {
         protocol_features: 0,
         auth_chain: build_auth_chain(wallet, server_id).await?,
         profile_version,
-        initial_state: None,
+        initial_state,
     })
 }
 
