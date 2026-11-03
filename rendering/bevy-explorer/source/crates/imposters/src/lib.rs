@@ -1,4 +1,5 @@
 pub mod bake_scene;
+pub mod fade;
 pub mod floor_imposter;
 pub mod imposter_mesh;
 pub mod imposter_spec;
