@@ -9,8 +9,11 @@
 //   unity:Explorer/Library/PackageCache/com.unity.render-pipelines.universal@d7774c218bdf/Shaders/PostProcessing/LensFlareDataDriven.shader
 //   includes from
 //   unity:Explorer/Library/PackageCache/com.unity.render-pipelines.core@a4c9a9793789/Runtime/PostProcessing/Shaders/LensFlareCommon.hlsl
-// The shapes' cut-off blocker is left out: every element's shapeCutOffSpeed is 0, so it never
-// cuts. Unity's screen position runs from -1 to 1 with y down (flarePosScreen); so does
+// The shapes' cut-off blocker is left out: it never cuts. Its radius is shapeCutOffRadius (10, and
+// 10.29 for the night's small circles) and its centre sits shapeCutOffSpeed (0, and -0.75
+// for the night's small circles) times the pixel's offset from the light away from the quad's
+// centre: at most about 2.1 in quad space. So it always covers the quad and max(sdf, blocker) is
+// sdf. Unity's screen position runs from -1 to 1 with y down (flarePosScreen); so does
 // `screen` here.
 
 #import bevy_core_pipeline::fullscreen_vertex_shader::FullscreenVertexOutput

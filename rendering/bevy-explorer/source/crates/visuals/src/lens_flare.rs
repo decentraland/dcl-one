@@ -29,6 +29,7 @@ use bevy::{
             PipelineCache, PrimitiveState, RenderPassColorAttachment, RenderPassDescriptor,
             RenderPipelineDescriptor, ShaderDefVal, ShaderStages, ShaderType,
             SpecializedRenderPipeline, SpecializedRenderPipelines, StoreOp, TextureFormat,
+            TextureUsages,
         },
         renderer::{RenderContext, RenderDevice, RenderQueue},
         view::{ExtractedView, Msaa, ViewDepthTexture, ViewTarget},
@@ -736,6 +737,14 @@ impl ViewNode for LensFlareNode {
         ) else {
             return Ok(());
         };
+        // the depth texture is bindable once `bind_depth_texture` has run for the camera
+        if !depth
+            .texture
+            .usage()
+            .contains(TextureUsages::TEXTURE_BINDING)
+        {
+            return Ok(());
+        }
         let layout = &world.resource::<LensFlarePipeline>().layouts[&pipeline_id.samples];
         let bind_group = render_context.render_device().create_bind_group(
             Some("lens flare bind group"),
@@ -842,7 +851,6 @@ mod tests {
                 pipelined_rendering::PipelinedRenderingPlugin,
                 render_resource::{
                     CachedPipelineState, Extent3d, PipelineDescriptor, TextureDimension,
-                    TextureUsages,
                 },
             },
             window::ExitCondition,

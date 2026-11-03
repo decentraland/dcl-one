@@ -2,7 +2,7 @@ use bevy::{
     ecs::system::{lifetimeless::SRes, SystemParamItem},
     prelude::*,
 };
-use common::structs::{AppConfig, LensFlare};
+use common::structs::{AppConfig, LensFlare, PrimaryCameraRes};
 
 use super::{AppSetting, EnumAppSetting};
 
@@ -27,7 +27,7 @@ impl EnumAppSetting for LensFlareSetting {
 }
 
 impl AppSetting for LensFlareSetting {
-    type Param = SRes<AppConfig>;
+    type Param = (SRes<AppConfig>, SRes<PrimaryCameraRes>);
 
     fn title() -> String {
         "Lens Flare".to_owned()
@@ -55,10 +55,14 @@ impl AppSetting for LensFlareSetting {
 
     fn apply_to_camera(
         &self,
-        _: &SystemParamItem<Self::Param>,
+        (_, primary): &SystemParamItem<Self::Param>,
         mut commands: Commands,
         camera_entity: Entity,
     ) {
+        // only the player's camera flares: scene texture cameras are not known to in Unity
+        if camera_entity != primary.0 {
+            return;
+        }
         let Ok(mut cmds) = commands.get_entity(camera_entity) else {
             return;
         };
