@@ -34,6 +34,9 @@ use scene_runner::{
     ContainerEntity, ContainingScene,
 };
 
+use bevy_console::ConsoleCommand;
+use console::{AddDebugSection, DebugSection, DoAddConsoleCommand};
+
 use crate::ParticleSystem;
 use config::{
     features, EmitterConfig, ParticleRing, SimParams, Spawner, MAX_CAPACITY, PARTICLE_SIZE,
@@ -64,6 +67,18 @@ impl Plugin for ParticleSystemPlugin {
 
         app.init_resource::<ActiveScenes>();
         app.init_resource::<ParticleMeshes>();
+        app.add_console_command::<ParticleState, _>(particle_state)
+            .add_debug_section(DebugSection {
+                title: "SDK particles",
+                query: "/particle_state",
+                fields: &[
+                    ("Live particles in active scenes", "live"),
+                    ("Emitters", "emitters"),
+                    ("Allocated slots", "capacity"),
+                ],
+                actions: &[],
+                inputs: &[],
+            });
 
         app.add_crdt_lww_component::<PbParticleSystem, ParticleSystem>(
             SceneComponentId::PARTICLE_SYSTEM,
@@ -105,6 +120,35 @@ pub struct ParticleEmitter {
     scene_root: Entity,
     material: Handle<ParticleMaterial>,
     pending_prewarm: bool,
+}
+
+/// Read live CPU particle rings for emitters in scenes containing the player.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/particle_state")]
+struct ParticleState;
+
+fn particle_state(
+    mut cmd: ConsoleCommand<ParticleState>,
+    active: Res<ActiveScenes>,
+    emitters: Query<&ParticleEmitter>,
+) {
+    if let Some(Ok(_)) = cmd.take() {
+        let mut live = 0_u64;
+        let mut capacity = 0_u64;
+        let mut count = 0;
+        for emitter in emitters
+            .iter()
+            .filter(|emitter| active.contains(&emitter.scene_root))
+        {
+            count += 1;
+            live += u64::from(emitter.ring.alive());
+            capacity += u64::from(emitter.capacity);
+        }
+        cmd.reply_ok(
+            serde_json::json!({ "live": live, "capacity": capacity, "emitters": count })
+                .to_string(),
+        );
+    }
 }
 
 /// Quad meshes by quad count; position.xy is the quad corner, position.z the quad index.

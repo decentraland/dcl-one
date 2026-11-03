@@ -143,3 +143,23 @@ The crate needs `assets` and `naga_oil` as dev-dependencies, the latter only to 
 `cargo test -p <crate> <test> -- --ignored --nocapture`. The native pass compiles the same
 variants as web, but the web-only rules on the [platforms](platforms.md#web) page still need
 the web build once.
+
+## A plugin section in the runtime debug panel
+
+In the plugin that registers the commands, call `app.add_debug_section(DebugSection { ... })`
+from `console::{AddDebugSection, DebugSection}`. Give it a unique title, a read-only JSON
+query and labeled fields using dot-separated keys or array indices. Actions pair a button
+label with a console command line. Use commands available in the same builds as the section.
+The HUD discovers sections through `/debug_panel` and polls only expanded sections.
+When developing a runtime feature, include the diagnostics that answer a concrete testing
+question. Show the effective state, units, scope and reason for an unavailable reading.
+For an adjustable feature, bind its existing validated action or setting. Register controls
+only where the feature and its permission level are available. Keep keys, tokens, private
+messages and signed URLs out of the panel. Compute expensive readings on demand.
+
+Use `DebugInput` for a toggle, choice, number or text argument. A field path binds the
+control to live state. A command template substitutes `{value}` into its arguments.
+Validate user input in the owning handler. For HUD-owned features, use the existing
+session handler and apply the same lifecycle rules. Verify a real value change or
+side effect through an open panel in a built client. See `WorldStatePlugin` for a
+readout with navigation controls and `AvatarPlugin` for an action.

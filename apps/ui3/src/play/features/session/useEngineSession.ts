@@ -23,6 +23,7 @@ import { checkRealm, realmCheckMessage } from '../../lib/realmCheck'
 import { entryRealm } from '../../lib/entryParams'
 import { color3ToHex, hexToColor3 } from '../../lib/color'
 import { closeTopPopup, hasOpenPopup, subscribePopups } from '../../design'
+import { requestDebugPanel } from '../debug/useDebugPanel'
 import { emitFriendEvent } from '../friends/friendEvents'
 import { toastFriendOnline, toastFriendResult } from '../friends/friendToasts'
 import { bootMode } from '../../lib/bootMode'
@@ -681,6 +682,7 @@ export interface EngineSession {
   bindings: BindingsState
   profile: ProfileState
   notifications: NotificationsState
+  runDebugCommand: (line: string) => Promise<string>
   skybox: SkyboxState
   emotes: EmotesState
   backpack: BackpackState
@@ -1610,6 +1612,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
           setSeenDenied([])
           skipRefusal.current.clear()
           break
+        case 'debug':
+          requestDebugPanel(cmd.target, pushSystemMessage)
+          break
         case 'commands':
           driverRef.current?.send({ kind: 'consoleCommand', command: 'help' })
           break
@@ -1816,6 +1821,9 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
     panelSetters.forEach((set) => set(open && set === setCreateOpen))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+  const runDebugCommand = useCallback((line: string) =>
+    driverRef.current?.command?.(line) ?? Promise.reject(new Error('Engine console unavailable')), [])
+
   // The engine clock as `/time` (no args) reports it; null when there is no engine console.
   const readClock = useCallback(async (): Promise<{ hours: number; speed: number } | null> => {
     const reply = await driverRef.current?.command?.('/time').catch(() => undefined)
@@ -3194,6 +3202,7 @@ export function useEngineSession(createDriver: () => LoginDriver): EngineSession
       requestOwnedNames,
       dismissSaveError: dismissProfileSaveError
     },
+    runDebugCommand,
     skybox: {
       open: skyboxOpen,
       toggle: toggleSkybox,

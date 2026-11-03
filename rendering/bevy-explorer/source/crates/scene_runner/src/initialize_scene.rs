@@ -1441,6 +1441,7 @@ fn load_active_entities(
 
         let retrieved_parcels = match task_result {
             Ok(res) => {
+                ipfas.ipfs().record_scene_batch(res.len());
                 *consecutive_fetch_fail_count = 0;
                 *fetch_count = (*fetch_count * 2).min(1000);
                 res

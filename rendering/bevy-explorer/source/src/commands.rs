@@ -1,6 +1,11 @@
-use bevy::prelude::*;
+use bevy::{
+    diagnostic::{Diagnostic, DiagnosticsStore, FrameTimeDiagnosticsPlugin},
+    prelude::*,
+};
 use bevy_console::ConsoleCommand;
 use common::{
+    gpu_time::GPU_FRAME_TIME,
+    memory::{GpuMemoryBudget, MemoryStatus},
     rpc::{RpcCall, RpcCallEvent, RpcResultSender},
     structs::{
         AppConfig, ParcelGrassSetting, PreviewMode, PrimaryUser, SceneLoadDistance, SessionGraphics,
@@ -147,6 +152,82 @@ pub fn scene_threads(
         config.scene_threads = threads;
         input.reply_ok("scene simultaneous thread count set to {threads}");
     }
+}
+
+/// Report the live engine readings and the effective session frame-rate target as JSON.
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/performance_state")]
+pub struct PerformanceStateCommand;
+
+pub fn performance_state(
+    mut input: ConsoleCommand<PerformanceStateCommand>,
+    window: Res<analytics::frame::LastFrameWindow>,
+    diagnostics: Res<DiagnosticsStore>,
+    time: Res<Time<Real>>,
+    session: Res<SessionGraphics>,
+    config: Res<AppConfig>,
+    memory: Res<MemoryStatus>,
+) {
+    if let Some(Ok(_)) = input.take() {
+        let fps = diagnostics
+            .get(&FrameTimeDiagnosticsPlugin::FPS)
+            .and_then(Diagnostic::smoothed)
+            .or_else(|| {
+                let seconds = time.delta_secs_f64();
+                (seconds > 0.0).then(|| seconds.recip())
+            });
+        let gpu_ms = diagnostics
+            .get(&GPU_FRAME_TIME)
+            .and_then(Diagnostic::smoothed);
+        input.reply_ok(
+            serde_json::json!({
+                "version": crate::version(),
+                "frameMs": (time.delta_secs_f64() * 10000.0).round() / 10.0,
+                "minFps": window.min_fps, "maxFps": window.max_fps, "hiccups": window.hiccups,
+                "fps": fps.map(f64::round),
+                "targetFps": session.fps_target(&config),
+                "overrideFps": session.fps_target,
+                "gpuFrameMs": gpu_ms.map(|ms| (ms * 10.0).round() / 10.0),
+                "engineMemoryMiB": memory.reading().map(|reading| reading.used_bytes >> 20),
+            })
+            .to_string(),
+        );
+    }
+}
+
+/// Inspect the engine memory budget or set its session limit in MiB (zero restores platform capacity).
+#[derive(clap::Parser, ConsoleCommand)]
+#[command(name = "/debug_memory")]
+pub struct MemoryCommand {
+    limit_mib: Option<u32>,
+}
+
+pub fn debug_memory(
+    mut cmd: ConsoleCommand<MemoryCommand>,
+    mut memory: ResMut<MemoryStatus>,
+    gpu: Option<Res<GpuMemoryBudget>>,
+) {
+    let Some(Ok(args)) = cmd.take() else { return };
+    if let Some(limit) = args.limit_mib {
+        memory.limit_mib = std::num::NonZeroU64::new(limit.into());
+        cmd.reply_ok("Updated session memory limit");
+        return;
+    }
+    let reading = memory.reading();
+    let pools = match gpu.as_deref() {
+        Some(GpuMemoryBudget::Available(pools)) => Some(pools.iter().map(|p| serde_json::json!({
+            "pool": format!("{:?}", p.kind), "usedMiB": p.used_bytes >> 20, "budgetMiB": p.budget_bytes.get() >> 20
+        })).collect::<Vec<_>>()),
+        _ => None,
+    };
+    cmd.reply_ok(serde_json::json!({
+        "used": reading.map(|r| r.used_bytes >> 20), "capacity": reading.map(|r| r.capacity_mib),
+        "cap": reading.map(|r| r.cap_mib), "limit": memory.limit_mib.map_or(0, |n| n.get()),
+        "pressure": reading.map(|r| format!("{:?}", r.pressure())), "gpu": pools,
+        "thresholds": reading.map(|r| { let t = r.thresholds(); serde_json::json!({
+            "abundance": t.abundance_mib.round(), "warning": t.warning_mib.round(), "full": t.full_mib.round()
+        }) })
+    }).to_string());
 }
 
 /// set fps

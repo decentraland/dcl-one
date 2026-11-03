@@ -6,6 +6,8 @@ edition = "2021"
 [lib]
 
 [dependencies]
+serde = { workspace = true, features = ["derive"] }
+rand = { workspace = true }
 common = { workspace = true }
 comms = { workspace = true }
 console = { workspace = true }

@@ -23,7 +23,7 @@ use collectibles::{
     CollectibleError, CollectibleManager, Emote, EmoteUrn,
 };
 use colliders::AvatarColliderPlugin;
-use console::DoAddConsoleCommand;
+use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use npc_dynamics::NpcMovementPlugin;
 use scene_material::{
     SceneBound, SceneBounds, SceneMaterial, SCENE_MATERIAL_CONE_ONLY_DITHER_MESH_TAG,
@@ -36,12 +36,14 @@ pub mod attach;
 mod avatar_state;
 pub mod avatar_texture;
 pub mod colliders;
+mod debug_avatars;
 mod dynamic_nametag;
 pub mod emote_report;
 pub mod foot_ik;
 pub mod foreign_dynamics;
 pub mod ghost;
 pub mod head_ik;
+mod ik_debug;
 pub mod mask_material;
 pub mod material_cache;
 pub mod npc_dynamics;
@@ -129,6 +131,8 @@ impl Plugin for AvatarPlugin {
         app.add_plugins(GhostAvatarPlugin);
         app.add_plugins(FootIkPlugin);
         app.add_plugins(HeadIkPlugin);
+        ik_debug::register(app);
+        debug_avatars::register(app);
         app.add_plugins(PointAtIkPlugin);
         app.add_plugins(PointAtMarkerPlugin);
         app.init_resource::<AssetCache<AvatarMatKey, SceneMaterial>>();
@@ -168,6 +172,30 @@ impl Plugin for AvatarPlugin {
         app.add_console_command::<avatar_state::AvatarStateCommand, _>(
             avatar_state::avatar_state_cmd,
         );
+
+        app.add_debug_section(DebugSection {
+            title: "Avatar",
+            query: "/avatar_state",
+            fields: &[
+                ("Body shape", "0.rendered.bodyShape"),
+                ("Address", "0.address"),
+                ("Rendered wearables", "0.rendered.wearables"),
+                ("Hidden slots", "0.rendered.hidden"),
+                ("Equipped emotes", "0.selected.emotes"),
+                ("Animation", "0.emote.urn"),
+                ("Animation source", "0.emote.source"),
+            ],
+            actions: &[(
+                "Play wave",
+                "/emote urn:decentraland:off-chain:base-emotes:wave",
+            )],
+            inputs: &[DebugInput {
+                label: "Play emote (URN or equipped slot)",
+                field: "",
+                command: "/emote {value}",
+                kind: DebugInputKind::Text,
+            }],
+        });
 
         app.add_observer(add_attach_points_to_avatar_shape);
         app.add_observer(remove_attach_points_from_avatar_shape);

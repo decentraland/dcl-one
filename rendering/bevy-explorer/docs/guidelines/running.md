@@ -74,6 +74,19 @@ commands registered with `add_preview_console_command`. On web the same surface 
 from the browser console through `window.engine`, which lives in the app frame (`app.html`),
 not the shell page: pick the app frame in the DevTools context selector first.
 
+## Runtime debug panel
+
+In world, open **Sidebar settings (•••) → Debug panel** or enter `/debug` in chat.
+Use `/debug help` to list the sections available in this client and `/debug <section>`
+to open one directly. Search matches both section titles and controls. Expand the
+sections you want to watch. Collapsing a section stops its queries.
+
+World and Scene Loading show where the player is and which load stage is active.
+Performance and Memory and limits expose the engine's measurements and budgets.
+The room, voice, rendering, media and avatar sections appear with the plugins that
+supply them. A missing reading displays **Unavailable**. Development-only mutations
+require preview mode. To add a section, follow the [plugin recipe](recipes.md#a-plugin-section-in-the-runtime-debug-panel).
+
 ## Test commands
 
 > **Implementation and acceptance:** the web driver, HUD automation helper and native

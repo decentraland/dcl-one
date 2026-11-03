@@ -154,9 +154,28 @@ pub struct PulseTransportConfig {
 /// Protocol-layer end of the boundary (held by the Bevy plugin). `Send + Sync`, so it lives in a
 /// resource.
 pub struct PulseLink {
-    pub outbound: mpsc::Sender<PulseFrame>,
+    outbound: mpsc::Sender<PulseFrame>,
+    pub(crate) sent: crate::traffic::PayloadRate,
+    pub(crate) received: crate::traffic::PayloadRate,
     pub inbound: mpsc::Receiver<Vec<u8>>,
     pub status: mpsc::Receiver<PulseStatus>,
+}
+
+impl PulseLink {
+    pub(crate) fn send(&mut self, frame: PulseFrame) -> bool {
+        let size = frame.bytes.len();
+        if self.outbound.try_send(frame).is_err() {
+            return false;
+        }
+        self.sent.record(size);
+        true
+    }
+
+    pub(crate) fn receive(&mut self) -> Option<Vec<u8>> {
+        let bytes = self.inbound.try_recv().ok()?;
+        self.received.record(bytes.len());
+        Some(bytes)
+    }
 }
 
 /// Driver end of the boundary (moved into the native thread / wasm task).
@@ -175,6 +194,8 @@ pub fn pulse_channels(capacity: usize) -> (PulseLink, PulseDriverChannels) {
     (
         PulseLink {
             outbound: outbound_tx,
+            sent: Default::default(),
+            received: Default::default(),
             inbound: inbound_rx,
             status: status_rx,
         },

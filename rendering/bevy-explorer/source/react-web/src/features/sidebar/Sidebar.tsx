@@ -5,7 +5,8 @@
 // migrated to React.
 
 import { useCallback, useContext, useEffect, useState } from 'react'
-import { ControlButton, IconButton, Panel, Toggle } from '../../design'
+import { Button, ControlButton, IconButton, Panel, Toggle } from '../../design'
+import { useDebugPanel } from '../debug/useDebugPanel'
 import type { IconName } from '../../design'
 import type { NavAction } from '../../engine/protocol'
 import { keyHintFor, useBindingsSnapshot, type BindingsSnapshot } from '../../lib/bindingLabels'
@@ -329,6 +330,7 @@ export function Sidebar({
   const liveEvents = useLiveEventCount()
   const create = useContext(EditorOffered)
   const [configOpen, setConfigOpen] = useState(false)
+  const toggleDebugPanel = useDebugPanel(session)
   const [voiceAnchor, setVoiceAnchor] = useState<HTMLElement | null>(null)
   const [permissionsAnchor, setPermissionsAnchor] = useState<HTMLElement | null>(null)
   const autoHide = useAutoHide(configOpen || voiceAnchor != null || permissionsAnchor != null)
@@ -421,6 +423,10 @@ export function Sidebar({
         <Panel className={styles.config} role="dialog" aria-label="Sidebar settings">
           <span>Auto-hide sidebar</span>
           <Toggle checked={autoHide.enabled} onChange={autoHide.setEnabled} aria-label="Auto-hide sidebar" />
+          <Button size="sm" variant="secondary" onClick={() => {
+            setConfigOpen(false)
+            toggleDebugPanel()
+          }}>Debug panel</Button>
         </Panel>
       )}
     </>

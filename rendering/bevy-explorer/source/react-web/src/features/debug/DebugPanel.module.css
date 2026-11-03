@@ -1,0 +1,53 @@
+.panel {
+  position: fixed;
+  top: 12px;
+  right: 12px;
+  max-width: calc((100vw - 24px) / var(--ui-scale));
+  max-height: calc((100dvh - 24px) / var(--ui-scale));
+  transform: scale(var(--ui-scale));
+  transform-origin: top right;
+  overflow-wrap: anywhere;
+}
+.section {
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+.chart { margin: 0; font-size: var(--fs-xs); }
+.chart svg { width: 100%; height: 32px; display: block; color: var(--brand); }
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.inputRow, .edit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 0;
+}
+.edit { align-items: end; }
+.edit label { flex: 1; min-width: 0; }
+.reply, .fields dd {
+  white-space: pre-wrap;
+  max-height: 175px;
+  overflow: auto;
+}
+.reply { font-size: var(--fs-sm); }
+.fields {
+  font-size: var(--fs-sm);
+  margin: 8px 0;
+}
+.fields > div {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 12px;
+  padding: 4px 0;
+}
+.fields dt {
+  color: var(--ink-7);
+}
+.fields dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}

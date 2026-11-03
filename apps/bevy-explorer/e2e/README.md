@@ -77,6 +77,8 @@ with their replies parsed. It asserts through the engine where it can (`/world_s
 first. Every wait is bounded and says what it waits for; nothing asserts zone's live listings as
 literals. A scenario that changes account state restores it.
 
+The in-world scenario in `specs/debug-panel.test.ts` opens Sidebar settings → Debug panel, finds plugin sections, reads the current realm, observes a live FPS-target change and verifies an avatar action against the engine.
+
 ## Scenario map
 
 explorer-automation's 89 Explorer tests outside the sign-in flows, by fixture; the class of each

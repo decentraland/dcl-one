@@ -447,6 +447,7 @@ fn play_videos(
         }
 
         if let Some(state) = new_state {
+            video.last_state = Some(state);
             if let Ok(mut context) = scenes.get_mut(container.root) {
                 trace!("send current time = {}", video.current_time);
                 let event = PbVideoEvent {
@@ -505,6 +506,7 @@ mod snapshot_tests {
                     image: image.clone(),
                     current_time: -1.0,
                     last_reported_time: -1.0,
+                    last_state: None,
                     length: None,
                     resized: false,
                 }),

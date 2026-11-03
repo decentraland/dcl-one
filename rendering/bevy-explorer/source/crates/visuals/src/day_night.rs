@@ -16,6 +16,7 @@ use scene_runner::{
 
 /// One hour in seconds
 const ONE_HOUR: f32 = 60. * 60.;
+const DEFAULT_CLOCK_SPEED: f32 = 12.;
 /// One hour in seconds using u32
 const ONE_HOUR_U32: u32 = 60 * 60;
 /// 24 hours in seconds
@@ -104,7 +105,10 @@ fn start_clock(mut commands: Commands) {
     commands
         .spawn((
             TimeKeeper,
-            RunningClock { time, speed: 12.0 },
+            RunningClock {
+                time,
+                speed: DEFAULT_CLOCK_SPEED,
+            },
             SceneTime { time: 0. },
         ))
         .observe(check_new_scene_time)
@@ -394,6 +398,9 @@ fn check_new_skybox_time(
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/time")]
 pub struct TimeOfDayConsoleCommand {
+    /// Resume the normal day cycle and scene-specified skies.
+    #[arg(long, conflicts_with_all = ["time", "speed"])]
+    pub resume: bool,
     pub time: Option<f32>,
     pub speed: Option<f32>,
 }
@@ -430,6 +437,9 @@ fn timeofday_console_command(
         let was_override = running_clock.overrides_scene();
         if let Some(hours) = command.time {
             running_clock.time = (hours * ONE_HOUR) % TWENTY_FOUR_HOURS;
+        }
+        if command.resume {
+            running_clock.speed = DEFAULT_CLOCK_SPEED;
         }
         if let Some(speed) = command.speed {
             running_clock.speed = speed;

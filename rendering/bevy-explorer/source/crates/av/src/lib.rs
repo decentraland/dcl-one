@@ -16,6 +16,7 @@ pub mod audio_source;
 pub mod audio_source_native;
 #[cfg(feature = "html")]
 pub mod audio_source_wasm;
+mod debug_panel;
 
 // video
 #[cfg(any(feature = "ffmpeg", feature = "html"))]
@@ -387,6 +388,7 @@ impl Plugin for AVPlayerPlugin {
         app.add_plugins(VideoPlayerPlugin);
         #[cfg(all(not(test), feature = "ffmpeg"))]
         app.add_plugins(AudioSinkPlugin);
+        debug_panel::register(app);
         app.add_plugins(AudioSourcePlugin);
         app.add_plugins(AudioSourcePluginImpl);
 

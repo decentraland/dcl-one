@@ -59,6 +59,7 @@ pub mod cache_size;
 pub mod camera_smoothing;
 pub mod cel_shading_setting;
 pub mod constrain_ui;
+mod debug_quality;
 pub mod dm_privacy;
 pub mod dof_setting;
 pub mod fog_settings;
@@ -219,6 +220,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<CacheSizeSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<PointAtMarkerVisibility>(app, &mut settings, &mut schedule, &config);
 
+        debug_quality::register(app, &settings);
         app.insert_resource(settings);
         app.insert_resource(ApplyAppSettingsSchedule(schedule));
         app.init_resource::<ActiveCameras>();

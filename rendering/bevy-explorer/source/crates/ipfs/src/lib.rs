@@ -1,4 +1,6 @@
+mod batch_sizes;
 pub mod content_hash;
+mod debug_panel;
 #[cfg(feature = "ipfs_debug")]
 mod ipfs_debug;
 pub mod ipfs_path;
@@ -580,6 +582,7 @@ impl Plugin for IpfsIoPlugin {
         );
 
         app.add_console_command::<ChangeRealmCommand, _>(change_realm_command);
+        debug_panel::register(app, self.preview);
 
         app.register_diagnostic(Diagnostic::new(IPFS_IN_FLIGHT_DIAGNOSTIC_PATH));
         app.register_diagnostic(Diagnostic::new(IPFS_SUCCESS_DIAGNOSTIC_PATH));
@@ -920,6 +923,9 @@ pub struct RealmConfig {
 }
 
 pub struct IpfsIo {
+    debug: std::sync::Mutex<debug_panel::RequestStats>,
+    /// Effective preview-only delay before a real outbound request, without holding a slot.
+    preview_delay_ms: AtomicU32,
     is_preview: bool, // determines whether we always retry failed assets immediately
     default_io: Box<dyn ErasedAssetReader>,
     default_fs_path: Option<PathBuf>,
@@ -966,6 +972,8 @@ impl IpfsIo {
                 ..Default::default()
             }),
             request_slots: tokio::sync::Semaphore::new(num_slots),
+            debug: Default::default(),
+            preview_delay_ms: AtomicU32::new(0),
             reqno: default(),
             static_files: static_paths,
             #[cfg(not(target_arch = "wasm32"))]
@@ -1315,8 +1323,12 @@ impl IpfsIo {
         match request {
             ActiveEntitiesRequest::Pointers(pointers) => {
                 let client = self.client.clone();
+                let delay = self.preview_request_delay();
                 IoTaskPool::get().spawn_compat(async move {
                     let active_url = active_url.ok_or(anyhow!("not connected"))?;
+                    if let Some(delay) = delay {
+                        async_std::task::sleep(delay).await;
+                    }
                     let body = serde_json::to_string(&ActiveEntitiesPointersRequest { pointers })?;
                     // Headers-phase timeout + body inactivity timeout (the total is
                     // left unbounded, so a large-but-progressing response — e.g. bulk
@@ -1397,6 +1409,9 @@ impl IpfsIo {
         request: reqwest::Request,
         client: reqwest::Client,
     ) -> Result<reqwest::Response, anyhow::Error> {
+        if let Some(delay) = self.preview_request_delay() {
+            async_std::task::sleep(delay).await;
+        }
         // get semaphore to limit concurrent requests
         let _permit = self.request_slots.acquire().await.map_err(|e| anyhow!(e))?;
 
@@ -1975,11 +1990,15 @@ impl IpfsIo {
         debug!("[{token:?}]: remote url: `{remote}` awaiting semaphore");
         // get semaphore to limit concurrent requests
         let _deferred_in_flight = DeferredDropper::new(&IPFS_IN_FLIGHT);
+        if let Some(delay) = self.preview_request_delay() {
+            async_std::task::sleep(delay).await;
+        }
         let _permit =
             ipfs_io_read_state.send_failure(self.request_slots.acquire().await.map_err(|e| {
                 AssetReaderError::Io(Arc::new(std::io::Error::new(ErrorKind::Interrupted, e)))
             }))?;
         debug!("[{token:?}]: remote url: `{remote}` proceeding");
+        let transfer_start = Instant::now();
 
         let mut attempt = 0;
         let mut no_cache = false;
@@ -2029,6 +2048,10 @@ impl IpfsIo {
                     continue;
                 }
                 Err(e) => {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    if matches!(&e, platform::FetchError::Send(error) if error.is_connect()) {
+                        self.debug.lock().unwrap().connect_failed += 1;
+                    }
                     let detail = match e {
                         platform::FetchError::Headers => "timed out awaiting headers".to_owned(),
                         platform::FetchError::Stalled => "stalled (no data for 10s)".to_owned(),
@@ -2064,6 +2087,15 @@ impl IpfsIo {
             #[cfg(target_arch = "wasm32")]
             {
                 sw_cached = fetched.headers.contains_key(web_cache::CACHED_HEADER);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            let sw_cached = false;
+            if !sw_cached {
+                self.debug.lock().unwrap().download(
+                    fetched.body.len(),
+                    transfer_start.elapsed(),
+                    fetched.first_byte,
+                );
             }
 
             break SharedBytes(Arc::new(fetched.body));
