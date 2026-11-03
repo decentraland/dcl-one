@@ -4,13 +4,16 @@
 //! (`squid_marketplace.nft`, `mv.owned_nft`) and had no subgraph path for
 //! them; these queries are the ones the reference lambdas ran against the
 //! same subgraphs. Every call goes through the shared client with the SSRF
-//! guard, the retry ladder for 429/5xx and an 8 MiB body cap; answers are
+//! guard and an 8 MiB body cap. Background/mutation readers use the retry
+//! ladder for 429/5xx; admission reads use one shared, one-second attempt.
+//! Answers are
 //! memoized per owner for [`OWNED_TTL`] so a profile burst costs one round
 //! trip per network.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -33,6 +36,9 @@ const RETRY_ATTEMPTS: u32 = 3;
 const RETRY_BASE_MS: u64 = 500;
 pub const OWNED_TTL: Duration = Duration::from_secs(30);
 const OWNED_CACHE_MAX_ENTRIES: usize = 20_000;
+const READ_OWNER_TIMEOUT: Duration = Duration::from_secs(1);
+const READ_OWNER_RESULT_TTL: Duration = Duration::from_secs(5);
+const LAST_OWNER_TTL: Duration = Duration::from_secs(24 * 60 * 60);
 /// Owners folded into one aliased ownership document.
 const OWNERS_PER_QUERY: usize = 20;
 
@@ -135,7 +141,12 @@ pub struct Caches {
     /// The sorted coordinate list of a place -> its parcels and their owners.
     land: TtlMap<Vec<(i32, i32)>, Arc<Vec<LandParcel>>>,
     /// lowercased DCL name -> its holder.
-    pub name_owner: TtlMap<String, Arc<Option<String>>>,
+    name_owner: TtlMap<String, Arc<Option<String>>>,
+    /// Read-side results include failures so a failing single flight does not
+    /// make every waiter repeat the request. Mutation authority never uses it.
+    read_name_owner: TtlMap<String, Arc<Result<Option<String>, String>>>,
+    /// Last successful read-side holder, bounded independently of result TTLs.
+    last_name_owner: Mutex<HashMap<String, (Instant, Option<String>)>>,
     /// `owner` -> the parcels and estates the owner holds, newest transfer first.
     lands: TtlMap<String, Arc<Vec<OwnedLand>>>,
 }
@@ -147,8 +158,34 @@ impl Default for Caches {
             names: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             land: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
             name_owner: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
+            read_name_owner: TtlMap::bounded(READ_OWNER_RESULT_TTL, OWNED_CACHE_MAX_ENTRIES),
+            last_name_owner: Mutex::new(HashMap::new()),
             lands: TtlMap::bounded(OWNED_TTL, OWNED_CACHE_MAX_ENTRIES),
         }
+    }
+}
+
+impl Caches {
+    fn remember_name_owner(&self, name: &str, owner: Option<String>) {
+        let mut last = self.last_name_owner.lock().expect("last name owner cache");
+        if last.len() >= OWNED_CACHE_MAX_ENTRIES
+            && !last.contains_key(name)
+            && let Some(key) = last.keys().next().cloned()
+        {
+            last.remove(&key);
+        }
+        last.insert(name.to_owned(), (Instant::now(), owner));
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn clear_name_owner(&self) {
+        self.name_owner.clear();
+        self.read_name_owner.clear();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn name_owner_cache_len(&self) -> usize {
+        self.name_owner.len() + self.read_name_owner.len()
     }
 }
 
@@ -217,6 +254,10 @@ pub async fn graph_query(
     .await
     .map_err(|e| e.to_string())?;
     let body = outcome.ok_or_else(|| "subgraph unavailable after retries".to_string())?;
+    graph_data(body)
+}
+
+fn graph_data(body: Value) -> Result<Value, String> {
     if let Some(errors) = body
         .get("errors")
         .and_then(Value::as_array)
@@ -655,12 +696,89 @@ pub async fn name_owner(state: &ChainIndex, name: &str) -> Result<Option<String>
         .map(|a| (*a).clone())
 }
 
+/// Read-side ownership has one shared, one-second attempt with no retries.
+/// Positive authority answers use the ordinary 30-second memo; errors are
+/// shared for five seconds. Mutation callers keep using `name_owner`.
+pub async fn read_name_owner(state: &ChainIndex, name: &str) -> Result<Option<String>, String> {
+    let name = name.to_lowercase();
+    let Some(url) = state.settings.marketplace_subgraph_url.as_deref() else {
+        return Ok(None);
+    };
+    if let Some(owner) = state.graph.name_owner.get_fresh(&name) {
+        state.graph.remember_name_owner(&name, (*owner).clone());
+        return Ok((*owner).clone());
+    }
+    let result = state
+        .graph
+        .read_name_owner
+        .get_or_fetch(name.clone(), || async {
+            let fetch = async {
+                state
+                    .graph
+                    .name_owner
+                    .get_or_fetch(name.clone(), || async {
+                        if !state.upstream_allowed(url) {
+                            return Err("subgraph URL is not a publicly routable http(s) endpoint"
+                                .to_string());
+                        }
+                        let response = state
+                            .http
+                            .post(url)
+                            .timeout(READ_OWNER_TIMEOUT)
+                            .json(&json!({"query": QUERY_NAME_OWNER, "variables": {"name": name}}))
+                            .send()
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        if !response.status().is_success() {
+                            return Err(format!("subgraph returned HTTP {}", response.status()));
+                        }
+                        let bytes = read_body_capped(response, BODY_CAP)
+                            .await
+                            .map_err(|e| e.to_string())?;
+                        let body = serde_json::from_slice(&bytes)
+                            .map_err(|e| format!("invalid subgraph response: {e}"))?;
+                        let owner = parse_name_owner(&graph_data(body)?);
+                        Ok::<_, String>(Arc::new(owner))
+                    })
+                    .await
+                    .map(|owner| (*owner).clone())
+            };
+            let answer = tokio::time::timeout(READ_OWNER_TIMEOUT, fetch)
+                .await
+                .unwrap_or_else(|_| Err("name owner lookup deadline exceeded".to_string()));
+            if let Ok(owner) = &answer {
+                state.graph.remember_name_owner(&name, owner.clone());
+            }
+            Ok::<_, std::convert::Infallible>(Arc::new(answer))
+        })
+        .await
+        .expect("read owner result cache cannot fail");
+    (*result).clone()
+}
+
+/// A read-side outage must not restore an already-observed previous holder.
+/// This process-local fallback expires after 24 hours and is never used for edits.
+pub fn last_read_name_owner(state: &ChainIndex, name: &str) -> Option<String> {
+    let mut last = state
+        .graph
+        .last_name_owner
+        .lock()
+        .expect("last name owner cache");
+    let name = name.to_lowercase();
+    let (at, holder) = last.get(&name)?;
+    if at.elapsed() < LAST_OWNER_TTL {
+        return holder.clone();
+    }
+    last.remove(&name);
+    None
+}
+
 /// The holders of up to [`NAMES_PER_QUERY`] names in one round trip.
 const QUERY_NAME_OWNERS: &str = r#"
 query nameOwners($names: [String!]!, $first: Int!) {
   nfts(where: { category: ens, searchText_in: $names }, orderBy: id, orderDirection: asc, first: $first) {
     id
-    name
+    searchText
     owner { id }
   }
 }"#;
@@ -678,7 +796,7 @@ pub(crate) fn parse_name_owners(data: &Value) -> HashMap<String, String> {
         .into_iter()
         .flatten()
     {
-        let Some(name) = nft.get("name").and_then(Value::as_str) else {
+        let Some(name) = nft.get("searchText").and_then(Value::as_str) else {
             continue;
         };
         let owner = nft
@@ -860,11 +978,11 @@ mod tests {
     #[test]
     fn name_owners_map_each_lowercased_name_to_its_holder() {
         let owners = parse_name_owners(&json!({ "nfts": [
-            { "id": "ens-1", "name": "Boedo", "owner": { "id": "0xABCD" } },
-            { "id": "ens-2", "name": "palermo", "owner": { "id": "" } },
+            { "id": "ens-1", "searchText": "Boedo", "name": null, "owner": { "id": "0xABCD" } },
+            { "id": "ens-2", "searchText": "palermo", "owner": { "id": "" } },
             { "id": "ens-3", "owner": { "id": "0x01" } },
-            { "id": "ens-4", "name": "boedo", "owner": { "id": "0x02" } },
-            { "id": "ens-5", "name": "palermo", "owner": { "id": "0x03" } }
+            { "id": "ens-4", "searchText": "boedo", "owner": { "id": "0x02" } },
+            { "id": "ens-5", "searchText": "palermo", "owner": { "id": "0x03" } }
         ] }));
         assert_eq!(owners.len(), 1);
         assert_eq!(owners.get("boedo").map(String::as_str), Some("0xabcd"));
@@ -872,6 +990,55 @@ mod tests {
 
     fn holder(i: usize) -> crate::shared::identity::Address {
         crate::shared::identity::Address::parse(&format!("0x{i:040x}")).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_hanging_read_owner_has_one_bounded_flight_and_caches_the_failure() {
+        let (index, names) = test_support::index_with_names().await;
+        names.set_delay_ms(10_000);
+        let mut tasks = tokio::task::JoinSet::new();
+        for _ in 0..20 {
+            let index = index.clone();
+            tasks.spawn(async move { read_name_owner(&index, "slow").await });
+        }
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while let Some(answer) = tasks.join_next().await {
+                assert!(answer.unwrap().is_err());
+            }
+        })
+        .await
+        .expect("a burst cannot serialize one timeout per waiter");
+        assert_eq!(names.owner_queries(), 1);
+        assert!(read_name_owner(&index, "slow").await.is_err());
+        assert_eq!(names.owner_queries(), 1, "failure is cached briefly");
+    }
+
+    #[tokio::test]
+    async fn a_read_failure_retains_the_last_observed_holder() {
+        let (index, names) = test_support::index_with_names().await;
+        let owner = holder(7);
+        names.set(&owner, "sold");
+        assert_eq!(
+            read_name_owner(&index, "sold").await.unwrap().as_deref(),
+            Some(owner.as_str())
+        );
+        index.graph.clear_name_owner();
+        names.set_delay_ms(10_000);
+        assert!(read_name_owner(&index, "sold").await.is_err());
+        assert_eq!(
+            last_read_name_owner(&index, "sold").as_deref(),
+            Some(owner.as_str())
+        );
+        // The retention boundary never becomes an unbounded fallback.
+        index
+            .graph
+            .last_name_owner
+            .lock()
+            .unwrap()
+            .get_mut("sold")
+            .unwrap()
+            .0 = Instant::now() - LAST_OWNER_TTL;
+        assert_eq!(last_read_name_owner(&index, "sold"), None);
     }
 
     #[tokio::test]
@@ -1119,11 +1286,23 @@ pub mod test_support {
     pub struct Names(
         Arc<Mutex<HashMap<String, Vec<String>>>>,
         Arc<std::sync::atomic::AtomicUsize>,
+        Arc<std::sync::atomic::AtomicUsize>,
+        Arc<std::sync::atomic::AtomicU64>,
+        Arc<Mutex<Option<usize>>>,
     );
 
     impl Names {
         pub fn batch_queries(&self) -> usize {
             self.1.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        pub fn owner_queries(&self) -> usize {
+            self.2.load(std::sync::atomic::Ordering::SeqCst)
+        }
+        pub fn set_delay_ms(&self, millis: u64) {
+            self.3.store(millis, std::sync::atomic::Ordering::SeqCst);
+        }
+        pub fn fail_batches_after(&self, successful: usize) {
+            *self.4.lock().unwrap() = Some(successful);
         }
         pub fn set(&self, owner: &Address, label: &str) {
             self.0
@@ -1143,6 +1322,23 @@ pub mod test_support {
         axum::Json(body): axum::Json<Value>,
     ) -> axum::response::Response {
         let query = body["query"].as_str().unwrap_or("");
+        if query.contains("nameOwners(") {
+            let attempt = names.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if names
+                .4
+                .lock()
+                .unwrap()
+                .is_some_and(|limit| attempt >= limit)
+            {
+                return axum::http::StatusCode::BAD_REQUEST.into_response();
+            }
+        } else if query.contains("nameOwner(") {
+            names.2.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(
+            names.3.load(std::sync::atomic::Ordering::SeqCst),
+        ))
+        .await;
         // Every holder of `wanted` is one token, id-ordered and cut at `first`.
         let tokens = |wanted: &[&str], first: usize| -> Vec<Value> {
             let names = names.0.lock().unwrap();
@@ -1152,7 +1348,7 @@ pub mod test_support {
                 .filter(|(_, l)| wanted.iter().any(|w| l.eq_ignore_ascii_case(w)))
                 .map(|(owner, label)| {
                     let id = format!("0xname-{}-{owner}", label.to_lowercase());
-                    let nft = json!({ "id": id, "name": label, "owner": { "id": owner } });
+                    let nft = json!({ "id": id, "name": label, "searchText": label.to_lowercase(), "owner": { "id": owner } });
                     (id, nft)
                 })
                 .collect();
@@ -1160,7 +1356,6 @@ pub mod test_support {
             out.into_iter().take(first).map(|(_, nft)| nft).collect()
         };
         let nfts: Vec<Value> = if query.contains("nameOwners(") {
-            names.1.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             let wanted: Vec<&str> = body["variables"]["names"]
                 .as_array()
                 .into_iter()

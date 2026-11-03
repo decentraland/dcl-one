@@ -526,7 +526,7 @@ impl Policy {
     }
 
     /// The owner of `world` now: the personal rule, else the name authority's
-    /// holder of a DCL NAME (memoized per name for `OWNED_TTL`), else the
+    /// holder of a DCL NAME (with a bounded read deadline), else the
     /// stored owner (no reader, an ENS world, or a name the subgraph does not
     /// list). A reader fault is undetermined.
     pub async fn current_owner(
@@ -541,7 +541,7 @@ impl Policy {
         else {
             return Ok(stored);
         };
-        match crate::chain_index::graph::name_owner(market, world.label()).await {
+        match crate::chain_index::graph::read_name_owner(market, world.label()).await {
             Ok(holder) => Ok(holder.and_then(|h| Address::parse(&h).ok()).or(stored)),
             Err(e) => Err(reader_unavailable("marketplace names reader", &e)),
         }
@@ -549,8 +549,9 @@ impl Policy {
 
     /// [`Self::current_owner`] for the read-side consumers (admission, the
     /// permissions document, protected addresses, notifications): a reader
-    /// fault answers the stored owner, so a previous holder may keep the
-    /// owner's view for an outage but the holder is never locked out.
+    /// fault uses the last successfully observed holder for up to 24 hours,
+    /// then the stored owner if no such holder is retained. This cache is
+    /// read-side only; mutations still require established authority.
     /// Personal worlds never reach the reader, so the personal rule holds.
     pub async fn current_owner_or_stored(
         &self,
@@ -561,9 +562,14 @@ impl Policy {
             Ok(owner) => owner,
             Err(e) => {
                 if let Some(suppressed) = self.owner_fallback_warn.admit(Instant::now()) {
-                    tracing::warn!(world = %world, error = %e, suppressed, "world owner not resolved; using the stored one");
+                    tracing::warn!(world = %world, error = %e, suppressed, "world owner not resolved; using the last known owner");
                 }
-                stored
+                self.names_reader()
+                    .and_then(|market| {
+                        crate::chain_index::graph::last_read_name_owner(market, world.label())
+                    })
+                    .and_then(|owner| Address::parse(&owner).ok())
+                    .or(stored)
             }
         }
     }
@@ -1401,7 +1407,7 @@ mod tests {
             Deploy::Owner
         );
         assert!(p.is_owner(&world, &new).await.is_allowed());
-        market.graph.name_owner.clear();
+        market.graph.clear_name_owner();
         assert_eq!(
             p.can_access(&world, &old, None, None, None, now())
                 .await
@@ -1509,6 +1515,53 @@ mod tests {
             .await
             .unwrap();
         assert!(protected.contains(&owner));
+    }
+
+    #[tokio::test]
+    async fn a_hanging_authority_cannot_restore_the_previous_holder_or_serialize_admission() {
+        let Some((p, names, market)) = scratch_with_names().await else {
+            return;
+        };
+        let (world, old, new) = (world_name(), wallet(), wallet());
+        names.set(&new, world.label());
+        seed_world(&p, &world, Some(&old), AccessType::AllowList, None).await;
+        assert_eq!(
+            p.can_access(&world, &new, None, None, None, now())
+                .await
+                .unwrap(),
+            Access::Allowed(AccessGrant::Owner)
+        );
+        market.graph.clear_name_owner();
+        names.set_delay_ms(10_000);
+        let outcomes = tokio::time::timeout(
+            Duration::from_secs(2),
+            futures::future::join_all(
+                (0..20).map(|_| p.can_access(&world, &old, None, None, None, now())),
+            ),
+        )
+        .await
+        .expect("admission has one shared short lookup budget");
+        assert!(
+            outcomes
+                .into_iter()
+                .all(|outcome| outcome.unwrap() == Access::NotAllowed)
+        );
+        assert_eq!(
+            names.owner_queries(),
+            2,
+            "one initial success, one shared failed lookup"
+        );
+        assert_eq!(
+            p.can_access(&world, &new, None, None, None, now())
+                .await
+                .unwrap(),
+            Access::Allowed(AccessGrant::Owner)
+        );
+        let protected = p
+            .protected_addresses(&world, &parcels(&["0,0"]))
+            .await
+            .unwrap();
+        assert!(protected.contains(&new) && !protected.contains(&old));
     }
 
     /// Without a names reader every non-personal publish is refused (the old

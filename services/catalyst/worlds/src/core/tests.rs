@@ -533,7 +533,7 @@ async fn a_name_transfer_moves_ownership_on_the_next_publish() {
         Some(old.address.as_str()),
         "a refused publish rewrites nothing"
     );
-    f.market.graph.name_owner.clear();
+    f.market.graph.clear_name_owner();
     let permissions = expect(
         &f.app,
         Case::new("get", format!("/world/{}/permissions", world.display())),
@@ -599,9 +599,13 @@ async fn the_owner_job_reconciles_transferred_names_and_keeps_the_rest() {
     f.names.set(&held.address, kept.label());
     f.names.set(&held.address, mirrored.label());
 
-    let summary = super::owners::reconcile(&f.pool, &f.state.policy)
-        .await
-        .unwrap();
+    let summary = super::owners::reconcile(
+        &f.pool,
+        &f.state.policy,
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     assert_eq!(summary.updated, 1);
     assert_eq!(
         summary.checked - summary.unresolved,
@@ -644,7 +648,7 @@ async fn the_permissions_document_of_an_unpublished_name_skips_the_authority() {
     )
     .await;
     assert_eq!(permissions["owner"], serde_json::Value::Null);
-    assert_eq!(f.market.graph.name_owner.len(), 0);
+    assert_eq!(f.market.graph.name_owner_cache_len(), 0);
 }
 
 /// More names than one subgraph query asks: every chunk is resolved.
@@ -658,9 +662,13 @@ async fn the_owner_job_reconciles_past_one_query_of_names() {
         f.names.set(&new.address, w.label());
     }
 
-    let summary = super::owners::reconcile(&f.pool, &f.state.policy)
-        .await
-        .unwrap();
+    let summary = super::owners::reconcile(
+        &f.pool,
+        &f.state.policy,
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     assert_eq!(summary.updated, 150);
     assert_eq!(summary.checked - summary.unresolved, 150);
     for w in [&worlds[0], &worlds[99], &worlds[149]] {
@@ -682,13 +690,87 @@ async fn the_owner_job_and_admission_agree_on_a_name_with_several_tokens() {
     f.names.set(&b.address, world.label());
     let first = std::cmp::min(a.address.as_str(), b.address.as_str());
 
-    let summary = super::owners::reconcile(&f.pool, &f.state.policy)
-        .await
-        .unwrap();
+    let summary = super::owners::reconcile(
+        &f.pool,
+        &f.state.policy,
+        &tokio_util::sync::CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     assert_eq!(summary.updated, 1);
     assert_eq!(stored_owner(&f.pool, &world).await.as_deref(), Some(first));
     let live = f.state.policy.current_owner(&world, None).await.unwrap();
     assert_eq!(live.as_ref().map(|a| a.as_str()), Some(first));
+}
+
+#[tokio::test]
+async fn the_permissions_document_retains_the_last_holder_during_a_reader_timeout() {
+    let Some(f) = fixture().await else { return };
+    let (world, old, new) = (world_name(), Wallet::random(), Wallet::random());
+    seed_owned_world(&f.pool, world.key(), Some(&old.address), false).await;
+    f.names.set(&new.address, world.label());
+    let path = format!("/world/{}/permissions", world.display());
+    let first = expect(&f.app, Case::new("get", &path), 200).await;
+    assert_eq!(first["owner"].as_str(), Some(new.address.as_str()));
+    f.market.graph.clear_name_owner();
+    f.names.set_delay_ms(10_000);
+    let after = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        expect(&f.app, Case::new("get", &path), 200),
+    )
+    .await
+    .expect("permissions does not wait through graph retries");
+    assert_eq!(after["owner"].as_str(), Some(new.address.as_str()));
+}
+
+#[tokio::test]
+async fn the_owner_job_stops_after_its_first_failed_batch_and_observes_cancellation() {
+    let Some(f) = fixture().await else { return };
+    let owner = Wallet::random();
+    for _ in 0..250 {
+        let world = world_name();
+        seed_owned_world(&f.pool, world.key(), Some(&owner.address), false).await;
+    }
+    // A cancelled pass does no authority work at all.
+    let cancelled = tokio_util::sync::CancellationToken::new();
+    cancelled.cancel();
+    let summary = super::owners::reconcile(&f.pool, &f.state.policy, &cancelled)
+        .await
+        .unwrap();
+    assert_eq!(summary.checked, 0);
+    assert_eq!(f.names.batch_queries(), 0);
+    f.names.fail_batches_after(1);
+    assert!(
+        super::owners::reconcile(
+            &f.pool,
+            &f.state.policy,
+            &tokio_util::sync::CancellationToken::new()
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(
+        f.names.batch_queries(),
+        2,
+        "the remaining chunks do not hit a failed authority"
+    );
+    // Losing the lease during an in-flight request also cancels promptly.
+    let Some(g) = fixture().await else { return };
+    g.names.set_delay_ms(10_000);
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let waiting = super::owners::reconcile(&g.pool, &g.state.policy, &cancel);
+    let cancellation = async {
+        while g.names.batch_queries() == 0 {
+            tokio::task::yield_now().await;
+        }
+        cancel.cancel();
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        let (answer, ()) = tokio::join!(waiting, cancellation);
+        answer.unwrap();
+    })
+    .await
+    .expect("lease loss cancels the in-flight lookup");
 }
 
 /// A publish between the job's read and its write wins: the write compares

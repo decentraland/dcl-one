@@ -394,7 +394,8 @@ impl CoreState {
             jobs.spawn_periodic_leased(owners::JOB, cfg, move |ctx| {
                 let state = state.clone();
                 async move {
-                    let summary = owners::reconcile(&state.pool, &state.policy).await?;
+                    let summary =
+                        owners::reconcile(&state.pool, &state.policy, &ctx.cancel).await?;
                     ctx.progress(format!("{summary:?}"));
                     Ok(())
                 }

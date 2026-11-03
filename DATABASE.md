@@ -254,6 +254,18 @@ these are estimates, not measured throughput.
 
 ## Queries, ingest and derived state
 
+Read-side world ownership uses the configured marketplace name authority with
+a one-second lookup budget and no retries. Concurrent readers share a lookup;
+failures are cached for five seconds so an outage does not serialize a new
+lookup for each admission. Successful authority answers retain the existing
+30-second name memo. A separate process-local cache retains the last observed
+holder for at most 24 hours, with at most 20,000 names, and takes precedence over
+the stored owner during a reader fault. Without a retained holder, reads keep
+the stored-owner fallback. Process restart discards both caches. Mutation
+authorization never uses stale ownership. The leased stored-owner reconciliation
+checks cancellation between batches and during remote reads, and stops on its
+first authority error instead of querying the remaining catalogue.
+
 Native ended-event metrics live in Social. `social.event_ended_occurrences`
 records one immutable fact per `(event_id, occurrence_start)`; its RSVP count
 comes from explicit local attendance, and its community must resolve to an

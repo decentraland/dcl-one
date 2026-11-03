@@ -10,6 +10,7 @@
 //! answer for (the stored owner is kept).
 
 use sqlx::PgPool;
+use tokio_util::sync::CancellationToken;
 
 use crate::chain_index::graph::{NAMES_PER_QUERY, name_owners};
 use crate::comms::world_identity::WorldName;
@@ -26,7 +27,14 @@ pub struct Summary {
 }
 
 /// One pass; a no-op without a names reader.
-pub async fn reconcile(pool: &PgPool, policy: &Policy) -> anyhow::Result<Summary> {
+pub async fn reconcile(
+    pool: &PgPool,
+    policy: &Policy,
+    cancel: &CancellationToken,
+) -> anyhow::Result<Summary> {
+    if cancel.is_cancelled() {
+        return Ok(Summary::default());
+    }
     let Some(market) = policy.names_reader() else {
         return Ok(Summary::default());
     };
@@ -43,14 +51,20 @@ pub async fn reconcile(pool: &PgPool, policy: &Policy) -> anyhow::Result<Summary
         .collect();
     let mut summary = Summary::default();
     for chunk in worlds.chunks(NAMES_PER_QUERY) {
+        if cancel.is_cancelled() {
+            break;
+        }
         let labels: Vec<String> = chunk.iter().map(|(w, _)| w.label().to_string()).collect();
         summary.checked += chunk.len();
-        let holders = match name_owners(market, &labels).await {
+        let answer = tokio::select! {
+            _ = cancel.cancelled() => return Ok(summary),
+            answer = name_owners(market, &labels) => answer,
+        };
+        let holders = match answer {
             Ok(holders) => holders,
             Err(e) => {
                 tracing::warn!(error = %e, worlds = chunk.len(), "world owners not resolved; stored owners kept");
-                summary.unresolved += chunk.len();
-                continue;
+                return Err(anyhow::anyhow!("name owner reconciliation stopped: {e}"));
             }
         };
         let mut changes = Vec::new();
@@ -70,6 +84,9 @@ pub async fn reconcile(pool: &PgPool, policy: &Policy) -> anyhow::Result<Summary
                     previous: stored.clone(),
                 });
             }
+        }
+        if cancel.is_cancelled() {
+            break;
         }
         summary.updated += write(pool, &changes).await? as usize;
     }
