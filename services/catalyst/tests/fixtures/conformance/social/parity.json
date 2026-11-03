@@ -1411,7 +1411,7 @@
       "id": "api_http:PATCH:/v1/friendship-requests/:address",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Accepted/rejected/cancelled intentions invoke same state machine and mapped refusals. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
+      "result": "Accepted/rejected/cancelled intentions invoke same state machine and mapped refusals. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication now emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -1436,6 +1436,11 @@
           "path": "services/catalyst/social/src/rpc/limits.rs",
           "test": "concurrent_replicas_share_one_atomic_pair_budget",
           "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/notification_source_cases.rs",
+          "test": "friendship_sns_events_and_retries_match_executed_source",
+          "scope": "Four actual source notification creator/retrier captures are compared with real SQL mutations and the official SNS SDK against a local stub, including request/accept payloads, success after two failures and exhausted failures. Dynamic action UUID/time are asserted against committed state/clock bounds then normalized for comparison; no real topic or deployed consumer was contacted."
         }
       ],
       "gaps": [],
@@ -1833,7 +1838,7 @@
       "id": "api_http:POST:/v1/friendship-requests",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Schema/signed-fetch gates, request/state/rate/block checks; response identifies friendship, event identifies action. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
+      "result": "Schema/signed-fetch gates, request/state/rate/block checks; response identifies friendship, event identifies action. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication now emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/http.rs",
@@ -1858,6 +1863,11 @@
           "path": "services/catalyst/social/src/rpc/limits.rs",
           "test": "concurrent_replicas_share_one_atomic_pair_budget",
           "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/notification_source_cases.rs",
+          "test": "friendship_sns_events_and_retries_match_executed_source",
+          "scope": "Four actual source notification creator/retrier captures are compared with real SQL mutations and the official SNS SDK against a local stub, including request/accept payloads, success after two failures and exhausted failures. Dynamic action UUID/time are asserted against committed state/clock bounds then normalized for comparison; no real topic or deployed consumer was contacted."
         }
       ],
       "gaps": [],
@@ -2867,7 +2877,7 @@
       "id": "rpc_unary:RPC:upsertFriendship",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Validates action/address/self/message/rate/state; atomically writes action, keeps friendship creation time, uses action UUID for updates, and can return a profile error after commit. Request stream omits unresolved sender profiles. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
+      "result": "Validates action/address/self/message/rate/state; atomically writes action, keeps friendship creation time, uses action UUID for updates, and can return a profile error after commit. Request stream omits unresolved sender profiles. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Configured legacy SNS publication now emits source social-service friendship events, keyed by action UUID; its detached three-attempt retry refreshes event time with 300ms pauses and does not roll back the action on failure.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/friends.rs",
@@ -2892,6 +2902,11 @@
           "path": "services/catalyst/social/src/rpc/limits.rs",
           "test": "concurrent_replicas_share_one_atomic_pair_budget",
           "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/notification_source_cases.rs",
+          "test": "friendship_sns_events_and_retries_match_executed_source",
+          "scope": "Four actual source notification creator/retrier captures are compared with real SQL mutations and the official SNS SDK against a local stub, including request/accept payloads, success after two failures and exhausted failures. Dynamic action UUID/time are asserted against committed state/clock bounds then normalized for comparison; no real topic or deployed consumer was contacted."
         }
       ],
       "gaps": [],
@@ -5023,10 +5038,12 @@
     {
       "id": "external-notification-consumers",
       "operations": [
-        "rpc_unary:RPC:upsertFriendship"
+        "rpc_unary:RPC:upsertFriendship",
+        "api_http:POST:/v1/friendship-requests",
+        "api_http:PATCH:/v1/friendship-requests/:address"
       ],
-      "status": "known_gap",
-      "description": "Optional SNS publishing exists for referral events. Friendship and community notification producers still require source-compatible SNS wiring; writing a local inbox does not preserve existing external subscribers. Deployed subscriptions, duplicate delivery and cutover remain unverified."
+      "status": "unverified",
+      "description": "Configured friendship SNS producers now preserve source event fields, action key, retry timing and failure isolation through the existing official SDK publisher; local source/stub regressions pass. Existing external topic subscriptions, downstream consumers and deployed migration/cutover delivery remain unverified; community producer wiring is tracked separately."
     },
     {
       "id": "cross-replica-social-events",
@@ -5112,7 +5129,7 @@
         "api_http:POST:/v1/referral-email"
       ],
       "status": "unverified",
-      "description": "Configured official SQS/SNS transports preserve legacy raw events and attributes locally; deployed queue policies,topic subscriptions and real credential access have not been exercised. The additive upgrade preserves populated candidate IDs in synthetic tests; import of existing upstream progress/login-days/reward/email state and live cutover remain outstanding. Ranking event dispatch and other SNS producer wiring are subsequent packages."
+      "description": "Configured official SQS/SNS transports preserve legacy raw events and attributes locally; deployed queue policies,topic subscriptions and real credential access have not been exercised. The additive upgrade preserves populated candidate IDs in synthetic tests; import of existing upstream progress/login-days/reward/email state and live cutover remain outstanding. Ranking event dispatch and friendship SNS producers now execute through the configured shared transport; community SNS producers and deployed cutover evidence remain outstanding."
     },
     {
       "id": "api-body-size-boundary",

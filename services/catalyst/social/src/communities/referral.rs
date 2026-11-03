@@ -76,6 +76,10 @@ impl Referral {
         let _ = self.publisher.set(publisher);
     }
 
+    pub(crate) fn publisher(&self) -> Option<&std::sync::Arc<crate::legacy_events::LegacyEvents>> {
+        self.publisher.get()
+    }
+
     async fn denylist(&self) -> HashSet<String> {
         let Some(url) = self.settings.denylist_url.as_deref() else {
             return HashSet::new();

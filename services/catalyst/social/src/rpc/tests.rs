@@ -40,6 +40,7 @@ mod failures;
 mod fanout;
 mod friends;
 mod http;
+mod notification_source_cases;
 mod private_voice;
 mod profile_source_cases;
 mod settings;

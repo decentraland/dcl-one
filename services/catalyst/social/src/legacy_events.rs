@@ -70,6 +70,29 @@ impl LegacyEvents {
         });
         Ok(Some(Arc::new(Self { queue, publisher })))
     }
+    #[cfg(test)]
+    pub(crate) fn test_publisher(endpoint: &str) -> Arc<Self> {
+        let client = aws_sdk_sns::Client::from_conf(
+            aws_sdk_sns::config::Builder::new()
+                .behavior_version_latest()
+                .region(aws_sdk_sns::config::Region::new("us-east-1"))
+                .credentials_provider(aws_sdk_sns::config::Credentials::new(
+                    "test-access",
+                    "test-secret",
+                    None,
+                    None,
+                    "fixture",
+                ))
+                .retry_config(aws_config::retry::RetryConfig::standard().with_max_attempts(1))
+                .endpoint_url(endpoint)
+                .build(),
+        );
+        Arc::new(Self {
+            queue: None,
+            publisher: Some((client, "arn:aws:sns:us-east-1:123456789012:fixture".into())),
+        })
+    }
+
     pub async fn publish(&self, event: &Value) -> anyhow::Result<()> {
         let Some((client, arn)) = &self.publisher else {
             anyhow::bail!("AWS_SNS_ARN is not configured");
