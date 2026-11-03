@@ -111,11 +111,10 @@ async fn every_community_http_database_failure_uses_the_source_message_boundary(
                 call.json(&json!({"placeIds":[Uuid::new_v4().to_string()]}))
             }
             ("post", "/v1/communities/:id/posts") => call.json(&json!({"content":"Fixture post"})),
-            ("post", "/v1/communities/:id/requests") => {
-                call.json(&json!({"type":"request_to_join","targetedAddress":actor.address.as_str()}))
-            }
+            ("post", "/v1/communities/:id/requests") => call
+                .json(&json!({"type":"request_to_join","targetedAddress":actor.address.as_str()})),
             ("patch", "/v1/communities/:id/requests/:requestId") => {
-                call.json(&json!({"intention":"accept"}))
+                call.json(&json!({"intention":"accepted"}))
             }
             _ => call,
         };
@@ -164,6 +163,26 @@ async fn every_community_http_database_failure_uses_the_source_message_boundary(
             json!({"message":"permission denied for table community_members"})
         );
     }
+    let requester = wallet();
+    let request_call = || {
+        Case::new("post", format!("/social-api/v1/communities/{id}/requests"))
+            .json(&json!({"type":"request_to_join","targetedAddress":requester.address.as_str()}))
+    };
+    let (status, body) = hit(&api, request_call().signed(&requester).await).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        body,
+        json!({"message":"permission denied for table community_members"}),
+        "auth, schema and mirror lookup pass before this handler membership read"
+    );
+    sqlx::raw_sql(sqlx::AssertSqlSafe(format!("GRANT SELECT ON social.community_members TO {role}; REVOKE INSERT ON social.community_requests FROM {role}"))).execute(&rig.pool).await.unwrap();
+    let (status, body) = hit(&api, request_call().signed(&requester).await).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        body,
+        json!({"message":"permission denied for table community_requests"}),
+        "request insert fails after all preflight reads succeed"
+    );
     let after:(i64,i64,i64,i64)=sqlx::query_as("SELECT (SELECT count(*) FROM social.communities WHERE id=$1),(SELECT count(*) FROM social.community_members WHERE community_id=$1),(SELECT count(*) FROM social.community_requests WHERE community_id=$1),(SELECT count(*) FROM social.community_posts WHERE community_id=$1)").bind(id).fetch_one(&rig.pool).await.unwrap();
     assert_eq!(
         after, before,

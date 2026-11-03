@@ -510,10 +510,7 @@ pub async fn create_request(
         }
         Err(e) => {
             tracing::error!(error = %e, "failed to create community request");
-            err_json(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "failed to create request",
-            )
+            super::http::database_error(e).into_response()
         }
     }
 }
