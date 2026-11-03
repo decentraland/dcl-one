@@ -139,6 +139,11 @@ five at a time, and each hosted scene can send 32. See the
 [scene Fetch limits ADR](../../../../docs/adr/2026-11-03-explorer-scene-fetch-limits.md)
 for queue limits, deadlines and response streaming.
 
+Native scene diagnostics count outstanding calls from the permission prompt through queueing
+and body consumption. A client has 30 seconds after permission for queueing and the entire
+transfer, so a slow response can time out while bytes are still arriving. Browser callers
+take ownership at headers and can continue reading the body afterward.
+
 ## Headless
 
 The headless server uses the same `ScenePlugin`, so the `SceneSets` chain and the scene loop

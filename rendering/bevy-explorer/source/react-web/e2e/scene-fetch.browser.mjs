@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
-import { chromium } from 'playwright'
+import { chromium } from '@playwright/test'
 
 const engine = new URL('../../deploy/web/engine/', import.meta.url)
 
