@@ -252,8 +252,13 @@ impl SnapshotGenerator {
             return Ok(());
         }
         let forced = self.requested.swap(false, Ordering::SeqCst);
+        // A window the deleter repair marked is regenerated at the next tick, not the next
+        // interval; a failed pass keeps its backoff.
         if !forced && !self.due() {
-            return Ok(());
+            let succeeded = self.last.lock().succeeded;
+            if !succeeded || !any_marked_window(&self.content.pool).await? {
+                return Ok(());
+            }
         }
         let end_ms = chrono::Utc::now().timestamp_millis();
         match self.run_pass(end_ms, forced, Some(&ctx.cancel)).await {
@@ -600,6 +605,16 @@ async fn read_horizon_ms(conn: &mut sqlx::PgConnection) -> Result<Timestamp, Gen
     .fetch_one(conn)
     .await?;
     Ok(ms - 1)
+}
+
+/// Whether the deleter repair marked a window (a generation stamped before the
+/// window began) that no pass has regenerated yet. A scan of a few dozen rows.
+async fn any_marked_window(pool: &PgPool) -> Result<bool, GenerationError> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM content.snapshots WHERE generation_time < init_timestamp)",
+    )
+    .fetch_one(pool)
+    .await?)
 }
 
 /// Advisory lock key the generator takes shared while it writes a window and

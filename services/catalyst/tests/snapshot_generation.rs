@@ -1487,6 +1487,57 @@ async fn a_window_written_beside_the_deleter_repair_keeps_its_mark() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// A window the deleter repair marked is regenerated at the job's next tick,
+/// not a whole generation interval later.
+#[tokio::test]
+async fn the_job_regenerates_a_marked_window_at_the_next_tick() {
+    let Some((db_a, root, node, _, _)) = restored_scene_database("repair-tick").await else {
+        return;
+    };
+    let generator = SnapshotGenerator::new(
+        node.clone(),
+        false,
+        snapshot_gen::Settings {
+            interval: Duration::from_secs(6 * 3600),
+            tick: Duration::from_millis(100),
+        },
+    );
+    let jobs = Jobs::new();
+    generator.spawn_job(&jobs);
+    wait_until("the first pass", 20, || {
+        generator
+            .report()
+            .last_summary
+            .is_some_and(|s| s.windows > 0)
+    })
+    .await;
+    let first = generator.report().last_finished_ms;
+
+    catalyst::content::sync::LiveDeploymentRepository::new(
+        db_a.pool.clone(),
+        Arc::new(SyncStatus::default()),
+    )
+    .resolve_deleter_deployments()
+    .await
+    .unwrap();
+    wait_until("a pass after the repair", 20, || {
+        generator.report().last_finished_ms > first
+    })
+    .await;
+    let summary = generator.report().last_summary.unwrap();
+    assert!(summary.generated >= 1, "{summary:?}");
+    let in_files: i64 =
+        sqlx::query_scalar("SELECT coalesce(sum(number_of_entities), 0) FROM content.snapshots")
+            .fetch_one(&db_a.pool)
+            .await
+            .unwrap();
+    assert_eq!(in_files, 0, "the regenerated window leaves the scene out");
+
+    jobs.shutdown(Duration::from_secs(5)).await;
+    db_a.teardown().await;
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// A pass over a populated database. Not a contract: run by hand with
 /// CATALYST_SNAPSHOT_BENCH_DATABASE_URL naming a disposable database (it
 /// writes content.snapshots and a temporary store). Prints each pass's wall
