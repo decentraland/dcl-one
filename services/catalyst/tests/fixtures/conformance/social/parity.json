@@ -136,8 +136,8 @@
     {
       "id": "api_http:DELETE:/v1/communities/:id",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -156,11 +156,19 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "test": "dapps_variants_and_sdk_boolean_overrides_drive_community_permissions",
+          "scope": "Local moderator GET/PATCH authorization, disabled DELETE rejection and literal env override regression; no deployed feature-provider comparison."
+        },
+        {
+          "path": "services/catalyst/explore/src/api/tests.rs",
+          "test": "dapps_flags_refresh_preserves_the_audience_and_last_good_document",
+          "scope": "Bounded fake HTTP provider, Referer audience, valid snapshot persistence, last-good state after malformed/failing response and process reload."
         }
       ],
-      "gaps": [
-        "community-moderator-feature-variants"
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
@@ -716,8 +724,8 @@
     {
       "id": "api_http:GET:/v1/moderation/communities",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/admin.rs",
@@ -727,11 +735,19 @@
           "path": "services/catalyst/social/src/communities/tests.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "every_route_answers_its_contract"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "test": "dapps_variants_and_sdk_boolean_overrides_drive_community_permissions",
+          "scope": "Local moderator GET/PATCH authorization, disabled DELETE rejection and literal env override regression; no deployed feature-provider comparison."
+        },
+        {
+          "path": "services/catalyst/explore/src/api/tests.rs",
+          "test": "dapps_flags_refresh_preserves_the_audience_and_last_good_document",
+          "scope": "Bounded fake HTTP provider, Referer audience, valid snapshot persistence, last-good state after malformed/failing response and process reload."
         }
       ],
-      "gaps": [
-        "community-moderator-feature-variants"
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
@@ -1121,8 +1137,8 @@
     {
       "id": "api_http:PATCH:/v1/communities/:id",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Dynamic moderator variants now use the shared DAPPS document and source SDK parsing; disabled variants no longer authorize a moderator.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -1141,11 +1157,19 @@
           "path": "services/catalyst/social/src/communities/tests/fixture_shapes.rs",
           "scope": "Local community HTTP regression with seeded PostgreSQL state; does not establish deployed upstream equivalence.",
           "test": "the_data_bound_social_api_fixtures_replay_against_their_seeded_rows"
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/full_http_parity.rs",
+          "test": "dapps_variants_and_sdk_boolean_overrides_drive_community_permissions",
+          "scope": "Local moderator GET/PATCH authorization, disabled DELETE rejection and literal env override regression; no deployed feature-provider comparison."
+        },
+        {
+          "path": "services/catalyst/explore/src/api/tests.rs",
+          "test": "dapps_flags_refresh_preserves_the_audience_and_last_good_document",
+          "scope": "Bounded fake HTTP provider, Referer audience, valid snapshot persistence, last-good state after malformed/failing response and process reload."
         }
       ],
-      "gaps": [
-        "community-moderator-feature-variants"
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
     {
@@ -4456,7 +4480,7 @@
     {
       "id": "community-ranking-and-configured-moderation",
       "status": "known_gap",
-      "description": "Lifetime ranking producers, enabled AI compliance and dynamic moderator feature variants remain under implementation; affected HTTP rows retain their own gaps.",
+      "description": "Dynamic moderator variants now use the source-compatible shared DAPPS document and have focused authorization/fetch regressions. Lifetime ranking producers and enabled AI compliance remain under implementation; affected HTTP rows retain their own gaps.",
       "operations": [
         "api_http:DELETE:/v1/communities/:id",
         "api_http:GET:/v1/communities",
