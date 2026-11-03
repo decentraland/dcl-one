@@ -1,0 +1,7 @@
+.root { border: 1px solid var(--ink-45); border-radius: 8px; padding: 12px; min-width: 0; }
+.results { list-style: none; padding: 0; margin: 12px 0 0; }
+.asset { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px; color: inherit; background: transparent; border: 1px solid var(--ink-45); border-radius: 6px; cursor: pointer; text-align: left; overflow-wrap: anywhere; }
+.label { min-width: 0; }
+.kind { display: block; color: var(--ink-60); }
+.thumbnail { object-fit: cover; }
+.root :focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px; }
