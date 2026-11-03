@@ -190,6 +190,10 @@ impl AxumWsTransport {
             loop {
                 tokio::select! {
                     _ = reader_close.ended() => break,
+                    _ = reader_idle.expired(), if forward_text => {
+                        reader_close.peer_gone();
+                        break;
+                    },
                     msg = stream.next() => {
                         if matches!(&msg, Some(Ok(_))) { reader_idle.activity(); }
                         match msg {

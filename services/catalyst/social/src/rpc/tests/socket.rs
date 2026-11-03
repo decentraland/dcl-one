@@ -627,6 +627,15 @@ fn source_numeric_auth_timer_buckets_remain_independent_from_signature_windows()
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ordinary_large_unary_response_is_preserved_and_a_stopped_reader_closes() {
+    ordinary_large_reader_case(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn one_accepted_stalled_response_still_expires_without_a_retry_head() {
+    ordinary_large_reader_case(true).await;
+}
+
+async fn ordinary_large_reader_case(idle_only: bool) {
     use std::sync::atomic::Ordering;
     let Some(pool) = scratch_pool().await else {
         return;
@@ -634,6 +643,7 @@ async fn ordinary_large_unary_response_is_preserved_and_a_stopped_reader_closes(
     let _turn = VOICE_TABLE.lock().await;
     let settings = Settings {
         ws_max_backpressure_bytes: 1024,
+        ws_idle_timeout_secs: if idle_only { 8 } else { 300 },
         ordinary_transport: crate::shared::rpc::ws::OrdinaryQueueConfig {
             retry_delay_ms: 10.0,
             max_retry_attempts: 3.0,
@@ -700,20 +710,30 @@ async fn ordinary_large_unary_response_is_preserved_and_a_stopped_reader_closes(
     let _ = social.get_friendship_status(&friend).await;
     assert!(gate.paused.load(Ordering::SeqCst));
     let requests = async {
-        tokio::join!(
-            social
+        if idle_only {
+            let _ = social
                 .module
                 .call_unary_procedure::<PaginatedFriendsProfilesResponse, _>(
                     "GetFriends",
-                    GetFriendsPayload { pagination: None }
-                ),
-            social
-                .module
-                .call_unary_procedure::<PaginatedFriendsProfilesResponse, _>(
-                    "GetFriends",
-                    GetFriendsPayload { pagination: None }
+                    GetFriendsPayload { pagination: None },
                 )
-        )
+                .await;
+        } else {
+            let _ = tokio::join!(
+                social
+                    .module
+                    .call_unary_procedure::<PaginatedFriendsProfilesResponse, _>(
+                        "GetFriends",
+                        GetFriendsPayload { pagination: None }
+                    ),
+                social
+                    .module
+                    .call_unary_procedure::<PaginatedFriendsProfilesResponse, _>(
+                        "GetFriends",
+                        GetFriendsPayload { pagination: None }
+                    )
+            );
+        }
     };
     tokio::pin!(requests);
     let retired = tokio::time::timeout(Duration::from_secs(10), async {
@@ -722,7 +742,7 @@ async fn ordinary_large_unary_response_is_preserved_and_a_stopped_reader_closes(
         }
     });
     tokio::select! {
-        result = retired => result.expect("ordinary retry exhaustion must retire a stopped socket"),
+        result = retired => result.expect("idle expiry or bounded retry exhaustion must retire a stopped socket"),
         _ = &mut requests => panic!("paused reader cannot complete pending calls"),
     }
     gate.paused.store(false, Ordering::SeqCst);
