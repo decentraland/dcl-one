@@ -49,7 +49,7 @@ a new recording directory outside the Explorer cache. In the first run, visit th
 wait for the affected assets to load, then close the client before launching replay.
 
 ```sh
-capture="${TMPDIR:-/tmp}/dcl-public-asset-capture"
+capture="$(mktemp -d "${TMPDIR:-/tmp}/dcl-public-asset-capture.XXXXXXXX")"
 just native-debug --realm https://peer.decentraland.org --position 0,0 --record-assets "$capture"
 # Inspect the recorded CIDs and byte counts before repeating the visit.
 cat "$capture/reads.log"
@@ -57,7 +57,8 @@ just native-debug --realm https://peer.decentraland.org --position 0,0 --replay-
 ```
 
 The reader covers Bevy asset loads resolved through a connected, secret-free Genesis realm
-on the selected `--base-domain`. The realm's `/about` selects the public HTTPS content
+on the selected `--base-domain`. Use `peer.`, `peer-ap1.`, or the `realm-provider-ea.`
+main realm as the starting realm. Its `/about` selects the public HTTPS content
 endpoint. A regional peer or a Catalyst operator on a different domain can serve the bytes.
 Selection uses the logical realm and content endpoints. The reader has no access to transport
 response headers or redirect history. Worlds, explicit scene content bases, URL assets and

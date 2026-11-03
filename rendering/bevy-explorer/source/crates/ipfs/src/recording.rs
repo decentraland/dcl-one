@@ -472,9 +472,8 @@ impl Recording {
         let log =
             std::str::from_utf8(&journal).map_err(|_| invalid("invalid recording journal"))?;
         let mut entries = HashMap::new();
-        let mut events = 0;
         let mut unique = Vec::new();
-        for line in log.lines() {
+        for (events, line) in log.lines().enumerate() {
             let mut fields = line.split(' ');
             let hash = fields.next().unwrap_or_default();
             let len = fields
@@ -492,7 +491,6 @@ impl Recording {
                 unique.extend_from_slice(line.as_bytes());
                 unique.push(b'\n');
             }
-            events += 1;
         }
         let store = if let Some(lock) = lock {
             for path in staging {

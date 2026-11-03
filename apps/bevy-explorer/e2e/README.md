@@ -56,8 +56,9 @@ boots a second one on its own realm.
 | `DCL_E2E_NATIVE_BIN`, `DCL_E2E_NATIVE_ARGS` | A standalone to start with its loopback console on (`--realm`, `--position`, `--automation-token` and `--automation-port` are added) | unset |
 | `DCL_E2E_NATIVE_PORT`, `DCL_E2E_NATIVE_TOKEN` | A running standalone's loopback console and the token it was started with | `15702`, unset |
 
-For a local native reproduction, set `capture="${TMPDIR:-/tmp}/dcl-public-asset-capture"` and
-`export DCL_E2E_NATIVE_ARGS="--replay-assets $capture"` to forward the same absolute directory to the client.
+For a local native reproduction, use the `capture` variable from the capture session or set it
+to that recording’s absolute path. Run `export DCL_E2E_NATIVE_ARGS="--replay-assets $capture"`
+to forward the recorded directory to the client.
 Use a path with no spaces for this whitespace-separated argument list. See the [capture and replay procedure](../../../rendering/bevy-explorer/docs/guidelines/running.md#reproduce-a-native-public-asset-read).
 
 The report goes to `report/`: `junit-<groups>.xml`, and per scenario `commands.jsonl` (every
