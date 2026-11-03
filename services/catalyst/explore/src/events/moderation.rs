@@ -1020,24 +1020,14 @@ pub async fn create(
     body: &CreateEvent,
     operator: &str,
     settings: &crate::Settings,
+    places: Option<&crate::places::PlacesComponent>,
 ) -> Result<String, ApiError> {
-    create_as(pool, body, ADMIN_CREATOR, operator, settings).await
+    create_as(pool, body, ADMIN_CREATOR, operator, settings, places).await
 }
 
 /// Creates the event with `creator` as its `user` and `signer` as its
 /// overlay's signer (the old user path: both the signed wallet).
 pub async fn create_as(
-    pool: &PgPool,
-    body: &CreateEvent,
-    creator: &str,
-    signer: &str,
-    settings: &crate::Settings,
-) -> Result<String, ApiError> {
-    create_as_with_places(pool, body, creator, signer, settings, None).await
-}
-
-/// Authoring with native LAND enrichment when the shared reader is available.
-pub async fn create_as_with_places(
     pool: &PgPool,
     body: &CreateEvent,
     creator: &str,
@@ -1769,7 +1759,7 @@ mod tests {
             ..body(start)
         };
         let operator = "0x00000000000000000000000000000000000000e2";
-        let id = create(&pool, &b, operator, &crate::Settings::for_tests())
+        let id = create(&pool, &b, operator, &crate::Settings::for_tests(), None)
             .await
             .unwrap();
         let (approved, user, raw, origin): (bool, Option<String>, Value, String) = sqlx::query_as(

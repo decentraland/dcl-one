@@ -191,6 +191,17 @@ mod tests {
             .unwrap();
         assert_eq!(raw["estate_id"], "500");
         assert_eq!(raw["estate_name"], Value::Null);
+        sqlx::query(r#"UPDATE explore.place SET raw=raw || '{"estate_id":"500","estate_name":"Known estate"}' WHERE id=$1"#)
+            .bind(&id).execute(&mut *tx).await.unwrap();
+        enrich(&mut tx, &mut raw, None, true, Some(&places))
+            .await
+            .unwrap();
+        assert_eq!(
+            raw["estate_name"], "Known estate",
+            "matching native identity preserves its known name"
+        );
+        sqlx::query(r#"UPDATE explore.place SET raw=raw || '{"estate_id":"old","estate_name":"Old estate"}' WHERE id=$1"#)
+            .bind(&id).execute(&mut *tx).await.unwrap();
         sqlx::query("DELETE FROM land_authz.estate_land WHERE land_token_id=$1::numeric")
             .bind(&token)
             .execute(&mut *tx)
@@ -212,13 +223,26 @@ mod tests {
             raw["estate_id"], "old",
             "unready authority retains known catalogue metadata"
         );
-        let previous = raw.clone();
+        sqlx::query(
+            "UPDATE land_authz.index_cursor SET folded_at=timezone('UTC',now()) WHERE network=$1",
+        )
+        .bind(&settings.network)
+        .execute(&mut *tx)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO land_authz.estate_land(land_token_id,estate_token_id,updated_block,updated_log) VALUES($1::numeric,500,1,0)")
+            .bind(&token).execute(&mut *tx).await.unwrap();
         raw.insert("world".into(), json!(true));
         raw.remove("place_id");
+        raw.insert("estate_id".into(), json!("unchanged-world-fact"));
+        let previous = raw.clone();
         enrich(&mut tx, &mut raw, Some(&previous), true, Some(&places))
             .await
             .unwrap();
-        assert_eq!(raw["estate_id"], Value::Null);
+        assert_eq!(
+            raw["estate_id"], "unchanged-world-fact",
+            "world enrichment never consults a fresh parcel index at the same coordinates"
+        );
         tx.rollback().await.unwrap();
     }
 

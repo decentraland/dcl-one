@@ -504,7 +504,7 @@ pub async fn create_event(
         body.schedules = None;
         body.url = None;
     }
-    let id = moderation::create_as_with_places(
+    let id = moderation::create_as(
         &state.pool,
         &body,
         &signer,
@@ -2063,6 +2063,7 @@ mod tests {
             "0x0123456789012345678901234567890123456789",
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -2682,6 +2683,7 @@ mod tests {
             &owner_address,
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -2818,6 +2820,7 @@ mod tests {
             &owner,
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -3029,6 +3032,7 @@ mod tests {
             &owner_address,
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -3096,6 +3100,7 @@ mod tests {
             &owner,
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -3185,6 +3190,7 @@ mod tests {
                 "0xowner",
                 "test",
                 &Settings::for_tests(),
+                None,
             )
             .await
             .unwrap();
@@ -3242,6 +3248,7 @@ mod tests {
                 &address,
                 "test",
                 &Settings::for_tests(),
+                None,
             )
             .await
             .unwrap();
@@ -3315,6 +3322,7 @@ mod tests {
             &owner,
             "test",
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
@@ -3499,6 +3507,7 @@ mod tests {
             &address,
             &address,
             &Settings::for_tests(),
+            None,
         )
         .await
         .unwrap();
