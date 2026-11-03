@@ -1,0 +1,597 @@
+{
+  "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+  "sources": [
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/logic/community-voice/community-voice.ts",
+      "sha256": "1d91e9ce1b66c146d5c85cc3554729fe7b02dd84e06db719d65d2a661a6fc716"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/logic/community-voice/community-voice-cache.ts",
+      "sha256": "f4abaa10d293932d66cada2a73d2d429dd465bd0c1344f8d41d12ad3db4e2d6b"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/logic/community-voice/community-voice-polling.ts",
+      "sha256": "607637eafe5d6006cdc7f9891ae123fc0ee14d0274110fe7428ad33f72745088"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/adapters/comms-gatekeeper.ts",
+      "sha256": "3ab0b025bc24e1e5e5f987edf311ef816e884e5fd19132ce43c31d53a4ff3d3e"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/utils/uuid.ts",
+      "sha256": "2b19a75f8592496b7b4820bbee4ef1b8334540db2f5002296f80e6a15c70e5db"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/logic/updates.ts",
+      "sha256": "72b9f7eb4b47a309ce702a96d7407d1c7c3a97ed0b3f9f7f5ca472a62637a827"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/controllers/handlers/rpc/subscribe-to-community-voice-chat-updates.ts",
+      "sha256": "dbb387700070c9224a33ce01133208afdc95d5fea15a3d9121c7e4d6a00ab293"
+    },
+    {
+      "repository": "decentraland/social-service-ea",
+      "file": "src/controllers/handlers/uws/stream-registry.ts",
+      "sha256": "9d0da108781769c1c9f5899e4e5ae187fab1d02119abbbb934a66efbe92089f0"
+    }
+  ],
+  "scope": "Original community domain, cache, poller, privileged adapter identifier guards, update audience handler and both client parsers; deterministic JSON-serializing Redis facade shared across component rebuilds; controlled media HTTP responses and clock. No network Redis/LiveKit used.",
+  "cases": [
+    {
+      "scenario": "uppercase-start-lowercase-end",
+      "http": [
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "DELETE",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333",
+          "body": {
+            "user_address": "0x1111111111111111111111111111111111111111"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        }
+      ],
+      "keys": [
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333"
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333"
+        }
+      ],
+      "reads": [
+        {
+          "step": "restart-after-start",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "restart-after-end-other-spelling",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "after-inactive-poll",
+          "entries": []
+        }
+      ],
+      "published": [
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+          "status": 1,
+          "endedAt": 1234567890000
+        },
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 1,
+          "endedAt": 1234567890000,
+          "positions": [],
+          "worlds": [],
+          "communityName": "",
+          "notificationScope": "all"
+        }
+      ],
+      "wire": [
+        {
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": false,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": "Community"
+          }
+        },
+        {
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": true,
+            "communityName": "",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": ""
+          }
+        },
+        {
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        },
+        {
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        }
+      ]
+    },
+    {
+      "scenario": "two-alias-cache-entries",
+      "http": [
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "POST",
+          "path": "/community-voice-chat",
+          "body": {
+            "community_id": "a3333333-b333-4c33-8d33-e33333333333",
+            "user_address": "0x1111111111111111111111111111111111111111",
+            "action": "create",
+            "user_role": "owner"
+          }
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        },
+        {
+          "method": "GET",
+          "path": "/community-voice-chat/a3333333-b333-4c33-8d33-e33333333333/status"
+        }
+      ],
+      "keys": [
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "put",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333",
+          "ttl": 86400
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:A3333333-B333-4C33-8D33-E33333333333"
+        },
+        {
+          "op": "del",
+          "key": "community-voice-chat:a3333333-b333-4c33-8d33-e33333333333"
+        }
+      ],
+      "reads": [
+        {
+          "step": "restart-after-start",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "restart-two-aliases",
+          "entries": [
+            {
+              "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            },
+            {
+              "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+              "isActive": true,
+              "lastChecked": 1234567890000,
+              "createdAt": 1234567890000,
+              "notificationScope": "all"
+            }
+          ]
+        },
+        {
+          "step": "after-inactive-poll",
+          "entries": []
+        }
+      ],
+      "published": [
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+          "status": 0,
+          "positions": [],
+          "worlds": [],
+          "communityName": "Community",
+          "creatorAddress": "0x1111111111111111111111111111111111111111",
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+          "status": 1,
+          "endedAt": 1234567890000,
+          "positions": [],
+          "worlds": [],
+          "communityName": "",
+          "notificationScope": "all"
+        },
+        {
+          "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+          "status": 1,
+          "endedAt": 1234567890000,
+          "positions": [],
+          "worlds": [],
+          "communityName": "",
+          "notificationScope": "all"
+        }
+      ],
+      "wire": [
+        {
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": false,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": "Community"
+          }
+        },
+        {
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": true,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": true,
+            "communityName": "Community"
+          }
+        },
+        {
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567890000,
+            "status": 0,
+            "positions": [],
+            "isMember": false,
+            "communityName": "Community",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "started",
+            "createdAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": "Community"
+          }
+        },
+        {
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        },
+        {
+          "address": "0x2222222222222222222222222222222222222222",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        },
+        {
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "A3333333-B333-4C33-8D33-E33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        },
+        {
+          "address": "0x5555555555555555555555555555555555555555",
+          "rpc": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "createdAt": 1234567890000,
+            "status": 1,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "isMember": false,
+            "communityName": "",
+            "worlds": []
+          },
+          "json": {
+            "communityId": "a3333333-b333-4c33-8d33-e33333333333",
+            "status": "ended",
+            "createdAt": 1234567890000,
+            "endedAt": 1234567890000,
+            "positions": [],
+            "worlds": [],
+            "isMember": false,
+            "communityName": ""
+          }
+        }
+      ]
+    }
+  ]
+}
