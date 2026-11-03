@@ -28,7 +28,10 @@ type CatalogElement = {
 // accumulates across fetched pages + the equipped set, so any item the user has actually
 // seen/equipped can be equipped.
 const tokenUrnByItem = new Map<string, string>()
+// Bumped on an account change, so a page that was requested for the previous account adds no tokens.
+let account = 0
 identity.onChange(() => {
+  account += 1
   tokenUrnByItem.clear()
 })
 
@@ -37,6 +40,11 @@ function accumulateTokens(elements: CatalogElement[]): void {
     const full = tokenUrnOf(el)
     if (full !== el.urn) tokenUrnByItem.set(el.urn, full)
   }
+}
+
+/** The urn the look deploys for an item seen in a fetched page or the equipped set. */
+export function deployableUrn(urn: string): string {
+  return tokenUrnByItem.get(urn) ?? urn
 }
 
 export type CatalogPageParams = {
@@ -49,24 +57,40 @@ export type CatalogPageParams = {
   direction?: 'asc' | 'desc'
   collectiblesOnly?: boolean
   smartOnly?: boolean
+  /** Overrides the collection types `collectiblesOnly` picks. */
+  collectionTypes?: string[]
+  /** Several categories at once; `category` narrows to one. */
+  categories?: string[]
+  /** False when only the total is read: the items then carry no thumbnail, representations or hides. */
+  includeEntities?: boolean
 }
 
 // Server-side-paginated owned-wearables fetch (one page). Filters/sort are applied by the catalyst
 // so multi-thousand inventories never load at once. `equipped` per item reflects the live avatar.
-export async function fetchWearablesPage(address: string, p: CatalogPageParams): Promise<{ items: Wearable[]; total: number }> {
+// `failed` is set when the request failed; the page is then empty.
+export async function fetchWearablesPage(
+  address: string,
+  p: CatalogPageParams
+): Promise<{ items: Wearable[]; total: number; failed: boolean }> {
+  const requestedFor = account
   const baseUrl = await catalystBase()
-  let url = `${baseUrl}/explorer/${address}/wearables?pageNum=${p.page + 1}&pageSize=${p.pageSize}&includeEntities=true`
+  let url = `${baseUrl}/explorer/${address}/wearables?pageNum=${p.page + 1}&pageSize=${p.pageSize}&includeEntities=${p.includeEntities !== false}`
   if (p.category != null && p.category !== 'all') url += `&category=${p.category}`
+  for (const c of p.categories ?? []) url += `&category=${c}`
   if (p.search != null && p.search !== '') url += `&name=${encodeURIComponent(p.search)}`
   if (p.orderBy != null) url += `&orderBy=${p.orderBy}&direction=${p.direction === 'asc' ? 'ASC' : 'DESC'}`
   // Explicit collection types (matches unity/bevy-ui-scene): collectibles-only drops base wearables.
-  const collectionTypes = p.collectiblesOnly ? ['on-chain', 'third-party'] : ['base-wearable', 'on-chain', 'third-party']
+  const collectionTypes = p.collectionTypes ?? (p.collectiblesOnly ? ['on-chain', 'third-party'] : ['base-wearable', 'on-chain', 'third-party'])
   for (const t of collectionTypes) url += `&collectionType=${t}`
   if (p.smartOnly === true) url += '&isSmartWearable=true'
 
-  const data = await getJson<{ elements?: CatalogElement[]; totalAmount?: number }>(url).catch(() => undefined)
+  let failed = false
+  const data = await getJson<{ elements?: CatalogElement[]; totalAmount?: number }>(url).catch(() => {
+    failed = true
+    return undefined
+  })
   const elements = data?.elements ?? []
-  accumulateTokens(elements)
+  if (requestedFor === account) accumulateTokens(elements)
   const look = currentLook()
   const owned = look != null ? [look.bodyShape, ...look.wearables] : []
   const items: Wearable[] = elements.map((el) => {
@@ -84,7 +108,7 @@ export async function fetchWearablesPage(address: string, p: CatalogPageParams):
       hides: itemHides(el.category, el.entity?.metadata?.data, look?.bodyShape)
     }
   })
-  return { items, total: data?.totalAmount ?? items.length }
+  return { items, total: data?.totalAmount ?? items.length, failed }
 }
 
 type ResolveOpts = {
@@ -173,7 +197,7 @@ export function registerWearables(ctx: Ctx): void {
   ctx.on('equip', async (msg) => {
     // The equipped set carries the body shape, but it's the avatar base, not a wearable.
     const { bodyShape, wearables } = splitBodyShape(msg.urns)
-    const tokenUrns = wearables.map((u) => tokenUrnByItem.get(u) ?? u)
+    const tokenUrns = wearables.map(deployableUrn)
     const before = currentLook()
     const newShape = bodyShape != null && bodyShape !== before?.bodyShape
     editLook(bodyShape != null ? { bodyShape, wearables: tokenUrns } : { wearables: tokenUrns })
