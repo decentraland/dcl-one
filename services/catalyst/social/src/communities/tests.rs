@@ -34,6 +34,7 @@ mod dependency_errors;
 mod fixture_shapes;
 mod full_http_parity;
 mod gateway_auth;
+mod membership_concurrency;
 mod mute_body;
 mod owner_parity;
 mod post_create;

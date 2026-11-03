@@ -15,6 +15,8 @@ use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
 
+use sqlx::Connection as _;
+
 use crate::{Address, CommunityId, CommunityPermission};
 
 use super::dto::{CommunityDetail, CommunityListItem};
@@ -25,8 +27,8 @@ use super::http::{
 use super::profiles::ProfileInfo;
 use super::thumbnail::{detect_image_mime_type, store_thumbnail, validate_thumbnail};
 use super::write_support::{
-    ClientCommunityWriteAuthority, Refusal, load_client_standing, map_db, parse_community_id,
-    parse_form,
+    ClientCommunityWriteAuthority, Refusal, load_client_standing, map_db, membership_lock,
+    parse_community_id, parse_form,
 };
 use super::{SharedState, queries, signed_path, validate};
 use crate::notifications::community::{Audience, CommunityEvent, notify};
@@ -967,7 +969,9 @@ pub async fn update_community(
     let accepted_request_ids: Vec<uuid::Uuid> = if becomes_public {
         // The source bulk acceptance owns its transaction. Failure rolls back
         // its membership/request changes, preserving the preceding UPDATE.
-        let mut tx = try_resp!(map_db(state.pool.begin().await));
+        let connection = try_resp!(map_db(state.pool.acquire().await));
+        let mut guard = try_resp!(map_db(membership_lock(uuid).acquire(connection).await));
+        let mut tx = try_resp!(map_db(guard.begin().await));
         try_resp!(map_db(sqlx::query(
             "INSERT INTO social.community_members (community_id,member_address,role) \
              SELECT $1,r.member_address,'member' FROM social.community_requests r \
@@ -983,6 +987,7 @@ pub async fn update_community(
              RETURNING r.id"
         ).bind(uuid).fetch_all(&mut *tx).await));
         try_resp!(map_db(tx.commit().await));
+        try_resp!(map_db(guard.release_now().await));
         ids
     } else {
         Vec::new()

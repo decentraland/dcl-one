@@ -136,8 +136,8 @@ pub async fn load_standing_pair(
         .map_err(|error| AuthorityNotEstablished::store_unavailable(STORE, &error))
 }
 
-pub(crate) async fn load_standing_pair_from_database(
-    pool: &PgPool,
+pub(crate) async fn load_standing_pair_from_database<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     community_id: CommunityId,
     first: &Address,
     second: &Address,
@@ -150,7 +150,7 @@ pub(crate) async fn load_standing_pair_from_database(
     .bind(community_id)
     .bind(first)
     .bind(second)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
     let role_of = |wallet: &Address| {
         rows.iter()

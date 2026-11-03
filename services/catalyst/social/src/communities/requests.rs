@@ -11,6 +11,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
+use sqlx::Connection as _;
 use uuid::Uuid;
 
 use crate::{Address, CommunityId, CommunityPermission};
@@ -20,7 +21,9 @@ use super::http::{
 };
 use super::profiles::enrich_with_profiles;
 use super::standing::load_standing_from_database as load_standing;
-use super::write_support::{Refusal, load_client_standing, map_db, parse_community_id};
+use super::write_support::{
+    Refusal, load_client_standing, map_db, membership_lock, parse_community_id,
+};
 use super::{SharedState, queries, signed_path};
 use crate::notifications::community::Audience;
 
@@ -415,6 +418,29 @@ pub async fn create_request(
         .fetch_all(&state.pool)
         .await
     ));
+    // Retain the source's observed request identity across a concurrent
+    // cancellation, then recheck the ban under the mutation lock. Moving the
+    // pending read after this wait would turn a cancelled opposite request
+    // into a fresh invitation instead of refusing the stale acceptance.
+    let connection = try_resp!(map_db(state.pool.acquire().await));
+    let mut guard = try_resp!(map_db(
+        membership_lock(community_id).acquire(connection).await
+    ));
+    let banned: Option<bool> = try_resp!(map_db(
+        sqlx::query_scalar(
+            "SELECT active FROM social.community_bans WHERE community_id=$1 AND banned_address=$2"
+        )
+        .bind(community_id)
+        .bind(&member_address)
+        .fetch_optional(&mut *guard)
+        .await
+    ));
+    if banned.unwrap_or(false) {
+        return err_json(
+            StatusCode::UNAUTHORIZED,
+            format!("The user {member_address} is banned from the community {id}"),
+        );
+    }
     if let Some((rid, _)) = pending.iter().find(|(_, t)| t == kind) {
         return request_json(*rid, community_id, &member_address, kind, "pending");
     }
@@ -423,7 +449,7 @@ pub async fn create_request(
         // accepted only if a competing decision has not already closed it.
         try_resp!(
             transition_request(
-                &state.pool,
+                &mut *guard,
                 community_id,
                 *opp_id,
                 &member_address,
@@ -431,6 +457,7 @@ pub async fn create_request(
             )
             .await
         );
+        try_resp!(map_db(guard.release_now().await));
         state.fire_analytics(
             "JOIN_COMMUNITY",
             json!({"community_id":id,"user_id":member_address.as_str(),"request_id":opp_id}),
@@ -463,10 +490,11 @@ pub async fn create_request(
     .bind(community_id)
     .bind(&member_address)
     .bind(kind)
-    .execute(&state.pool)
+    .execute(&mut *guard)
     .await;
     match inserted {
         Ok(_) => {
+            try_resp!(map_db(guard.release_now().await));
             notify_request(
                 &state,
                 community_id,
@@ -488,7 +516,7 @@ pub async fn create_request(
                 )
                 .bind(community_id)
                 .bind(&member_address)
-                .fetch_optional(&state.pool)
+                .fetch_optional(&mut *guard)
                 .await
             ));
             match existing {
@@ -653,12 +681,14 @@ pub async fn update_request_status(
     if let Some(e) = auth_err {
         return e;
     }
+    let connection = try_resp!(map_db(state.pool.acquire().await));
+    let mut guard = try_resp!(map_db(membership_lock(uuid).acquire(connection).await));
     if status == "accepted" {
         let banned: Option<bool> = try_resp!(map_db(
             sqlx::query_scalar("SELECT active FROM social.community_bans WHERE community_id = $1 AND banned_address = $2")
                 .bind(uuid)
                 .bind(&member_address)
-                .fetch_optional(&state.pool)
+                .fetch_optional(&mut *guard)
                 .await
         ));
         if banned.unwrap_or(false) {
@@ -668,7 +698,8 @@ pub async fn update_request_status(
             );
         }
     }
-    try_resp!(transition_request(&state.pool, uuid, req_uuid, &member_address, status).await);
+    try_resp!(transition_request(&mut *guard, uuid, req_uuid, &member_address, status).await);
+    try_resp!(map_db(guard.release_now().await));
     if status == "rejected" || status == "cancelled" {
         let event = if status == "rejected" {
             "REJECT_COMMUNITY_REQUEST"
@@ -750,13 +781,13 @@ async fn notify_request(
 /// serializes competing decisions; acceptance removes every request for the
 /// pair in the same transaction as its membership insert.
 async fn transition_request(
-    pool: &sqlx::PgPool,
+    connection: &mut sqlx::PgConnection,
     community: CommunityId,
     request: Uuid,
     member: &Address,
     status: &str,
 ) -> Result<(), Refusal> {
-    let mut tx = map_db(pool.begin().await)?;
+    let mut tx = map_db(connection.begin().await)?;
     map_db(
         sqlx::query("SELECT id FROM social.communities WHERE id = $1 FOR UPDATE")
             .bind(community)

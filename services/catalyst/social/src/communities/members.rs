@@ -2,7 +2,7 @@
 //! viewers, refused to signed non-members, open to the admin bearer), the
 //! join/leave/kick/role/ban/unban writes and the per-wallet community
 //! listings. A ban deletes the member row and the wallet's pending requests
-//! in the same transaction; a kick or ban of a private community's member
+//! in source-defined independent commits; a kick or ban of a private community's member
 //! reaches the voice-eviction seam.
 
 use std::collections::HashMap;
@@ -14,6 +14,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
+use sqlx::Connection as _;
 
 use crate::identity::can_act_on_member;
 use crate::{Address, CommunityId, CommunityPermission, CommunityRole, CommunityStanding};
@@ -26,9 +27,11 @@ use super::http::{
 use super::profiles::enrich_with_profiles;
 use super::standing::{
     CommunityBanAuthority, CommunityUnbanAuthority, load_standing_from_database as load_standing,
+    load_standing_pair_from_database,
 };
 use super::write_support::{
-    load_client_standing, load_client_standing_pair, map_db, parse_community_id, refusal_response,
+    load_client_standing, load_client_standing_pair, map_db, membership_lock, parse_community_id,
+    refusal_response,
 };
 use super::{SharedState, queries, signed_path};
 use crate::notifications::community::{Audience, now_ms};
@@ -603,7 +606,9 @@ pub async fn add_member(
         Err(r) => return r,
     };
     let uuid = try_resp!(parse_community_id(&id));
-    let mut tx = try_resp!(map_db(state.pool.begin().await));
+    let connection = try_resp!(map_db(state.pool.acquire().await));
+    let mut guard = try_resp!(map_db(membership_lock(uuid).acquire(connection).await));
+    let mut tx = try_resp!(map_db(guard.begin().await));
     try_resp!(map_db(
         sqlx::query("SELECT id FROM social.communities WHERE id = $1 FOR UPDATE")
             .bind(uuid)
@@ -653,6 +658,7 @@ pub async fn add_member(
         .into_response();
     }
     try_resp!(map_db(tx.commit().await));
+    try_resp!(map_db(guard.release_now().await));
     if inserted {
         let mut properties = json!({"community_id":id,"user_id":signer.as_str()});
         if let Some(request_id) = request_id {
@@ -731,7 +737,7 @@ pub async fn remove_member(
     let removed = try_resp!(map_db(
         sqlx::query(
             "WITH removed AS (DELETE FROM social.community_members \
-                              WHERE community_id = $1 AND member_address = $2 RETURNING community_id), \
+                              WHERE community_id = $1 AND member_address = $2 AND role <> 'owner' RETURNING community_id), \
                   likes AS (DELETE FROM social.community_post_likes l \
                             USING social.community_posts p \
                             WHERE l.post_id = p.id AND p.community_id = $1 AND l.user_address = $2 \
@@ -865,7 +871,7 @@ pub async fn update_member_role(
         );
     }
     let upd = try_resp!(map_db(
-        sqlx::query("UPDATE social.community_members SET role = $3 WHERE community_id = $1 AND member_address = $2")
+        sqlx::query("UPDATE social.community_members SET role = $3 WHERE community_id = $1 AND member_address = $2 AND role <> 'owner'")
             .bind(uuid)
             .bind(&target)
             .bind(new_role.as_stored_text())
@@ -914,7 +920,9 @@ async fn transfer_ownership(
         return CommError::bad_request(format!("The user {target} doesn't have any names"))
             .into_response();
     }
-    let mut tx = try_resp!(map_db(state.pool.begin().await));
+    let connection = try_resp!(map_db(state.pool.acquire().await));
+    let mut guard = try_resp!(map_db(membership_lock(uuid).acquire(connection).await));
+    let mut tx = try_resp!(map_db(guard.begin().await));
     let old_owner: Address = try_resp!(map_db(
         sqlx::query_scalar("SELECT owner_address FROM social.communities WHERE id = $1 FOR UPDATE")
             .bind(uuid)
@@ -957,6 +965,7 @@ async fn transfer_ownership(
         }
     }
     try_resp!(map_db(tx.commit().await));
+    try_resp!(map_db(guard.release_now().await));
     state
         .notify_community_event(
             "community_ownership_transferred",
@@ -1003,8 +1012,11 @@ pub async fn ban_member(
             return CommError::bad_request("Invalid member address".to_string()).into_response();
         }
     };
-    let (actor_standing, target_standing) =
-        try_resp!(load_client_standing_pair(&state, uuid, &signer, &target).await);
+    let connection = try_resp!(map_db(state.pool.acquire().await));
+    let mut guard = try_resp!(map_db(membership_lock(uuid).acquire(connection).await));
+    let (actor_standing, target_standing) = try_resp!(map_db(
+        load_standing_pair_from_database(&mut *guard, uuid, &signer, &target).await
+    ));
     if let Err(refusal) = CommunityBanAuthority::from_standings(actor_standing, target_standing) {
         return refusal_response(&refusal, StatusCode::UNAUTHORIZED, || {
             format!(
@@ -1016,7 +1028,7 @@ pub async fn ban_member(
     // must retain an earlier kick and unlike, including the analytics event.
     let removed: bool = try_resp!(map_db(
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.community_members WHERE community_id=$1 AND member_address=$2)")
-            .bind(uuid).bind(&target).fetch_one(&state.pool).await
+            .bind(uuid).bind(&target).fetch_one(&mut *guard).await
     ));
     if removed {
         try_resp!(map_db(
@@ -1025,7 +1037,7 @@ pub async fn ban_member(
             )
             .bind(uuid)
             .bind(&target)
-            .execute(&state.pool)
+            .execute(&mut *guard)
             .await
         ));
         try_resp!(map_db(
@@ -1035,7 +1047,7 @@ pub async fn ban_member(
             )
             .bind(uuid)
             .bind(&target)
-            .execute(&state.pool)
+            .execute(&mut *guard)
             .await
         ));
         state.fire_analytics("BAN_MEMBER_FROM_COMMUNITY",json!({"community_id":id,"banner_user_id":signer.as_str(),"target_user_id":target.as_str()}));
@@ -1050,7 +1062,7 @@ pub async fn ban_member(
         .bind(uuid)
         .bind(&target)
         .bind(&signer)
-        .execute(&state.pool)
+        .execute(&mut *guard)
         .await
     ));
     try_resp!(map_db(
@@ -1059,10 +1071,11 @@ pub async fn ban_member(
         )
         .bind(uuid)
         .bind(&target)
-        .execute(&state.pool)
+        .execute(&mut *guard)
         .await
     ));
 
+    try_resp!(map_db(guard.release_now().await));
     state
         .evict_from_private_community_voice(uuid, &target)
         .await;

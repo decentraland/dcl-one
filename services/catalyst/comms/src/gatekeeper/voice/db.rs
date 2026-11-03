@@ -422,9 +422,36 @@ impl VoiceDb {
     ) -> Result<Vec<Uuid>, sqlx::Error> {
         let now = now_utc();
         let mut txn = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *txn)
+            .await?;
+        // Same-id credential writers serialize before reading the immutable
+        // party pair. The two-key advisory namespace is separate from the
+        // existing single-key wallet locks. Never hold a row lock while waiting
+        // for wallets: pending/expiry paths may already be waiting on that row.
+        sqlx::query(
+            "SELECT pg_advisory_xact_lock(hashtext('private-voice-call'),hashtext($1::text))",
+        )
+        .bind(call_id)
+        .execute(&mut *txn)
+        .await?;
+        let old: Option<(String, String)> = sqlx::query_as(
+            "SELECT caller_address,callee_address FROM social.private_voice_chats WHERE id=$1",
+        )
+        .bind(call_id)
+        .fetch_optional(&mut *txn)
+        .await?;
+        let mut wallets = vec![caller.as_str().to_owned(), callee.as_str().to_owned()];
+        if let Some((a, b)) = old {
+            wallets.extend([a.to_lowercase(), b.to_lowercase()]);
+        }
+        wallets.sort();
+        wallets.dedup();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('private-voice:' || p)) FROM unnest($1::text[]) AS t(p)")
+            .bind(&wallets).execute(&mut *txn).await?;
         sqlx::query(
             "INSERT INTO social.private_voice_chats (id, caller_address, callee_address, created_at) VALUES ($1, $2, $3, $4) \
-             ON CONFLICT (id) DO UPDATE SET caller_address = EXCLUDED.caller_address, callee_address = EXCLUDED.callee_address, created_at = EXCLUDED.created_at",
+             ON CONFLICT (id) DO UPDATE SET id = EXCLUDED.id",
         )
         .bind(call_id)
         .bind(caller)
@@ -942,6 +969,203 @@ pub(crate) fn is_private_room_active(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    async fn waiting_on(pool: &PgPool, blocker: i32) -> i32 {
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                let pid: Option<i32> = sqlx::query_scalar(
+                    "SELECT pid FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)) LIMIT 1",
+                )
+                .bind(blocker)
+                .fetch_optional(pool)
+                .await
+                .unwrap();
+                if let Some(pid) = pid {
+                    return pid;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("the production writer must reach the database barrier")
+    }
+
+    #[tokio::test]
+    async fn private_conflicts_preserve_parties_and_wait_for_wallets_before_rows() {
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let db = VoiceDb::new(pool.clone(), VoiceDbConfig::default());
+        let wallet = || Address::parse(&format!("0x{}00000000", Uuid::new_v4().simple())).unwrap();
+        let (a, b, c, d, e, f, g, h) = (
+            wallet(),
+            wallet(),
+            wallet(),
+            wallet(),
+            wallet(),
+            wallet(),
+            wallet(),
+            wallet(),
+        );
+        let call = db
+            .seed_pending_private_call(a.as_str(), b.as_str())
+            .await
+            .unwrap();
+        let unrelated = db
+            .seed_pending_private_call(c.as_str(), d.as_str())
+            .await
+            .unwrap();
+        let before: (String,String,NaiveDateTime) = sqlx::query_as("SELECT caller_address,callee_address,created_at FROM social.private_voice_chats WHERE id=$1")
+            .bind(call).fetch_one(&pool).await.unwrap();
+        let unrelated_before: String = sqlx::query_scalar(
+            "SELECT to_jsonb(c)::text FROM social.private_voice_chats c WHERE id=$1",
+        )
+        .bind(unrelated)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let mut barrier = pool.begin().await.unwrap();
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *barrier)
+            .await
+            .unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('private-voice:' || $1))")
+            .bind(&a)
+            .execute(&mut *barrier)
+            .await
+            .unwrap();
+        let writer = db.clone();
+        let (e1, f1) = (e.clone(), f.clone());
+        let first = tokio::spawn(async move { writer.create_private_call(call, &e1, &f1).await });
+        let first_pid = waiting_on(&pool, pid).await;
+        // Acceptance takes this call's row lock. It must finish while the
+        // credential writer waits for a wallet, proving there is no row→wallet
+        // inversion. Existing callers/callees are retained on the later conflict.
+        assert!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                db.accept_pending_private_call(call, &a, &b)
+            )
+            .await
+            .unwrap()
+            .unwrap()
+        );
+        let writer = db.clone();
+        let (g1, h1) = (g.clone(), h.clone());
+        let second = tokio::spawn(async move { writer.create_private_call(call, &g1, &h1).await });
+        waiting_on(&pool, first_pid).await;
+        let pending_db = db.clone();
+        let (a1, h2) = (a.to_string(), h.to_string());
+        let pending = tokio::spawn(async move {
+            pending_db
+                .create_pending_private_call(&a1, &h2, 60_000)
+                .await
+        });
+        barrier.commit().await.unwrap();
+        for writer in [first, second] {
+            assert!(
+                tokio::time::timeout(std::time::Duration::from_secs(10), writer)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap()
+                    .is_empty()
+            );
+        }
+        let pending = tokio::time::timeout(std::time::Duration::from_secs(10), pending)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert!(
+            pending.started.is_some(),
+            "accepted media and a new pending intent coexist"
+        );
+        let after: (String,String,NaiveDateTime) = sqlx::query_as("SELECT caller_address,callee_address,created_at FROM social.private_voice_chats WHERE id=$1")
+            .bind(call).fetch_one(&pool).await.unwrap();
+        assert_eq!(
+            after, before,
+            "conflicts preserve the original party pair and creation time"
+        );
+        let parties: Vec<Address> = sqlx::query_scalar("SELECT address FROM social.private_voice_chat_participants WHERE call_id=$1 ORDER BY address")
+            .bind(call).fetch_all(&pool).await.unwrap();
+        let mut expected = vec![a, b, e, f, g, h];
+        expected.sort();
+        assert_eq!(
+            parties, expected,
+            "new credentials retain every prior participant"
+        );
+        let unrelated_after: String = sqlx::query_scalar(
+            "SELECT to_jsonb(c)::text FROM social.private_voice_chats c WHERE id=$1",
+        )
+        .bind(unrelated)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(unrelated_after, unrelated_before);
+    }
+
+    #[tokio::test]
+    async fn private_credential_writer_does_not_lock_rows_while_waiting_behind_expiry() {
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        let db = VoiceDb::new(pool.clone(), VoiceDbConfig::default());
+        let wallet = || Address::parse(&format!("0x{}00000000", Uuid::new_v4().simple())).unwrap();
+        let (a, b, e, f) = (wallet(), wallet(), wallet(), wallet());
+        let call = db
+            .seed_pending_private_call(a.as_str(), b.as_str())
+            .await
+            .unwrap();
+        sqlx::query("UPDATE social.private_voice_chats SET created_at=created_at-interval '1 day' WHERE id=$1").bind(call).execute(&pool).await.unwrap();
+        let mut barrier = pool.begin().await.unwrap();
+        let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+            .fetch_one(&mut *barrier)
+            .await
+            .unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext('private-voice:' || $1))")
+            .bind(&a)
+            .execute(&mut *barrier)
+            .await
+            .unwrap();
+        let writer = db.clone();
+        let (e1, f1) = (e.clone(), f.clone());
+        let media = tokio::spawn(async move { writer.create_private_call(call, &e1, &f1).await });
+        waiting_on(&pool, pid).await;
+        let expired = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            db.expire_pending_private_calls(60 * 60 * 1000, 100),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(
+            expired.iter().any(|row| row.id == call),
+            "expiry can acquire the pending row while media waits for wallets"
+        );
+        barrier.commit().await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(10), media)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        // The pending fact expired before media creation; the direct credential
+        // service still creates its requested media, without restoring an intent.
+        let parties: (String, String) = sqlx::query_as(
+            "SELECT caller_address,callee_address FROM social.private_voice_chats WHERE id=$1",
+        )
+        .bind(call)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(parties, (e.to_string(), f.to_string()));
+        assert!(
+            db.finish_pending_private_call(PendingPrivateCall::Id(call))
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[tokio::test]
     async fn prepared_join_serializes_rows_and_rollback_preserves_replay_source() {

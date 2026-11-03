@@ -18,6 +18,13 @@ use super::standing::{Standing, load_standing_from_database, load_standing_pair_
 
 pub type Refusal = Box<Response>;
 
+/// Community membership mutations serialize across source-defined independent
+/// commits, including bulk acceptance. One native SQLx guard owns one existing
+/// pool connection; dropping it releases the lock on cancellation.
+pub(super) fn membership_lock(community: CommunityId) -> sqlx::postgres::PgAdvisoryLock {
+    sqlx::postgres::PgAdvisoryLock::new(format!("social-community-membership:{community}"))
+}
+
 pub fn refuse(code: StatusCode, message: impl Into<String>) -> Refusal {
     Box::new(err_json(code, message))
 }
