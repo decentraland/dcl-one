@@ -1016,7 +1016,7 @@ impl IpfsIo {
             static_files: static_paths,
             #[cfg(not(target_arch = "wasm32"))]
             allowed_file_roots: Default::default(),
-            client: reqwest::Client::builder()
+            client: platform::http_client_builder()
                 .connect_timeout(Duration::from_secs(5))
                 .use_native_tls()
                 .user_agent("DCLExplorer/0.1")
