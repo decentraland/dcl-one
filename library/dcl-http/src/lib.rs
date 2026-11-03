@@ -1,7 +1,8 @@
-//! The process's outbound HTTP: one hardened [`reqwest::Client`] built through
-//! [`HttpClientCfg`] and wrapped in the one [`Outbound`] handle `serve` hands
-//! to every reader (peer sync and the RPC validator take its `raw` client,
-//! the mirrors and upstream readers send through the guard), the SSRF guard
+//! The default outbound HTTP handle: a hardened [`reqwest::Client`] built through
+//! [`HttpClientCfg`] and wrapped in the shared [`Outbound`] `serve` hands to
+//! readers (peer sync and the RPC validator take its `raw` client; mirrors and
+//! upstream readers send through the guard). Provider adapters that construct
+//! an Outbound with distinct transport settings own separate HTTP pools. The SSRF guard
 //! ([`is_safe_http_url`] on the string, [`resolve_and_pin`] on the socket),
 //! the retry ladder ([`retry_with_backoff`]) and the capped body reader.
 

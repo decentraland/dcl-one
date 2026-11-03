@@ -7,9 +7,11 @@
 //! `communities` (social-api REST), `rpc` (the friends/presence/voice
 //! WebSocket), `messaging` (the old gatekeeper's MLS delivery service, on
 //! its own state), `notifications`, `badges`, `media`
-//! (autotranslate) and `profile_images`; domain HTTP calls share one outbound
-//! client,SQL pool and blob store. Optional legacy SQS/SNS transports use the
-//! official AWS SDKs inside the existing job lifecycle (`legacy_events`). The
+//! (autotranslate) and `profile_images`; domain readers share the default outbound
+//! client, SQL pool and blob store. Configured AI compliance lazily owns an
+//! Outbound with provider-specific timeout/redirect settings and its own HTTP
+//! pools. Optional legacy SQS/SNS transports use the official AWS SDK clients
+//! inside the existing job lifecycle (`legacy_events`). The
 //! LiveKit gatekeeper itself is `comms::gatekeeper`; its state is the RPC's
 //! voice runtime and the communities' voice eviction. [`router`] composes
 //! them the way the old gateway's location table did, behind the [`writes`]
