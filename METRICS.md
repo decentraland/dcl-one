@@ -225,3 +225,13 @@ to bitmap scans selecting ten rows. Each index occupied 2,072,576 bytes.
 The insertion medians increased by 23.2% and 83.6%, respectively. These warm,
 synthetic samples establish the tradeoff for this fixture; they do not establish
 production latency, sustained throughput or a service-level bound.
+
+## Community mutation coordination
+
+A PostgreSQL 18.6 synthetic fixture used eight workers, 2,000 operations per sample
+and three warm samples. Each operation ran two independently committed SQL
+statements. With no guard on one community, median/p95 were 0.182/0.331ms;
+with its session advisory guard, 1.029/1.189ms; guards over eight communities
+measured 0.269/0.427ms. These isolate SQL coordination cost and exclude HTTP
+signatures, Rust/SQLx prepare costs and external awaits. They establish no
+production capacity or service-level bound.

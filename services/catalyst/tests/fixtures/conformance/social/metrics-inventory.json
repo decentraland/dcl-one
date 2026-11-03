@@ -212,7 +212,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 182,
+          "line": 202,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -347,14 +347,14 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 129,
+          "line": 142,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 130,
+          "line": 143,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -420,7 +420,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 75,
+          "line": 83,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -463,7 +463,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/ws.rs",
-          "line": 188,
+          "line": 208,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [

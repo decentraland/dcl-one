@@ -3497,8 +3497,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -3542,8 +3542,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -3587,8 +3587,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -3661,8 +3661,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -3706,8 +3706,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -3751,8 +3751,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -3806,8 +3806,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -3861,8 +3861,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -3916,8 +3916,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4015,8 +4015,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4070,8 +4070,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4125,8 +4125,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4169,8 +4169,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4248,8 +4248,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4287,8 +4287,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4326,8 +4326,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4404,8 +4404,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4468,8 +4468,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4507,8 +4507,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4566,8 +4566,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4610,8 +4610,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4649,8 +4649,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4708,8 +4708,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4762,8 +4762,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4806,8 +4806,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4860,8 +4860,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4904,8 +4904,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4943,8 +4943,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -4987,8 +4987,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5026,8 +5026,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5070,8 +5070,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5114,8 +5114,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5158,8 +5158,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5197,8 +5197,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5251,8 +5251,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5324,8 +5324,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5422,8 +5422,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5481,8 +5481,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5525,8 +5525,8 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
@@ -5702,7 +5702,7 @@
       "id": "websocket:UPGRADE:/",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Source numeric conversions are now replayed: 13 auth settings, 16 native idle inputs and 100 actual signed-timestamp decisions. Independent f64 signature window and Node timer buckets preserve prefix/fraction/overflow behavior; native ushort conversion preserves idle admission. Package config 51, handshake 21 and socket 18 tests pass; root all-targets passes.",
+      "result": "Source numeric conversions replay13auth settings,16nativeidle inputs and100signed-timestamp decisions. Canonical source signing paths remain accepted, with exact mounted legacy aliases for earlier clients. The81path cases include9source accepts,9legacy compatibility extensions and63rejections. Authentication uses one absolute deadline through verification, Ping and AUTH_IN_PROGRESS writes, with bounded terminal cleanup. Shared byte admission fairly queues guarded frames; cancellation/expiry release accounting. Real socket tests retain independent reader idle behavior with both8MiB stopped-reader cases.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
@@ -5730,13 +5730,18 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
           "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
           "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "test": "auth_ping_and_in_progress_writes_share_the_original_absolute_deadline",
+          "scope": "Controlled actual Sink flush stalls prove Ping and in-progress sends share one auth instant; terminal Close cleanup is bounded100ms, and no send renews the window."
         }
       ],
       "gaps": [],
@@ -5746,7 +5751,7 @@
       "id": "websocket:UPGRADE:/v1/stream",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Source numeric conversions are now replayed: 13 auth settings, 16 native idle inputs and 100 actual signed-timestamp decisions. Independent f64 signature window and Node timer buckets preserve prefix/fraction/overflow behavior; native ushort conversion preserves idle admission. Package config 51, handshake 21 and socket 18 tests pass; root all-targets passes.",
+      "result": "Source numeric conversions replay13auth settings,16nativeidle inputs and100signed-timestamp decisions. Canonical source signing paths remain accepted, with exact mounted legacy aliases for earlier clients. The81path cases include9source accepts,9legacy compatibility extensions and63rejections. Authentication uses one absolute deadline through verification, Ping and AUTH_IN_PROGRESS writes, with bounded terminal cleanup. Shared byte admission fairly queues guarded frames; cancellation/expiry release accounting. Real socket tests retain independent reader idle behavior with both8MiB stopped-reader cases.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
@@ -5764,13 +5769,18 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
-          "test": "mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers",
-          "scope": "Eighty-one actual source verifier decisions replay over signed candidate sockets: RPC binds / and both JSON handshakes bind /v1/stream regardless of mount/proxy aliases. This tests shared authentication, not each method body."
+          "test": "socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases",
+          "scope": "Eighty-one pinned-source verifier cases remain unchanged: nine source accepts, nine exact legacy mounted-alias compatibility extensions and63 rejections. Canonical source / and /v1/stream plus exact /social-rpc and /social-rpc/v1/stream are accepted; arbitrary proxy/header aliases are not trusted. This is an explicit compatibility extension, not identical acceptance to source."
         },
         {
           "path": "services/catalyst/social/src/rpc/tests/startup.rs",
           "test": "both_upgrades_wait_for_initial_social_subscription_without_slots_or_auth",
           "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/ws.rs",
+          "test": "auth_ping_and_in_progress_writes_share_the_original_absolute_deadline",
+          "scope": "Controlled actual Sink flush stalls prove Ping and in-progress sends share one auth instant; terminal Close cleanup is bounded100ms, and no send renews the window."
         }
       ],
       "gaps": [],
@@ -8124,7 +8134,7 @@
         "websocket:UPGRADE:/",
         "websocket:UPGRADE:/v1/stream"
       ],
-      "description": "Signed Social paths now match 81 source verifier decisions and real socket replays. The Bevy client preserves its connection URL while signing /; a native cryptographic unit covers standalone, mounted and query URLs. Deployed web artifacts must contain that update before strict server cutover. Cached/running clients, full Explorer, wasm and rendered /play behavior have not been exercised."
+      "description": "Signed Social paths now match 81 source verifier decisions and real socket replays. The Bevy client preserves its connection URL while signing /; a native cryptographic unit covers standalone, mounted and query URLs. Deployed web artifacts must contain that update before strict server cutover. Cached/running clients, full Explorer, wasm and rendered /play behavior have not been exercised. Exact legacy mounted signing aliases are accepted alongside canonical source paths. Signed socket regressions cover old/new spellings and reject arbitrary proxy/header aliases; deployed cached artifacts and admitted client versions still need runtime comparison."
     },
     {
       "id": "social-initial-subscription-readiness",
@@ -8262,7 +8272,7 @@
         "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
         "api_http:PUT:/v1/communities/:id"
       ],
-      "description": "Client BAN and update now preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede separate places and atomic bulk acceptance. Nine actual-source PostgreSQL trigger captures independently match exactly; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified."
+      "description": "Client BAN and update now preserve the source commit phases on the existing pool: completed membership/unlike/analytics stages survive a later ban/request failure, while community updates precede separate places and atomic bulk acceptance. Nine actual-source PostgreSQL trigger captures independently match exactly; package community186 tests pass. Native federation and atomic join retain their separate contracts. Production crash/retry/concurrency and nonempty cutover remain unverified. Community-scoped native advisory guards now coordinate joins, all acceptance paths, BAN and ownership SQL transfer while retaining separate source commit stages. Cancellation/error and queued owner/BAN cases pass local PostgreSQL barriers; this strengthens concurrency coordination beyond source."
     },
     {
       "id": "community-voice-raw-cache-aliases",

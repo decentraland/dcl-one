@@ -757,3 +757,17 @@ makes tied pages deterministic; live membership changes across pages do not have
 a shared snapshot. The generic helper excludes every supplied address. The
 pinned source's multiple-exclusion predicate differs; current post and voice
 producers each supply a single excluded address.
+
+Community membership mutations use one PostgreSQL session advisory guard per
+community on the shared pool. BAN, direct join, request acceptance, bulk public
+acceptance and the SQL phase of ownership transfer serialize under that guard.
+BAN retains separate committed kick, unlike, analytics, ban and request-removal
+phases. Ownership NAME validation precedes its guard; external notification,
+voice and provider awaits follow release. SQLx's native owned-connection guard
+releases on failure or cancellation. This strengthens concurrency coordination
+without making the separate phases atomic.
+
+Private media credentials serialize same-call writers before a plain party read,
+then take sorted wallet transaction locks before locking/upserting the call.
+A conflict preserves its existing parties, creation time and prior participants.
+Pending expiry remains effective while a media writer waits for a wallet.
