@@ -29,6 +29,7 @@ impl Faulty {
 
 #[async_trait::async_trait]
 impl VoiceRooms for Faulty {
+    fn presence_config(&self) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig { self.inner.presence_config() }
     async fn create_pending_private_call(
         &self,
         caller: &str,

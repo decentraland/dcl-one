@@ -67,6 +67,9 @@ impl CommunityVoiceAction {
 
 #[async_trait]
 pub trait VoiceRooms: Send + Sync {
+    /// The existing comms presence configuration also governs shared SQL readers.
+    fn presence_config(&self) -> super::db::VoiceDbConfig;
+
     /// Atomically reclaim stale calls and create a pending call unless either party is busy.
     async fn create_pending_private_call(
         &self,
@@ -171,6 +174,7 @@ pub struct NoVoiceRuntime;
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl VoiceRooms for NoVoiceRuntime {
+    fn presence_config(&self) -> super::db::VoiceDbConfig { Default::default() }
     async fn create_pending_private_call(
         &self,
         _: &str,
@@ -323,6 +327,7 @@ fn address(raw: &str) -> Result<Address, VoiceUnavailable> {
 
 #[async_trait]
 impl VoiceRooms for CommsState {
+    fn presence_config(&self) -> super::db::VoiceDbConfig { self.voice_db.config() }
     async fn create_pending_private_call(
         &self,
         caller: &str,

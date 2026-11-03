@@ -63,6 +63,21 @@ struct Cutoffs {
 }
 
 impl VoiceDbConfig {
+    /// The comms liveness predicate for a caller's SQL alias and cutoff bind positions.
+    /// Arguments are SQL identifiers supplied by trusted in-tree query builders.
+    pub fn connected_sql(alias: &str, interrupted: &str, initial: &str) -> String {
+        let prefix = if alias.is_empty() { String::new() } else { format!("{alias}.") };
+        CONNECTED_SQL.replace("status_updated_at", &format!("{prefix}status_updated_at"))
+            .replace("joined_at", &format!("{prefix}joined_at"))
+            .replace("status =", &format!("{prefix}status ="))
+            .replace("$1", "__INTERRUPTED_CUTOFF__").replace("$2", initial)
+            .replace("__INTERRUPTED_CUTOFF__", interrupted)
+    }
+
+    pub fn sql_cutoffs(&self) -> (NaiveDateTime, NaiveDateTime) {
+        let values = self.cutoffs(); (values.interrupted, values.initial)
+    }
+
     fn cutoffs(&self) -> Cutoffs {
         let now = now_utc();
         Cutoffs {
