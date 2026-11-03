@@ -64,14 +64,14 @@ function parseEvent(raw: unknown): Event {
   throw new CatalystError("event payload failed validation", "events");
 }
 
-function parseEvents(raw: unknown[]): Event[] {
-  const out: Event[] = [];
+function parseEvents(raw: unknown[]): (Event | null)[] {
+  const out: (Event | null)[] = [];
   for (const row of raw ?? []) {
     const r = EventRecordSchema.safeParse(row);
     if (r.success) out.push(r.data);
     else {
       warnInvalid("Event", r.error.issues);
-      throw new CatalystError("event payload failed validation", "events");
+      out.push(null);
     }
   }
   return out;
@@ -124,10 +124,10 @@ export type _DriftAttendeeListEnvelope = Assert<
   AssignableTo<RsApiOk<RsEventAttendee[]>, z.input<typeof AttendeeListEnvelope>>
 >;
 
-export async function fetchEvents(
-  params: FetchEventsParams = {},
-  opts: GetOptions = {},
-): Promise<{ data: Event[]; total: number; copy?: CopyStamp | null }> {
+async function fetchEventRows(
+  params: FetchEventsParams,
+  opts: GetOptions,
+): Promise<{ rows: (Event | null)[]; total: number; copy: CopyStamp | null }> {
   const raw = await getJSON<unknown>(eventsApiPath("get", "/api/events"), {
     ...opts,
     query: {
@@ -148,8 +148,30 @@ export async function fetchEvents(
     throw new CatalystError("events envelope failed validation", "events");
   }
   const payload = env.data.data;
-  const data = parseEvents(Array.isArray(payload) ? payload : payload.events);
-  return { data, total: Array.isArray(payload) ? data.length : payload.total, copy };
+  const rows = parseEvents(Array.isArray(payload) ? payload : payload.events);
+  return { rows, total: Array.isArray(payload) ? rows.length : payload.total, copy };
+}
+
+export async function fetchEvents(
+  params: FetchEventsParams = {},
+  opts: GetOptions = {},
+): Promise<{ data: Event[]; total: number; received?: number; invalidCount?: number; copy?: CopyStamp | null }> {
+  const { rows, total, copy } = await fetchEventRows(params, opts);
+  return { data: rows.filter((event) => event !== null), total, received: rows.length, invalidCount: rows.filter((event) => event === null).length, copy };
+}
+
+/** Slice server slots before discarding malformed records so lookahead never leaks into this page. */
+export async function fetchEventPage(
+  params: FetchEventsParams & { limit: number },
+  opts: GetOptions = {},
+): Promise<{ data: Event[]; hasMore: boolean; invalidCount?: number; copy?: CopyStamp | null }> {
+  const { rows, copy } = await fetchEventRows({ ...params, limit: params.limit + 1 }, opts);
+  return {
+    data: rows.slice(0, params.limit).filter((event) => event !== null),
+    hasMore: rows.length > params.limit,
+    invalidCount: rows.filter((event) => event === null).length,
+    copy,
+  };
 }
 
 export async function fetchEvent(id: string, opts: GetOptions = {}): Promise<Event> {

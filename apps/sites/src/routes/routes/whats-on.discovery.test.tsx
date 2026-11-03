@@ -1,24 +1,25 @@
 import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fetchEvents, toLiveNowCard, type Event } from "@/data/lib/catalyst/places/events";
+import { fetchEvents, fetchEventPage, toLiveNowCard, type Event } from "@/data/lib/catalyst/places/events";
 import WhatsOn, { loader } from "./whats-on";
 
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: null, isConnected: false }) }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
-vi.mock("@/core/lib/telemetry/page-loader", () => ({ pageLoader: async () => ({ sid: "test-session", wrap: (data: unknown) => data }) }));
-vi.mock("@/data/lib/catalyst/places/events", async (original) => ({ ...await original<typeof import("@/data/lib/catalyst/places/events")>(), fetchEvents: vi.fn() }));
+vi.mock("@/data/lib/catalyst/places/events", async (original) => ({ ...await original<typeof import("@/data/lib/catalyst/places/events")>(), fetchEvents: vi.fn(), fetchEventPage: vi.fn() }));
 
 describe("when the public hangout catalogue is paginated", () => {
   let events: Event[];
   let request: Request;
   let data: Extract<Awaited<ReturnType<typeof loader>>, { data: unknown }>["data"];
   let html: string;
+  let response: Extract<Awaited<ReturnType<typeof loader>>, { data: unknown }>;
   let renderPage: () => string;
   beforeEach(() => {
     events = Array.from({ length: 25 }, (_, index) => ({ id: `event-${index}`, name: `Hangout ${index}`, start_at: "2099-06-01T18:00:00Z", next_start_at: "2099-06-01T18:00:00Z", recurrent: true, total_attendees: 90 } as Event));
     request = new Request("https://example.test/whats-on?search=music&offset=120&filter=recurring");
     vi.mocked(fetchEvents).mockImplementation(async (params) => ({ data: params?.list === "live" ? [] : events, total: events.length }));
+    vi.mocked(fetchEventPage).mockResolvedValue({ data: events.slice(0, 24), hasMore: true });
     renderPage = () => {
       const router = createMemoryRouter([{ id: "feed", path: "/whats-on", Component: WhatsOn as never }], { initialEntries: [request.url.replace("https://example.test", "")], hydrationData: { loaderData: { feed: data } } });
       return renderToString(<RouterProvider router={router} />).replace(/<!--.*?-->/g, "");
@@ -27,15 +28,17 @@ describe("when the public hangout catalogue is paginated", () => {
   afterEach(() => { vi.restoreAllMocks(); vi.clearAllMocks(); });
 
   it("should request the selected page and apply recurrence and search before pagination", async () => {
-    data = await loader({ request } as never) as unknown as typeof data;
-    expect(fetchEvents).toHaveBeenCalledWith(expect.objectContaining({ list: "active", offset: 120, limit: 25, search: "music", recurrent: true }), expect.objectContaining({ signal: request.signal }));
+    response = await loader({ request } as never) as typeof response;
+    data = response.data;
+    expect(fetchEventPage).toHaveBeenCalledWith(expect.objectContaining({ list: "active", offset: 120, limit: 24, search: "music", recurrent: true }), expect.objectContaining({ signal: request.signal }));
     expect(fetchEvents).toHaveBeenCalledWith(expect.objectContaining({ list: "live", recurrent: true, with_connected_users: true }), expect.anything());
     expect(data.upcoming).toHaveLength(24);
     expect(data.hasMore).toBe(true);
   });
 
   it("should expose search and next/previous links retaining filters", async () => {
-    data = await loader({ request } as never) as unknown as typeof data;
+    response = await loader({ request } as never) as typeof response;
+    data = response.data;
     html = renderPage();
     expect(html).toContain('role="search"');
     expect(html).toContain('name="search"');
@@ -46,21 +49,25 @@ describe("when the public hangout catalogue is paginated", () => {
 
   describe("and Today is selected", () => {
     beforeEach(() => { request = new Request("https://example.test/whats-on?filter=today"); });
-    it("should apply the same server date range to live and upcoming lists", async () => {
-      data = await loader({ request } as never) as unknown as typeof data;
-      expect(vi.mocked(fetchEvents).mock.calls[0][0]?.from).toEqual(vi.mocked(fetchEvents).mock.calls[1][0]?.from);
-      expect(Date.parse(vi.mocked(fetchEvents).mock.calls[0][0]?.to ?? "") - Date.parse(vi.mocked(fetchEvents).mock.calls[0][0]?.from ?? "")).toBe(86_400_000);
+    it("should keep cross-midnight live events while date-filtering upcoming events", async () => {
+      response = await loader({ request } as never) as typeof response;
+      data = response.data;
+      expect(vi.mocked(fetchEvents).mock.calls[0][0]).not.toHaveProperty("from");
+      expect(Date.parse(vi.mocked(fetchEventPage).mock.calls[0][0]?.to ?? "") - Date.parse(vi.mocked(fetchEventPage).mock.calls[0][0]?.from ?? "")).toBe(86_400_000);
     });
   });
 
   describe("and the API is unavailable", () => {
-    beforeEach(() => { vi.mocked(fetchEvents).mockRejectedValue(new Error("offline")); });
+    beforeEach(() => { vi.mocked(fetchEvents).mockRejectedValue(new Error("offline")); vi.mocked(fetchEventPage).mockRejectedValue(new Error("offline")); });
     it("should show a retryable failure instead of an empty catalogue", async () => {
-      data = await loader({ request } as never) as unknown as typeof data;
+      response = await loader({ request } as never) as typeof response;
+      data = response.data;
       html = renderPage();
       expect(html).toContain("Hangouts are temporarily unavailable");
       expect(html).toContain("Retry");
       expect(html).not.toContain("No events right now");
+      expect(response.init?.status).toBe(503);
+      expect(html).not.toContain("Next page");
     });
   });
 
@@ -72,15 +79,37 @@ describe("when the public hangout catalogue is paginated", () => {
       });
     });
     it("should keep the successful page and offer a retry for the missing feed", async () => {
-      data = await loader({ request } as never) as unknown as typeof data;
+      response = await loader({ request } as never) as typeof response;
+      data = response.data;
       expect(data.upcoming).toHaveLength(24);
-      expect(renderPage()).toContain("Hangouts are temporarily unavailable");
+      expect(renderPage()).toContain("Live hangouts are temporarily unavailable");
+      expect(renderPage()).toContain("Next page");
+      expect(response.init?.status).toBe(200);
+    });
+  });
+
+  describe("and the calendar includes a later event outside the current page", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2099-06-01T12:00:00Z"));
+      vi.mocked(fetchEvents).mockImplementation(async (params) => ({ data: params?.list === "live" ? [] : [{ ...events[0], id: "later", start_at: "2099-06-20T18:00:00Z", next_start_at: "2099-06-20T18:00:00Z" }], total: 1 }));
+    });
+    afterEach(() => { vi.useRealTimers(); });
+    it("should keep its calendar entry independent of catalogue pagination", async () => {
+      response = await loader({ request } as never) as typeof response;
+      data = response.data;
+      expect(data.allDays[19].map((event) => event.id)).toContain("later");
+      expect(fetchEvents).toHaveBeenCalledWith(expect.objectContaining({ list: "active", limit: 500, from: "2099-06-01T00:00:00.000Z", to: "2099-06-29T00:00:00.000Z" }), expect.anything());
+      expect(vi.mocked(fetchEvents).mock.calls[1][0]).not.toHaveProperty("offset");
     });
   });
 
   describe("and a live event has many RSVPs", () => {
     it("should leave live occupancy unknown without a presence observation", () => {
       expect(toLiveNowCard(events[0]).users).toBeNull();
+    });
+    it("should keep a successful empty presence observation distinct from unknown", () => {
+      expect(toLiveNowCard({ ...events[0], connected_addresses: [] }).users).toBe(0);
     });
     it("should count observed connected wallets independently of RSVPs", () => {
       expect(toLiveNowCard({ ...events[0], connected_addresses: ["0xAb", "0xab", "0xcd"] }).users).toBe(2);
