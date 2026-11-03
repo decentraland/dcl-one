@@ -21,6 +21,7 @@ use bevy::{
     platform::collections::HashSet,
     prelude::*,
 };
+#[cfg(not(target_arch = "wasm32"))]
 use cache_size::CacheSizeSetting;
 use cel_shading_setting::CelShadingSetting;
 use common::structs::DmPrivacy;
@@ -157,7 +158,9 @@ impl Plugin for SettingBridgePlugin {
             apply_to_camera::<ShadowSetting>.in_set(SceneSets::RestrictedActions),
         );
 
-        add_enum_setting::<ImposterSetting>(app, &mut settings, &mut schedule, &config);
+        if !is_preview {
+            add_enum_setting::<ImposterSetting>(app, &mut settings, &mut schedule, &config);
+        }
         add_enum_setting::<ParcelGrassSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<FogSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<BloomSetting>(app, &mut settings, &mut schedule, &config);
@@ -217,6 +220,8 @@ impl Plugin for SettingBridgePlugin {
 
         add_int_setting::<VideoThreadsSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<MaxDownloadsSetting>(app, &mut settings, &mut schedule, &config);
+        // Only the native IPFS disk cache is trimmed against this setting.
+        #[cfg(not(target_arch = "wasm32"))]
         add_enum_setting::<CacheSizeSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<PointAtMarkerVisibility>(app, &mut settings, &mut schedule, &config);
 

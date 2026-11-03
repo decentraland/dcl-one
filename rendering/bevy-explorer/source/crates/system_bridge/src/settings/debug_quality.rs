@@ -12,6 +12,12 @@ const GROUPS: &[(&str, &str)] = &[
     ("Audio", "Audio settings"),
 ];
 
+// Settings use whole steps (including tenths and twentieths). Convert the step count
+// to HTML's f64 numbers without widening a binary f32 approximation of e.g. 0.05.
+fn panel_number(value: f32, step: f32) -> f64 {
+    f64::from((value / step).round()) / f64::from(step.recip())
+}
+
 pub(super) fn register(app: &mut App, settings: &Settings) {
     app.add_console_command::<QualityCommand, _>(quality);
     for &(category, title) in GROUPS {
@@ -59,9 +65,9 @@ fn register_group(app: &mut App, settings: &Settings, category: &str, title: &st
             command,
             kind: if options.is_empty() {
                 DebugInputKind::Number {
-                    min: s.min_value.into(),
-                    max: s.max_value.into(),
-                    step: s.step_size.into(),
+                    min: panel_number(s.min_value, s.step_size),
+                    max: panel_number(s.max_value, s.step_size),
+                    step: panel_number(s.step_size, s.step_size),
                 }
             } else {
                 DebugInputKind::Select(options)
@@ -128,8 +134,34 @@ fn quality(
             .iter()
             .enumerate()
             .filter(|(_, s)| s.info.category == cmd.category)
-            .map(|(i, s)| (i.to_string(), Value::from(s.info.value)))
+            .map(|(i, s)| {
+                (
+                    i.to_string(),
+                    Value::from(panel_number(s.info.value, s.info.step_size)),
+                )
+            })
             .collect();
         input.reply_ok(Value::Object(values).to_string());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::settings::player_settings::WalkSpeedSetting;
+
+    #[test]
+    fn gameplay_numbers_use_the_player_settings_decimal_steps() {
+        let mut config = AppConfig::default();
+        config.player_settings.walk_speed = 1.3;
+        let mut settings = Settings {
+            settings: Vec::new(),
+        };
+        settings.add_int_setting::<WalkSpeedSetting>(&config);
+        let info = &settings.settings[0].info;
+        assert_eq!(panel_number(info.value, info.step_size), 1.3);
+        assert_eq!(panel_number(info.min_value, info.step_size), 0.1);
+        assert_eq!(panel_number(1.9, 0.05), 1.9);
+        assert_eq!(panel_number(0.05, 0.05), 0.05);
     }
 }

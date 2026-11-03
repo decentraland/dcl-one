@@ -26,7 +26,7 @@ pub(super) fn register(app: &mut App) {
                 ("Microphone enabled", "enabled"),
                 ("Room connected", "connected"),
                 ("Permission", "permission"),
-                ("Publishing microphone", "transmitting"),
+                ("Local microphone track active", "transmitting"),
                 ("Active remote speakers (up to 32)", "speakers"),
                 #[cfg(not(target_arch = "wasm32"))]
                 ("Available input devices", "devices"),
@@ -49,9 +49,12 @@ pub(super) fn register(app: &mut App) {
                 ("Remote participants", "participants"),
                 ("Active speakers", "speakerCount"),
                 ("Speakers (up to 32)", "speakers"),
-                ("Subscribed microphone tracks", "tracks"),
-                ("ECS audio sources", "sources"),
-                ("Sources with a selected transport", "assigned"),
+                ("Subscribed microphone tracks (all rooms)", "tracks"),
+                ("Player audio sources (all transports)", "sources"),
+                (
+                    "Sources with a selected transport (all transports)",
+                    "assigned",
+                ),
             ],
             actions: &[],
             inputs: &[
@@ -118,6 +121,12 @@ fn microphone_info(
             .map(|devices| devices.count()));
         report["rate"] = json!(format.as_ref().map(|f| f.sample_rate));
         report["channels"] = json!(format.as_ref().map(|f| f.channels));
+        report["unavailable"] = json!({
+            "rate": "Microphone capture is inactive",
+            "channels": "Microphone capture is inactive",
+            "device": "No current input device",
+            "devices": "Input device enumeration failed",
+        });
     }
     input.reply_ok(report.to_string());
 }

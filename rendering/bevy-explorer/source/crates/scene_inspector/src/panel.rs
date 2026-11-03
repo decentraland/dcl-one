@@ -94,15 +94,19 @@ fn inspection_state(
     resolver: SceneResolver,
 ) {
     if let Some(Ok(_)) = input.take() {
-        let scene = target
-            .resolve(&resolver)
-            .ok()
-            .and_then(|e| resolver.scenes.get(e).ok());
+        let scene = target.resolve(&resolver).and_then(|e| {
+            resolver
+                .scenes
+                .get(e)
+                .map(|(_, context)| &context.title)
+                .map_err(|_| "The selected parcel scene is no longer loaded.".to_owned())
+        });
         input.reply_ok(
             json!({
                 "mode": if target.parcel.is_some() { "Selected parcel" } else { "Player's parcel" },
                 "parcel": target.parcel.map(|p| format!("{},{}", p.x, p.y)),
-                "scene": scene.map(|(_, context)| &context.title),
+                "scene": scene.as_ref().ok(),
+                "unavailable": { "scene": scene.as_ref().err() },
             })
             .to_string(),
         );

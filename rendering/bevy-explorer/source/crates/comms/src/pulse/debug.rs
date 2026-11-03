@@ -123,6 +123,7 @@ fn pulse_state(
             "sentBytes": sent.bytes, "sentPackets": sent.packets, "receivedBytes": received.bytes,
             "receivedPackets": received.packets, "resyncs": resyncs,
             "wallet": lookup.0.map(|wallet| format!("{wallet:#x}")), "emote": emote,
+            "unavailable": {"emote": "Select a peer wallet to inspect its emote"},
         }).to_string());
     }
 }

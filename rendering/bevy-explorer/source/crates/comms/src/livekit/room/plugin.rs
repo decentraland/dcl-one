@@ -333,7 +333,7 @@ fn process_room_events(
                     ));
                 }
                 RoomEvent::ActiveSpeakersChanged { speakers } => {
-                    commands.trigger(ActiveSpeakersChanged { speakers });
+                    commands.trigger_targets(ActiveSpeakersChanged { speakers }, entity);
                 }
                 #[cfg(not(target_arch = "wasm32"))]
                 _ => {

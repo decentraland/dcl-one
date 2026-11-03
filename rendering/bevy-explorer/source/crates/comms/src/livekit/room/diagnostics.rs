@@ -187,7 +187,18 @@ fn room_diagnostics(
         return;
     }
 
-    let mut result = json!({"policy": format!("{:?}", policy.get()), "room": null});
+    let unavailable = match command.scope {
+        Scope::Island => json!({"room": "No LiveKit island room assigned"}),
+        Scope::Scene => json!({"room": "No LiveKit scene room assigned"}),
+        Scope::Chat => json!({"room": "No private chat room assigned"}),
+        Scope::Throughput => json!({
+            "island": "No LiveKit island room assigned",
+            "scene": "No LiveKit scene room assigned",
+        }),
+        Scope::Info => unreachable!(),
+    };
+    let mut result =
+        json!({"policy": format!("{:?}", policy.get()), "room": null, "unavailable": unavailable});
     for (
         entity,
         scene,
@@ -219,11 +230,15 @@ fn room_diagnostics(
         let mut peer_quality = BTreeSet::new();
         let mut local_sid = None;
         let mut local_quality = None;
-        for (participant, _, local, quality) in participants
+        for (participant, _, local, _quality) in participants
             .iter()
             .filter(|(_, hosted, ..)| hosted.get() == entity)
         {
-            let quality = quality.map(|q| format!("{q:?}"));
+            // The native SDK retains current quality even if it hasn't changed since joining.
+            #[cfg(not(target_arch = "wasm32"))]
+            let quality = Some(format!("{:?}", participant.connection_quality()));
+            #[cfg(target_arch = "wasm32")]
+            let quality = _quality.map(|q| format!("{q:?}"));
             if local {
                 local_sid = Some(participant.sid().to_string());
                 local_quality = quality;
@@ -248,6 +263,11 @@ fn room_diagnostics(
                 "island"
             };
             result[key] = json!({"sent": traffic.map(|t| t.sent.last_second().bytes), "received": traffic.map(|t| t.received.last_second().bytes), "peers": peer_quality});
+            if traffic.is_none() {
+                result["unavailable"][key] = json!("Room has not connected");
+            } else {
+                result["unavailable"].as_object_mut().unwrap().remove(key);
+            }
         } else {
             #[cfg(not(target_arch = "wasm32"))]
             let sid = room.and_then(|r| r.maybe_sid()).map(|sid| sid.to_string());
@@ -268,6 +288,14 @@ fn room_diagnostics(
                 "name": room.map(|r| r.name().to_string()), "sid": sid, "scene": scene.map(|s| s.0.as_str()),
                 "baseParcel": base, "attempts": livekit.retries,
                 "remoteCount": remote_count, "selfSid": local_sid, "quality": local_quality});
+            result["unavailable"] = if connected {
+                json!({"room.quality": "Waiting for LiveKit to report connection quality",
+                    "room.baseParcel": "Scene metadata has no loaded base parcel",
+                    "room.sid": "LiveKit has not reported a room SID",
+                    "room.selfSid": "Waiting for the local participant"})
+            } else {
+                json!({"room": "Room is not connected", "room.baseParcel": "Scene metadata has no loaded base parcel"})
+            };
             break;
         }
     }
@@ -304,6 +332,7 @@ fn room_connection(
             Has<PrivateChatRoom>,
             Has<Transport>,
             Has<RoomPaused>,
+            Has<ConnectFailed>,
             Option<&LivekitRoom>,
         ),
         With<LivekitTransport>,
@@ -325,7 +354,7 @@ fn room_connection(
                 Scope::Island => !*scene && !*private && *transport,
                 _ => false,
             });
-    let Some((entity, _, _, _, paused, room)) = matching.next() else {
+    let Some((entity, _, _, _, paused, failed, room)) = matching.next() else {
         input.reply_failed("No current room");
         return;
     };
@@ -340,12 +369,17 @@ fn room_connection(
                 .insert(RoomPaused)
                 .remove::<Connecting>();
         }
-        RoomAction::Connect if paused => {
+        RoomAction::Connect if paused || failed => {
             let mut entity = commands.entity(entity);
             entity.remove::<RoomPaused>();
+            // A refused dial retains Connecting. Its OnAdd observer dials again only
+            // when the marker is removed and re-added.
+            if failed {
+                entity.remove::<Connecting>();
+            }
             // While close is in flight the SDK will report Disconnected, invoking the
             // regular reconnect path once cleanup of the old participants has finished.
-            if room.is_none_or(|room| room.closed) {
+            if failed || room.is_none_or(|room| room.closed) {
                 entity.insert(Connecting);
             }
         }
@@ -447,5 +481,52 @@ fn draw_room_indicators(
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy_console::ConsoleCommandEntered;
+
+    #[test]
+    fn reconnect_restarts_a_refused_dial_once() {
+        let mut app = App::new();
+        app.add_plugins(console::ConsolePlugin {
+            add_bevy_console: false,
+        })
+        .insert_resource(State::new(ConnectionAvailability::Available))
+        .add_console_command::<RoomConnectionCommand, _>(room_connection)
+        .add_observer(
+            |trigger: Trigger<OnAdd, Connecting>, mut rooms: Query<&mut LivekitTransport>| {
+                rooms.get_mut(trigger.target()).unwrap().retries += 1;
+            },
+        );
+        let (components, sender, _) = crate::livekit::standalone_room_components(String::new());
+        let room = app
+            .world_mut()
+            .spawn((
+                components,
+                Transport {
+                    transport_type: TransportType::Livekit,
+                    context: Entity::PLACEHOLDER,
+                    sender,
+                    control: None,
+                },
+                Connecting,
+            ))
+            .id();
+        app.update();
+        app.world_mut().entity_mut(room).insert(ConnectFailed);
+        app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: "/room_connection".into(),
+            args: vec!["island".into(), "connect".into()],
+            responder: None,
+        });
+        app.update();
+        assert_eq!(
+            app.world().get::<LivekitTransport>(room).unwrap().retries,
+            2
+        );
     }
 }

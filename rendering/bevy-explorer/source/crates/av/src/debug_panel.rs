@@ -101,25 +101,27 @@ fn media_state(
     } else {
         "No playback backend"
     };
-    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows}).to_string());
+    cmd.reply_ok(json!({"backend":backend, "scene":scene, "video":video.iter().len(), "audio":audio.iter().len(), "parcelVideo":parcel_video, "parcelAudio":parcel_audio, "parcelExternal":parcel_external, "players":rows,
+        "unavailable":{"scene":"No loaded scene at the player's parcel."}}).to_string());
 }
 
 // Stream paths and queries can contain credentials. A remote origin or a local content key
 // identifies the source without exposing playback credentials in the panel or console logs.
 fn source_label(source: &str) -> String {
+    let source = source.trim();
     if source.starts_with("//") {
         return String::from("remote media");
     }
     match reqwest::Url::parse(source) {
         Ok(url) if matches!(url.scheme(), "http" | "https") => url.origin().ascii_serialization(),
         Ok(url) => format!("{} stream", url.scheme()),
-        Err(_) => source
-            .split(['?', '#'])
-            .next()
-            .unwrap_or_default()
-            .chars()
-            .take(128)
-            .collect(),
+        Err(_) => {
+            let path = source.split(['?', '#']).next().unwrap_or_default();
+            if path.starts_with(['/', '\\']) || path.contains([':', '@', '\\']) {
+                return String::from("unrecognized media source");
+            }
+            path.chars().take(128).collect()
+        }
     }
 }
 
@@ -129,7 +131,9 @@ fn add_sink<T: AVPlayer>(row: &mut Value, sinks: Option<&AVSinks<T>>, images: &A
     row["hasSink"] = json!(sinks.is_some());
     row["lastPlaybackState"] = json!(sink.and_then(|s| s.last_state).map(|s| s.as_str_name()));
     row["appliedVolume"] = json!(sinks.and_then(|s| s.sent_volume));
-    row["frameRate"] = json!(sinks.and_then(|s| s.rate));
+    row["frameRate"] = json!(sinks
+        .and_then(|s| s.rate)
+        .filter(|hz| hz.is_finite() && *hz > 0.0));
     row["textureSize"] = json!(sink
         .filter(|_| T::has_video() && sinks.is_some_and(|s| s.rate.is_some()))
         .and_then(|s| images.get(&s.image))
@@ -138,4 +142,34 @@ fn add_sink<T: AVPlayer>(row: &mut Value, sinks: Option<&AVSinks<T>>, images: &A
         .filter(|s| s.current_time >= 0.0)
         .map(|s| s.current_time));
     row["durationSeconds"] = json!(sink.and_then(|s| s.length));
+}
+
+#[cfg(all(test, feature = "ffmpeg"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn source_labels_keep_stream_credentials_private_even_for_invalid_urls() {
+        for source in [
+            "https://private@bad host/path",
+            "  //private@host/path",
+            r"\\private@host\path",
+            "https://user:private@example.com/path?key=private",
+        ] {
+            assert!(!source_label(source).contains("private"));
+        }
+        assert_eq!(source_label("videos/intro.mp4"), "videos/intro.mp4");
+    }
+
+    #[test]
+    fn a_video_without_a_reported_frame_rate_can_still_have_a_texture() {
+        let mut images = Assets::<Image>::default();
+        let image = images.add(Image::default());
+        let mut sinks = crate::video_stream::noop_sinks::<VideoPlayer>(String::new(), image);
+        sinks.rate = Some(0.0); // HTML media provides dimensions but no frame rate.
+        let mut row = json!({});
+        add_sink(&mut row, Some(&sinks), &images);
+        assert!(row["frameRate"].is_null());
+        assert!(row["textureSize"].is_array());
+    }
 }

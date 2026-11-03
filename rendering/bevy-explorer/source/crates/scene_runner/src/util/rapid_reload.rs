@@ -161,7 +161,11 @@ fn command(
             input.reply_ok(serde_json::json!({
                 "enabled":target.is_some(), "interval":state.interval,"cycles":state.cycles,
                 "status":state.status, "hash":target.map(|t|&t.hash),
-                "remaining":target.filter(|t|t.awaiting_until.is_none()).map(|t| ((t.next-now).max(0.0)*10.0).round()/10.0)
+                "remaining":target.filter(|t|t.awaiting_until.is_none()).map(|t| ((t.next-now).max(0.0)*10.0).round()/10.0),
+                "unavailable": {
+                    "hash": "No active reload target.",
+                    "remaining": if target.is_some() { "Waiting for the target scene to restart." } else { "No active reload target." },
+                }
             }).to_string());
         }
         Some(Setting::Enabled { value: false }) => {

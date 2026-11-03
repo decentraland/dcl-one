@@ -377,7 +377,8 @@ fn look_command(
             } else {
                 "own profile"
             };
-            cmd.reply_ok(json!({"status":status, "requested":pending.map(|p| p.0).or(missing.map(|p| p.0)).map(|a| format!("{a:#x}")), "displayed":displayed.map(|p| format!("{:#x}",p.0)).unwrap_or_else(|| own.content.eth_address.clone())}).to_string());
+            cmd.reply_ok(json!({"status":status, "requested":pending.map(|p| p.0).or(missing.map(|p| p.0)).map(|a| format!("{a:#x}")), "displayed":displayed.map(|p| format!("{:#x}",p.0)).unwrap_or_else(|| own.content.eth_address.clone()),
+                "unavailable":{"requested":"No pending profile request."}}).to_string());
         }
     }
 }

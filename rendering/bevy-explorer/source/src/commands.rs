@@ -176,9 +176,9 @@ pub fn performance_state(
                 let seconds = time.delta_secs_f64();
                 (seconds > 0.0).then(|| seconds.recip())
             });
-        let gpu_ms = diagnostics
-            .get(&GPU_FRAME_TIME)
-            .and_then(Diagnostic::smoothed);
+        let gpu = diagnostics.get(&GPU_FRAME_TIME);
+        let gpu_ms = gpu.and_then(Diagnostic::smoothed);
+        let first_window = "Waiting for the first 1,000 frames.";
         input.reply_ok(
             serde_json::json!({
                 "version": crate::version(),
@@ -189,6 +189,12 @@ pub fn performance_state(
                 "overrideFps": session.fps_target,
                 "gpuFrameMs": gpu_ms.map(|ms| (ms * 10.0).round() / 10.0),
                 "engineMemoryMiB": memory.reading().map(|reading| reading.used_bytes >> 20),
+                "unavailable": {
+                    "minFps": first_window, "maxFps": first_window, "hiccups": first_window,
+                    "fps": "Waiting for a frame.",
+                    "gpuFrameMs": if gpu.is_some() { "Waiting for a GPU timestamp sample." } else { "GPU timestamps are unavailable on this renderer." },
+                    "engineMemoryMiB": "No platform memory sample.",
+                },
             })
             .to_string(),
         );
@@ -220,13 +226,22 @@ pub fn debug_memory(
         })).collect::<Vec<_>>()),
         _ => None,
     };
+    let ram_reason = "No platform memory sample.";
     cmd.reply_ok(serde_json::json!({
         "used": reading.map(|r| r.used_bytes >> 20), "capacity": reading.map(|r| r.capacity_mib),
         "cap": reading.map(|r| r.cap_mib), "limit": memory.limit_mib.map_or(0, |n| n.get()),
         "pressure": reading.map(|r| format!("{:?}", r.pressure())), "gpu": pools,
         "thresholds": reading.map(|r| { let t = r.thresholds(); serde_json::json!({
             "abundance": t.abundance_mib.round(), "warning": t.warning_mib.round(), "full": t.full_mib.round()
-        }) })
+        }) }),
+        "unavailable": {
+            "used":ram_reason, "capacity":ram_reason, "cap":ram_reason,
+            "pressure":ram_reason, "thresholds":ram_reason,
+            "gpu":match gpu.as_deref() {
+                Some(GpuMemoryBudget::NotApplicable) => "This platform does not expose a GPU memory budget.",
+                _ => "The graphics driver has not provided a GPU memory budget.",
+            }
+        }
     }).to_string());
 }
 

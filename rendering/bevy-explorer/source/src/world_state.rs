@@ -4,7 +4,7 @@
 
 use bevy::prelude::*;
 use bevy_console::ConsoleCommand;
-use common::structs::{CurrentRealm, OutOfWorld, PrimaryUser, WorldHold};
+use common::structs::{CurrentRealm, NoRenderApp, OutOfWorld, PreviewMode, PrimaryUser, WorldHold};
 use console::{AddDebugSection, DebugInput, DebugInputKind, DebugSection, DoAddConsoleCommand};
 use ipfs::IpfsResource;
 use wallet::Wallet;
@@ -16,24 +16,32 @@ pub struct WorldStatePlugin;
 
 impl Plugin for WorldStatePlugin {
     fn build(&self, app: &mut App) {
+        let mut inputs = Vec::new();
+        if !app.world().contains_resource::<NoRenderApp>() {
+            inputs.push(DebugInput {
+                label: "Teleport to parcel (x y)",
+                field: "",
+                command: "/teleport {value}",
+                kind: DebugInputKind::Text,
+            });
+        }
+        if !app
+            .world()
+            .get_resource::<PreviewMode>()
+            .is_some_and(|p| p.is_preview)
+        {
+            inputs.push(DebugInput {
+                label: "Change realm",
+                field: "",
+                command: "/changerealm {value}",
+                kind: DebugInputKind::Text,
+            });
+        }
         app.add_plugins(ArrivalsPlugin)
             .add_console_command::<WorldStateCommand, _>(world_state_cmd)
             .add_debug_section(DebugSection {
                 title: "World",
-                inputs: &[
-                    DebugInput {
-                        label: "Teleport to parcel (x y)",
-                        field: "",
-                        command: "/teleport {value}",
-                        kind: DebugInputKind::Text,
-                    },
-                    DebugInput {
-                        label: "Change realm",
-                        field: "",
-                        command: "/changerealm {value}",
-                        kind: DebugInputKind::Text,
-                    },
-                ],
+                inputs: &inputs,
                 query: "/world_state",
                 fields: &[
                     ("Realm", "realmOrigin"),
@@ -42,7 +50,7 @@ impl Plugin for WorldStatePlugin {
                     ("Lambdas server", "lambdasOrigin"),
                     ("Realm connected", "realmConnected"),
                     ("In world", "inWorld"),
-                    ("Position", "position"),
+                    ("Position (X / Y / Z)", "position"),
                     ("Arrivals", "arrivals"),
                 ],
                 actions: &[],

@@ -11,13 +11,15 @@ use web_time::{Duration, Instant};
 
 use crate::{
     asset_preload::plugin::{LoadingPreloadedAsset, PreloadedAsset},
-    initialize_scene::{CurrentSceneLoading, SceneLoading, SuperUserScene, PARCEL_SIZE},
+    initialize_scene::{
+        CurrentSceneLoading, PointerResult, SceneLoading, SuperUserScene, PARCEL_SIZE,
+    },
     renderer_context::RendererSceneContext,
     update_world::{
         gltf_container::{GltfLoadingCount, SceneResourceLookup},
         mesh_collider::SceneColliderData,
     },
-    ContainerEntity, ContainingScene,
+    vec3_to_parcel, ContainerEntity, ContainingScene,
 };
 
 pub(super) fn register(app: &mut App) {
@@ -36,8 +38,8 @@ pub(super) fn register(app: &mut App) {
                 ("SDK", "sdk"),
                 ("Parcels", "parcels"),
                 ("Height (m)", "height"),
-                ("Global position (m)", "world"),
-                ("Scene position (m)", "relative"),
+                ("Global position (m) (X / Y / Z)", "world"),
+                ("Scene position (m) (X / Y / Z)", "relative"),
                 ("Tick", "tick"),
                 ("Scene tick FPS", "history.fps"),
                 ("Minimum FPS (last 256 observed ticks)", "history.minFps"),
@@ -78,18 +80,28 @@ pub(super) fn register(app: &mut App) {
                 ("CRDT bytes from scene", "worker.crdt_bytes"),
                 ("CRDT bytes/s from scene", "bytesPerSecond"),
                 ("IPC responses from scene", "worker.ipc_responses"),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("Worker fetches started", "worker.fetch_started"),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("Worker fetches completed", "worker.fetch_completed"),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("Worker fetches failed", "worker.fetch_failed"),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("Worker fetch bytes received", "worker.fetch_bytes_down"),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("Current native V8 heap used (bytes)", "heap"),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("Current native V8 heap limit (bytes)", "heapLimit"),
+                #[cfg(not(target_arch = "wasm32"))]
                 (
                     "Current native V8 external memory (bytes)",
                     "externalMemory",
                 ),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("Sampled native JS engines", "engines.count"),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("Sampled native JS heaps used (bytes)", "engines.used"),
+                #[cfg(not(target_arch = "wasm32"))]
                 (
                     "Sampled native JS external memory (bytes)",
                     "engines.external",
@@ -328,6 +340,33 @@ impl SceneTraffic {
 #[command(name = "/current_scene_state")]
 struct SceneState;
 
+/// The parcel may already be known to be empty, still resolving, or waiting for its scene.
+fn parcel_root(
+    containing: &ContainingScene,
+    player: Option<Entity>,
+    include_out_of_world: bool,
+) -> Result<Entity, &'static str> {
+    let (transform, outside) = player
+        .and_then(|id| containing.transforms.get(id).ok())
+        .ok_or("Waiting for the player position.")?;
+    if outside && !include_out_of_world {
+        return Err("The player has not entered the world.");
+    }
+    match containing
+        .pointers
+        .get(vec3_to_parcel(transform.translation()))
+    {
+        Some(PointerResult::Exists { hash, .. }) => containing
+            .live_scenes
+            .scenes
+            .get(hash)
+            .copied()
+            .ok_or("Waiting for the parcel scene to load."),
+        Some(PointerResult::Nothing) => Err("There is no scene on this parcel."),
+        None => Err("Waiting for the parcel's scene definition."),
+    }
+}
+
 fn scene_state(
     mut input: ConsoleCommand<SceneState>,
     player: Query<(Entity, &GlobalTransform), With<PrimaryUser>>,
@@ -357,17 +396,26 @@ fn scene_state(
         }
         json!({"count":count, "used":(count > 0).then_some(used), "external": (count > 0).then_some(external)})
     };
-    let Some((transform, scene)) = player.single().ok().and_then(|(id, t)| {
-        containing
-            .get_parcel(id)
-            .and_then(|e| scenes.get(e).ok())
-            .filter(|(s, privileged)| !*privileged && !s.is_portable)
-            .map(|(s, _)| (t, s))
-    }) else {
-        input.reply_ok(json!({"bounds": bounds.0, "engines": engines}).to_string());
-        return;
+    let player = player.single().ok();
+    let position = player.map(|(_, t)| t.translation() * Vec3::new(1.0, 1.0, -1.0));
+    let scene = parcel_root(&containing, player.map(|(id, _)| id), false).and_then(|root| {
+        let (scene, privileged) = scenes
+            .get(root)
+            .map_err(|_| "Waiting for the parcel scene to start.")?;
+        if privileged || scene.is_portable {
+            return Err("Scene inspection requires an ordinary parcel scene.");
+        }
+        Ok(scene)
+    });
+    let mut unavailable = json!({"engines": "No live native scene worker has reported a sample."});
+    let scene = match scene {
+        Ok(scene) => scene,
+        Err(reason) => {
+            unavailable[""] = reason.into();
+            input.reply_ok(json!({"bounds": bounds.0, "engines": engines, "world": position.map(|p| p.to_array()), "unavailable": unavailable}).to_string());
+            return;
+        }
     };
-    let p = transform.translation() * Vec3::new(1.0, 1.0, -1.0);
     let base = Vec3::new(
         scene.base.x as f32 * PARCEL_SIZE,
         0.0,
@@ -382,10 +430,15 @@ fn scene_state(
         }
     };
     // Browser scene workers do not publish V8 heap readings or the native fetch counters.
+    unavailable["history"] = "Waiting for a complete scene tick while this section is open.".into();
+    unavailable["bytesPerSecond"] = "Waiting for two consecutive worker samples.".into();
+    unavailable["height"] = "The scene has no parcel bounds.".into();
+    unavailable[""] = "The parcel scene worker has not reported a sample.".into();
     let report = json!({
+        "unavailable": unavailable,
         "bounds": bounds.0, "name": scene.title, "sdk": scene.sdk_version, "parcels": scene.parcels.len(),
         "height": scene.bounds.iter().map(|r| r.height).reduce(f32::max),
-        "world": p.to_array(), "relative": (p-base).to_array(), "tick": scene.tick_number,
+        "world": position.map(|p| p.to_array()), "relative": position.map(|p| (p-base).to_array()), "tick": scene.tick_number,
         "history": history, "engines": engines,
         "bytesPerSecond": scene.crdt_bytes_per_second.map(f64::round),
         "worker": scene.resource_counters.as_ref().map(|c| json!({"crdt_bytes": c.crdt_bytes, "ipc_responses": c.ipc_responses})),
@@ -482,16 +535,25 @@ fn scene_content(
     if input.take().is_none() {
         return;
     }
-    let Some(root) = player.single().ok().and_then(|p| containing.get_parcel(p)) else {
-        input.reply_ok("{}");
-        return;
+    let root = match parcel_root(&containing, player.single().ok(), false) {
+        Ok(root) => root,
+        Err(reason) => {
+            input.reply_ok(json!({"unavailable": {"": reason}}).to_string());
+            return;
+        }
     };
     let Ok((scene, colliders, resources)) = scenes.get(root) else {
-        input.reply_ok("{}");
+        input.reply_ok(
+            json!({"unavailable": {"": "No ordinary parcel scene is ready for inspection."}})
+                .to_string(),
+        );
         return;
     };
     if scene.is_portable {
-        input.reply_ok("{}");
+        input.reply_ok(
+            json!({"unavailable": {"": "Scene inspection requires an ordinary parcel scene."}})
+                .to_string(),
+        );
         return;
     }
     let mut geometry = HashSet::new();
@@ -591,30 +653,32 @@ fn loading_state(
         }] += 1;
     }
     let [spawned, definition, crdt, javascript, failed] = stages_by_kind;
-    let stage = player
-        .single()
-        .ok()
-        .and_then(|p| containing.get_parcel_oow(p))
-        .and_then(|root| {
+    let stage = parcel_root(&containing, player.single().ok(), true)
+        .map(|root| {
             if let Ok(stage) = stages.get(root) {
-                return Some(match stage {
+                return match stage {
                     SceneLoading::SceneSpawned => "Spawning",
                     SceneLoading::SceneEntity => "Reading definition",
                     SceneLoading::MainCrdt { .. } => "Reading main.crdt",
                     SceneLoading::Javascript { .. } => "Starting JavaScript",
                     SceneLoading::Failed => "Failed",
-                });
+                };
             }
-            scenes.get(root).ok().map(|(ctx, _)| {
-                if ctx.broken() {
-                    "Broken"
-                } else if !ctx.blocked.is_empty() {
-                    "Blocked"
-                } else {
-                    "Running"
-                }
-            })
-        });
+            scenes
+                .get(root)
+                .ok()
+                .map(|(ctx, _)| {
+                    if ctx.broken() {
+                        "Broken"
+                    } else if !ctx.blocked.is_empty() {
+                        "Blocked"
+                    } else {
+                        "Running"
+                    }
+                })
+                .unwrap_or("Waiting for the parcel scene to start.")
+        })
+        .unwrap_or_else(|reason| reason);
     let (mut running, mut blocked, mut broken, mut gltf) = (0, 0, 0, 0);
     for (scene, loading) in &scenes {
         if scene.broken() {
@@ -632,11 +696,10 @@ fn loading_state(
         let ext = std::path::Path::new(&asset.file_path)
             .extension()
             .and_then(|ext| ext.to_str());
-        if ext.is_some_and(|ext| {
-            ["ktx2", "png", "jpg", "jpeg", "webp"]
-                .iter()
-                .any(|known| ext.eq_ignore_ascii_case(known))
-        }) {
+        if ext
+            .and_then(bevy::image::ImageFormat::from_extension)
+            .is_some()
+        {
             textures += 1;
         }
     }
@@ -662,8 +725,52 @@ fn texture_state(mut input: ConsoleCommand<TextureState>, images: Res<Assets<Ima
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::initialize_scene::{LiveScenes, PortableScenes, ScenePointers};
+    use bevy_console::{ConsoleCommandEntered, ConsoleResponder};
     use dcl_component::{DclReader, SceneComponentId, SceneCrdtTimestamp, SceneEntityId};
     use dcl_types::interface::CrdtType;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn empty_parcel_keeps_player_coordinates_and_explains_missing_scene_readings() {
+        let mut app = App::new();
+        app.add_plugins(console::ConsolePlugin {
+            add_bevy_console: false,
+        })
+        .init_resource::<LiveScenes>()
+        .init_resource::<PortableScenes>()
+        .init_resource::<ScenePointers>()
+        .init_resource::<ShowBounds>()
+        .add_console_command::<SceneState, _>(scene_state);
+        let mut pointers = app.world_mut().resource_mut::<ScenePointers>();
+        pointers.set_realm(IVec2::ZERO, IVec2::ONE);
+        pointers.insert(IVec2::ZERO, PointerResult::Nothing);
+        app.world_mut().spawn((
+            PrimaryUser::default(),
+            GlobalTransform::from_translation(Vec3::new(8.0, 2.0, -8.0)),
+        ));
+        app.update();
+
+        let result = Arc::new(Mutex::new(None));
+        let responder: ConsoleResponder = {
+            let result = result.clone();
+            Arc::new(move |reply| *result.lock().unwrap() = Some(reply))
+        };
+        app.world_mut().send_event(ConsoleCommandEntered {
+            command_name: "/current_scene_state".into(),
+            args: Vec::new(),
+            responder: Some(responder),
+        });
+        app.update();
+        let reply = result.lock().unwrap().take().unwrap().unwrap();
+        let report: Value = serde_json::from_str(&reply).unwrap();
+        assert_eq!(report["world"], json!([8.0, 2.0, 8.0]));
+        assert_eq!(
+            report["unavailable"][""],
+            "There is no scene on this parcel."
+        );
+        assert!(report["parcels"].is_null());
+    }
 
     #[test]
     fn gpu_only_nonindexed_triangles_remain_explicitly_partial() {

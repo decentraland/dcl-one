@@ -52,10 +52,10 @@ impl Plugin for PlayerMovementPlugin {
                     ("Packet timestamp (s)", "timestamp"),
                     ("Time since receipt (s)", "age"),
                     ("Estimated packet interval (s)", "interval"),
-                    ("Rendered position", "position"),
-                    ("Target position", "target"),
+                    ("Rendered position (X / Y / Z)", "position"),
+                    ("Target position (X / Y / Z)", "target"),
                     ("Target yaw (degrees)", "yaw"),
-                    ("Packet velocity", "velocity"),
+                    ("Packet velocity (X / Y / Z)", "velocity"),
                     ("Movement kind", "movement"),
                 ],
                 actions: &[("Inspect first remote player", "/movement_profile")],
@@ -85,7 +85,7 @@ struct MovementProfile(Option<String>);
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/movement_profile")]
 struct MovementProfileCommand {
-    selector: Option<String>,
+    selector: Vec<String>,
 }
 
 fn movement_profile(
@@ -93,7 +93,7 @@ fn movement_profile(
     mut profile: ResMut<MovementProfile>,
 ) {
     if let Some(Ok(command)) = input.take() {
-        profile.0 = command.selector;
+        profile.0 = (!command.selector.is_empty()).then(|| command.selector.join(" "));
         input.reply_ok("Movement profile selected");
     }
 }
@@ -120,7 +120,8 @@ fn foreign_movement(
     let Some(Ok(_)) = input.take() else { return };
     let selector = filter.0.as_deref();
     let address = selector.and_then(|id| id.as_h160());
-    let mut report = json!({"count": peers.iter().count(), "selector": selector});
+    let count = peers.iter().count();
+    let mut report = json!({"count": count, "selector": selector});
     if let Some((entity, player, profile, pose, target, dynamics)) = peers
         .iter()
         .filter(|(_, player, profile, ..)| {
@@ -148,6 +149,12 @@ fn foreign_movement(
             MoveKind::Glide => "glide",
             MoveKind::Emote => "emote",
         }));
+        report["unavailable"] = json!({
+            "": "No movement packet received for this player",
+            "name": "Waiting for the player profile",
+            "position": "The player has no rendered transform",
+            "movement": "The player has no animation state",
+        });
         if let Some(target) = target {
             report["teleport"] = json!(target.teleport);
             report["timestamp"] = json!(target.timestamp);
@@ -156,7 +163,15 @@ fn foreign_movement(
             report["target"] = json!(target.translation.to_array());
             report["velocity"] = json!(target.velocity.map(|v| v.to_array()));
             report["yaw"] = json!(target.rotation.to_euler(EulerRot::YXZ).0.to_degrees());
+            report["unavailable"]["timestamp"] = json!("The movement packet has no timestamp");
+            report["unavailable"]["velocity"] = json!("The movement packet has no velocity");
         }
+    } else {
+        report["unavailable"] = json!({"": if count == 0 {
+            "No remote players are present"
+        } else {
+            "No remote player matches this name or wallet"
+        }});
     }
     input.reply_ok(report.to_string());
 }

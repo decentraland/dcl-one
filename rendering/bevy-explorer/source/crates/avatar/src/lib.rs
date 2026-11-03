@@ -175,15 +175,15 @@ impl Plugin for AvatarPlugin {
 
         app.add_debug_section(DebugSection {
             title: "Avatar",
-            query: "/avatar_state",
+            query: "/avatar_state --panel",
             fields: &[
-                ("Body shape", "0.rendered.bodyShape"),
-                ("Address", "0.address"),
-                ("Rendered wearables", "0.rendered.wearables"),
-                ("Hidden slots", "0.rendered.hidden"),
-                ("Equipped emotes", "0.selected.emotes"),
-                ("Animation", "0.emote.urn"),
-                ("Animation source", "0.emote.source"),
+                ("Body shape", "rendered.bodyShape"),
+                ("Address", "address"),
+                ("Rendered wearables", "rendered.wearables"),
+                ("Hidden slots", "rendered.hidden"),
+                ("Equipped emotes", "selected.emotes"),
+                ("Animation", "emote.urn"),
+                ("Animation source", "emote.source"),
             ],
             actions: &[(
                 "Play wave",

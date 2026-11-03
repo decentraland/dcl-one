@@ -268,6 +268,7 @@ fn profile_requests(mut input: ConsoleCommand<ProfileRequestsCommand>, cache: Re
         let posts = counts.single + counts.aggregated;
         input.reply_ok(serde_json::json!({"posts": posts, "single": counts.single, "aggregated": counts.aggregated,
             "lastBatch": counts.last_batch, "meanBatch": (posts > 0).then(|| counts.addresses as f64 / posts as f64),
+            "unavailable": {"meanBatch": "No profile registry requests yet"},
             "inFlight": cache.registry_batches.len(), "fallbacks": cache.catalyst_fetches.len(),
             "unresolved": cache.entries.values().filter(|entry| entry.data.is_none()).count()}).to_string());
     }

@@ -84,6 +84,7 @@ pub(super) fn register(app: &mut App, preview: bool) {
                 ("Cached reads", "cached"),
                 ("Non-IPFS reads", "local"),
                 ("Failed reads", "failed"),
+                #[cfg(not(target_arch = "wasm32"))]
                 ("IPFS connection failures (native)", "connectFailed"),
                 ("Available request slots", "available"),
                 ("Configured download slots", "slots"),
@@ -247,6 +248,14 @@ fn web_state(mut input: ConsoleCommand<WebState>, ipfs: Res<IpfsResource>, confi
             "fillRate": (stats.large_seconds > 0.0).then(|| (stats.large_bytes as f64 / stats.large_seconds).round()),
             "sceneBatch": stats.scene_batches.range(),
             "attachmentBatch": stats.attachment_batches.range(),
+            "unavailable": {
+                "firstByteMs": "No content download has returned a body byte yet.",
+                "smallMs": "No content download of 10 KiB or less has completed.",
+                "msPerMiB": "No content download of 10 KiB or more has completed.",
+                "fillRate": "No transfer time recorded for downloads of 10 KiB or more.",
+                "sceneBatch": "No scene definition lookup has completed.",
+                "attachmentBatch": "No avatar attachment lookup has completed.",
+            },
         }).to_string());
     }
 }
