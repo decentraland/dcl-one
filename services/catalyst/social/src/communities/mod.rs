@@ -49,7 +49,7 @@ mod members;
 mod mutes;
 mod places;
 mod posts;
-mod referral;
+pub mod referral;
 mod requests;
 pub(crate) mod voice;
 mod write_support;
@@ -110,6 +110,7 @@ pub struct Settings {
     /// `COMMUNITIES_MIRROR_INTERVAL_SECS` (3600): a copy is stale after
     /// twice it (`as_of::stale_after`).
     pub mirror_interval: std::time::Duration,
+    pub referral: referral::Settings,
 }
 
 impl Settings {
@@ -148,6 +149,7 @@ impl Settings {
             archipelago_stats_url: None,
             places_ownership_check: true,
             mirror_interval: std::time::Duration::from_secs(3600),
+            referral: referral::Settings::for_tests(),
         }
     }
 }
@@ -160,6 +162,7 @@ pub struct State {
     /// `None` reads such chains as unverifiable.
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     pub profiles: ProfilesCache,
+    pub referral: referral::Referral,
     pub presence: Presence,
     /// One DAPPS document shared by moderator, compliance and referral decisions.
     pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
@@ -246,6 +249,8 @@ impl State {
         explore: crate::explore::SharedState,
     ) -> Self {
         let profiles = ProfilesCache::new(pool.clone(), settings.faces.clone());
+        let referral =
+            referral::Referral::new(pool.clone(), http.clone(), settings.referral.clone());
         let presence = Presence::new(http.raw().clone(), settings.archipelago_stats_url.clone());
         let dm_limiter = RateLimiter::new(DM_SENDS_PER_MINUTE, std::time::Duration::from_secs(60));
         Self {
@@ -254,6 +259,7 @@ impl State {
             settings,
             eip1654,
             profiles,
+            referral,
             presence,
             flags: Arc::new(crate::explore::api::feature_flags::Snapshot::empty()),
             dm_limiter,

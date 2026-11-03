@@ -983,6 +983,22 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     comms_stage.gatekeeper.spawn_jobs(&jobs);
     social.media.spawn_jobs(&jobs);
     social.rpc.spawn_jobs(&jobs);
+    if let Some(events) =
+        social::legacy_events::LegacyEvents::new(social::legacy_events::Settings {
+            sqs_endpoint: config.social.legacy_sqs_endpoint.clone(),
+            sqs_queue_url: config.social.legacy_sqs_queue_url.clone(),
+            sns_endpoint: config.social.legacy_sns_endpoint.clone(),
+            sns_arn: config.social.legacy_sns_arn.clone(),
+        })
+        .await?
+    {
+        social.communities.referral.set_publisher(events.clone());
+        events.spawn(
+            &jobs,
+            social.communities.clone(),
+            config.writes.social_writes_enabled,
+        );
+    }
     communities::fed::spawn_job(&social.communities, &jobs);
     // Copies of the upstream public communities; not local authority, so
     // not behind SOCIAL_WRITES_ENABLED (the explore mirrors' rule). A join or
@@ -1919,6 +1935,52 @@ fn social_states(
             mirror_interval: Duration::from_secs(
                 config.social.communities_mirror_interval_secs.max(1),
             ),
+            referral: communities::referral::Settings {
+                max_ip_matches: config.social.referral_max_ip_matches,
+                denylist_url: (!config.explore.explorer_denylist_source_url.is_empty())
+                    .then(|| config.explore.explorer_denylist_source_url.clone()),
+                min_login_days: config.social.referral_min_login_days,
+                profile_url: config.social.referral_profile_url.clone(),
+                reward_server_url: config.social.referral_reward_server_url.clone(),
+                reward_keys: [
+                    (
+                        5,
+                        &config.social.rewards_api_key_by_referral_invited_users_5,
+                    ),
+                    (
+                        10,
+                        &config.social.rewards_api_key_by_referral_invited_users_10,
+                    ),
+                    (
+                        20,
+                        &config.social.rewards_api_key_by_referral_invited_users_20,
+                    ),
+                    (
+                        25,
+                        &config.social.rewards_api_key_by_referral_invited_users_25,
+                    ),
+                    (
+                        30,
+                        &config.social.rewards_api_key_by_referral_invited_users_30,
+                    ),
+                    (
+                        50,
+                        &config.social.rewards_api_key_by_referral_invited_users_50,
+                    ),
+                    (
+                        60,
+                        &config.social.rewards_api_key_by_referral_invited_users_60,
+                    ),
+                    (
+                        75,
+                        &config.social.rewards_api_key_by_referral_invited_users_75,
+                    ),
+                ]
+                .into_iter()
+                .map(|(tier, key)| (tier, key.clone().unwrap_or_default()))
+                .collect(),
+                ..Default::default()
+            },
         },
         eip1654.clone(),
         http_client,
@@ -1963,6 +2025,8 @@ fn social_states(
         eip1654.clone(),
         Some(market.index.clone()),
     ));
+
+    communities.referral.set_mailer(notifications.email.clone());
 
     let badges = Arc::new(badges::State::new(
         pool.clone(),

@@ -529,8 +529,8 @@ async fn referral_email_is_checked_and_kept_once_a_day() {
         )
     );
     sqlx::query(
-        "INSERT INTO social.referral_progress (invited_user, referrer, status) \
-         SELECT '0x' || substr(md5(random()::text) || md5(random()::text), 1, 40), $1, 'tier_granted' \
+        "INSERT INTO social.referral_progress (invited_user, referrer, status, tier_granted) \
+         SELECT '0x' || substr(md5(random()::text) || md5(random()::text), 1, 40), $1, 'tier_granted', true \
          FROM generate_series(1, 100)",
     )
     .bind(&referrer.address)
@@ -539,16 +539,14 @@ async fn referral_email_is_checked_and_kept_once_a_day() {
     .unwrap();
     let (status, v) = send_email(&rig, &referrer, json!({ "email": "not-an-email" })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert_eq!(v["message"], "Invalid email format");
+    assert_eq!(v["message"], "Invalid JSON body");
+    assert_eq!(v["data"][0]["keyword"], "format");
     let (status, v) = send_email(&rig, &referrer, json!({})).await;
-    assert_eq!(v["message"], "Email is required", "{status}");
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(v["message"], "Invalid JSON body");
+    assert_eq!(v["data"][0]["keyword"], "required");
 
-    let (status, v) = send_email(
-        &rig,
-        &referrer,
-        json!({ "email": " Jane.Doe@Example.com " }),
-    )
-    .await;
+    let (status, v) = send_email(&rig, &referrer, json!({ "email": "Jane.Doe@Example.com" })).await;
     assert_eq!(status, StatusCode::NO_CONTENT, "{v}");
     let stored: String =
         sqlx::query_scalar("SELECT email FROM social.referral_emails WHERE referrer = $1")

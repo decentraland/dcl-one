@@ -774,11 +774,20 @@ CREATE TABLE social.badge_admin_audit (
 
 -- One row per invited wallet; first referrer wins (ON CONFLICT DO NOTHING).
 CREATE TABLE social.referral_progress (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
     invited_user text NOT NULL,
     referrer text NOT NULL,
     status text NOT NULL DEFAULT 'pending',
+    invited_user_ip text,
+    signed_up_at timestamp without time zone,
+    tier_granted boolean NOT NULL DEFAULT false,
+    tier_granted_at timestamp without time zone,
+    -- The source's no-TTL login-day set; whole-value reads, at most the
+    -- configured minimum distinct UTC dates before the next login grants.
+    login_days date[] NOT NULL DEFAULT '{}',
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT referral_progress_id_key UNIQUE (id),
     CONSTRAINT referral_progress_pkey PRIMARY KEY (invited_user),
     CONSTRAINT referral_progress_status_check
         CHECK (status IN ('pending', 'signed_up', 'tier_granted', 'rejected_ip_match')),
@@ -787,6 +796,22 @@ CREATE TABLE social.referral_progress (
 
 -- The referrer's `COUNT(*) WHERE status = 'tier_granted'` and progress list.
 CREATE INDEX referral_progress_referrer_idx ON social.referral_progress (referrer, status);
+-- Registration counts all prior rows for this referrer+IP, including rejections.
+CREATE INDEX referral_progress_ip_idx ON social.referral_progress (referrer, invited_user_ip);
+CREATE INDEX referral_progress_granted_idx ON social.referral_progress (referrer) WHERE tier_granted;
+
+-- Reward art returned by the rewards API after a tier's guarded transition;
+-- source IDs and all historical snapshots survive imports and later updates.
+CREATE TABLE social.referral_reward_images (
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
+    referrer text NOT NULL,
+    reward_image_url text NOT NULL,
+    tier integer NOT NULL CHECK (tier > 0),
+    created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
+    CONSTRAINT referral_reward_images_pkey PRIMARY KEY (id)
+);
+CREATE INDEX referral_reward_images_referrer_idx ON social.referral_reward_images (referrer);
+
 
 -- The invitedUsersAccepted count each referrer last saw.
 CREATE TABLE social.referral_progress_viewed (

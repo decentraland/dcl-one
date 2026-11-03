@@ -32,6 +32,7 @@ mod full_http_parity;
 mod mute_body;
 mod post_create;
 mod post_edit;
+mod referral_lifecycle;
 mod request_lifecycle;
 mod selected_community;
 mod social_api_parity;
@@ -117,6 +118,10 @@ impl Case {
     async fn forged(mut self, w: &Wallet) -> Self {
         self.headers
             .extend(signed_headers(w, self.method, FORGED).await);
+        self
+    }
+    fn header(mut self, name: &str, value: &str) -> Self {
+        self.headers.push((name.into(), value.into()));
         self
     }
     fn bearer(mut self, token: &str) -> Self {
@@ -610,13 +615,21 @@ async fn referral_zero_shape_gate_and_flow() {
     let refer = json!({ "referrer": referrer.address.as_str() });
     let (status, _) = hit(
         app,
-        Case::new("post", path).signed(&invited).await.json(&refer),
+        Case::new("post", path)
+            .header("cf-connecting-ip", "192.0.2.1")
+            .signed(&invited)
+            .await
+            .json(&refer),
     )
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
     let (status, _) = hit(
         app,
-        Case::new("post", path).signed(&invited).await.json(&refer),
+        Case::new("post", path)
+            .header("cf-connecting-ip", "192.0.2.1")
+            .signed(&invited)
+            .await
+            .json(&refer),
     )
     .await;
     assert_eq!(
@@ -627,6 +640,7 @@ async fn referral_zero_shape_gate_and_flow() {
     let (status, v) = hit(
         app,
         Case::new("post", path)
+            .header("cf-connecting-ip", "192.0.2.1")
             .signed(&invited)
             .await
             .json(&json!({ "referrer": other.address.as_str() })),
@@ -639,7 +653,11 @@ async fn referral_zero_shape_gate_and_flow() {
     );
     let (status, v) = hit(
         app,
-        Case::new("post", path).signed(&referrer).await.json(&refer),
+        Case::new("post", path)
+            .header("cf-connecting-ip", "192.0.2.1")
+            .signed(&referrer)
+            .await
+            .json(&refer),
     )
     .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
@@ -653,6 +671,7 @@ async fn referral_zero_shape_gate_and_flow() {
     let (status, _) = hit(
         app,
         Case::new("post", path)
+            .header("cf-connecting-ip", "192.0.2.1")
             .signed(&other)
             .await
             .json(&json!({ "referrer": "not-an-address" })),

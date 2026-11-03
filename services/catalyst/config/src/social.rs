@@ -158,6 +158,72 @@ pub struct SocialConfig {
     )]
     pub friendship_rate_limit_per_pair: f64,
 
+    #[arg(long, env = "AWS_SQS_ENDPOINT")]
+    pub legacy_sqs_endpoint: Option<String>,
+    #[arg(long, env = "AWS_SQS_QUEUE_URL")]
+    pub legacy_sqs_queue_url: Option<String>,
+    #[arg(long, env = "AWS_SNS_ENDPOINT")]
+    pub legacy_sns_endpoint: Option<String>,
+    #[arg(long, env = "AWS_SNS_ARN")]
+    pub legacy_sns_arn: Option<String>,
+    #[arg(long, env = "REFERRAL_MAX_IP_MATCHES", default_value_t = 2)]
+    pub referral_max_ip_matches: i64,
+    #[arg(long, env = "REFERRAL_MIN_LOGIN_DAYS", default_value_t = 3)]
+    pub referral_min_login_days: i64,
+    #[arg(long, env = "REWARD_SERVER_URL")]
+    pub referral_reward_server_url: Option<String>,
+    #[arg(
+        long,
+        env = "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
+        hide_env_values = true
+    )]
+    pub rewards_api_key_by_referral_invited_users_5: Option<String>,
+    #[arg(
+        long,
+        env = "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
+        hide_env_values = true
+    )]
+    pub rewards_api_key_by_referral_invited_users_10: Option<String>,
+    #[arg(
+        long,
+        env = "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
+        hide_env_values = true
+    )]
+    pub rewards_api_key_by_referral_invited_users_20: Option<String>,
+    #[arg(
+        long,
+        env = "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
+        hide_env_values = true
+    )]
+    pub rewards_api_key_by_referral_invited_users_25: Option<String>,
+    #[arg(
+        long,
+        env = "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
+        hide_env_values = true
+    )]
+    pub rewards_api_key_by_referral_invited_users_30: Option<String>,
+    #[arg(
+        long,
+        env = "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
+        hide_env_values = true
+    )]
+    pub rewards_api_key_by_referral_invited_users_50: Option<String>,
+    #[arg(
+        long,
+        env = "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
+        hide_env_values = true
+    )]
+    pub rewards_api_key_by_referral_invited_users_60: Option<String>,
+    #[arg(
+        long,
+        env = "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
+        hide_env_values = true
+    )]
+    pub rewards_api_key_by_referral_invited_users_75: Option<String>,
+
+    #[arg(long, env = "PROFILE_URL", default_value = "https://decentraland.org")]
+    pub referral_profile_url: String,
+
     /// Handshake frame deadline and timestamp window, seconds.
     #[arg(long, env = "AUTH_WINDOW_SECS", default_value_t = 300)]
     pub social_rpc_auth_window_secs: i64,

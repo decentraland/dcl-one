@@ -167,7 +167,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 61] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 69] {
         [
             (
                 "CATALYRST_CONTENT_ADMIN_TOKEN",
@@ -197,6 +197,38 @@ impl Config {
                 &mut self.social.catalyrst_badges_admin_token,
             ),
             ("SENDGRID_API_KEY", &mut self.social.sendgrid_api_key),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
+                &mut self.social.rewards_api_key_by_referral_invited_users_5,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
+                &mut self.social.rewards_api_key_by_referral_invited_users_10,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
+                &mut self.social.rewards_api_key_by_referral_invited_users_20,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
+                &mut self.social.rewards_api_key_by_referral_invited_users_25,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
+                &mut self.social.rewards_api_key_by_referral_invited_users_30,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
+                &mut self.social.rewards_api_key_by_referral_invited_users_50,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
+                &mut self.social.rewards_api_key_by_referral_invited_users_60,
+            ),
+            (
+                "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
+                &mut self.social.rewards_api_key_by_referral_invited_users_75,
+            ),
             (
                 "TURNSTILE_SECRET_KEY",
                 &mut self.social.turnstile_secret_key,

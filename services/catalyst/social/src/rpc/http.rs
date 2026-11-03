@@ -185,6 +185,7 @@ fn path_uuid(raw: &str, name: &str) -> Result<(), CommError> {
 /// One body property's schema (the AJV schemas of `handlers/http/schemas.ts`).
 pub(crate) enum Kind {
     Address,
+    Email,
     Uuid,
     OneOf(&'static [&'static str]),
     Text {
@@ -422,6 +423,24 @@ pub(crate) fn body(
             )
         };
         match kind {
+            Kind::Email => {
+                if text.is_empty() {
+                    return Err(invalid(
+                        field,
+                        "minLength",
+                        json!({"limit":1}),
+                        "must NOT have fewer than 1 characters".into(),
+                    ));
+                }
+                if !schema_email(text) {
+                    return Err(invalid(
+                        field,
+                        "format",
+                        json!({"format":"email"}),
+                        "must match format \"email\"".into(),
+                    ));
+                }
+            }
             Kind::Address if !crate::auth::is_eth_address(text) => {
                 return Err(pattern(ADDRESS_PATTERN));
             }
@@ -472,6 +491,26 @@ pub(crate) fn body(
         }
     }
     Ok(object)
+}
+
+// ajv-formats default/full email regexp used by the source schema middleware.
+fn schema_email(text: &str) -> bool {
+    let Some((local, domain)) = text.split_once('@') else {
+        return false;
+    };
+    let atom = |part: &str| {
+        !part.is_empty()
+            && part
+                .bytes()
+                .all(|c| c.is_ascii_alphanumeric() || b"!#$%&'*+/=?^_`{|}~-".contains(&c))
+    };
+    let label = |part: &str| {
+        !part.is_empty()
+            && part.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'-')
+            && part.as_bytes()[0].is_ascii_alphanumeric()
+            && part.as_bytes()[part.len() - 1].is_ascii_alphanumeric()
+    };
+    local.split('.').all(atom) && domain.contains('.') && domain.split('.').all(label)
 }
 
 pub(crate) fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a str> {

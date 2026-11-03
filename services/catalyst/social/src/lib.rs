@@ -7,8 +7,9 @@
 //! `communities` (social-api REST), `rpc` (the friends/presence/voice
 //! WebSocket), `messaging` (the old gatekeeper's MLS delivery service, on
 //! its own state), `notifications`, `badges`, `media`
-//! (autotranslate) and `profile_images`; every one over the ONE pool, the
-//! ONE outbound client, the ONE blob store and `jobs::spawn_periodic`. The
+//! (autotranslate) and `profile_images`; domain HTTP calls share one outbound
+//! client,SQL pool and blob store. Optional legacy SQS/SNS transports use the
+//! official AWS SDKs inside the existing job lifecycle (`legacy_events`). The
 //! LiveKit gatekeeper itself is `comms::gatekeeper`; its state is the RPC's
 //! voice runtime and the communities' voice eviction. [`router`] composes
 //! them the way the old gateway's location table did, behind the [`writes`]
@@ -37,6 +38,7 @@ pub mod chat;
 pub mod comms_directory;
 pub mod communities;
 
+pub mod legacy_events;
 pub mod media;
 pub mod messaging;
 mod mls;

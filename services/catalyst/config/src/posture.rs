@@ -734,6 +734,7 @@ pub const ANY_HOST: &[(&str, &str)] = &[
     ("PUBLIC_URL", "this node's own address"),
     ("HTTP_SERVER_HOST", "the address it listens on"),
     ("ACCOUNT_BASE_URL", LINK),
+    ("PROFILE_URL", LINK),
     ("MARKETPLACE_BASE_URL", LINK),
     ("SHOP_BASE_URL", LINK),
     ("SHOP_ITEM_BASE_URL", LINK),
@@ -948,6 +949,47 @@ pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
 /// key that can point it elsewhere (then held to loopback above) and the API.
 const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
     ("SENDGRID_API_KEY", None, "SendGrid's mail API"),
+    ("AWS_SNS_ARN", Some("AWS_SNS_ENDPOINT"), "Amazon SNS"),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_10",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_20",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_25",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_30",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_50",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_60",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
+    (
+        "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_75",
+        Some("REWARD_SERVER_URL"),
+        "referral rewards",
+    ),
     (
         "TURNSTILE_SECRET_KEY",
         None,

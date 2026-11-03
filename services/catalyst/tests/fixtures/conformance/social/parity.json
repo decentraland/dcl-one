@@ -804,12 +804,35 @@
     },
     {
       "id": "api_http:GET:/v1/referral-progress",
-      "owner": "referrals",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "friends-settings-blocks-referrals",
+      "status": "known_gap",
+      "result": "Source-reviewed accepted/viewed counts and reward snapshots; GET marks the current count viewed through the existing write gate.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/referral.rs",
+          "test": "referral_sql_lifecycle_matches_executed_upstream_component_and_db_cases",
+          "scope": "Actual pinned TS referral component and referral-db adapter execute on PostgreSQL TEMP relations;6 scenarios replay local state,day sets,reward snapshots and notification metadata. Clock values and generated UUIDs are not asserted equal."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral.rs",
+          "test": "referral_schema_answers_match_executed_upstream_ajv_middleware",
+          "scope": "13 actual upstream AJV middleware response cases, including required/type/format/extra fields."
+        },
+        {
+          "path": "services/catalyst/social/src/legacy_events.rs",
+          "test": "raw_queue_processing_matches_source_acknowledgements_even_on_handler_failure",
+          "scope": "8 actual queue-consumer/logged-in-handler source cases compared with local raw-event processing and delete-finally acknowledgements; source ranking event kinds are awaiting writer integration."
+        },
+        {
+          "path": "services/catalyst/social/src/legacy_events.rs",
+          "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
+          "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+        }
+      ],
+      "gaps": [
+        "Referral SQL failures still use the shared generic500 envelope; the source returns a message-only500 with its dependency error."
+      ],
+      "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. SDK tests use local stubs, so real AWS credentials,subscriptions,cutover state and delivery remain unverified."
     },
     {
       "id": "api_http:GET:/v1/social-settings",
@@ -1286,12 +1309,35 @@
     },
     {
       "id": "api_http:PATCH:/v1/referral-progress",
-      "owner": "referrals",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "friends-settings-blocks-referrals",
+      "status": "known_gap",
+      "result": "Source-reviewed pending-only signup and denylist order; preserves signed_up_at and the original fetched-status/unconditional-write sequence.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/referral.rs",
+          "test": "referral_sql_lifecycle_matches_executed_upstream_component_and_db_cases",
+          "scope": "Actual pinned TS referral component and referral-db adapter execute on PostgreSQL TEMP relations;6 scenarios replay local state,day sets,reward snapshots and notification metadata. Clock values and generated UUIDs are not asserted equal."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral.rs",
+          "test": "referral_schema_answers_match_executed_upstream_ajv_middleware",
+          "scope": "13 actual upstream AJV middleware response cases, including required/type/format/extra fields."
+        },
+        {
+          "path": "services/catalyst/social/src/legacy_events.rs",
+          "test": "raw_queue_processing_matches_source_acknowledgements_even_on_handler_failure",
+          "scope": "8 actual queue-consumer/logged-in-handler source cases compared with local raw-event processing and delete-finally acknowledgements; source ranking event kinds are awaiting writer integration."
+        },
+        {
+          "path": "services/catalyst/social/src/legacy_events.rs",
+          "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
+          "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+        }
+      ],
+      "gaps": [
+        "Referral SQL failures still use the shared generic500 envelope; the source returns a message-only500 with its dependency error."
+      ],
+      "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. SDK tests use local stubs, so real AWS credentials,subscriptions,cutover state and delivery remain unverified."
     },
     {
       "id": "api_http:PATCH:/v1/social-settings",
@@ -1672,21 +1718,68 @@
     },
     {
       "id": "api_http:POST:/v1/referral-email",
-      "owner": "referrals",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "friends-settings-blocks-referrals",
+      "status": "known_gap",
+      "result": "Source-reviewed AJV email format plus the distinct domain Email.validate pattern,100-invite threshold,24-hour limit,normalization and best-effort marketing mail after commit.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/referral.rs",
+          "test": "referral_sql_lifecycle_matches_executed_upstream_component_and_db_cases",
+          "scope": "Actual pinned TS referral component and referral-db adapter execute on PostgreSQL TEMP relations;6 scenarios replay local state,day sets,reward snapshots and notification metadata. Clock values and generated UUIDs are not asserted equal."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral.rs",
+          "test": "referral_schema_answers_match_executed_upstream_ajv_middleware",
+          "scope": "13 actual upstream AJV middleware response cases, including required/type/format/extra fields."
+        },
+        {
+          "path": "services/catalyst/social/src/legacy_events.rs",
+          "test": "raw_queue_processing_matches_source_acknowledgements_even_on_handler_failure",
+          "scope": "8 actual queue-consumer/logged-in-handler source cases compared with local raw-event processing and delete-finally acknowledgements; source ranking event kinds are awaiting writer integration."
+        },
+        {
+          "path": "services/catalyst/social/src/legacy_events.rs",
+          "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
+          "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+        }
+      ],
+      "gaps": [
+        "Referral SQL failures still use the shared generic500 envelope; the source returns a message-only500 with its dependency error."
+      ],
+      "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. SDK tests use local stubs, so real AWS credentials,subscriptions,cutover state and delivery remain unverified."
     },
     {
       "id": "api_http:POST:/v1/referral-progress",
-      "owner": "referrals",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "friends-settings-blocks-referrals",
+      "status": "known_gap",
+      "result": "Source-reviewed schema/auth/IP priority, first-wins retries, direct/one-hop denylist and persisted rejected-IP responses; registration kill flag uses the shared DAPPS snapshot.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/referral.rs",
+          "test": "referral_sql_lifecycle_matches_executed_upstream_component_and_db_cases",
+          "scope": "Actual pinned TS referral component and referral-db adapter execute on PostgreSQL TEMP relations;6 scenarios replay local state,day sets,reward snapshots and notification metadata. Clock values and generated UUIDs are not asserted equal."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/referral.rs",
+          "test": "referral_schema_answers_match_executed_upstream_ajv_middleware",
+          "scope": "13 actual upstream AJV middleware response cases, including required/type/format/extra fields."
+        },
+        {
+          "path": "services/catalyst/social/src/legacy_events.rs",
+          "test": "raw_queue_processing_matches_source_acknowledgements_even_on_handler_failure",
+          "scope": "8 actual queue-consumer/logged-in-handler source cases compared with local raw-event processing and delete-finally acknowledgements; source ranking event kinds are awaiting writer integration."
+        },
+        {
+          "path": "services/catalyst/social/src/legacy_events.rs",
+          "test": "official_sdk_keeps_source_queue_parameters_and_sns_attributes",
+          "scope": "Official SDKs send SigV4 requests only to a local stub; validates batch10,visibility60,longpoll20 and SNS JSON+type/subType attributes. No live AWS delivery claimed."
+        }
+      ],
+      "gaps": [
+        "Referral SQL failures still use the shared generic500 envelope; the source returns a message-only500 with its dependency error.",
+        "Source suspicious-timing/IP-rejection/100-invite Slack alert payloads are not yet emitted."
+      ],
+      "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. SDK tests use local stubs, so real AWS credentials,subscriptions,cutover state and delivery remain unverified."
     },
     {
       "id": "api_http:PUT:/v1/communities/:id",
@@ -4504,6 +4597,17 @@
       "status": "unverified",
       "description": "No nonempty migration snapshot, deployed provider/edge configuration, active LiveKit call continuity, running-client comparison or rollback rehearsal has been supplied or executed. These are replacement acceptance requirements, separate from local contract tests.",
       "operations": []
+    },
+    {
+      "id": "referral-external-cutover",
+      "operations": [
+        "api_http:GET:/v1/referral-progress",
+        "api_http:POST:/v1/referral-progress",
+        "api_http:PATCH:/v1/referral-progress",
+        "api_http:POST:/v1/referral-email"
+      ],
+      "status": "unverified",
+      "description": "Configured official SQS/SNS transports preserve legacy raw events and attributes locally; deployed queue policies,topic subscriptions and real credential access have not been exercised. The additive upgrade preserves populated candidate IDs in synthetic tests; import of existing upstream progress/login-days/reward/email state and live cutover remain outstanding. Ranking event dispatch and other SNS producer wiring are subsequent packages."
     }
   ]
 }
