@@ -812,7 +812,7 @@
             }
           }
         },
-        "description": "Signed-wallet callers use the strict UpdateEventBody request schema shown here. Authorized bearer operators may instead submit AdminEventPatch, including action/actor/reason and legacy extra fields. The bearer extension does not broaden signed-wallet validation.",
+        "description": "Signed-wallet callers use the strict UpdateEventBody request schema shown here. Authorized bearer operators may instead submit AdminEventPatch, including action/actor/reason and legacy extra fields. The bearer extension does not broaden signed-wallet validation. Custom join URL changes require edit_any_event for signed-wallet callers. Without that grant, url is silently ignored rather than rejected, so an otherwise valid PATCH returns HTTP 200 without applying the requested URL change. Authorized bearer operators can update the URL through AdminEventPatch.",
         "x-bearer-request-schema": {
           "$ref": "#/components/schemas/AdminEventPatch"
         }
@@ -4370,7 +4370,8 @@
             "type": [
               "string",
               "null"
-            ]
+            ],
+            "description": "Custom join URL. Signed-wallet callers require edit_any_event permission to set or clear this field; otherwise it is silently ignored and an otherwise valid PATCH returns HTTP 200 without applying the requested URL change. Authorized bearer operators can update it through AdminEventPatch. For permitted callers, null removes the custom override and uses the generated venue link."
           },
           "world": {
             "type": [
