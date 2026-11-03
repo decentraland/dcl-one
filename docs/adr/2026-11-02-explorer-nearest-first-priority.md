@@ -104,14 +104,15 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   default: a request whose hash nobody holds (an avatar's emote, a backpack thumbnail)
   ranks with the requests that carry no hash at all (NFT images, URL-form fonts and profile
   pictures, the imposter archives behind `IpfsIo::fetch_request`), in the `Other` tier after every
-  registered scene and avatar, oldest first. A hash released by its last holder while requests
-  under it wait, because its scene despawned or its avatar dropped it, is in the `Departed` tier,
-  last, for as long as those requests wait; the mark lives with the queue, so a request for the
-  hash that arrives meanwhile ranks last too, and one that arrives after the queue has drained
-  is unregistered again, in `Other`.
+  registered scene and avatar, oldest first. A hash released by its last holder while a request
+  under it is alive (waiting, in an attempt or between attempts), because its scene despawned or
+  its avatar dropped it, is in the `Departed` tier, last, for as long as such a request is alive;
+  the mark lives with the hash's live requests, so their retries and a request for the hash that
+  arrives meanwhile rank last too, and one that arrives after the last of them has ended is
+  unregistered again, in `Other`. Registering the hash again ends the mark.
 - **Keys cross the crate boundary as data, written in place.** Which hashes have a key is the
   hooks' business (above); their values are `publish_download_priorities`'s, which on every
-  frame in which a download waits for a slot writes this frame's key of every registered hash
+  frame in which a download waits for or holds a slot writes this frame's key of every registered hash
   into `IpfsIo` (`update_download_priorities`), because `ipfs` cannot depend on `scene_runner`:
   the player's scenes at `LoadPriority::TOP` (found through `ContainingScene::get_oow`, so a
   scene without a context yet counts, and so does the destination while the player is still
@@ -202,8 +203,8 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   count a server's scenes on one side (south, for the stand-in) four times farther in the tick
   queue while nobody looks.
 - **Treating a departed scene's queued downloads as unregistered.** They would rank in `Other`,
-  level with NFT frames and imposters, instead of last; the queue is marked departed when the
-  hash's last holder releases it.
+  level with NFT frames and imposters, instead of last; the hash is marked departed when its
+  last holder releases it while one of its requests is alive.
 - **User-facing settings for the penalty and the key.** unity-explorer keeps its equivalents as
   asset values with no runtime setter; here they are code constants.
 - **Changing the GPU transfer priority with this.** `RenderAssetTransferPriority` stays as it is

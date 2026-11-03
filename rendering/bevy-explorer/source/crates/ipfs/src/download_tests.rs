@@ -123,7 +123,7 @@ async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
 
         server.reply("retry", BUSY).await;
         sleeping.notified().await;
-        assert!(!io.has_pending_downloads());
+        assert!(!io.request_slots.has_waiters());
         let other = asset(&io, &server, "during-backoff", None);
         server.reply("during-backoff", OK).await;
         assert_eq!(other.await.unwrap().unwrap().as_ref(), b"x");
@@ -162,7 +162,7 @@ async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
             1
         );
         assert_eq!(io.request_metrics.bytes.load(Ordering::Relaxed), 5);
-        assert!(!io.has_pending_downloads());
+        assert!(!io.request_slots.has_waiters());
         assert!(io.request_slots.try_acquire().is_some());
     })
     .await
@@ -224,10 +224,10 @@ async fn last_shared_reader_cancels_a_queued_attempt_and_a_retry_timer() {
         let server = Server::start().await;
         let blocker = io.request_slots.try_acquire().unwrap();
         let queued = shared(&io, &server, "queued", "scene");
-        until(|| io.has_pending_downloads()).await;
+        until(|| io.request_slots.has_waiters()).await;
         let queued_handle = queued.download.clone();
         drop(queued);
-        until(|| !io.has_pending_downloads() && io.in_flight.lock().unwrap().is_empty()).await;
+        until(|| !io.request_slots.has_waiters() && io.in_flight.lock().unwrap().is_empty()).await;
         assert_eq!(io.request_metrics.attempts.load(Ordering::Relaxed), 0);
         drop(queued_handle);
         drop(blocker);
@@ -304,7 +304,7 @@ async fn a_stale_upgrade_cannot_revive_a_download_after_its_last_reader_left() {
         // A stale lookup can still hold the task handle when the last real reader goes.
         assert!(old_result.changed().await.is_err());
         drop(stale);
-        until(|| io.has_pending_downloads()).await;
+        until(|| io.request_slots.has_waiters()).await;
         assert_eq!(io.in_flight.lock().unwrap().len(), 1, "old cleanup must preserve the replacement");
         drop(blocker);
         server.reply("same", OK).await;
