@@ -1,6 +1,6 @@
 //! The entity file as a deploy parses it: the six deployable types, the
 //! `content` mapping and the lenient shape (`id`/`version` optional) that the
-//! write path accepts and fills in from the upload.
+//! write path accepts and fills in from the upload; a missing `version` is `v3`.
 
 use serde::{Deserialize, Serialize};
 
@@ -56,11 +56,20 @@ pub struct Entity {
     #[serde(default)]
     pub content: Vec<ContentMapping>,
 
-    #[serde(default)]
+    #[serde(default = "default_version", deserialize_with = "version_or_default")]
     pub version: String,
 
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub metadata: Option<serde_json::Value>,
+}
+
+fn default_version() -> String {
+    "v3".to_string()
+}
+
+/// `null` reads as absent, like the reference's `version ?? 'v3'`.
+fn version_or_default<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_else(default_version))
 }
 
 #[cfg(test)]
@@ -97,8 +106,22 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(entity.id, "");
-        assert_eq!(entity.version, "");
+        assert_eq!(entity.version, "v3");
         assert_eq!(entity.content[0].hash, "bafy");
         assert!(entity.metadata.is_none());
+    }
+
+    #[test]
+    fn a_null_version_defaults_and_a_given_one_is_kept() {
+        let base = serde_json::json!({"type": "profile", "pointers": ["0xabc"], "timestamp": 1});
+        let mut null = base.clone();
+        null["version"] = serde_json::Value::Null;
+        assert_eq!(
+            serde_json::from_value::<Entity>(null).unwrap().version,
+            "v3"
+        );
+        let mut v2 = base;
+        v2["version"] = serde_json::json!("v2");
+        assert_eq!(serde_json::from_value::<Entity>(v2).unwrap().version, "v2");
     }
 }
