@@ -100,7 +100,9 @@ pub async fn get_community_requests(
 ) -> Result<Json<serde_json::Value>, CommError> {
     let (mut rows, total, pagination, signer) =
         community_requests_page(&state, &headers, &original, &id_str, "v1", &pairs).await?;
-    enrich_with_profiles(&state.profiles, &mut rows, "memberAddress").await;
+    enrich_with_profiles(&state.profiles, &mut rows, "memberAddress")
+        .await
+        .map_err(super::http::database_error)?;
     super::members::enrich_with_friendship_status(&state, Some(&signer), &mut rows).await;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
@@ -190,13 +192,21 @@ pub async fn get_member_requests(
                 .map(str::to_string)
         })
         .collect();
-    let owner_names = state.profiles.get_owner_names(&owner_addrs).await;
+    let owner_names = state
+        .profiles
+        .get_owner_names(&owner_addrs)
+        .await
+        .map_err(super::http::database_error)?;
     let addresses: Vec<String> = rows
         .iter()
         .flat_map(|row| row["friends"].as_array().into_iter().flatten())
         .filter_map(|address| address.as_str().map(str::to_string))
         .collect();
-    let profiles = state.profiles.get_profiles(&addresses).await;
+    let profiles = state
+        .profiles
+        .try_get_profiles(&addresses)
+        .await
+        .map_err(super::http::database_error)?;
     for row in &mut rows {
         if let Some(name) = row["ownerAddress"]
             .as_str()

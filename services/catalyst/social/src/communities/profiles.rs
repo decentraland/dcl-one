@@ -442,24 +442,38 @@ impl ProfilesCache {
     pub(crate) async fn clear(&self) {
         self.registry.clear_seen().await;
     }
+    /// Best-effort reader retained for consumers whose source permits missing
+    /// enrichment. HTTP community profile boundaries use the fallible reader.
     pub async fn get_profiles(&self, addresses: &[String]) -> HashMap<String, ProfileInfo> {
-        match self.registry.batch(addresses).await {
-            Ok(profiles) => profiles
-                .into_iter()
-                .map(|(_, profile)| (profile.address.clone(), community_profile(profile)))
-                .collect(),
-            Err(error) => {
+        self.try_get_profiles(addresses)
+            .await
+            .unwrap_or_else(|error| {
                 tracing::warn!(%error,"community profile source unavailable");
                 HashMap::new()
-            }
-        }
+            })
     }
-    pub async fn get_owner_names(&self, addresses: &[String]) -> HashMap<String, String> {
-        self.get_profiles(addresses)
-            .await
+    pub async fn try_get_profiles(
+        &self,
+        addresses: &[String],
+    ) -> sqlx::Result<HashMap<String, ProfileInfo>> {
+        Ok(self
+            .registry
+            .batch(addresses)
+            .await?
+            .into_iter()
+            .map(|(_, profile)| (profile.address.clone(), community_profile(profile)))
+            .collect())
+    }
+    pub async fn get_owner_names(
+        &self,
+        addresses: &[String],
+    ) -> sqlx::Result<HashMap<String, String>> {
+        Ok(self
+            .try_get_profiles(addresses)
+            .await?
             .into_iter()
             .map(|(address, profile)| (address, profile.name))
-            .collect()
+            .collect())
     }
     pub async fn get_owner_name(&self, address: &str) -> Result<String, RegistryError> {
         Ok(self.registry.single(address).await?.name)
@@ -483,9 +497,9 @@ pub async fn enrich_with_profiles(
     profiles: &ProfilesCache,
     rows: &mut [serde_json::Value],
     addr_field: &str,
-) {
+) -> sqlx::Result<()> {
     if rows.is_empty() {
-        return;
+        return Ok(());
     }
     let addresses: Vec<String> = rows
         .iter()
@@ -495,7 +509,7 @@ pub async fn enrich_with_profiles(
                 .map(str::to_string)
         })
         .collect();
-    let map = profiles.get_profiles(&addresses).await;
+    let map = profiles.try_get_profiles(&addresses).await?;
     for row in rows.iter_mut() {
         let Some(obj) = row.as_object_mut() else {
             continue;
@@ -529,6 +543,7 @@ pub async fn enrich_with_profiles(
             obj.insert("nameColor".to_string(), v);
         }
     }
+    Ok(())
 }
 
 /// The post author fields; an unresolved author falls back to the address
@@ -537,9 +552,9 @@ pub async fn enrich_posts_with_authors(
     profiles: &ProfilesCache,
     rows: &mut [serde_json::Value],
     addr_field: &str,
-) {
+) -> sqlx::Result<()> {
     if rows.is_empty() {
-        return;
+        return Ok(());
     }
     let addresses: Vec<String> = rows
         .iter()
@@ -549,7 +564,7 @@ pub async fn enrich_posts_with_authors(
                 .map(str::to_string)
         })
         .collect();
-    let map = profiles.get_profiles(&addresses).await;
+    let map = profiles.try_get_profiles(&addresses).await?;
     for row in rows.iter_mut() {
         let Some(obj) = row.as_object_mut() else {
             continue;
@@ -577,6 +592,7 @@ pub async fn enrich_posts_with_authors(
             serde_json::Value::Bool(claimed),
         );
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -897,7 +913,9 @@ mod tests {
             "role": "member",
             "joinedAt": "2024-01-01T00:00:00",
         })];
-        enrich_with_profiles(&profiles, &mut rows, "memberAddress").await;
+        enrich_with_profiles(&profiles, &mut rows, "memberAddress")
+            .await
+            .unwrap();
         let m = rows[0].as_object().unwrap();
         for key in [
             "memberAddress",
@@ -917,7 +935,9 @@ mod tests {
 
         let mut rows =
             vec![serde_json::json!({ "id": "p1", "authorAddress": "0xABC", "content": "hi" })];
-        enrich_posts_with_authors(&profiles, &mut rows, "authorAddress").await;
+        enrich_posts_with_authors(&profiles, &mut rows, "authorAddress")
+            .await
+            .unwrap();
         let m = rows[0].as_object().unwrap();
         for key in [
             "authorName",

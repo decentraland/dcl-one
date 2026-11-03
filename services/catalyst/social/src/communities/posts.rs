@@ -120,7 +120,9 @@ pub async fn get_posts(
     Query(pairs): Query<Vec<(String, String)>>,
 ) -> Result<Json<serde_json::Value>, CommError> {
     let (mut rows, total) = posts_page(&state, &headers, &original, &id_str, "v1", &pairs).await?;
-    enrich_posts_with_authors(&state.profiles, &mut rows, "authorAddress").await;
+    enrich_posts_with_authors(&state.profiles, &mut rows, "authorAddress")
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(json!({ "data": { "posts": rows, "total": total } })))
 }
 

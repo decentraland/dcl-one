@@ -87,13 +87,14 @@ async fn to_member_wire_rows(
     state: &SharedState,
     signer: Option<&Address>,
     members: Vec<CommunityMember>,
-) -> Vec<CommunityMemberWire> {
+) -> sqlx::Result<Vec<CommunityMemberWire>> {
     let addresses: Vec<String> = members.iter().map(|m| m.member_address.clone()).collect();
     let (profiles, statuses) = tokio::join!(
-        state.profiles.get_profiles(&addresses),
+        state.profiles.try_get_profiles(&addresses),
         member_friendship_statuses(state, signer, &members)
     );
-    members
+    let profiles = profiles?;
+    Ok(members
         .into_iter()
         .map(|m| {
             let addr = m.member_address.to_lowercase();
@@ -118,7 +119,7 @@ async fn to_member_wire_rows(
                 has_claimed_name,
             }
         })
-        .collect()
+        .collect())
 }
 
 async fn to_member_v2_wire_rows(
@@ -230,7 +231,9 @@ pub async fn get_members(
     )
     .await?;
     let (members, total, pagination) = members_page(&state, id, &pairs).await?;
-    let rows = to_member_wire_rows(&state, signer.as_ref(), members).await;
+    let rows = to_member_wire_rows(&state, signer.as_ref(), members)
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -331,7 +334,9 @@ pub async fn get_bans(
         bans_listing(&state, &headers, &original, &id_str, "v1", &pairs).await?;
     // upstream `mapMembersWithProfiles`: the profile fields and the
     // viewer's `friendshipStatus`
-    enrich_with_profiles(&state.profiles, &mut rows, "memberAddress").await;
+    enrich_with_profiles(&state.profiles, &mut rows, "memberAddress")
+        .await
+        .map_err(super::http::database_error)?;
     enrich_with_friendship_status(&state, Some(&signer), &mut rows).await;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),

@@ -526,10 +526,14 @@ aliases, including duplicates admitted by the pinned source registry.
 Each successful write retains the minimal public profile for 600 seconds, measured
 by the database clock. Reads ignore expired rows even if cleanup is delayed.
 Missing or invalid profiles are not cached. Accepted content updates do not
-invalidate these facts; the source retains its previous value until expiry. Cache
-read failures reach each handler's existing error boundary. Writes are best effort:
-a batch first uses one set write and retries individual keys if it fails, so one
-failed key does not prevent successful keys from being retained.
+invalidate these facts; the source retains its previous value until expiry. The
+six V1 profile-enriched community reads (community listing, members, bans,
+community requests, member requests and posts) propagate cache-read failures to
+their handler error boundary. Consumers that intentionally use the best-effort
+profile wrapper retain that behavior; missing or invalid profiles retain their
+existing fallback. Cache writes are best effort: a batch first uses one set write
+and retries individual keys if it fails, so one failed key does not prevent
+successful keys from being retained.
 
 The workload consists of indexed key/`ANY` reads, existing active-pointer/profile
 lookups on misses and bounded page writes. No external await occurs inside an SQL

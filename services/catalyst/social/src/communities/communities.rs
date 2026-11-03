@@ -193,12 +193,12 @@ async fn enrich_with_friends(
     state: &SharedState,
     by_community: HashMap<CommunityId, Vec<String>>,
     items: &mut [CommunityListItem],
-) {
+) -> sqlx::Result<()> {
     if by_community.is_empty() {
-        return;
+        return Ok(());
     }
     let all_addresses: Vec<String> = by_community.values().flatten().cloned().collect();
-    let profiles = state.profiles.get_profiles(&all_addresses).await;
+    let profiles = state.profiles.try_get_profiles(&all_addresses).await?;
     for item in items.iter_mut() {
         let Some(addresses) = by_community.get(&CommunityId::from_uuid(item.id)) else {
             continue;
@@ -215,6 +215,7 @@ async fn enrich_with_friends(
             item.friends = Some(friends);
         }
     }
+    Ok(())
 }
 
 pub async fn get_raw_thumbnail(
@@ -313,8 +314,11 @@ pub async fn get_communities(
                 None => HashMap::new(),
             }
         });
+    let owner_names = owner_names.map_err(super::http::database_error)?;
     enrich_list_v1(&state.settings.cdn_url, &mut results, &owner_names);
-    enrich_with_friends(&state, by_community, &mut results).await;
+    enrich_with_friends(&state, by_community, &mut results)
+        .await
+        .map_err(super::http::database_error)?;
 
     Ok(Json(EnvelopeData {
         data: Paginated {

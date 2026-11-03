@@ -75,8 +75,13 @@ async fn historical_and_positive_profiles_match_executed_source_rpc_answers() {
                     }
                 } else {
                     assert_eq!(
-                        serde_json::to_value(community.get_owner_names(&[owner.to_string()]).await)
-                            .unwrap(),
+                        serde_json::to_value(
+                            community
+                                .get_owner_names(&[owner.to_string()])
+                                .await
+                                .unwrap()
+                        )
+                        .unwrap(),
                         step["expected_json"]
                     )
                 }
