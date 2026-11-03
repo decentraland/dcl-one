@@ -4,7 +4,7 @@
 //! List procedures omit unavailable profiles, while block/unblock responses and
 //! connectivity may represent an unavailable profile with empty display fields.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,6 +33,8 @@ impl From<NameColor> for Color3 {
 
 #[derive(Debug, Clone)]
 pub struct ProfileInfo {
+    /// Public profile identity; authorization continues to use the caller/pointer.
+    pub address: String,
     pub name: String,
     pub profile_picture_url: String,
     pub has_claimed_name: bool,
@@ -56,7 +58,8 @@ const PROFILE_SQL: &str = "\
     SELECT ap.pointer, d.entity_metadata::jsonb #> '{v,avatars,0}' AS avatar \
     FROM content.active_pointers ap \
     JOIN content.deployments d ON d.entity_id = ap.entity_id \
-    WHERE ap.pointer = ANY($1::text[]) AND d.entity_type = 'profile'";
+    WHERE ap.pointer = ANY($1::text[]) AND d.entity_type = 'profile' \
+    ORDER BY array_position($1::text[], ap.pointer)";
 
 #[derive(Clone)]
 pub struct Profiles {
@@ -74,124 +77,138 @@ impl Profiles {
     }
 
     pub async fn get_profiles(&self, addresses: &[String]) -> HashMap<String, ProfileInfo> {
-        self.get_profiles_result(addresses)
-            .await
-            .unwrap_or_else(|error| {
-                tracing::warn!(%error, "profile enrichment query failed; serving placeholders");
-                addresses
-                    .iter()
-                    .filter_map(|address| {
-                        self.cache
-                            .get_fresh(&address.to_lowercase())
-                            .flatten()
-                            .map(|profile| (address.to_lowercase(), profile))
-                    })
-                    .collect()
-            })
+        self.get_profiles_result(addresses).await.unwrap_or_else(|error| {
+            tracing::warn!(%error,"profile enrichment query failed; retaining fresh cached values");
+            addresses.iter().filter_map(|address| self.cache.get_fresh(&address.to_lowercase()).flatten().map(|profile|(profile.address.clone(),profile))).collect()
+        })
     }
 
+    /// Registry batch reduction keys by avatar.userId. Callers matching a
+    /// friendship/request wallet must use this key, never the requested pointer.
     pub(crate) async fn get_profiles_result(
         &self,
         addresses: &[String],
     ) -> Result<HashMap<String, ProfileInfo>, sqlx::Error> {
-        let mut out: HashMap<String, ProfileInfo> = HashMap::new();
-        if addresses.is_empty() {
-            return Ok(out);
-        }
-        let wanted = dedup_lowercased(addresses);
-        let mut misses: Vec<String> = Vec::new();
-        for addr in &wanted {
-            match self.cache.get_fresh(addr) {
-                Some(Some(info)) => {
-                    out.insert(addr.clone(), info);
-                }
-                Some(None) => {}
-                None => misses.push(addr.clone()),
-            }
-        }
-        if misses.is_empty() {
-            return Ok(out);
-        }
-        let Some(pool) = &self.pool else {
-            return Ok(out);
-        };
+        Ok(self
+            .get_profiles_list_result(addresses)
+            .await?
+            .into_iter()
+            .map(|profile| (profile.address.clone(), profile))
+            .collect())
+    }
 
-        let mut resolved: HashMap<String, ProfileInfo> = HashMap::new();
-        match sqlx::query_as::<_, (String, Option<serde_json::Value>)>(PROFILE_SQL)
-            .bind(&misses)
+    /// Source registry.getProfiles returns cached values first, followed by
+    /// fetched profiles. A historical pointer alias may therefore appear twice
+    /// after getProfile cached that profile under the requested pointer.
+    pub(crate) async fn get_profiles_list_result(
+        &self,
+        addresses: &[String],
+    ) -> Result<Vec<ProfileInfo>, sqlx::Error> {
+        let wanted = dedup_lowercased(addresses);
+        let mut profiles = wanted
+            .iter()
+            .filter_map(|address| self.cache.get_fresh(address).flatten())
+            .collect::<Vec<_>>();
+        let cached_identities = profiles
+            .iter()
+            .map(|profile| profile.address.clone())
+            .collect::<HashSet<_>>();
+        let missing = wanted
+            .into_iter()
+            .filter(|address| !cached_identities.contains(address))
+            .collect::<Vec<_>>();
+        if !missing.is_empty() {
+            let fetched = self.load_profiles(&missing).await?;
+            for profile in &fetched {
+                self.cache
+                    .insert(profile.address.clone(), Some(profile.clone()));
+            }
+            profiles.extend(fetched);
+        }
+        Ok(profiles)
+    }
+
+    /// Strict registry.getProfile semantics for subscriptions and best-effort
+    /// block enrichment: cache under the requested pointer, return avatar.userId.
+    pub(crate) async fn get_profile_result(
+        &self,
+        address: &str,
+    ) -> Result<Option<ProfileInfo>, sqlx::Error> {
+        let address = address.to_lowercase();
+        if let Some(profile) = self.cache.get_fresh(&address).flatten() {
+            return Ok(Some(profile));
+        }
+        let profile = self
+            .load_profiles(std::slice::from_ref(&address))
+            .await?
+            .into_iter()
+            .next();
+        if let Some(profile) = &profile {
+            self.cache.insert(address, Some(profile.clone()));
+        }
+        Ok(profile)
+    }
+
+    async fn load_profiles(&self, addresses: &[String]) -> Result<Vec<ProfileInfo>, sqlx::Error> {
+        let Some(pool) = &self.pool else {
+            return Ok(Vec::new());
+        };
+        let rows = sqlx::query_as::<_, (String, Option<serde_json::Value>)>(PROFILE_SQL)
+            .bind(addresses)
             .fetch_all(pool)
-            .await
-        {
-            Ok(rows) => {
-                for (addr, avatar) in rows {
-                    let Some(avatar) = avatar else { continue };
-                    let nonempty = |key| {
-                        avatar
-                            .get(key)
-                            .and_then(serde_json::Value::as_str)
-                            .filter(|v| !v.is_empty())
-                    };
-                    let Some(user_id) = nonempty("userId") else {
-                        continue;
-                    };
-                    // Upstream keys the profile map by avatar.userId, not by
-                    // the requested pointer; a mismatched profile cannot enrich it.
-                    if user_id.to_lowercase() != addr {
-                        continue;
-                    }
-                    let Some(name) = nonempty("name").or_else(|| nonempty("unclaimedName")) else {
-                        continue;
-                    };
-                    let Some(picture) = avatar
-                        .pointer("/avatar/snapshots/face256")
-                        .and_then(serde_json::Value::as_str)
-                        .filter(|v| !v.is_empty())
-                    else {
-                        continue;
-                    };
-                    let name_color = avatar.get("nameColor").and_then(|color| {
-                        Some(NameColor {
-                            r: color.get("r")?.as_f64()? as f32,
-                            g: color.get("g")?.as_f64()? as f32,
-                            b: color.get("b")?.as_f64()? as f32,
-                        })
-                    });
-                    resolved.insert(
-                        addr.to_lowercase(),
-                        ProfileInfo {
-                            name: name.to_string(),
-                            profile_picture_url: picture.to_string(),
-                            has_claimed_name: avatar
-                                .get("hasClaimedName")
-                                .and_then(serde_json::Value::as_bool)
-                                .unwrap_or(false),
-                            name_color,
-                        },
-                    );
-                }
-            }
-            Err(e) => {
-                return Err(e);
-            }
+            .await?;
+        let mut profiles = Vec::new();
+        for (_, avatar) in rows {
+            let Some(avatar) = avatar else {
+                continue;
+            };
+            let nonempty = |key| {
+                avatar
+                    .get(key)
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|value| !value.is_empty())
+            };
+            let Some(address) = nonempty("userId") else {
+                continue;
+            };
+            let Some(name) = nonempty("name").or_else(|| nonempty("unclaimedName")) else {
+                continue;
+            };
+            let Some(picture) = avatar
+                .pointer("/avatar/snapshots/face256")
+                .and_then(serde_json::Value::as_str)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            let name_color = avatar.get("nameColor").and_then(|color| {
+                Some(NameColor {
+                    r: color.get("r")?.as_f64()? as f32,
+                    g: color.get("g")?.as_f64()? as f32,
+                    b: color.get("b")?.as_f64()? as f32,
+                })
+            });
+            profiles.push(ProfileInfo {
+                address: address.to_lowercase(),
+                name: name.into(),
+                profile_picture_url: picture.into(),
+                has_claimed_name: avatar
+                    .get("hasClaimedName")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false),
+                name_color,
+            });
         }
-        for addr in misses {
-            let info = resolved.get(&addr).cloned();
-            if let Some(info) = &info {
-                out.insert(addr.clone(), info.clone());
-            }
-            // Upstream only caches resolved profiles. A missing profile may be
-            // deployed immediately after this read and must be retried.
-            if info.is_some() {
-                self.cache.insert(addr, info);
-            }
-        }
-        Ok(out)
+        Ok(profiles)
     }
 
     pub async fn get_profile(&self, address: &str) -> Option<ProfileInfo> {
-        self.get_profiles(std::slice::from_ref(&address.to_string()))
+        self.get_profile_result(address)
             .await
-            .remove(&address.to_lowercase())
+            .unwrap_or_else(|error| {
+                tracing::warn!(%error,"single profile enrichment unavailable");
+                None
+            })
     }
 
     pub async fn friend_profile(&self, address: &str) -> FriendProfile {
@@ -229,14 +246,15 @@ impl Profiles {
     /// `address`'s profile, or the placeholder; `None` only when a profile
     /// source is attached and holds no usable profile for it.
     pub async fn existing_friend_profile(&self, address: &str) -> Option<FriendProfile> {
-        let (mut map, strict) = self
-            .known_profiles(std::slice::from_ref(&address.to_string()))
-            .await;
-        let info = map.remove(&address.to_lowercase());
-        if info.is_none() && strict {
-            return None;
+        match self.get_profile_result(address).await {
+            Ok(Some(info)) => Some(friend_profile(address, Some(&info))),
+            Ok(None) if self.requires_profiles() => None,
+            Ok(None) => Some(friend_profile(address, None)),
+            Err(error) => {
+                tracing::warn!(%error,"profile source unavailable; retaining connectivity placeholder");
+                Some(friend_profile(address, None))
+            }
         }
-        Some(friend_profile(address, info.as_ref()))
     }
 
     /// [`Self::friend_profiles`] without the wallets
@@ -253,19 +271,17 @@ impl Profiles {
             .collect()
     }
 
-    /// Resolved profiles in input order. Upstream's profile-returning list
-    /// methods omit addresses whose profiles cannot be reduced.
+    /// Resolved profiles in registry order: cached values before fresh values.
+    /// Unavailable profiles are omitted; public aliases retain avatar.userId.
     pub async fn friend_profiles(
         &self,
         addresses: &[String],
     ) -> Result<Vec<FriendProfile>, sqlx::Error> {
-        let map = self.get_profiles_result(addresses).await?;
-        Ok(addresses
+        Ok(self
+            .get_profiles_list_result(addresses)
+            .await?
             .iter()
-            .filter_map(|a| {
-                map.get(&a.to_lowercase())
-                    .map(|p| friend_profile(a, Some(p)))
-            })
+            .map(|profile| friend_profile(&profile.address, Some(profile)))
             .collect())
     }
 
@@ -285,7 +301,7 @@ impl Profiles {
 pub fn friend_profile(address: &str, info: Option<&ProfileInfo>) -> FriendProfile {
     match info {
         Some(info) => FriendProfile {
-            address: address.to_lowercase(),
+            address: info.address.clone(),
             name: info.name.clone(),
             has_claimed_name: info.has_claimed_name,
             profile_picture_url: info.profile_picture_url.clone(),
@@ -308,7 +324,7 @@ pub fn blocked_profile(
 ) -> BlockedUserProfile {
     match info {
         Some(info) => BlockedUserProfile {
-            address: address.to_lowercase(),
+            address: info.address.clone(),
             name: info.name.clone(),
             has_claimed_name: info.has_claimed_name,
             profile_picture_url: info.profile_picture_url.clone(),
@@ -423,12 +439,16 @@ mod tests {
         cases.push((empty_face, None));
         let mut wrong_identity = valid.clone();
         wrong_identity["userId"] = serde_json::json!("different-user");
-        cases.push((wrong_identity, None));
+        cases.push((wrong_identity, Some("Alice")));
         cases.push((serde_json::json!([]), None));
         for (index, (avatar, expected_name)) in cases.into_iter().enumerate() {
+            let public_address = avatar
+                .get("userId")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_lowercase);
             let entity = format!("bafkreiprofile{tag}{index}");
             let metadata = serde_json::json!({"v":{"avatars":[avatar, valid.clone()]}});
-            sqlx::query("INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) VALUES ($1,'v3','profile',$2,$3,now(),ARRAY[$1],now(),'[]'::json)")
+            sqlx::query("INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) VALUES ($1,'v3','profile',$2,$3,to_timestamp(1451606400),ARRAY[$1],now(),'[]'::json)")
                 .bind(&address).bind(&entity).bind(metadata).execute(&pool).await.unwrap();
             sqlx::query("INSERT INTO content.active_pointers(pointer,entity_id,entity_type) VALUES($1,$2,'profile') ON CONFLICT(pointer) DO UPDATE SET entity_id=EXCLUDED.entity_id")
                 .bind(&address).bind(&entity).execute(&pool).await.unwrap();
@@ -439,7 +459,7 @@ mod tests {
                 .unwrap();
             if let Some(name) = expected_name {
                 assert_eq!(result.len(), 1);
-                assert_eq!(result[0].address, address);
+                assert_eq!(Some(result[0].address.as_str()), public_address.as_deref());
                 assert_eq!(result[0].name, name);
                 assert_eq!(
                     result[0].profile_picture_url,

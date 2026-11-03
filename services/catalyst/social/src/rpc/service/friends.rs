@@ -76,7 +76,10 @@ pub(crate) async fn apply_friendship_action(
     )
     .await?;
     let created_ms = created_at.timestamp_millis();
-    let my_profile = ctx.profiles().friend_profile(me).await;
+    let mut my_profile = ctx.profiles().friend_profile(me).await;
+    // Raw/JSON updates identify the actor wallet. RPC delivery resolves the
+    // public profile separately, whose historical userId may be an alias.
+    my_profile.address = me.to_string();
     let update = friendship_update_for(
         action,
         me,
@@ -107,16 +110,16 @@ async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
         let Some(profile) = ctx.profiles().existing_friend_profile(friend).await else {
             continue;
         };
-        let friend = profile;
-        let address = friend.address.clone();
+        let mut friend_profile = profile;
+        friend_profile.address = friend.to_string();
         ctx.topology()
-            .deliver_if_current(snapshot.generation, &address, true, || {
+            .deliver_if_current(snapshot.generation, friend, true, || {
                 ctx.pubsub().publish(
                     recipient,
                     SocialEvent::TopologyFriendConnectivity(
                         FriendConnectivityUpdate {
                             stream_closed: None,
-                            friend: Some(friend),
+                            friend: Some(friend_profile),
                             status: ConnectivityStatus::Online as i32,
                         },
                         snapshot.generation,

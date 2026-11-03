@@ -41,6 +41,7 @@ mod fanout;
 mod friends;
 mod http;
 mod private_voice;
+mod profile_source_cases;
 mod settings;
 mod social_api;
 mod socket;

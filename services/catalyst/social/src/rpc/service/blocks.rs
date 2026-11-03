@@ -242,10 +242,10 @@ impl SocialServiceImpl {
             }
         };
         let addrs: Vec<String> = rows.iter().map(|r| r.address.clone()).collect();
-        let map = match context
+        let resolved = match context
             .server_context
             .profiles()
-            .get_profiles_result(&addrs)
+            .get_profiles_list_result(&addrs)
             .await
         {
             Ok(profiles) => profiles,
@@ -257,15 +257,23 @@ impl SocialServiceImpl {
                 });
             }
         };
-        let profiles = rows
+        let blocked_at = rows
             .iter()
-            .filter_map(|r| {
-                let profile = map.get(&r.address.to_lowercase())?;
-                Some(profiles::blocked_profile(
-                    &r.address,
+            .map(|row| {
+                (
+                    row.address.to_lowercase(),
+                    row.blocked_at.timestamp_millis(),
+                )
+            })
+            .collect::<std::collections::HashMap<_, _>>();
+        let profiles = resolved
+            .iter()
+            .map(|profile| {
+                profiles::blocked_profile(
+                    &profile.address,
                     Some(profile),
-                    Some(r.blocked_at.timestamp_millis()),
-                ))
+                    blocked_at.get(&profile.address).copied(),
+                )
             })
             .collect();
         Ok(GetBlockedUsersResponse {

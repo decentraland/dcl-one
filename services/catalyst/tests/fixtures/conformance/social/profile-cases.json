@@ -1,0 +1,855 @@
+{
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "yarn_lock_sha256": "5e5f4a1ee4bd960bede74f5877921117ebbfa88a67cf5c75ffd86ea9416c7088",
+    "sources": [
+      {
+        "path": "src/adapters/registry.ts",
+        "sha256": "2c00eeec7ae8df9c24fef67b6c7b941f1688cf387af794aa38927ec7e2fca15c"
+      },
+      {
+        "path": "src/logic/profiles.ts",
+        "sha256": "3856e67cd3fcc10b9e4e40c5b775b93a2714cdd10bd1484996cd1aff501333ff"
+      },
+      {
+        "path": "src/logic/friends/friends.ts",
+        "sha256": "fc63e9642e5aaab3e70a28dcc8bd9e895797d02096e794738fa40816df114d0a"
+      },
+      {
+        "path": "src/logic/friends/blocks.ts",
+        "sha256": "990bf552f79df62de3a72759e527e9ec8b45c491ff098cd113597a512d12fd10"
+      },
+      {
+        "path": "src/logic/friends/friendships.ts",
+        "sha256": "1bedbfccb17dd92391e43f06564bf2e4a2ff70e53b36c8cb1d5ff44bfb07458a"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-friends.ts",
+        "sha256": "83a5b62c091b7b5c4d4cc5dc4e81a87c8f54445575e5b289d4fffd37c90d6d5e"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-mutual-friends.ts",
+        "sha256": "5ab9e4a955d193c53553da61e6464ac930af554340bdcc16c2bde7a9deb34c9c"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-blocked-users.ts",
+        "sha256": "9b3a9c38619407e35518ba9ee24d650ce39cec579d2b00d49cc8b2f5c6555a3a"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-pending-friendship-requests.ts",
+        "sha256": "6d269f62429605cbcf0fddee8999a6016ce5b61e3803461792544fc012d013bc"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-sent-friendship-requests.ts",
+        "sha256": "571dbcff43e82722fa0e3a08ed0b112bbabc47b5fcfa9199401bdb22791be2a2"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/block-user.ts",
+        "sha256": "895011beeeefb7b4e78c7a78612a3f7b0a362807ea049f514a9f9990d7075672"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/unblock-user.ts",
+        "sha256": "7010b7bf5a19088bfed066e9d005c7ee4b7fc9981233d85e5f64c6b8531f1d96"
+      }
+    ]
+  },
+  "runtime": {
+    "node": "v26.12.0"
+  },
+  "scope": "Actual source registry component (injected HTTP/Redis) plus real RPC handlers/DTO parsers; friendship/block database dependencies are injected. Captures public profile aliases, source single-vs-list cache key behavior, cached+fetched duplicates and positive normal profiles. Does not alter/authenticate wallet identities.",
+  "caller": "0x9111111111111111111111111111111111111111",
+  "owner": "0x9222222222222222222222222222222222222222",
+  "alias": "0x9333333333333333333333333333333333333333",
+  "second": "0x9444444444444444444444444444444444444444",
+  "cases": [
+    {
+      "id": "historical-alias-lists-and-single-cache",
+      "documents": {
+        "0x9222222222222222222222222222222222222222": {
+          "avatars": [
+            {
+              "userId": "0x9333333333333333333333333333333333333333",
+              "name": "Source profile",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "operation": "getFriends",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "friends": [
+              {
+                "address": "0x9333333333333333333333333333333333333333",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              }
+            ],
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a670a2a307839333333333333333333333333333333333333333333333333333333333333333333333333333333120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67120408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        },
+        {
+          "operation": "getFriends",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "friends": [
+              {
+                "address": "0x9333333333333333333333333333333333333333",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              }
+            ],
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a670a2a307839333333333333333333333333333333333333333333333333333333333333333333333333333333120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67120408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        },
+        {
+          "operation": "getMutualFriends",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "friends": [
+              {
+                "address": "0x9333333333333333333333333333333333333333",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              }
+            ],
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a670a2a307839333333333333333333333333333333333333333333333333333333333333333333333333333333120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67120408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        },
+        {
+          "operation": "blockUser",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "response": {
+              "$case": "ok",
+              "ok": {
+                "profile": {
+                  "address": "0x9333333333333333333333333333333333333333",
+                  "name": "Source profile",
+                  "hasClaimedName": true,
+                  "profilePictureUrl": "https://images.example.org/raw-face.png",
+                  "blockedAt": 0
+                }
+              }
+            }
+          },
+          "expected_hex": "0a6b0a690a2a307839333333333333333333333333333333333333333333333333333333333333333333333333333333120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e672800",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222",
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        },
+        {
+          "operation": "getFriends",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "friends": [
+              {
+                "address": "0x9333333333333333333333333333333333333333",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              },
+              {
+                "address": "0x9333333333333333333333333333333333333333",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              }
+            ],
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a670a2a307839333333333333333333333333333333333333333333333333333333333333333333333333333333120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e670a670a2a307839333333333333333333333333333333333333333333333333333333333333333333333333333333120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67120408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222",
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        },
+        {
+          "operation": "getBlockedUsers",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "profiles": [
+              {
+                "address": "0x9333333333333333333333333333333333333333",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              },
+              {
+                "address": "0x9333333333333333333333333333333333333333",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              }
+            ],
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a670a2a307839333333333333333333333333333333333333333333333333333333333333333333333333333333120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e670a670a2a307839333333333333333333333333333333333333333333333333333333333333333333333333333333120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67120408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222",
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        },
+        {
+          "operation": "getPendingFriendshipRequests",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "response": {
+              "$case": "requests",
+              "requests": {
+                "requests": []
+              }
+            },
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a001a0408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222",
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        },
+        {
+          "operation": "getSentFriendshipRequests",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "response": {
+              "$case": "requests",
+              "requests": {
+                "requests": []
+              }
+            },
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a001a0408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222",
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        },
+        {
+          "operation": "unblockUser",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "response": {
+              "$case": "ok",
+              "ok": {
+                "profile": {
+                  "address": "0x9333333333333333333333333333333333333333",
+                  "name": "Source profile",
+                  "hasClaimedName": true,
+                  "profilePictureUrl": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          },
+          "expected_hex": "0a690a670a2a307839333333333333333333333333333333333333333333333333333333333333333333333333333333120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222",
+            "catalyst:minimal:profile:0x9333333333333333333333333333333333333333"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "regular-positive-profiles",
+      "documents": {
+        "0x9222222222222222222222222222222222222222": {
+          "avatars": [
+            {
+              "userId": "0x9222222222222222222222222222222222222222",
+              "name": "Source profile",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "operation": "getFriends",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "friends": [
+              {
+                "address": "0x9222222222222222222222222222222222222222",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              }
+            ],
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a670a2a307839323232323232323232323232323232323232323232323232323232323232323232323232323232120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67120408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222"
+          ]
+        },
+        {
+          "operation": "blockUser",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "response": {
+              "$case": "ok",
+              "ok": {
+                "profile": {
+                  "address": "0x9222222222222222222222222222222222222222",
+                  "name": "Source profile",
+                  "hasClaimedName": true,
+                  "profilePictureUrl": "https://images.example.org/raw-face.png",
+                  "blockedAt": 0
+                }
+              }
+            }
+          },
+          "expected_hex": "0a6b0a690a2a307839323232323232323232323232323232323232323232323232323232323232323232323232323232120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e672800",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222"
+          ]
+        },
+        {
+          "operation": "getBlockedUsers",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "profiles": [
+              {
+                "address": "0x9222222222222222222222222222222222222222",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png",
+                "blockedAt": 0
+              }
+            ],
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a690a2a307839323232323232323232323232323232323232323232323232323232323232323232323232323232120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e672800120408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222"
+          ]
+        },
+        {
+          "operation": "getPendingFriendshipRequests",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "response": {
+              "$case": "requests",
+              "requests": {
+                "requests": [
+                  {
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "friend": {
+                      "address": "0x9222222222222222222222222222222222222222",
+                      "name": "Source profile",
+                      "hasClaimedName": true,
+                      "profilePictureUrl": "https://images.example.org/raw-face.png"
+                    },
+                    "createdAt": 0,
+                    "message": ""
+                  }
+                ]
+              }
+            },
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a94010a91010a670a2a307839323232323232323232323232323232323232323232323232323232323232323232323232323232120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e671a00222430303030303030302d303030302d303030302d303030302d3030303030303030303030311a0408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222"
+          ]
+        },
+        {
+          "operation": "getSentFriendshipRequests",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "response": {
+              "$case": "requests",
+              "requests": {
+                "requests": [
+                  {
+                    "id": "00000000-0000-0000-0000-000000000001",
+                    "friend": {
+                      "address": "0x9222222222222222222222222222222222222222",
+                      "name": "Source profile",
+                      "hasClaimedName": true,
+                      "profilePictureUrl": "https://images.example.org/raw-face.png"
+                    },
+                    "createdAt": 0,
+                    "message": ""
+                  }
+                ]
+              }
+            },
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a94010a91010a670a2a307839323232323232323232323232323232323232323232323232323232323232323232323232323232120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e671a00222430303030303030302d303030302d303030302d303030302d3030303030303030303030311a0408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222"
+          ]
+        },
+        {
+          "operation": "unblockUser",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "response": {
+              "$case": "ok",
+              "ok": {
+                "profile": {
+                  "address": "0x9222222222222222222222222222222222222222",
+                  "name": "Source profile",
+                  "hasClaimedName": true,
+                  "profilePictureUrl": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          },
+          "expected_hex": "0a690a670a2a307839323232323232323232323232323232323232323232323232323232323232323232323232323232120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "cached-profiles-precede-newly-fetched-profiles",
+      "documents": {
+        "0x9222222222222222222222222222222222222222": {
+          "avatars": [
+            {
+              "userId": "0x9222222222222222222222222222222222222222",
+              "name": "Source profile",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        },
+        "0x9444444444444444444444444444444444444444": {
+          "avatars": [
+            {
+              "userId": "0x9444444444444444444444444444444444444444",
+              "name": "Source profile",
+              "hasClaimedName": true,
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/raw-face.png"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "operation": "getFriends",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "friends": [
+              {
+                "address": "0x9222222222222222222222222222222222222222",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              }
+            ],
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a670a2a307839323232323232323232323232323232323232323232323232323232323232323232323232323232120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67120408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222"
+          ]
+        },
+        {
+          "operation": "getFriendsMixed",
+          "targets": [
+            "0x9444444444444444444444444444444444444444",
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "friends": [
+              {
+                "address": "0x9222222222222222222222222222222222222222",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              },
+              {
+                "address": "0x9444444444444444444444444444444444444444",
+                "name": "Source profile",
+                "hasClaimedName": true,
+                "profilePictureUrl": "https://images.example.org/raw-face.png"
+              }
+            ],
+            "paginationData": {
+              "total": 2,
+              "page": 1
+            }
+          },
+          "expected_hex": "0a670a2a307839323232323232323232323232323232323232323232323232323232323232323232323232323232120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e670a670a2a307839343434343434343434343434343434343434343434343434343434343434343434343434343434120e536f757263652070726f66696c651801222768747470733a2f2f696d616765732e6578616d706c652e6f72672f7261772d666163652e706e67120408021001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9444444444444444444444444444444444444444"
+            ]
+          ],
+          "cache_keys": [
+            "catalyst:minimal:profile:0x9222222222222222222222222222222222222222",
+            "catalyst:minimal:profile:0x9444444444444444444444444444444444444444"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "missing-user-id-remains-unavailable",
+      "documents": {
+        "0x9222222222222222222222222222222222222222": {
+          "avatars": [
+            {
+              "name": "Invalid",
+              "avatar": {
+                "snapshots": {
+                  "face256": "https://images.example.org/invalid.png"
+                }
+              }
+            }
+          ]
+        }
+      },
+      "steps": [
+        {
+          "operation": "getFriends",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "friends": [],
+            "paginationData": {
+              "total": 1,
+              "page": 1
+            }
+          },
+          "expected_hex": "120408011001",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": []
+        },
+        {
+          "operation": "blockUser",
+          "targets": [
+            "0x9222222222222222222222222222222222222222"
+          ],
+          "response": {
+            "response": {
+              "$case": "ok",
+              "ok": {
+                "profile": {
+                  "address": "0x9222222222222222222222222222222222222222",
+                  "name": "",
+                  "hasClaimedName": false,
+                  "profilePictureUrl": "",
+                  "blockedAt": 0
+                }
+              }
+            }
+          },
+          "expected_hex": "0a300a2e0a2a3078393232323232323232323232323232323232323232323232323232323232323232323232323232322800",
+          "fetches": [
+            [
+              "0x9222222222222222222222222222222222222222"
+            ],
+            [
+              "0x9222222222222222222222222222222222222222"
+            ]
+          ],
+          "cache_keys": []
+        }
+      ]
+    }
+  ]
+}

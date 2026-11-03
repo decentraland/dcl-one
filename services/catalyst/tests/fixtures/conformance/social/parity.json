@@ -2280,8 +2280,8 @@
     {
       "id": "rpc_unary:RPC:blockUser",
       "owner": "friends-settings-blocks",
-      "status": "known_gap",
-      "result": "Validates raw target/self, records block and existing friendship action atomically; only existing friendships emit friendship updates; write response retains profile fallback. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
+      "status": "reviewed",
+      "result": "Validates raw target/self, records block and existing friendship action atomically; only existing friendships emit friendship updates; write response retains profile fallback. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/blocks.rs",
@@ -2311,11 +2311,14 @@
           "path": "services/catalyst/social/src/rpc/limits.rs",
           "test": "concurrent_replicas_share_one_atomic_pair_budget",
           "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
+          "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
+          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
         }
       ],
-      "gaps": [
-        "Historical profile identity mismatch: the local resolver rejects an avatar.userId different from the active pointer; upstream registry parsing can return that userId. New deployments are constrained by content identity validation, historical pre-cutoff records need explicit conformance coverage."
-      ],
+      "gaps": [],
       "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
     },
     {
@@ -2378,8 +2381,8 @@
     {
       "id": "rpc_unary:RPC:getBlockedUsers",
       "owner": "friends-settings-blocks",
-      "status": "known_gap",
-      "result": "Returns only resolved profiles, retains full blocked total and original block time, bounds pages, and returns empty page on read failure.",
+      "status": "reviewed",
+      "result": "Returns only resolved profiles, retains full blocked total and original block time, bounds pages, and returns empty page on read failure. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/blocks.rs",
@@ -2399,11 +2402,14 @@
           "path": "services/catalyst/content/src/validator/checker.rs",
           "test": "profile_identity_mismatch_is_rejected_per_field",
           "scope": "Identity metadata is constrained only at/after PROFILE_IDENTITY; does not prove historical data has no mismatches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
+          "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
+          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
         }
       ],
-      "gaps": [
-        "Historical profile identity mismatch: the local resolver rejects an avatar.userId different from the active pointer; upstream registry parsing can return that userId. New deployments are constrained by content identity validation, historical pre-cutoff records need explicit conformance coverage."
-      ],
+      "gaps": [],
       "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
     },
     {
@@ -2428,8 +2434,8 @@
     {
       "id": "rpc_unary:RPC:getFriends",
       "owner": "friends-settings-blocks",
-      "status": "known_gap",
-      "result": "Filters unresolved profiles; reads active unblocked friends newest first; normalization bounds and source missing-profile response compared.",
+      "status": "reviewed",
+      "result": "Filters unresolved profiles; reads active unblocked friends newest first; normalization bounds and source missing-profile response compared. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/friends.rs",
@@ -2449,11 +2455,14 @@
           "path": "services/catalyst/content/src/validator/checker.rs",
           "test": "profile_identity_mismatch_is_rejected_per_field",
           "scope": "Identity metadata is constrained only at/after PROFILE_IDENTITY; does not prove historical data has no mismatches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
+          "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
+          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
         }
       ],
-      "gaps": [
-        "Historical profile identity mismatch: the local resolver rejects an avatar.userId different from the active pointer; upstream registry parsing can return that userId. New deployments are constrained by content identity validation, historical pre-cutoff records need explicit conformance coverage."
-      ],
+      "gaps": [],
       "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
     },
     {
@@ -2502,8 +2511,8 @@
     {
       "id": "rpc_unary:RPC:getMutualFriends",
       "owner": "friends-settings-blocks",
-      "status": "known_gap",
-      "result": "Validates normalized target, reads shared active unblocked friends in address order, and filters unresolved profiles; errors answer an empty page.",
+      "status": "reviewed",
+      "result": "Validates normalized target, reads shared active unblocked friends in address order, and filters unresolved profiles; errors answer an empty page. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/friends.rs",
@@ -2523,18 +2532,21 @@
           "path": "services/catalyst/content/src/validator/checker.rs",
           "test": "profile_identity_mismatch_is_rejected_per_field",
           "scope": "Identity metadata is constrained only at/after PROFILE_IDENTITY; does not prove historical data has no mismatches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
+          "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
+          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
         }
       ],
-      "gaps": [
-        "Historical profile identity mismatch: the local resolver rejects an avatar.userId different from the active pointer; upstream registry parsing can return that userId. New deployments are constrained by content identity validation, historical pre-cutoff records need explicit conformance coverage."
-      ],
+      "gaps": [],
       "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
     },
     {
       "id": "rpc_unary:RPC:getPendingFriendshipRequests",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Received request rows identify the request action UUID and counterparty; missing profiles omitted while full total is retained.",
+      "result": "Received request rows identify the request action UUID and counterparty; missing profiles omitted while full total is retained. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/domain.rs",
@@ -2549,6 +2561,11 @@
           "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
           "test": "rpc_wire_answers_match_executed_upstream_source_cases",
           "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
+          "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
+          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
         }
       ],
       "gaps": [],
@@ -2582,7 +2599,7 @@
       "id": "rpc_unary:RPC:getSentFriendshipRequests",
       "owner": "friends-settings-blocks",
       "status": "reviewed",
-      "result": "Sent request rows identify the request action UUID and counterparty; missing profiles omitted while full total is retained.",
+      "result": "Sent request rows identify the request action UUID and counterparty; missing profiles omitted while full total is retained. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/domain.rs",
@@ -2597,6 +2614,11 @@
           "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
           "test": "rpc_wire_answers_match_executed_upstream_source_cases",
           "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
+          "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
+          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
         }
       ],
       "gaps": [],
@@ -2800,8 +2822,8 @@
     {
       "id": "rpc_unary:RPC:unblockUser",
       "owner": "friends-settings-blocks",
-      "status": "known_gap",
-      "result": "Validates raw target/self; actual block removal and friendship delete action commit atomically; retry without block has no action/event; write response retains profile fallback. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables.",
+      "status": "reviewed",
+      "result": "Validates raw target/self; actual block removal and friendship delete action commit atomically; retry without block has no action/event; write response retains profile fallback. Shared SQL counters now reproduce the source actor-first fixed-window limiter across instances, including symmetric friendship and directional block budgets; configured limits use the source environment variables. Public historical profile aliases now retain avatar.userId. Single lookups and batch lists preserve the source cache-key and cached-first/fetched ordering, including duplicate aliases; request maps continue matching the wallet key.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/service/blocks.rs",
@@ -2831,11 +2853,14 @@
           "path": "services/catalyst/social/src/rpc/limits.rs",
           "test": "concurrent_replicas_share_one_atomic_pair_budget",
           "scope": "Two independent limiter instances share one atomic SQL pair budget under 32 concurrent attempts."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
+          "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
+          "scope": "Four scenarios replay 19 actual pinned registry/RPC handler responses with injected HTTP/Redis/domain reads against seeded pre-cutoff SQL content and real local friendship/block state. Includes normal positive profiles, old pointer/userId aliases, single-to-batch duplicate/order behavior and missing userId; mutation assertions keep requested wallet distinct from public profile identity."
         }
       ],
-      "gaps": [
-        "Historical profile identity mismatch: the local resolver rejects an avatar.userId different from the active pointer; upstream registry parsing can return that userId. New deployments are constrained by content identity validation, historical pre-cutoff records need explicit conformance coverage."
-      ],
+      "gaps": [],
       "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
     },
     {
@@ -4996,18 +5021,6 @@
   "review_policy": "reviewed means the stated source/behaviour scope was compared; it never means exhaustive equivalence. known_gap names a remaining observed difference. not_reviewed requires an explicit comparison, even if a matching route or local test exists.",
   "cross_cutting_gaps": [
     {
-      "id": "historical-profile-identity",
-      "operations": [
-        "rpc_unary:RPC:getFriends",
-        "rpc_unary:RPC:getMutualFriends",
-        "rpc_unary:RPC:getBlockedUsers",
-        "rpc_unary:RPC:blockUser",
-        "rpc_unary:RPC:unblockUser"
-      ],
-      "status": "known_gap",
-      "description": "Historical pre-identity-validation profiles with avatar.userId different from the active pointer are omitted locally; upstream registry reduction can preserve their profile identity. Preserve this as an observed resolver difference until source golden coverage and an explicit implementation decision resolve it."
-    },
-    {
       "id": "external-notification-consumers",
       "operations": [
         "rpc_unary:RPC:upsertFriendship"
@@ -5179,6 +5192,20 @@
         "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address"
       ],
       "description": "The pinned HTTP server applies HTTP_MAX_REQUEST_BODY_BYTES and rejects oversized declared bodies with413 before authentication; the current gateway still uses handler-level hardcoded limits. Declared/chunked body overflow, configured limits, response/CORS and connection-close behavior need a full boundary comparison and fix."
+    },
+    {
+      "id": "shared-social-profile-cache",
+      "status": "known_gap",
+      "operations": [
+        "rpc_unary:RPC:blockUser",
+        "rpc_unary:RPC:getBlockedUsers",
+        "rpc_unary:RPC:getFriends",
+        "rpc_unary:RPC:getMutualFriends",
+        "rpc_unary:RPC:getPendingFriendshipRequests",
+        "rpc_unary:RPC:getSentFriendshipRequests",
+        "rpc_unary:RPC:unblockUser"
+      ],
+      "description": "RPC historical single/list profile semantics now pass executed-source cases, while community owner single lookups and the one registry cache shared across domains remain to be consolidated. New profile-write identity validation remains enforced; current local RPC and community caches are distinct."
     }
   ]
 }
