@@ -39,6 +39,16 @@ describe("when discovery reads an event page", () => {
     });
   });
 
+  describe("and only the lookahead row is malformed", () => {
+    beforeEach(() => {
+      body = { ok: true, data: [record, { ...record, id: "second" }, { id: "bad-lookahead" }] };
+      vi.spyOn(console, "warn").mockImplementation(() => {});
+    });
+    it("should retain next-page navigation without warning about hidden rows on this page", async () => {
+      await expect(fetchEventPage({ limit: 2 }, { base: "https://node.example", fetchImpl })).resolves.toMatchObject({ data: [{ id: "valid" }, { id: "second" }], hasMore: true, invalidCount: 0 });
+    });
+  });
+
   describe("and a row is malformed", () => {
     beforeEach(() => {
       body = { ok: true, data: [{ ...record, name: 42 }, record, { ...record, id: "lookahead" }] };

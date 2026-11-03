@@ -169,7 +169,7 @@ export async function fetchEventPage(
   return {
     data: rows.slice(0, params.limit).filter((event) => event !== null),
     hasMore: rows.length > params.limit,
-    invalidCount: rows.filter((event) => event === null).length,
+    invalidCount: rows.slice(0, params.limit).filter((event) => event === null).length,
     copy,
   };
 }

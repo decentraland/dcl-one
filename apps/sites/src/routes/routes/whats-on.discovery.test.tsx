@@ -2,11 +2,14 @@ import { renderToString } from "react-dom/server";
 import { createMemoryRouter, RouterProvider } from "react-router";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fetchEvents, fetchEventPage, toLiveNowCard, type Event } from "@/data/lib/catalyst/places/events";
+import { fetchEventCalendar } from "@/data/lib/catalyst/places/event-calendar.server";
 import WhatsOn, { loader } from "./whats-on";
 
 vi.mock("@/data/lib/auth/context", () => ({ useAuth: () => ({ identity: null, isConnected: false }) }));
 vi.mock("@/core/lib/telemetry/track", () => ({ track: vi.fn() }));
 vi.mock("@/data/lib/catalyst/places/events", async (original) => ({ ...await original<typeof import("@/data/lib/catalyst/places/events")>(), fetchEvents: vi.fn(), fetchEventPage: vi.fn() }));
+
+vi.mock("@/data/lib/catalyst/places/event-calendar.server", () => ({ fetchEventCalendar: vi.fn() }));
 
 describe("when the public hangout catalogue is paginated", () => {
   let events: Event[];
@@ -20,6 +23,7 @@ describe("when the public hangout catalogue is paginated", () => {
     request = new Request("https://example.test/whats-on?search=music&offset=120&filter=recurring");
     vi.mocked(fetchEvents).mockImplementation(async (params) => ({ data: params?.list === "live" ? [] : events, total: events.length }));
     vi.mocked(fetchEventPage).mockResolvedValue({ data: events.slice(0, 24), hasMore: true });
+    vi.mocked(fetchEventCalendar).mockResolvedValue({ data: events, total: events.length });
     renderPage = () => {
       const router = createMemoryRouter([{ id: "feed", path: "/whats-on", Component: WhatsOn as never }], { initialEntries: [request.url.replace("https://example.test", "")], hydrationData: { loaderData: { feed: data } } });
       return renderToString(<RouterProvider router={router} />).replace(/<!--.*?-->/g, "");
@@ -58,7 +62,7 @@ describe("when the public hangout catalogue is paginated", () => {
   });
 
   describe("and the API is unavailable", () => {
-    beforeEach(() => { vi.mocked(fetchEvents).mockRejectedValue(new Error("offline")); vi.mocked(fetchEventPage).mockRejectedValue(new Error("offline")); });
+    beforeEach(() => { vi.mocked(fetchEvents).mockRejectedValue(new Error("offline")); vi.mocked(fetchEventPage).mockRejectedValue(new Error("offline")); vi.mocked(fetchEventCalendar).mockRejectedValue(new Error("offline")); });
     it("should show a retryable failure instead of an empty catalogue", async () => {
       response = await loader({ request } as never) as typeof response;
       data = response.data;
@@ -92,15 +96,27 @@ describe("when the public hangout catalogue is paginated", () => {
     beforeEach(() => {
       vi.useFakeTimers();
       vi.setSystemTime(new Date("2099-06-01T12:00:00Z"));
-      vi.mocked(fetchEvents).mockImplementation(async (params) => ({ data: params?.list === "live" ? [] : [{ ...events[0], id: "later", start_at: "2099-06-20T18:00:00Z", next_start_at: "2099-06-20T18:00:00Z" }], total: 1 }));
+      vi.mocked(fetchEventCalendar).mockResolvedValue({ data: [{ ...events[0], id: "later", start_at: "2099-06-20T18:00:00Z", next_start_at: "2099-06-20T18:00:00Z" }], total: 1 });
     });
     afterEach(() => { vi.useRealTimers(); });
     it("should keep its calendar entry independent of catalogue pagination", async () => {
       response = await loader({ request } as never) as typeof response;
       data = response.data;
       expect(data.allDays[19].map((event) => event.id)).toContain("later");
-      expect(fetchEvents).toHaveBeenCalledWith(expect.objectContaining({ list: "active", limit: 500, from: "2099-06-01T00:00:00.000Z", to: "2099-06-29T00:00:00.000Z" }), expect.anything());
-      expect(vi.mocked(fetchEvents).mock.calls[1][0]).not.toHaveProperty("offset");
+      expect(fetchEventCalendar).toHaveBeenCalledWith(expect.objectContaining({ from: "2099-06-01T00:00:00.000Z", to: "2099-06-29T00:00:00.000Z" }), expect.anything());
+      expect(vi.mocked(fetchEventCalendar).mock.calls[0][0]).not.toHaveProperty("offset");
+    });
+  });
+
+  describe("and malformed data is the only problem", () => {
+    beforeEach(() => { vi.mocked(fetchEventPage).mockResolvedValue({ data: events.slice(0, 24), hasMore: true, invalidCount: 1 }); });
+    it("should show the data warning without offering a service retry", async () => {
+      response = await loader({ request } as never) as typeof response;
+      data = response.data;
+      html = renderPage();
+      expect(html).toContain("Some hangouts could not be displayed");
+      expect(html).not.toContain(">Retry<");
+      expect(html).toContain("Next page");
     });
   });
 
