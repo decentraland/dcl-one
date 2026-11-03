@@ -8,6 +8,29 @@ use tokio::sync::mpsc;
 fn wallet() -> Address {
     Address::parse(&format!("0x{}00000000", uuid::Uuid::new_v4().simple())).unwrap()
 }
+async fn repeatable_read_writers(pool: &sqlx::PgPool) -> sqlx::PgPool {
+    let writers = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(12)
+        .after_connect(|connection, _| {
+            Box::pin(async move {
+                sqlx::query(
+                    "SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ",
+                )
+                .execute(connection)
+                .await?;
+                Ok(())
+            })
+        })
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .unwrap();
+    let isolation: String = sqlx::query_scalar("SHOW default_transaction_isolation")
+        .fetch_one(&writers)
+        .await
+        .unwrap();
+    assert_eq!(isolation, "repeatable read");
+    writers
+}
 async fn advisory_key(pool: &sqlx::PgPool, name: &str) -> i64 {
     sqlx::query_scalar("SELECT hashtextextended($1,0)")
         .bind(name)
@@ -31,7 +54,7 @@ async fn concurrent_ip_creates_enforce_the_cap_and_keep_rejected_retry_receipts(
         return;
     };
     let referral = Arc::new(Referral::new(
-        pool.clone(),
+        repeatable_read_writers(&pool).await,
         Outbound::for_tests(),
         Settings {
             suspicious_window_ms: 0.0,
@@ -122,7 +145,7 @@ async fn concurrent_referrer_grants_observe_distinct_totals_and_release_sql_befo
     let url = format!("http://{}", listener.local_addr().unwrap());
     let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     let referral = Arc::new(Referral::new(
-        pool.clone(),
+        repeatable_read_writers(&pool).await,
         Outbound::for_tests(),
         Settings {
             min_login_days: 0.0,

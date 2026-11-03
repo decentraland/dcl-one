@@ -199,8 +199,13 @@ impl Referral {
         }
         self.assert_not_banned(referrer.as_str(), Some(ip)).await?;
         let mut tx = self.pool.begin().await.map_err(database_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await
+            .map_err(database_error)?;
         // Separate statements take a fresh READ COMMITTED snapshot after the
-        // lock is acquired. Count and insert must share that transaction.
+        // lock is acquired, even with a REPEATABLE READ role default.
+        // Count and insert must share that transaction.
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
             .bind(format!("social-referral-ip:{referrer}:{ip}"))
             .execute(&mut *tx)
@@ -299,6 +304,10 @@ impl Referral {
         };
         self.assert_not_banned(&referrer, ip.as_deref()).await?;
         let mut tx = self.pool.begin().await.map_err(database_error)?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+            .execute(&mut *tx)
+            .await
+            .map_err(database_error)?;
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
             .bind(format!("social-referral-tier:{referrer}"))
             .execute(&mut *tx)
