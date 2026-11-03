@@ -699,7 +699,7 @@ fn active_transmitter_removed(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-const BUFFER_THRESHOLD: f64 = 0.1;
+const BUFFER_THRESHOLD: f64 = 1.;
 #[cfg(not(target_arch = "wasm32"))]
 fn copy_frame(
     mut commands: Commands,
