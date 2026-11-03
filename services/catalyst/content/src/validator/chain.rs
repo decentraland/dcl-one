@@ -29,7 +29,7 @@ use crate::chain_index::graph::normalize_urn;
 pub const DECENTRALAND_ADDRESS: &str = "0x1337e0507eb4ab47e08a179573ed4533d9e22a7b";
 
 /// The form a URN is compared in: lowercase, L1 spelled `ethereum`.
-fn urn_key(urn: &str) -> String {
+pub(super) fn urn_key(urn: &str) -> String {
     normalize_urn(&urn.to_lowercase())
 }
 

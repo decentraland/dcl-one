@@ -4,25 +4,24 @@
 
 use alloy_primitives::Address;
 
+use super::chain::urn_key;
+use super::checker::{ItemUrnType, classify_item_urn, parse_collection_urn};
+
 /// `(contract, item)` for a mainnet collections-v1 asset URN, by address or
 /// by a listed name; `None` for anything else.
-fn v1_asset_key(pointer: &str) -> Option<(Address, &str)> {
-    let parts: Vec<&str> = pointer.split(':').collect();
-    let [
-        "urn",
-        "decentraland",
-        "ethereum",
-        "collections-v1",
-        collection,
-        item,
-    ] = parts[..]
-    else {
+fn v1_asset_key(pointer: &str) -> Option<(Address, String)> {
+    if classify_item_urn(pointer) != ItemUrnType::CollectionV1 {
         return None;
-    };
+    }
+    let key = urn_key(pointer);
+    if !key.starts_with("urn:decentraland:ethereum:") {
+        return None;
+    }
+    let (collection, item, _) = parse_collection_urn(&key)?;
     let contract = if collection.starts_with("0x") {
         collection.parse().ok()?
     } else {
-        super::onchain::v1_collection_contract(collection)?
+        super::onchain::v1_collection_contract(&collection)?
     };
     Some((contract, item))
 }
@@ -36,7 +35,7 @@ pub(super) fn single_item_pointer(pointers: &[String]) -> Option<String> {
     }
     let key = v1_asset_key(first)?;
     rest.iter()
-        .all(|p| v1_asset_key(p) == Some(key))
+        .all(|p| v1_asset_key(p).as_ref() == Some(&key))
         .then(|| first.clone())
 }
 
@@ -53,6 +52,18 @@ mod tests {
         let both = pointers(&[
             "urn:decentraland:ethereum:collections-v1:halloween_2019:hat",
             "urn:decentraland:ethereum:collections-v1:0xc1f4b0eea2bd6690930e6c66efd3e197d620b9c2:hat",
+        ]);
+        assert_eq!(
+            single_item_pointer(&both).as_deref(),
+            Some(both[0].as_str())
+        );
+    }
+
+    #[test]
+    fn the_mainnet_alias_names_the_same_asset() {
+        let both = pointers(&[
+            "urn:decentraland:mainnet:collections-v1:halloween_2019:hat",
+            "urn:decentraland:ethereum:collections-v1:0xC1F4B0EEA2BD6690930E6C66EFD3E197D620B9C2:hat",
         ]);
         assert_eq!(
             single_item_pointer(&both).as_deref(),
