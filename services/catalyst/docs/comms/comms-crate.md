@@ -126,10 +126,15 @@ deletion; or an immutable payload reference. The decoder checks version, kind,
 UUIDs, normalized wallet identities, status enums and the permitted protobuf arm.
 Private REQUESTED includes only the caller, ACCEPTED alone may carry credentials,
 and neither private parties nor closure notices can be added by another arm.
-The NATS subject and payload together are limited to 64 KiB. The outbound and
-inbound application queues each contain at most 256 messages. A full queue or a
-failed publish drops that event and increments `social_event_delivery_dropped`.
-These application queues are separate from client subscription queues.
+The NATS subject and payload together are limited to 64 KiB. The
+outbound application queue contains at most 256 messages; mutation publishers
+await admission for up to five seconds. The community inbound queue contains at
+most 1,000 messages and runs at most four deliveries, capped by the shared SQL
+pool size. Address-targeted events need no SQL and enter subscription queues
+directly in the broker callback. Queue admission timeout, community ingress
+saturation or failed publish drops that event and increments
+`social_event_delivery_dropped`. These operational bounds are separate from
+client subscription queues; delivery beyond them is unmeasured.
 
 Each client subscription has its own typed queue of 1,000 pending events. Unrelated
 event types do not consume that queue. RPC discards its oldest pending update at
@@ -153,9 +158,10 @@ separate across END, privacy edits and a later START; metadata is never truncate
 A payload row is a transport cache, not an outbox, replay log or delivery receipt.
 
 A mutation is delivered locally before its bus hint is queued. The origin drops
-its own loopback; other replicas preserve the order observed from that publisher
-through one worker. Concurrent publishers have no total order. An inbound worker
-allows five seconds per delivery. Community fanout reads subscriber membership in
+its own loopback; address-targeted deliveries preserve the order observed from
+that publisher. Community handlers can complete out of order, as the source's
+async handlers can. Concurrent publishers have no total order. Community workers
+allow five seconds per delivery. Community fanout reads subscriber membership in
 pages of 256 and re-reads current privacy for START. Member removal and deletion
 status reach the removed member without requiring it to remain a member. Pulse
 connectivity is already derived locally by every replica and never crosses this

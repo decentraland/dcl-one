@@ -30,28 +30,32 @@ pub(crate) async fn block(
     let (blocked_at, ended_friendship) = ctx.db().block_user_recording_action(me, other).await?;
     let pubsub = ctx.pubsub();
     if ended_friendship {
-        ctx.pubsub().publish(
-            other,
-            SocialEvent::Friendship(FriendshipUpdate {
-                stream_closed: None,
-                update: Some(friendship_update::Update::Block(
-                    friendship_update::BlockResponse {
-                        user: Some(User {
-                            address: me.to_string(),
-                        }),
-                    },
-                )),
-            }),
-        );
+        ctx.pubsub()
+            .publish_mutation(
+                other,
+                SocialEvent::Friendship(FriendshipUpdate {
+                    stream_closed: None,
+                    update: Some(friendship_update::Update::Block(
+                        friendship_update::BlockResponse {
+                            user: Some(User {
+                                address: me.to_string(),
+                            }),
+                        },
+                    )),
+                }),
+            )
+            .await;
     }
-    pubsub.publish(
-        other,
-        SocialEvent::Block(BlockUpdate {
-            stream_closed: None,
-            address: me.to_string(),
-            is_blocked: true,
-        }),
-    );
+    pubsub
+        .publish_mutation(
+            other,
+            SocialEvent::Block(BlockUpdate {
+                stream_closed: None,
+                address: me.to_string(),
+                is_blocked: true,
+            }),
+        )
+        .await;
     Ok(blocked_at)
 }
 
@@ -73,28 +77,32 @@ pub(crate) async fn unblock(ctx: &Context, me: &str, other: &str) -> Result<(), 
         return Ok(());
     };
     if deleted_friendship {
-        ctx.pubsub().publish(
-            other,
-            SocialEvent::Friendship(FriendshipUpdate {
-                stream_closed: None,
-                update: Some(friendship_update::Update::Delete(
-                    friendship_update::DeleteResponse {
-                        user: Some(User {
-                            address: me.to_string(),
-                        }),
-                    },
-                )),
-            }),
-        );
+        ctx.pubsub()
+            .publish_mutation(
+                other,
+                SocialEvent::Friendship(FriendshipUpdate {
+                    stream_closed: None,
+                    update: Some(friendship_update::Update::Delete(
+                        friendship_update::DeleteResponse {
+                            user: Some(User {
+                                address: me.to_string(),
+                            }),
+                        },
+                    )),
+                }),
+            )
+            .await;
     }
-    ctx.pubsub().publish(
-        other,
-        SocialEvent::Block(BlockUpdate {
-            stream_closed: None,
-            address: me.to_string(),
-            is_blocked: false,
-        }),
-    );
+    ctx.pubsub()
+        .publish_mutation(
+            other,
+            SocialEvent::Block(BlockUpdate {
+                stream_closed: None,
+                address: me.to_string(),
+                is_blocked: false,
+            }),
+        )
+        .await;
     Ok(())
 }
 

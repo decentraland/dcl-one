@@ -658,14 +658,14 @@ impl Context {
                 return;
             }
         };
-        self.publish_private_voice_ended_by(&chat, address);
+        self.publish_private_voice_ended_by(&chat, address).await;
     }
 
     /// ENDED to the party that did not end the call (upstream
     /// `endPrivateVoiceChat`, `src/logic/voice/voice.ts:203-208`, `:230-237`:
     /// the acting side is left out of the update), whether it ended or
     /// dropped.
-    pub fn publish_private_voice_ended_by(
+    pub async fn publish_private_voice_ended_by(
         &self,
         chat: &crate::comms::gatekeeper::voice::db::PrivateVoiceChatRow,
         ender: &str,
@@ -682,13 +682,14 @@ impl Context {
             if !party.eq_ignore_ascii_case(ender) {
                 self.0
                     .pubsub
-                    .publish(party, SocialEvent::PrivateVoice(update.clone()));
+                    .publish_mutation(party, SocialEvent::PrivateVoice(update.clone()))
+                    .await;
             }
         }
     }
 
     /// The same update to both parties of `chat`.
-    pub fn publish_private_voice(
+    pub async fn publish_private_voice(
         &self,
         chat: &crate::comms::gatekeeper::voice::db::PrivateVoiceChatRow,
         status: PrivateVoiceChatStatus,
@@ -701,13 +702,17 @@ impl Context {
             callee: None,
             credentials: None,
         };
-        self.0.pubsub.publish(
-            &chat.caller_address,
-            SocialEvent::PrivateVoice(update.clone()),
-        );
         self.0
             .pubsub
-            .publish(&chat.callee_address, SocialEvent::PrivateVoice(update));
+            .publish_mutation(
+                &chat.caller_address,
+                SocialEvent::PrivateVoice(update.clone()),
+            )
+            .await;
+        self.0
+            .pubsub
+            .publish_mutation(&chat.callee_address, SocialEvent::PrivateVoice(update))
+            .await;
     }
 
     /// The periodic tick. The DELETE runs only once a call can have expired
@@ -758,7 +763,8 @@ impl Context {
                 break;
             }
             for chat in &expired {
-                self.publish_private_voice(chat, PrivateVoiceChatStatus::VoiceChatExpired);
+                self.publish_private_voice(chat, PrivateVoiceChatStatus::VoiceChatExpired)
+                    .await;
             }
             total += expired.len();
         }

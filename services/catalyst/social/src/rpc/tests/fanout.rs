@@ -434,3 +434,167 @@ async fn notification_and_spill_queries_use_bounded_index_paths() {
     tx.rollback().await.unwrap();
     database.close().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound() {
+    let Some(database) = OwnedDatabase::new().await else {
+        return;
+    };
+    let (_broker, url) = Broker::start();
+    let left = replica(&database.pool);
+    let right = replica(&database.pool);
+    let me = addr("burst-recipient");
+    let mut local = left.ctx.pubsub().subscribe_updates::<BlockUpdate>(&me);
+    let mut remote = right.ctx.pubsub().subscribe_updates::<BlockUpdate>(&me);
+    let jobs = Jobs::new();
+    let one = Arc::new(BrokerBus::new(Some(url.clone()), "social-burst-one"));
+    let two = Arc::new(BrokerBus::new(Some(url), "social-burst-two"));
+    left.start_fanout(&jobs, one.clone());
+    right.start_fanout(&jobs, two.clone());
+    one.connect();
+    two.connect();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !one.is_ready() || !two.is_ready() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    for n in 0..1000 {
+        left.ctx
+            .pubsub()
+            .publish_mutation(
+                &me,
+                SocialEvent::Block(BlockUpdate {
+                    stream_closed: None,
+                    address: format!("0x{n:040x}"),
+                    is_blocked: true,
+                }),
+            )
+            .await;
+    }
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while remote.len() < 1000 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("healthy burst must not disappear before the source subscription bound");
+    assert_eq!(local.len(), 1000);
+    for n in 0..1000 {
+        let address = format!("0x{n:040x}");
+        assert!(
+            matches!(&*local.recv().await.unwrap(),SocialEvent::Block(update) if update.address==address)
+        );
+        assert!(
+            matches!(&*remote.recv().await.unwrap(),SocialEvent::Block(update) if update.address==address)
+        );
+    }
+    assert_eq!(
+        remote.len(),
+        0,
+        "publisher loopback must not duplicate delivery"
+    );
+    jobs.shutdown(Duration::from_secs(2)).await;
+    drop((left, right));
+    database.close().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live() {
+    use crate::comms::gatekeeper::bus::PublishOutcome;
+    use crate::comms::protocol::bus::SOCIAL_EVENTS_SUBJECT;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let Some(database) = OwnedDatabase::new().await else {
+        return;
+    };
+    let (_broker, url) = Broker::start();
+    let right = replica(&database.pool);
+    let actor = addr("community-burst-actor");
+    let recipient = addr("community-burst-recipient");
+    let community = seed_community(&database.pool, true, &actor, "owner").await;
+    sqlx::query("INSERT INTO social.community_members(community_id,member_address,role) VALUES($1,$2,'member')")
+        .bind(community).bind(&recipient).execute(&database.pool).await.unwrap();
+    let mut remote = right
+        .ctx
+        .pubsub()
+        .subscribe_updates::<CommunityMemberConnectivityUpdate>(&recipient);
+    let jobs = Jobs::new();
+    let one = Arc::new(BrokerBus::new(
+        Some(url.clone()),
+        "social-community-burst-one",
+    ));
+    let two = Arc::new(BrokerBus::new(Some(url), "social-community-burst-two"));
+    let controls = Arc::new(AtomicUsize::new(0));
+    let control_count = controls.clone();
+    let _control = two.subscribe(
+        "social.test.control",
+        None,
+        Arc::new(move |_, _| {
+            control_count.fetch_add(1, Ordering::SeqCst);
+        }),
+    );
+    right.start_fanout(&jobs, two.clone());
+    one.connect();
+    two.connect();
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while !one.is_ready() || !two.is_ready() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let source = Uuid::new_v4();
+    let event = Event::CommunityMember {
+        community,
+        actor,
+        status: ConnectivityStatus::Online as i32,
+    }
+    .encode(source)
+    .unwrap();
+    let started = std::time::Instant::now();
+    for n in 0..1000 {
+        assert_eq!(
+            one.publish(SOCIAL_EVENTS_SUBJECT, event.clone()).await,
+            PublishOutcome::Submitted
+        );
+        if n % 10 == 0 {
+            assert_eq!(
+                one.publish("social.test.control", vec![1]).await,
+                PublishOutcome::Submitted
+            );
+        }
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while controls.load(Ordering::SeqCst) < 100 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("control subject must keep running while community SQL is busy");
+    println!(
+        "community burst: control100 delivered after {:?}; community queued{}",
+        started.elapsed(),
+        remote.len()
+    );
+    let complete = tokio::time::timeout(Duration::from_secs(10), async {
+        while remote.len() < 1000 {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+    })
+    .await;
+    assert!(
+        complete.is_ok(),
+        "normal community burst lost events: received{}of1000",
+        remote.len()
+    );
+    for _ in 0..1000 {
+        assert!(matches!(
+            &*remote.recv().await.unwrap(),
+            SocialEvent::CommunityMemberStatus(_)
+        ));
+    }
+    jobs.shutdown(Duration::from_secs(2)).await;
+    drop(right);
+    database.close().await;
+}

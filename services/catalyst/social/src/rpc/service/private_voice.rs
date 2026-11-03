@@ -91,24 +91,27 @@ pub(crate) async fn start_private_voice_chat(
             .note_private_voice_due(chrono::Utc::now().timestamp_millis() + expiration_ms);
     }
     for expired in &outcome.expired {
-        ctx.publish_private_voice(expired, PrivateVoiceChatStatus::VoiceChatExpired);
+        ctx.publish_private_voice(expired, PrivateVoiceChatStatus::VoiceChatExpired)
+            .await;
     }
     let Some(id) = outcome.started else {
         return Err(Refusal::Conflict(BUSY.into()));
     };
-    ctx.pubsub().publish(
-        callee,
-        SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
-            stream_closed: None,
-            call_id: id.to_string(),
-            status: PrivateVoiceChatStatus::VoiceChatRequested as i32,
-            caller: Some(User {
-                address: me.to_string(),
+    ctx.pubsub()
+        .publish_mutation(
+            callee,
+            SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+                stream_closed: None,
+                call_id: id.to_string(),
+                status: PrivateVoiceChatStatus::VoiceChatRequested as i32,
+                caller: Some(User {
+                    address: me.to_string(),
+                }),
+                callee: None,
+                credentials: None,
             }),
-            callee: None,
-            credentials: None,
-        }),
-    );
+        )
+        .await;
     Ok(id)
 }
 
@@ -139,19 +142,21 @@ pub(crate) async fn accept_private_voice_chat(
             .cloned()
             .unwrap_or_default()
     };
-    ctx.pubsub().publish(
-        &chat.caller_address,
-        SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
-            stream_closed: None,
-            call_id: id.to_string(),
-            status: PrivateVoiceChatStatus::VoiceChatAccepted as i32,
-            caller: None,
-            callee: None,
-            credentials: Some(PrivateVoiceChatCredentials {
-                connection_url: url_of(&chat.caller_address),
+    ctx.pubsub()
+        .publish_mutation(
+            &chat.caller_address,
+            SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+                stream_closed: None,
+                call_id: id.to_string(),
+                status: PrivateVoiceChatStatus::VoiceChatAccepted as i32,
+                caller: None,
+                callee: None,
+                credentials: Some(PrivateVoiceChatCredentials {
+                    connection_url: url_of(&chat.caller_address),
+                }),
             }),
-        }),
-    );
+        )
+        .await;
     Ok(url_of(&chat.callee_address))
 }
 
@@ -170,17 +175,19 @@ pub(crate) async fn reject_private_voice_chat(
     let Some(chat) = ctx.voice().finish_pending_private_call(call).await? else {
         return Err(call_not_found(id));
     };
-    ctx.pubsub().publish(
-        &chat.caller_address,
-        SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
-            stream_closed: None,
-            call_id: id.to_string(),
-            status: PrivateVoiceChatStatus::VoiceChatRejected as i32,
-            caller: None,
-            callee: None,
-            credentials: None,
-        }),
-    );
+    ctx.pubsub()
+        .publish_mutation(
+            &chat.caller_address,
+            SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+                stream_closed: None,
+                call_id: id.to_string(),
+                status: PrivateVoiceChatStatus::VoiceChatRejected as i32,
+                caller: None,
+                callee: None,
+                credentials: None,
+            }),
+        )
+        .await;
     Ok(())
 }
 
@@ -206,7 +213,7 @@ pub(crate) async fn end_private_voice_chat(
                 .ok_or_else(|| call_not_found(id))?
         }
     };
-    ctx.publish_private_voice_ended_by(&chat, me);
+    ctx.publish_private_voice_ended_by(&chat, me).await;
     Ok(())
 }
 

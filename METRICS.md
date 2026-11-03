@@ -19,3 +19,19 @@ These small warm-cache plans establish access paths, not production throughput o
 capacity for the 512 MiB payload admission bound. Production active-room counts,
 large-event frequency, cold-cache behavior, index write cost and maximum-payload
 memory/latency remain unmeasured.
+
+## Social mutation burst fanout
+
+The real-NATS tests run an owned broker and two links, with 1,000 updates for one
+local subscription. A targeted block burst delivered all 1,000 updates in order,
+without origin loopback duplication, through awaited publisher admission and the
+synchronous target callback. The community test uses PostgreSQL membership reads,
+a pool of eight connections, and 100 interleaved messages on a control subject.
+
+A local run on 2026-11-03 with the former 256-entry serial community queue delivered
+331 of 1,000 updates; the 100 control messages arrived in 16.145 ms. With the current
+1,000-entry queue and four concurrent deliveries, all 1,000 updates arrived; the
+control messages arrived in 24.757 ms. This is one small warm-cache burst fixture,
+not a sustained throughput, multi-community fairness or maximum-payload benchmark.
+SQL concurrency is capped by the configured pool size; ingress beyond the queue
+bound can still drop transient events and increments the delivery-drop counter.

@@ -88,7 +88,9 @@ pub(crate) async fn apply_friendship_action(
         message,
         my_profile,
     );
-    ctx.pubsub().publish(other, SocialEvent::Friendship(update));
+    ctx.pubsub()
+        .publish_mutation(other, SocialEvent::Friendship(update))
+        .await;
     if action == Action::Accept {
         announce_accepted_connectivity(ctx, me, other).await;
     }

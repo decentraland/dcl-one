@@ -5,6 +5,7 @@ use crate::comms::gatekeeper::bus::NatsBus;
 use crate::comms::protocol::bus::{SOCIAL_EVENTS_SUBJECT, wallet_token};
 use crate::jobs::Jobs;
 use base64::{Engine, engine::general_purpose::STANDARD};
+use futures::StreamExt;
 use prost::Message;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -15,7 +16,8 @@ pub(crate) const MAX_BYTES: usize = 64 * 1024 - SOCIAL_EVENTS_SUBJECT.len();
 // Redis strings, used by the pinned publisher, have a 512 MiB limit. The
 // transient SQL spill cache retains this upper bound without shrinking client metadata.
 const MAX_STORED_BYTES: usize = 512 * 1024 * 1024;
-const QUEUE: usize = 256;
+const OUTBOUND_QUEUE: usize = 256;
+const INBOUND_QUEUE: usize = 1000;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -281,24 +283,33 @@ impl Event {
         )?;
         event.validate().then_some(event)
     }
+    /// Address-targeted updates need no SQL, so they enter their subscription
+    /// queues directly in the broker callback instead of an earlier shared queue.
+    fn deliver_target(&self, ctx: &Context) -> bool {
+        let Self::Target {
+            recipient,
+            event,
+            payload,
+        } = self
+        else {
+            return false;
+        };
+        let event = match event {
+            TargetKind::Friendship => decode_proto(payload).map(SocialEvent::Friendship),
+            TargetKind::Block => decode_proto(payload).map(SocialEvent::Block),
+            TargetKind::PrivateVoice => decode_proto(payload).map(SocialEvent::PrivateVoice),
+        };
+        if let Some(event) = event {
+            ctx.pubsub().publish_local(recipient, event);
+        }
+        true
+    }
     pub(crate) async fn deliver(self, ctx: &Context) {
+        if self.deliver_target(ctx) {
+            return;
+        }
         match self {
-            Self::Target {
-                recipient,
-                event,
-                payload,
-            } => {
-                let event = match event {
-                    TargetKind::Friendship => decode_proto(&payload).map(SocialEvent::Friendship),
-                    TargetKind::Block => decode_proto(&payload).map(SocialEvent::Block),
-                    TargetKind::PrivateVoice => {
-                        decode_proto(&payload).map(SocialEvent::PrivateVoice)
-                    }
-                };
-                if let Some(event) = event {
-                    ctx.pubsub().publish_local(&recipient, event);
-                }
-            }
+            Self::Target { .. } => unreachable!("target delivered synchronously"),
             Self::CommunityVoice {
                 scope,
                 exclude,
@@ -361,18 +372,29 @@ impl State {
     /// Every serve consumes the same subject without a queue group. The connection is comms'
     /// existing link; social owns only these bounded application queues and local delivery.
     pub fn start_fanout(self: &Arc<Self>, jobs: &Jobs, bus: Arc<dyn NatsBus>) {
-        let (outbound, mut outgoing) = mpsc::channel::<Event>(QUEUE);
+        let (outbound, mut outgoing) = mpsc::channel::<Event>(OUTBOUND_QUEUE);
         self.ctx.pubsub().attach_outbound(outbound);
-        let (incoming, mut inbound) = mpsc::channel::<Event>(QUEUE);
+        let (incoming, inbound) = mpsc::channel::<Event>(INBOUND_QUEUE);
         let source = Uuid::new_v4();
+        let target_context = self.ctx.clone();
         let subscription = bus.subscribe(SOCIAL_EVENTS_SUBJECT, None, Arc::new(move |_, payload| {
             if let Some(event) = Event::decode(payload, source) {
+                if event.deliver_target(&target_context) { return; }
                 if incoming.try_send(event).is_err() {
                     metrics::counter!("social_event_delivery_dropped", "reason" => "inbound_queue").increment(1);
                 }
             }
         }));
         let context = self.ctx.clone();
+        // The callback stays synchronous and never awaits SQL on a bus task.
+        // Source async handlers may complete out of order; bound independent
+        // community work to four tasks and never exceed the shared pool size.
+        let concurrency = context
+            .db()
+            .pool()
+            .options()
+            .get_max_connections()
+            .clamp(1, 4) as usize;
         jobs.spawn("social-event-fanout", move |job| async move {
             let _subscription = subscription;
             let publish = async {
@@ -390,13 +412,16 @@ impl State {
                     }
                 }
             };
-            let deliver = async {
-                while let Some(event) = inbound.recv().await {
-                    if tokio::time::timeout(std::time::Duration::from_secs(5), event.deliver(&context)).await.is_err() {
+            let deliver = futures::stream::unfold(inbound, |mut receiver| async move {
+                receiver.recv().await.map(|event| (event, receiver))
+            }).for_each_concurrent(concurrency, |event| {
+                let context = &context;
+                async move {
+                    if tokio::time::timeout(std::time::Duration::from_secs(5), event.deliver(context)).await.is_err() {
                         metrics::counter!("social_event_delivery_dropped", "reason" => "delivery_timeout").increment(1);
                     }
                 }
-            };
+            });
             tokio::select! { _ = job.cancel.cancelled() => {}, _ = publish => {}, _ = deliver => {} }
             Ok(())
         });

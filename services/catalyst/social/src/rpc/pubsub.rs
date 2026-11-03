@@ -107,6 +107,34 @@ impl PubSub {
         }
     }
 
+    /// Mutation publishers await bounded queue admission, like the source's
+    /// awaited Redis publish. Local delivery remains first; failures are best effort.
+    pub(crate) async fn publish_mutation(&self, address: &str, event: SocialEvent) {
+        self.publish_local(address, event.clone());
+        if let Some(event) = super::fanout::Event::target(address, &event) {
+            self.forward_mutation(event).await;
+        }
+    }
+
+    async fn forward_mutation(&self, event: super::fanout::Event) {
+        let Some(outbound) = self.outbound.get() else {
+            return;
+        };
+        if !event.fits_queue() {
+            metrics::counter!("social_event_delivery_dropped", "reason" => "oversized_outbound")
+                .increment(1);
+            return;
+        }
+        if !matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(5), outbound.send(event)).await,
+            Ok(Ok(()))
+        ) {
+            tracing::warn!("social mutation publish queue admission failed");
+            metrics::counter!("social_event_delivery_dropped", "reason" => "outbound_queue")
+                .increment(1);
+        }
+    }
+
     pub(crate) fn attach_outbound(
         &self,
         outbound: tokio::sync::mpsc::Sender<super::fanout::Event>,
@@ -146,7 +174,7 @@ impl PubSub {
             return;
         };
         if event.fits_queue() {
-            self.forward(event);
+            self.forward_mutation(event).await;
             return;
         }
         let Some(bytes) = event.encode_stored() else {
@@ -158,7 +186,10 @@ impl PubSub {
             .store_social_event_payload(bytes)
             .await
         {
-            Ok(event_id) => self.forward(super::fanout::Event::Reference { event_id }),
+            Ok(event_id) => {
+                self.forward_mutation(super::fanout::Event::Reference { event_id })
+                    .await
+            }
             Err(error) => {
                 tracing::warn!(%error, "social event overflow storage failed");
                 metrics::counter!("social_event_delivery_dropped", "reason" => "payload_storage")
@@ -220,11 +251,12 @@ impl PubSub {
     ) {
         self.deliver_community_member(pool, community, member, status)
             .await;
-        self.forward(super::fanout::Event::CommunityMember {
+        self.forward_mutation(super::fanout::Event::CommunityMember {
             community,
             actor: member.to_lowercase(),
             status: status as i32,
-        });
+        })
+        .await;
     }
     pub(crate) async fn deliver_community_member(
         &self,
@@ -266,7 +298,8 @@ impl PubSub {
     }
     pub async fn community_deleted(&self, pool: &PgPool, community: Uuid) {
         self.deliver_community_deleted(pool, community).await;
-        self.forward(super::fanout::Event::CommunityDeleted { community });
+        self.forward_mutation(super::fanout::Event::CommunityDeleted { community })
+            .await;
     }
     pub(crate) async fn deliver_community_deleted(&self, pool: &PgPool, community: Uuid) {
         for page in self.subscribed_addresses().chunks(256) {
