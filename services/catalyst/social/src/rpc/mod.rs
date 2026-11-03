@@ -186,6 +186,8 @@ pub struct State {
     pub ctx: Context,
     pub eip1654: Option<Arc<dyn Eip1654Validator>>,
     rpc_events: OnceCell<ServerEventsSender<AxumWsTransport>>,
+    /// Armed after registering Social's subject; local/no-bus states have no gate.
+    fanout_ready: Mutex<Option<Arc<std::sync::atomic::AtomicBool>>>,
     /// The server, until `spawn_jobs` takes it into its job.
     server: Mutex<Option<RpcServer<Context, AxumWsTransport>>>,
 }
@@ -239,8 +241,16 @@ impl State {
             ctx,
             eip1654,
             rpc_events,
+            fanout_ready: Mutex::new(None),
             server: Mutex::new(Some(server)),
         }
+    }
+
+    pub(crate) fn initial_fanout_ready(&self) -> bool {
+        self.fanout_ready
+            .lock()
+            .as_ref()
+            .is_none_or(|ready| ready.load(std::sync::atomic::Ordering::Acquire))
     }
 
     /// The handle the socket attaches transports through; `None` before the

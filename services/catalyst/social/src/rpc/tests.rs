@@ -48,6 +48,7 @@ mod settings;
 mod social_api;
 mod socket;
 mod source_cases;
+mod startup;
 mod stream;
 mod subscription_lifecycle;
 mod upstream_reads;

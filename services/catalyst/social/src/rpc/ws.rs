@@ -50,6 +50,9 @@ pub async fn ws_upgrade(
         }
         Err(rejection) => return rejection.into_response(),
     };
+    if !state.initial_fanout_ready() {
+        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     let paths = vec!["/".to_owned()];
     ws.max_message_size(state.settings.ws_max_payload_bytes)
         .on_upgrade(move |socket| async move {

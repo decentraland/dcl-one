@@ -203,6 +203,24 @@ while keeping its configured connection URL. Clients signing a mounted alias
 must sign the source path; deployed web artifacts need the corresponding client
 build at cutover. Other shared handshake callers keep their chosen alias policy.
 
+When the shared bus is enabled, Social registers its event subscription before
+checking the existing NATS subscription readiness fence. Until the first ready
+transition, valid RPC and JSON WebSocket upgrade requests receive an empty HTTP
+503 before authentication, socket admission, or a 101 response. Other HTTP routes,
+ordinary fallback requests, and local mode remain available. The retained Social
+subscription and readiness poll run in the existing fanout job. Admission stays
+open through later outages; publication and delivery retain transient, at-most-once
+behavior, with no replay guarantee.
+
+The pinned source starts its standalone RPC listener only after Redis connects
+and all nine subscription registrations finish. Executed component/lifecycle
+captures cover delayed connections, delayed subscriptions, subscription failure,
+and an outage after startup. The monolith's pre-upgrade 503 is an operational
+difference from that closed listener; it does not wait within an HTTP request or
+hold authentication age and socket slots while startup is pending. The controlled
+startup tests exercise both protocols and delivery after the fence; the separate
+real-broker tests cover live cross-replica delivery.
+
 Oversized community voice metadata is stored as one immutable binary protobuf
 snapshot in `social.event_payloads`, with a UUID and a 24-hour expiry, before a
 small reference is published. A subscriber reads that exact snapshot through its

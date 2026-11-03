@@ -219,6 +219,9 @@ pub async fn ws_upgrade(
         }
         Err(rejection) => return rejection.into_response(),
     };
+    if !state.initial_fanout_ready() {
+        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
     let paths = stream_paths();
     let verified = match header_frame(&headers) {
         None => None,

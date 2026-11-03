@@ -372,6 +372,10 @@ impl State {
     /// Every serve consumes the same subject without a queue group. The connection is comms'
     /// existing link; social owns only these bounded application queues and local delivery.
     pub fn start_fanout(self: &Arc<Self>, jobs: &Jobs, bus: Arc<dyn NatsBus>) {
+        let mut admission = self.fanout_ready.lock();
+        if admission.is_some() {
+            return;
+        }
         let (outbound, mut outgoing) = mpsc::channel::<Event>(OUTBOUND_QUEUE);
         self.ctx.pubsub().attach_outbound(outbound);
         let (incoming, inbound) = mpsc::channel::<Event>(INBOUND_QUEUE);
@@ -385,6 +389,10 @@ impl State {
                 }
             }
         }));
+        // Register first: readiness covers the revision containing Social's subject.
+        let first_ready = Arc::new(std::sync::atomic::AtomicBool::new(!bus.is_enabled()));
+        *admission = Some(first_ready.clone());
+        drop(admission);
         let context = self.ctx.clone();
         // The callback stays synchronous and never awaits SQL on a bus task.
         // Source async handlers may complete out of order; bound independent
@@ -397,6 +405,14 @@ impl State {
             .clamp(1, 4) as usize;
         jobs.spawn("social-event-fanout", move |job| async move {
             let _subscription = subscription;
+            let initial_readiness = async {
+                while !bus.is_ready() {
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+                first_ready.store(true, std::sync::atomic::Ordering::Release);
+                // A later outage retains the source's transient pub/sub behavior.
+                std::future::pending::<()>().await;
+            };
             let publish = async {
                 while let Some(event) = outgoing.recv().await {
                     let Some(bytes) = event.encode(source) else {
@@ -422,7 +438,7 @@ impl State {
                     }
                 }
             });
-            tokio::select! { _ = job.cancel.cancelled() => {}, _ = publish => {}, _ = deliver => {} }
+            tokio::select! { _ = job.cancel.cancelled() => {}, _ = publish => {}, _ = deliver => {}, _ = initial_readiness => {} }
             Ok(())
         });
     }
