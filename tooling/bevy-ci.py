@@ -14,7 +14,7 @@ PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Sm
 LANES = ('clippy', 'test', 'headless', 'web')
 NATIVE_JOBS = {'Test Suite (ubuntu-24.04)', 'Test Suite (windows-2025)', 'Test Suite (macos-15)'}
 INPUTS = ('rendering/bevy-explorer/source', 'library/vendor/rusty_enet', 'tooling/dev-regressions*', 'library/protocol/proto', 'apps/bevy-explorer',
-          'tooling/bevy-ci.py', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
+          'tooling/bevy-ci.py', 'tooling/bevy-http2-test.mjs', 'tooling/play-artifact.py', 'tooling/tests/test_play_*.py',
           'tooling/tests/test_bevy_*.py', WORKFLOW, SCENES_WORKFLOW,
           '.github/workflows/bevy-explorer-images.yml',
           '.github/workflows/bevy-explorer-headless.yml',
@@ -173,6 +173,8 @@ def select(base, head):
             affected = (*LANES, 'native-matrix')
         elif path == '.github/workflows/bevy-explorer-images.yml':
             affected = ('web', 'headless')
+        elif path == 'tooling/bevy-http2-test.mjs':
+            affected = ('test',)
         elif path == 'tooling/play-artifact.py':
             affected = ('web',)
         elif path.startswith(('tooling/tests/test_bevy_', 'tooling/tests/test_play_')):
