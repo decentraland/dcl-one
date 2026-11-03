@@ -19,10 +19,11 @@
 //! settings, eip1654, gatekeeper.clone()))`; `social_rpc.spawn_jobs(&jobs)`
 //! (the RPC server loop and the private-voice expiry sweep);
 //! `.merge(social::rpc::router(social_rpc))`. Routes: `GET /social-rpc`
-//! (the upgrade; its signature binds the source protocol path `/`, independently
-//! of the connection URL and proxy headers), `GET /social-rpc/info`,
+//! (the upgrade; signatures accept source `/` and legacy `/social-rpc`,
+//! independently of connection URL and proxy headers), `GET /social-rpc/info`,
 //! `GET /social-rpc/health` (local), the plain JSON stream
-//! `GET /social-rpc/v1/stream` (`stream`, upstream's `/v1/stream`), and the
+//! `GET /social-rpc/v1/stream` (`stream`, signed as source `/v1/stream` or
+//! legacy `/social-rpc/v1/stream`), and the
 //! upstream uWS host's HTTP routes
 //! (`src/controllers/routes/uws.routes.ts`): `GET /social-rpc/status`, any
 //! method on `/social-rpc/health/live`,

@@ -810,7 +810,7 @@ async fn authenticated_text_and_binary_frames_match_source_drpc_exchange() {
 }
 
 #[tokio::test]
-async fn mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers() {
+async fn socket_paths_preserve_source_cases_and_exact_legacy_mounted_aliases() {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
     let source: serde_json::Value = serde_json::from_str(include_str!(concat!(
         env!("DCL_ONE_ROOT"),
@@ -844,6 +844,13 @@ async fn mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers() 
                 .insert("x-original-path", original.parse().unwrap());
             signed["x-original-path"] = serde_json::json!(original);
         }
+        // Source rejects the mounted spelling. Accepting this exact alias is
+        // a compatibility extension for shipped clients, not source equality.
+        let legacy_alias = case["signed_path"] == mounted;
+        if legacy_alias {
+            assert_eq!(case["accepted"], false, "{case}");
+        }
+        let accepted = case["accepted"] == true || legacy_alias;
         let headers = case["mode"] == "headers";
         if headers {
             for (name, value) in signed.as_object().unwrap() {
@@ -855,7 +862,7 @@ async fn mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers() 
             }
         }
         let connected = tokio_tungstenite::connect_async(request).await;
-        if headers && case["accepted"] == false {
+        if headers && !accepted {
             match connected {
                 Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
                     assert_eq!(response.status(), 401, "{case}")
@@ -875,7 +882,7 @@ async fn mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers() 
                 .unwrap();
         }
         let response = next_message(&mut socket).await;
-        if case["accepted"] == true {
+        if accepted {
             if rpc {
                 assert!(is_server_ready(&response), "{case}: {response:?}");
             } else {

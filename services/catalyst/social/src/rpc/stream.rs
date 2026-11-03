@@ -159,10 +159,10 @@ impl Stream {
     }
 }
 
-/// Upstream binds both stream handshakes to this protocol path, independently
-/// of the mounted connection URL and proxy headers.
+/// Keep the source protocol path and the canonical mounted path signed by
+/// shipped clients. Neither the connection URL nor proxy headers add aliases.
 fn stream_paths() -> Vec<String> {
-    vec![STREAM_PATH.to_owned()]
+    vec![STREAM_PATH.to_owned(), "/social-rpc/v1/stream".to_owned()]
 }
 
 /// The upgrade request's `x-identity-*` headers as the first frame's JSON
