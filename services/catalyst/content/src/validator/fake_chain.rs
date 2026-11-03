@@ -2,8 +2,9 @@
 //! [`INTERVAL`] seconds from [`GENESIS`] up to now, `eth_call` to the Checker
 //! (only with its bytecode as the state override, decoded through
 //! `multicall`) and to item contracts, each question answered by the test.
+//! A JSON-RPC batch is answered element by element unless batches are off.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use alloy_primitives::{Address, B256, Bytes, U256};
@@ -91,23 +92,47 @@ pub(crate) enum Reply {
 
 type Answer = Arc<dyn Fn(&Query, u64) -> Reply + Send + Sync>;
 
+#[derive(Clone, Default)]
+struct Switches {
+    down: Arc<AtomicBool>,
+    no_batch: Arc<AtomicBool>,
+    chain_id: Arc<AtomicU64>,
+    requests: Arc<AtomicUsize>,
+}
+
 #[derive(Clone)]
 struct Fake {
     answer: Answer,
-    down: Arc<AtomicBool>,
+    switches: Switches,
     log: Arc<Mutex<Vec<String>>>,
 }
 
 pub(crate) struct FakeChain {
     pub url: String,
-    down: Arc<AtomicBool>,
+    switches: Switches,
     log: Arc<Mutex<Vec<String>>>,
 }
 
 impl FakeChain {
     /// Every request answers HTTP 503 while set.
     pub fn set_down(&self, down: bool) {
-        self.down.store(down, Ordering::SeqCst);
+        self.switches.down.store(down, Ordering::SeqCst);
+    }
+
+    /// A batch request answers a single JSON-RPC error while set, as an
+    /// endpoint without batches does.
+    pub fn set_no_batch(&self, no_batch: bool) {
+        self.switches.no_batch.store(no_batch, Ordering::SeqCst);
+    }
+
+    /// The `eth_chainId` this chain answers (1 by default).
+    pub fn set_chain_id(&self, id: u64) {
+        self.switches.chain_id.store(id, Ordering::SeqCst);
+    }
+
+    /// HTTP requests received so far (a batch is one).
+    pub fn requests(&self) -> usize {
+        self.switches.requests.load(Ordering::SeqCst)
     }
 
     /// The methods called so far, `eth_call` as `eth_call@<block>`.
@@ -117,6 +142,7 @@ impl FakeChain {
 
     pub fn clear(&self) {
         self.log.lock().unwrap().clear();
+        self.switches.requests.store(0, Ordering::SeqCst);
     }
 }
 
@@ -187,9 +213,17 @@ fn quantity(v: &Value) -> Option<u64> {
     u64::from_str_radix(v.as_str()?.trim_start_matches("0x"), 16).ok()
 }
 
+/// A block number or `latest` (the head).
+fn block_param(v: &Value) -> Option<u64> {
+    match v.as_str() {
+        Some("latest") => Some(head()),
+        _ => quantity(v),
+    }
+}
+
 /// One eth_call: `Ok(result bytes)` or `Err((code, message))`.
 fn eth_call(fake: &Fake, params: &Value) -> Result<Vec<u8>, (i64, String)> {
-    let block = quantity(&params[1]).ok_or((-32602, "bad block".to_string()))?;
+    let block = block_param(&params[1]).ok_or((-32602, "bad block".to_string()))?;
     if block > head() {
         return Err((-32000, "header not found".into()));
     }
@@ -243,10 +277,8 @@ fn eth_call(fake: &Fake, params: &Value) -> Result<Vec<u8>, (i64, String)> {
     }
 }
 
-async fn handle(State(fake): State<Fake>, Json(body): Json<Value>) -> axum::response::Response {
-    if fake.down.load(Ordering::SeqCst) {
-        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
-    }
+/// The envelope answering one request.
+fn answer_one(fake: &Fake, body: &Value) -> Value {
     let method = body["method"].as_str().unwrap_or_default().to_string();
     let params = &body["params"];
     let answer = match method.as_str() {
@@ -264,10 +296,14 @@ async fn handle(State(fake): State<Fake>, Json(body): Json<Value>) -> axum::resp
         "eth_call" => {
             fake.log.lock().unwrap().push(format!(
                 "eth_call@{}",
-                quantity(&params[1]).unwrap_or_default()
+                block_param(&params[1]).unwrap_or_default()
             ));
-            eth_call(&fake, params).map(|out| json!(Bytes::from(out)))
+            eth_call(fake, params).map(|out| json!(Bytes::from(out)))
         }
+        "eth_chainId" => Ok(json!(format!(
+            "0x{:x}",
+            fake.switches.chain_id.load(Ordering::SeqCst)
+        ))),
         other => Err((-32601, format!("{other} not found"))),
     };
     let mut envelope = match answer {
@@ -276,21 +312,42 @@ async fn handle(State(fake): State<Fake>, Json(body): Json<Value>) -> axum::resp
     };
     envelope["jsonrpc"] = "2.0".into();
     envelope["id"] = body["id"].clone();
-    Json(envelope).into_response()
+    envelope
+}
+
+async fn handle(State(fake): State<Fake>, Json(body): Json<Value>) -> axum::response::Response {
+    fake.switches.requests.fetch_add(1, Ordering::SeqCst);
+    if fake.switches.down.load(Ordering::SeqCst) {
+        return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response();
+    }
+    match body {
+        Value::Array(_) if fake.switches.no_batch.load(Ordering::SeqCst) => Json(json!({
+            "jsonrpc": "2.0", "id": null,
+            "error": { "code": -32600, "message": "batch requests are not supported" }
+        }))
+        .into_response(),
+        Value::Array(requests) => Json(Value::Array(
+            requests.iter().map(|r| answer_one(&fake, r)).collect(),
+        ))
+        .into_response(),
+        single => Json(answer_one(&fake, &single)).into_response(),
+    }
 }
 
 /// A chain on the loopback whose every answer is `answer(question, block)`.
 pub(crate) async fn serve(
     answer: impl Fn(&Query, u64) -> Reply + Send + Sync + 'static,
 ) -> FakeChain {
+    let switches = Switches::default();
+    switches.chain_id.store(1, Ordering::SeqCst);
     let fake = Fake {
         answer: Arc::new(answer),
-        down: Arc::new(AtomicBool::new(false)),
+        switches: switches.clone(),
         log: Arc::new(Mutex::new(Vec::new())),
     };
     let chain = FakeChain {
         url: String::new(),
-        down: fake.down.clone(),
+        switches,
         log: fake.log.clone(),
     };
     let app = Router::new().route("/", post(handle)).with_state(fake);

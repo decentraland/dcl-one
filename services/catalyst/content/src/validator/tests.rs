@@ -533,13 +533,18 @@ async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
     let mine = "0xaaa0000000000000000000000000000000000001";
     let theirs = "0xccc0000000000000000000000000000000000003";
     let escrowed = "0xddd0000000000000000000000000000000000004";
+    let recent = "0xeee0000000000000000000000000000000000005";
     let holder = owner.clone();
-    let chain = fake_chain::serve(move |q, _| match q {
-        Query::OwnerOf { contract, .. } => Reply::Owner(if *contract == addr(mine) {
-            addr(&holder)
-        } else {
-            addr(STRANGER)
-        }),
+    let chain = fake_chain::serve(move |q, block| match q {
+        Query::OwnerOf { contract, .. } => Reply::Owner(
+            if *contract == addr(mine)
+                || (*contract == addr(recent) && block == fake_chain::at_deployment(TS))
+            {
+                addr(&holder)
+            } else {
+                addr(STRANGER)
+            },
+        ),
         other => panic!("{other:?}"),
     })
     .await;
@@ -585,6 +590,16 @@ async fn owned_items_come_from_the_chain_and_the_escrow_overlay() {
             "The following items ({unowned}) are not owned by the address {owner}."
         )]),
         "an active escrow lease is ownership of its token"
+    );
+    let bought_now = format!("urn:decentraland:matic:collections-v2:{recent}:0:1");
+    let mut d2 = profile(&owner, "", &[&bought_now, &leased_token]);
+    d2.entity.metadata.as_mut().unwrap()["avatars"][0]["hasClaimedName"] = json!(false);
+    assert_eq!(
+        validate_profile_access(&d2.view(), &s, &owner)
+            .await
+            .into_result(),
+        Ok(()),
+        "a leased item does not hold the others to one block"
     );
 
     sqlx::query("UPDATE shop.usage_grants SET status = 'revoked' WHERE grantee_address = $1")

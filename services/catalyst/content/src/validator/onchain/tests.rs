@@ -357,6 +357,254 @@ async fn case_variants_are_asked_and_malformed_collection_urns_are_never_owned()
 }
 
 #[tokio::test]
+async fn names_must_all_pass_at_one_block() {
+    let at = at_deployment(TS);
+    let chain = fake_chain::serve(move |q, block| match q {
+        // alice is held only at the deploy block, bob only five minutes before.
+        Query::Name { name, .. } => Reply::Yes(match name.as_str() {
+            "alice" => block == at,
+            "bob" => block != at,
+            _ => true,
+        }),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(Some(&chain.url), None);
+    let owned = a
+        .names(OWNER, &["alice".into(), "bob".into()], TS)
+        .await
+        .unwrap();
+    assert!(!owned.iter().all(|o| *o), "{owned:?}");
+    assert_eq!(
+        a.names(OWNER, &["bob".into(), "carol".into()], TS)
+            .await
+            .unwrap(),
+        vec![true, true],
+        "all at the earlier block"
+    );
+}
+
+#[tokio::test]
+async fn items_must_all_pass_at_one_block_per_chain() {
+    let at = at_deployment(TS);
+    let l2_now = "0x0002000000000000000000000000000000000001";
+    let l2_before = "0x0002000000000000000000000000000000000002";
+    let l1_before = "0x0001000000000000000000000000000000000001";
+    let chain = fake_chain::serve(move |q, block| match q {
+        Query::OwnerOf { contract, .. } => {
+            let held = if *contract == addr(l2_now) {
+                block == at
+            } else {
+                block != at
+            };
+            Reply::Owner(if held { addr(OWNER) } else { addr(STRANGER) })
+        }
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(Some(&chain.url), Some(&chain.url));
+    let urn =
+        |network: &str, kind: &str, c: &str| format!("urn:decentraland:{network}:{kind}:{c}:0:1");
+    let split = vec![
+        urn("matic", "collections-v2", l2_now),
+        urn("matic", "collections-v2", l2_before),
+    ];
+    let owned = a.items(OWNER, &split, TS).await.unwrap();
+    assert!(!owned.iter().all(|o| *o), "{owned:?}");
+    // Each chain at its own block: L2 at the deploy block, L1 five minutes before.
+    let per_chain = vec![
+        urn("matic", "collections-v2", l2_now),
+        urn("sepolia", "collections-v2", l1_before),
+    ];
+    assert_eq!(
+        a.items(OWNER, &per_chain, TS).await.unwrap(),
+        vec![true, true]
+    );
+}
+
+#[tokio::test]
+async fn a_timestamp_ahead_of_the_chain_is_asked_at_the_head() {
+    let chain = fake_chain::serve(|q, _| match q {
+        Query::Name { sender, .. } => Reply::Yes(*sender == addr(OWNER)),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(Some(&chain.url), None);
+    let ahead = (chrono::Utc::now().timestamp() + 10 * 60) * 1000;
+    let blocks = a.l1().unwrap().chain.blocks_for(ahead).await.unwrap();
+    assert_eq!(blocks.at_deployment, blocks.five_min_before, "{blocks:?}");
+    assert_eq!(
+        a.names(STRANGER, &["alice".into()], ahead).await.unwrap(),
+        vec![false],
+        "a refusal, not an undecidable check"
+    );
+    assert_eq!(
+        a.names(OWNER, &["alice".into()], ahead).await.unwrap(),
+        vec![true]
+    );
+}
+
+#[tokio::test]
+async fn item_calls_go_out_in_one_batch_per_block() {
+    let at = at_deployment(TS);
+    let v2 = "0x0002000000000000000000000000000000000001";
+    let chain = fake_chain::serve(move |q, block| match q {
+        Query::OwnerOf { token, .. } => Reply::Owner(if *token < U256::from(10) || block != at {
+            addr(OWNER)
+        } else {
+            addr(STRANGER)
+        }),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(None, Some(&chain.url));
+    let urns: Vec<String> = (0..20)
+        .map(|t| format!("urn:decentraland:matic:collections-v2:{v2}:0:{t}"))
+        .collect();
+    a.l2().unwrap().chain.blocks_for(TS).await.unwrap();
+    chain.clear();
+    assert_eq!(a.items(OWNER, &urns, TS).await.unwrap(), vec![true; 20]);
+    assert_eq!(chain.requests(), 2, "one batch at each block");
+    assert_eq!(chain.calls().len(), 40);
+
+    chain.set_no_batch(true);
+    chain.clear();
+    assert_eq!(a.items(OWNER, &urns, TS).await.unwrap(), vec![true; 20]);
+    assert_eq!(
+        chain.calls().len(),
+        40,
+        "an endpoint without batches: one by one"
+    );
+}
+
+#[tokio::test]
+async fn items_past_the_cap_are_not_owned_and_not_asked() {
+    let v2 = "0x0002000000000000000000000000000000000001";
+    let chain = fake_chain::serve(|q, _| match q {
+        Query::OwnerOf { .. } => Reply::Owner(addr(OWNER)),
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(None, Some(&chain.url));
+    let mut urns: Vec<String> = (0..MAX_ITEMS_ASKED + 3)
+        .map(|t| format!("urn:decentraland:matic:collections-v2:{v2}:0:{t}"))
+        .collect();
+    // A repeated URN is asked once.
+    urns.insert(1, urns[0].clone());
+    let owned = a.items(OWNER, &urns, TS).await.unwrap();
+    assert_eq!(owned.iter().filter(|o| **o).count(), MAX_ITEMS_ASKED + 1);
+    assert_eq!(owned[MAX_ITEMS_ASKED + 1..], [false, false, false]);
+    let asked = chain
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("eth_call"))
+        .count();
+    assert_eq!(asked, MAX_ITEMS_ASKED);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_check_past_its_deadline_is_undecided() {
+    let chain = fake_chain::serve(|_, _| {
+        std::thread::sleep(std::time::Duration::from_millis(500));
+        Reply::Yes(true)
+    })
+    .await;
+    let a = access(Some(&chain.url), None).with_deadline(std::time::Duration::from_millis(100));
+    let err = a.land(OWNER, &[(1, 1)], TS).await.unwrap_err();
+    assert!(
+        matches!(&err, ValidatorError::BlockchainQuery(m) if m.contains("did not finish")),
+        "{err}"
+    );
+}
+
+#[tokio::test]
+async fn a_contract_of_no_known_standard_is_probed_again() {
+    let not_nft = "0x0000000000000000000000000000000000000bad";
+    let probes = Arc::new(AtomicUsize::new(0));
+    let seen = probes.clone();
+    let chain = fake_chain::serve(move |q, _| {
+        seen.fetch_add(1, Ordering::SeqCst);
+        match q {
+            Query::OwnerOf { .. } | Query::BalanceOf { .. } => Reply::Empty,
+            other => panic!("{other:?}"),
+        }
+    })
+    .await;
+    let a = access(None, Some(&chain.url));
+    let urns = vec![format!(
+        "urn:decentraland:matic:collections-thirdparty:tp:c:i:matic:{not_nft}:1"
+    )];
+    assert_eq!(a.items(OWNER, &urns, TS).await.unwrap(), vec![false]);
+    let first = probes.load(Ordering::SeqCst);
+    assert_eq!(first, 2, "balanceOf, then ownerOf");
+    assert_eq!(a.items(OWNER, &urns, TS).await.unwrap(), vec![false]);
+    assert_eq!(probes.load(Ordering::SeqCst), 2 * first);
+}
+
+#[tokio::test]
+async fn the_rpcs_must_answer_for_the_configured_network() {
+    let chain = fake_chain::serve(|_, _| Reply::Yes(true)).await;
+    assert!(
+        access(Some(&chain.url), None)
+            .verify_chain_ids()
+            .await
+            .is_ok()
+    );
+    let err = access(None, Some(&chain.url))
+        .verify_chain_ids()
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("L2") && err.contains("137"), "{err}");
+    chain.set_chain_id(137);
+    assert!(
+        access(None, Some(&chain.url))
+            .verify_chain_ids()
+            .await
+            .is_ok()
+    );
+    chain.set_down(true);
+    assert!(
+        access(Some(&chain.url), None)
+            .verify_chain_ids()
+            .await
+            .is_ok(),
+        "an unreachable RPC is logged, not refused"
+    );
+}
+
+#[test]
+fn reverts_are_told_from_other_provider_errors() {
+    let response = |code, message: &str| RpcError::Response {
+        code,
+        message: message.to_string(),
+    };
+    for revert in [
+        response(3, "execution reverted"),
+        response(-32000, "execution reverted"),
+        response(-32000, "Execution reverted: ERC721: invalid token ID"),
+        response(-32603, "VM Exception while processing transaction: revert"),
+        response(-32015, "VM execution error."),
+    ] {
+        assert!(is_revert(&revert), "{revert}");
+    }
+    for failure in [
+        response(-32000, "header not found"),
+        response(
+            -32000,
+            "missing trie node 1a2b (path ) state is not available",
+        ),
+        response(-32005, "limit exceeded"),
+        response(-32603, "request timed out"),
+        response(429, "Too Many Requests"),
+        RpcError::Status(502),
+        RpcError::Transport("connection reset".into()),
+    ] {
+        assert!(!is_revert(&failure), "{failure}");
+    }
+}
+
+#[tokio::test]
 async fn a_check_the_rpc_cannot_answer_is_an_error_never_a_grant() {
     let at = at_deployment(TS);
     let chain = fake_chain::serve(move |q, block| match q {

@@ -154,34 +154,31 @@ impl BlockchainChecker for Sources {
         urns: &[String],
         timestamp: Timestamp,
     ) -> Result<PermissionResult, ValidatorError> {
-        let owned = self.access.items(eth_address, urns, timestamp).await?;
-        let missing: Vec<&String> = urns
-            .iter()
-            .zip(&owned)
-            .filter(|(_, o)| !**o)
-            .map(|(u, _)| u)
-            .collect();
-        if missing.is_empty() {
+        if urns.is_empty() {
             return Ok(PermissionResult::ok());
         }
-        let patterns: Vec<String> = missing
+        // Leased items first: the chain must grant every other item at one block.
+        let patterns: Vec<String> = urns
             .iter()
             .flat_map(|u| [like_pattern(u), like_pattern(&urn_key(u))])
             .collect::<HashSet<_>>()
             .into_iter()
             .collect();
         let grants = self
-            .granted(
-                eth_address,
-                &exact_forms(missing.iter().copied()),
-                &patterns,
-            )
+            .granted(eth_address, &exact_forms(urns.iter()), &patterns)
             .await?;
+        let on_chain: Vec<String> = urns
+            .iter()
+            .filter(|u| !lease_covers(u, &grants))
+            .cloned()
+            .collect();
+        let owned = self.access.items(eth_address, &on_chain, timestamp).await?;
         Ok(PermissionResult::from_failing(
-            missing
+            on_chain
                 .into_iter()
-                .filter(|u| !lease_covers(u, &grants))
-                .cloned()
+                .zip(owned)
+                .filter(|(_, o)| !o)
+                .map(|(u, _)| u)
                 .collect(),
         ))
     }

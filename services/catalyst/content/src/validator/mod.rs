@@ -41,7 +41,7 @@ mod helpers;
 pub mod image_metadata;
 mod item_hash;
 pub mod merkle;
-pub mod onchain;
+pub(crate) mod onchain;
 pub mod rules;
 mod scene_parcels;
 mod spring_bones;
@@ -182,8 +182,15 @@ impl Sources {
 
     /// The chain access checks, for entities this node did not validate
     /// itself (peer sync): every check takes the entity timestamp.
-    pub fn access(&self) -> Arc<onchain::OnChainAccess> {
+    #[allow(dead_code)] // peer sync validation reads it
+    pub(crate) fn access(&self) -> Arc<onchain::OnChainAccess> {
         self.access.clone()
+    }
+
+    /// Each configured RPC answers for the chain `ETH_NETWORK` names; an
+    /// unreachable RPC is only logged.
+    pub async fn verify_chain_ids(&self) -> anyhow::Result<()> {
+        self.access.verify_chain_ids().await
     }
 }
 
