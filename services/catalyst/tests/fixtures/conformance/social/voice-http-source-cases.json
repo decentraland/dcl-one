@@ -3,11 +3,11 @@
     "repository": "decentraland/social-service-ea",
     "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
   },
-  "scope": "Executed actual HTTP controllers, schema middleware and voice/http error middleware; real community domain with deterministic injected dependencies, private voice outcomes injected. Authentication bypassed with explicit verified actor; no live-media claim.",
+  "scope": "Executed actual HTTP controllers, schema middleware and voice/http error middleware; real community domain with deterministic injected dependencies, private voice outcomes injected. 13 unique HTTP operations, including both private PATCH branches; active-community GET is owned separately. Authentication bypassed with explicit verified actor; no live-media claim.",
   "caller": "0x1111111111111111111111111111111111111111",
   "target": "0x2222222222222222222222222222222222222222",
   "community": "33333333-3333-4333-8333-333333333333",
-  "call": "44444444-4444-4444-8444-444444444444",
+  "call": "a4444444-4444-4444-8444-444444444444",
   "cases": [
     {
       "id": "private-start.success",
@@ -24,7 +24,7 @@
         "status": 201,
         "body": {
           "data": {
-            "callId": "44444444-4444-4444-8444-444444444444"
+            "callId": "a4444444-4444-4444-8444-444444444444"
           }
         }
       }
@@ -88,7 +88,7 @@
         "status": 200,
         "body": {
           "data": {
-            "callId": "44444444-4444-4444-8444-444444444444",
+            "callId": "a4444444-4444-4444-8444-444444444444",
             "callerAddress": "0x2222222222222222222222222222222222222222"
           }
         }
@@ -132,9 +132,9 @@
       "operation": "private-accept",
       "scenario": "success",
       "method": "PATCH",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": {
         "intention": "accepted"
@@ -144,8 +144,8 @@
         "status": 200,
         "body": {
           "data": {
-            "callId": "44444444-4444-4444-8444-444444444444",
-            "connectionUrl": "wss://livekit.test/voice-chat-private-44444444-4444-4444-8444-444444444444?for=0x2222222222222222222222222222222222222222"
+            "callId": "a4444444-4444-4444-8444-444444444444",
+            "connectionUrl": "wss://livekit.test/voice-chat-private-a4444444-4444-4444-8444-444444444444?for=0x2222222222222222222222222222222222222222"
           }
         }
       }
@@ -155,9 +155,9 @@
       "operation": "private-accept",
       "scenario": "runtime-failure",
       "method": "PATCH",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": {
         "intention": "accepted"
@@ -196,9 +196,9 @@
       "operation": "private-accept",
       "scenario": "schema-required",
       "method": "PATCH",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": {},
       "caller": "0x2222222222222222222222222222222222222222",
@@ -222,13 +222,120 @@
       }
     },
     {
+      "id": "private-accept.compact-id",
+      "operation": "private-accept",
+      "scenario": "compact-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444444444448444444444444444",
+      "params": {
+        "callId": "a4444444444444448444444444444444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-accept.braced-id",
+      "operation": "private-accept",
+      "scenario": "braced-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/{a4444444-4444-4444-8444-444444444444}",
+      "params": {
+        "callId": "{a4444444-4444-4444-8444-444444444444}"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-accept.uppercase-id",
+      "operation": "private-accept",
+      "scenario": "uppercase-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/A4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "A4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 200,
+        "body": {
+          "data": {
+            "callId": "A4444444-4444-4444-8444-444444444444",
+            "connectionUrl": "wss://livekit.test/voice-chat-private-a4444444-4444-4444-8444-444444444444?for=0x2222222222222222222222222222222222222222"
+          }
+        }
+      }
+    },
+    {
+      "id": "private-accept.urn-id",
+      "operation": "private-accept",
+      "scenario": "urn-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "urn:uuid:a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-accept.four-digit-id",
+      "operation": "private-accept",
+      "scenario": "four-digit-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a444-4444-4444-4444-8444-4444-4444-4444",
+      "params": {
+        "callId": "a444-4444-4444-4444-8444-4444-4444-4444"
+      },
+      "body": {
+        "intention": "accepted"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
       "id": "private-accept.not-found",
       "operation": "private-accept",
       "scenario": "not-found",
       "method": "PATCH",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": {
         "intention": "accepted"
@@ -238,7 +345,7 @@
         "status": 404,
         "body": {
           "error": "Not Found",
-          "message": "The voice chat with id 44444444-4444-4444-8444-444444444444 was not found"
+          "message": "The voice chat with id a4444444-4444-4444-8444-444444444444 was not found"
         }
       }
     },
@@ -247,9 +354,9 @@
       "operation": "private-reject",
       "scenario": "success",
       "method": "PATCH",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": {
         "intention": "rejected"
@@ -265,9 +372,9 @@
       "operation": "private-reject",
       "scenario": "runtime-failure",
       "method": "PATCH",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": {
         "intention": "rejected"
@@ -306,9 +413,9 @@
       "operation": "private-reject",
       "scenario": "schema-required",
       "method": "PATCH",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": {},
       "caller": "0x2222222222222222222222222222222222222222",
@@ -332,13 +439,115 @@
       }
     },
     {
+      "id": "private-reject.compact-id",
+      "operation": "private-reject",
+      "scenario": "compact-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a4444444444444448444444444444444",
+      "params": {
+        "callId": "a4444444444444448444444444444444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-reject.braced-id",
+      "operation": "private-reject",
+      "scenario": "braced-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/{a4444444-4444-4444-8444-444444444444}",
+      "params": {
+        "callId": "{a4444444-4444-4444-8444-444444444444}"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-reject.uppercase-id",
+      "operation": "private-reject",
+      "scenario": "uppercase-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/A4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "A4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "private-reject.urn-id",
+      "operation": "private-reject",
+      "scenario": "urn-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "urn:uuid:a4444444-4444-4444-8444-444444444444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-reject.four-digit-id",
+      "operation": "private-reject",
+      "scenario": "four-digit-id",
+      "method": "PATCH",
+      "path": "/v1/private-voice-chats/a444-4444-4444-4444-8444-4444-4444-4444",
+      "params": {
+        "callId": "a444-4444-4444-4444-8444-4444-4444-4444"
+      },
+      "body": {
+        "intention": "rejected"
+      },
+      "caller": "0x2222222222222222222222222222222222222222",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
       "id": "private-reject.not-found",
       "operation": "private-reject",
       "scenario": "not-found",
       "method": "PATCH",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": {
         "intention": "rejected"
@@ -348,7 +557,7 @@
         "status": 404,
         "body": {
           "error": "Not Found",
-          "message": "The voice chat with id 44444444-4444-4444-8444-444444444444 was not found"
+          "message": "The voice chat with id a4444444-4444-4444-8444-444444444444 was not found"
         }
       }
     },
@@ -357,9 +566,9 @@
       "operation": "private-end",
       "scenario": "success",
       "method": "DELETE",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": null,
       "caller": "0x1111111111111111111111111111111111111111",
@@ -373,9 +582,9 @@
       "operation": "private-end",
       "scenario": "runtime-failure",
       "method": "DELETE",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": null,
       "caller": "0x1111111111111111111111111111111111111111",
@@ -406,13 +615,105 @@
       }
     },
     {
+      "id": "private-end.compact-id",
+      "operation": "private-end",
+      "scenario": "compact-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/a4444444444444448444444444444444",
+      "params": {
+        "callId": "a4444444444444448444444444444444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-end.braced-id",
+      "operation": "private-end",
+      "scenario": "braced-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/{a4444444-4444-4444-8444-444444444444}",
+      "params": {
+        "callId": "{a4444444-4444-4444-8444-444444444444}"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-end.uppercase-id",
+      "operation": "private-end",
+      "scenario": "uppercase-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/A4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "A4444444-4444-4444-8444-444444444444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 204,
+        "body": null
+      }
+    },
+    {
+      "id": "private-end.urn-id",
+      "operation": "private-end",
+      "scenario": "urn-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/urn:uuid:a4444444-4444-4444-8444-444444444444",
+      "params": {
+        "callId": "urn:uuid:a4444444-4444-4444-8444-444444444444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
+      "id": "private-end.four-digit-id",
+      "operation": "private-end",
+      "scenario": "four-digit-id",
+      "method": "DELETE",
+      "path": "/v1/private-voice-chats/a444-4444-4444-4444-8444-4444-4444-4444",
+      "params": {
+        "callId": "a444-4444-4444-4444-8444-4444-4444-4444"
+      },
+      "body": null,
+      "caller": "0x1111111111111111111111111111111111111111",
+      "response": {
+        "status": 400,
+        "body": {
+          "error": "Bad request",
+          "message": "Invalid callId"
+        }
+      }
+    },
+    {
       "id": "private-end.not-found",
       "operation": "private-end",
       "scenario": "not-found",
       "method": "DELETE",
-      "path": "/v1/private-voice-chats/44444444-4444-4444-8444-444444444444",
+      "path": "/v1/private-voice-chats/a4444444-4444-4444-8444-444444444444",
       "params": {
-        "callId": "44444444-4444-4444-8444-444444444444"
+        "callId": "a4444444-4444-4444-8444-444444444444"
       },
       "body": null,
       "caller": "0x1111111111111111111111111111111111111111",
@@ -420,7 +721,7 @@
         "status": 404,
         "body": {
           "error": "Not Found",
-          "message": "The voice chat with id 44444444-4444-4444-8444-444444444444 was not found"
+          "message": "The voice chat with id a4444444-4444-4444-8444-444444444444 was not found"
         }
       }
     },

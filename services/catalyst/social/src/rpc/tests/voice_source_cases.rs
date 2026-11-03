@@ -563,7 +563,7 @@ async fn voice_http_answers_match_executed_upstream_controllers_and_middlewares(
     let community: Uuid = fixture["community"].as_str().unwrap().parse().unwrap();
     let call: Uuid = fixture["call"].as_str().unwrap().parse().unwrap();
     let mut mismatches = Vec::new();
-    assert_eq!(fixture["cases"].as_array().unwrap().len(), 61);
+    assert_eq!(fixture["cases"].as_array().unwrap().len(), 76);
     for source in fixture["cases"].as_array().unwrap() {
         let encoded = serde_json::to_string(source)
             .unwrap()
@@ -605,7 +605,8 @@ async fn voice_http_answers_match_executed_upstream_controllers_and_middlewares(
             if operation != "community-start" {
                 voice.inner.live.lock().insert(community);
             }
-        } else if operation != "private-start" && ["success", "runtime-failure"].contains(&scenario)
+        } else if operation != "private-start"
+            && ["success", "runtime-failure", "uppercase-id"].contains(&scenario)
         {
             let (from, to) = if operation == "private-incoming" {
                 (&address_b, &address_a)

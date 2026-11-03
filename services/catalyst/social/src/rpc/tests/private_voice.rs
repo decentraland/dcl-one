@@ -653,6 +653,24 @@ async fn private_identifier_wire_and_pending_side_effects_match_executed_upstrea
     let b = fixture["target"].as_str().unwrap();
     let call: Uuid = fixture["call"].as_str().unwrap().parse().unwrap();
     assert_eq!(fixture["cases"].as_array().unwrap().len(), 48);
+    // Query-only warm samples separate the extra UUID-boundary round trip from
+    // the domain/media operation; this is an observation, not a timing gate.
+    let mut cast_micros = Vec::with_capacity(128);
+    for _ in 0..128 {
+        let at = std::time::Instant::now();
+        let parsed: Uuid = sqlx::query_scalar("SELECT $1::text::uuid")
+            .bind(call.to_string())
+            .fetch_one(rig.db.pool())
+            .await
+            .unwrap();
+        assert_eq!(parsed, call);
+        cast_micros.push(at.elapsed().as_micros());
+    }
+    cast_micros.sort_unstable();
+    println!(
+        "RPC UUID cast query128samples: p50={}us p95={}us max={}us",
+        cast_micros[64], cast_micros[121], cast_micros[127]
+    );
     for case in fixture["cases"].as_array().unwrap() {
         let label = case["id"].as_str().unwrap();
         sqlx::query("DELETE FROM social.private_voice_chats WHERE id=$1")

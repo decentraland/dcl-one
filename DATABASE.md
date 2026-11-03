@@ -417,3 +417,11 @@ statement. Production active-room counts, oversized-event frequency and a 512 Mi
 payload's memory/latency cost have not been measured; the byte limit is an admission
 bound, not a demonstrated capacity. Operators can observe transport drops through
 `social_event_delivery_dropped` and retain the existing SQL/job instrumentation.
+
+Private-call accept, reject and end RPCs first run the parameterized scalar query
+`SELECT $1::text::uuid` through the existing pool. This adds one SQL round trip per
+RPC so PostgreSQL controls accepted UUID spellings and syntax-error messages before
+the stricter media identifier check. It reads no application row, takes no row
+lock and needs no index. HTTP keeps its own canonical UUID validation and calls
+the typed operation directly. Query-only observations are recorded in `METRICS.md`;
+they do not establish equal latency with the source's combined lookup.

@@ -35,3 +35,14 @@ control messages arrived in 24.757 ms. This is one small warm-cache burst fixtur
 not a sustained throughput, multi-community fairness or maximum-payload benchmark.
 SQL concurrency is capped by the configured pool size; ingress beyond the queue
 bound can still drop transient events and increments the delivery-drop counter.
+
+## Private-call RPC UUID boundary
+
+The private identifier replay sampled 128 sequential SQLx executions of the bound
+scalar `SELECT $1::text::uuid` on the existing test pool. On local PostgreSQL 18.6,
+over loopback with a warm statement cache and concurrent builds, one 2026-11-03
+run measured p50 133 microseconds, p95 848 microseconds and maximum 5,001
+microseconds. These timings include pool acquisition and the query round trip.
+The sample adds no application-table reads or row locks. Hardware details, p99,
+sustained throughput and production-load latency were not recorded. The RPC now
+performs this extra query; the measurement does not claim source performance parity.

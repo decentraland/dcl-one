@@ -2,7 +2,8 @@
 // Actual pinned HTTP controllers, schema validator and both error middlewares;
 // community domain is real with deterministic dependencies, private outcomes injected.
 const fs = require('node:fs')
-const { req, load, logs, caller, target, community, call, revision, components } = require('./social-service-voice-source-cases.cjs')
+const { req, load, logs, caller, target, community, revision, components } = require('./social-service-voice-source-cases.cjs')
+const call = 'a4444444-4444-4444-8444-444444444444'
 const schema = load('controllers/handlers/http/schemas.ts')
 const validator = req('@dcl/schema-validator-component').createSchemaValidatorComponent({ ensureJsonContentType: false })
 const { errorHandler } = req('@dcl/http-commons')
@@ -33,6 +34,9 @@ async function capture(config, scenario) {
     if (params.communityId) { path = path.replace(community,'invalid'); params.communityId='invalid' }
     if (params.callId) { path = path.replace(call,'invalid'); params.callId='invalid' }
   }
+  const spellings = { 'compact-id':call.replaceAll('-',''), 'braced-id':`{${call}}`, 'uppercase-id':call.toUpperCase(),
+    'urn-id':`urn:uuid:${call}`, 'four-digit-id':'a444-4444-4444-4444-8444-4444-4444-4444' }
+  if (spellings[scenario]) { path=path.replace(call,spellings[scenario]);params.callId=spellings[scenario] }
   if (scenario === 'schema-required') body={}
   if (scenario === 'invalid-target') { path=path.replace(target,'invalid');params.address='invalid' }
   const deps = await components(scenario, id === 'community-start')
@@ -62,12 +66,13 @@ async function main() {
     cases.push(await capture(config,'runtime-failure'))
     if (Object.keys(config[5]).length) cases.push(await capture(config,'invalid-id'))
     if (config[7]) cases.push(await capture(config,'schema-required'))
+    if (config[5].callId) for (const spelling of ['compact-id','braced-id','uppercase-id','urn-id','four-digit-id']) cases.push(await capture(config,spelling))
     if (config[5].address) cases.push(await capture(config,'invalid-target'))
     if (config[0].startsWith('private-') && config[0]!=='private-start') cases.push(await capture(config,'not-found'))
     if (config[0].startsWith('community-') && config[0]!=='community-start') cases.push(await capture(config,'runtime-not-found'))
   }
   fs.writeFileSync(process.argv[3],JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision},
-    scope:'Executed actual HTTP controllers, schema middleware and voice/http error middleware; real community domain with deterministic injected dependencies, private voice outcomes injected. Authentication bypassed with explicit verified actor; no live-media claim.',caller,target,community,call,cases},null,2)+'\n')
+    scope:'Executed actual HTTP controllers, schema middleware and voice/http error middleware; real community domain with deterministic injected dependencies, private voice outcomes injected. 13 unique HTTP operations, including both private PATCH branches; active-community GET is owned separately. Authentication bypassed with explicit verified actor; no live-media claim.',caller,target,community,call,cases},null,2)+'\n')
   process.stdout.write(`Captured ${cases.length} upstream voice HTTP cases\n`)
 }
 main().catch(error=>{console.error(error);process.exitCode=1})
