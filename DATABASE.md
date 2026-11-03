@@ -254,6 +254,56 @@ these are estimates, not measured throughput.
 
 ## Queries, ingest and derived state
 
+Native ended-event metrics live in Social. `social.event_ended_occurrences`
+records one immutable fact per `(event_id, occurrence_start)`; its RSVP count
+comes from explicit local attendance, and its community must resolve to an
+active, unsuspended local community. The fact and community metric contribution
+commit together. Removing a catalogue event does not erase facts; deleting a community removes its aggregate. The first scan starts at
+activation and does not import historical endings. Each subsequent pass reconciles
+currently ended occurrences against the immutable fact keys. Duration-only edits
+that move an end behind an earlier scan are reconsidered. A DTSTART or recurrence
+change records a private database-clock cutoff in the authoring transaction.
+Unchanged eligible starts shared by the old and new materialized schedules
+remain eligible, including live occurrences and deferred endings. A private
+lookup stores only those pre-edit starts still in the current schedule, bounded
+by that schedule rather than growing across edits. Newly introduced backdated
+starts cannot contribute. Creation and each transition into approved state start
+an eligibility window using the database clock: already-ended occurrences are
+excluded, while an already eligible occurrence still in progress is retained.
+Thus a late first submission counts its ongoing occurrence without importing
+historical attendance, and later approval cannot backfill endings from pending
+review or resurrect a newly backdated schedule identity. These keys
+are excluded from the public event projection and notification snapshots.
+Existing immutable facts remain intact. Ordinary
+owners must obtain moderation again after changing dates or durations. Recovery
+is limited to the latest 30 days: older unrecorded endings require a separate
+backfill, and existing immutable facts remain untouched. The approved
+`(finish_at,id)` index prefilters series before date expansion; attendance and
+community resolution occur after the candidate LIMIT. Each pass handles
+at most 100 occurrences with transaction-local statement and lock timeouts and
+an independent scan budget, so metric contention cannot stop notification
+delivery. Expected workload is one periodic scan per minute; throughput at
+production catalogue size remains unmeasured.
+
+The optional event moderation webhook uses an Explore-owned transactional
+outbox with public labels and moderation reasons only. Delivery is at least
+once, bounded to six attempts with five-second HTTP timeouts, and starts at its
+first capture cutoff, written atomically with the intent using the database clock.
+Exhausted delivery attempts remain distinct from successful completion. A creator
+can enqueue at most two edited notices per rolling minute; unsent edits
+coalesce per event. Every submission retains its own durable alert. Approvals,
+rejections and deletions precede all submissions, and submissions precede edits;
+submission volume therefore cannot delay operator moderation alerts. Deployment configuration supplies the secret endpoint;
+operator writes and deployment posture gate outbound delivery. Unconfigured or
+operator-write-disabled authoring captures no webhook intent. The same worker
+performs bounded cleanup even when its endpoint is disabled: at most 1000 rows
+per pass, with a one-second client budget and transaction-local statement/lock
+timeouts. Completed and exhausted rows are retained for 30 days, as is legacy
+history before activation; eligible unfinished retries and the rolling-minute
+edit throttle window are preserved. `(created_at,id)` supports retention order. Migration `0018` adds missing creator
+and edit-bucket columns on earlier shared development layouts without removing
+intents, and the object pass recreates the changed due/creator indexes.
+
 Event notification delivery is owned by Social in
 `social.event_notification_intents`. Explore inserts an event transition snapshot
 through qualified SQL in the same transaction as the event change; Social owns

@@ -203,6 +203,7 @@ fn content_touched(body: &UpdateEventBody) -> bool {
         || body.categories.is_some()
         || body.community_id.is_some()
         || location_touched(body)
+        || recurrence_touched(body)
 }
 
 fn moderated_content_changed(before: &Map<String, Value>, after: &Map<String, Value>) -> bool {
@@ -214,6 +215,17 @@ fn moderated_content_changed(before: &Map<String, Value>, after: &Map<String, Va
         "url",
         "categories",
         "community_id",
+        "start_at",
+        "duration",
+        "recurrent",
+        "recurrent_frequency",
+        "recurrent_interval",
+        "recurrent_weekday_mask",
+        "recurrent_month_mask",
+        "recurrent_setpos",
+        "recurrent_monthday",
+        "recurrent_count",
+        "recurrent_until",
         "x",
         "y",
         "server",
@@ -710,6 +722,30 @@ pub async fn patch_event(
         }
     }
     apply_owner_edit(&mut raw, &edit, dates_present)?;
+    // A new schedule cannot mint historical occurrence facts. Duration-only
+    // corrections keep the same occurrence keys and remain reconcilable.
+    if [
+        "start_at",
+        "recurrent",
+        "recurrent_frequency",
+        "recurrent_interval",
+        "recurrent_weekday_mask",
+        "recurrent_month_mask",
+        "recurrent_setpos",
+        "recurrent_monthday",
+        "recurrent_count",
+        "recurrent_until",
+    ]
+    .iter()
+    .any(|key| before.get(*key) != raw.get(*key))
+    {
+        let cutoff: chrono::NaiveDateTime =
+            sqlx::query_scalar("SELECT clock_timestamp() AT TIME ZONE 'UTC'")
+                .fetch_one(&mut *tx)
+                .await?;
+        moderation::preserve_metric_starts(&before, &mut raw, cutoff.and_utc());
+    }
+
     let mut changed_references = Map::new();
     for (key, changed) in [
         ("categories", edit.categories.is_some()),
@@ -811,6 +847,7 @@ pub async fn patch_event(
         raw,
         &signer,
         json!({ "edit": edit }),
+        &state.settings,
     )
     .await?;
     tx.commit().await?;
@@ -908,9 +945,26 @@ pub async fn delete_event(
     raw.insert("deleted_at".into(), json!(now));
     raw.insert("updated_at".into(), json!(now));
     if mirrored {
-        moderation::hide_mirrored_locked(&mut tx, &event_id, &before, raw, &provenance).await?;
+        moderation::hide_mirrored_locked(
+            &mut tx,
+            &event_id,
+            &before,
+            raw,
+            &provenance,
+            &state.settings,
+        )
+        .await?;
     } else {
-        moderation::store_locked(&mut tx, &event_id, &before, raw, &provenance, payload).await?;
+        moderation::store_locked(
+            &mut tx,
+            &event_id,
+            &before,
+            raw,
+            &provenance,
+            payload,
+            &state.settings,
+        )
+        .await?;
     }
     tx.commit().await?;
     answer(&state, &event_id, viewer.as_deref()).await
@@ -2651,7 +2705,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK, "{date}");
-        assert_eq!(date["data"]["approved"], true);
+        assert_eq!(
+            date["data"]["approved"], false,
+            "owner reschedules require review"
+        );
         let (_, renamed) = call_as(
             &app,
             "PATCH",
@@ -3402,12 +3459,13 @@ mod tests {
     }
 
     #[test]
-    fn schedule_edits_and_content_roundtrips_do_not_require_new_moderation() {
+    fn schedule_changes_require_moderation_but_content_roundtrips_do_not() {
         let before = json!({"name":"Event", "description":"text", "categories":["art","music"],"start_at":"2099-01-01T00:00:00Z"}).as_object().unwrap().clone();
         let mut after = before.clone();
-        after.insert("start_at".into(), json!("2099-01-02T00:00:00Z"));
         after.insert("categories".into(), json!(["music", "art"]));
         assert!(!moderated_content_changed(&before, &after));
+        after.insert("start_at".into(), json!("2099-01-02T00:00:00Z"));
+        assert!(moderated_content_changed(&before, &after));
         after.insert("name".into(), json!("Changed"));
         assert!(moderated_content_changed(&before, &after));
     }

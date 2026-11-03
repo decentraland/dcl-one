@@ -743,3 +743,29 @@ fn island_refuses_the_secrets_that_call_a_third_party() {
         None
     );
 }
+
+#[test]
+fn optional_moderation_webhooks_obey_posture_before_and_after_secret_resolution() {
+    for posture in ["island", "journey"] {
+        let error = refusal(&[
+            ("DATABASE_URL", "postgres:///catalyst"),
+            (ENV, posture),
+            (
+                "SLACK_WEBHOOK",
+                "https://hooks.slack.com/services/private-token",
+            ),
+        ])
+        .unwrap();
+        assert!(error.contains("SLACK_WEBHOOK"));
+        assert!(!error.contains("private-token"));
+        let mut config = parsed(&[("DATABASE_URL", "postgres:///catalyst"), (ENV, posture)]);
+        config.explore.events_slack_webhook =
+            Some("https://hooks.slack.com/services/private-token".into());
+        assert!(
+            refuse_remote_secrets(&mut config).is_err(),
+            "credential-file values obey the same posture"
+        );
+        config.explore.events_slack_webhook = Some("http://127.0.0.1:9999/slack-fixture".into());
+        refuse_remote_secrets(&mut config).unwrap();
+    }
+}

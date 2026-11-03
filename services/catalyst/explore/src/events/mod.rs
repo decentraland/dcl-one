@@ -7,6 +7,7 @@
 pub mod attendees;
 pub mod categories;
 pub mod handlers;
+pub(crate) mod hooks;
 mod metadata;
 pub mod mirror;
 pub mod moderation;
