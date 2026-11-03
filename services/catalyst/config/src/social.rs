@@ -2,6 +2,57 @@
 
 use clap::Args;
 
+// @well-known-components/env-config-provider getNumber uses parseFloat,
+// including numeric prefixes and Infinity, and rejects NaN.
+fn source_number(raw: &str) -> Result<f64, String> {
+    let raw =
+        raw.trim_start_matches(|c: char| c == '\u{feff}' || (c != '\u{85}' && c.is_whitespace()));
+    let bytes = raw.as_bytes();
+    let mut end = usize::from(matches!(bytes.first(), Some(b'+' | b'-')));
+    if raw
+        .get(end..)
+        .is_some_and(|suffix| suffix.starts_with("Infinity"))
+    {
+        return Ok(if bytes.first() == Some(&b'-') {
+            f64::NEG_INFINITY
+        } else {
+            f64::INFINITY
+        });
+    }
+    let mut digits = 0;
+    while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+        end += 1;
+        digits += 1;
+    }
+    if bytes.get(end) == Some(&b'.') {
+        end += 1;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+            digits += 1;
+        }
+    }
+    if digits == 0 {
+        return Err("Value is not a number".into());
+    }
+    if matches!(bytes.get(end), Some(b'e' | b'E')) {
+        let exponent = end;
+        end += 1;
+        if matches!(bytes.get(end), Some(b'+' | b'-')) {
+            end += 1;
+        }
+        let start = end;
+        while bytes.get(end).is_some_and(u8::is_ascii_digit) {
+            end += 1;
+        }
+        if end == start {
+            end = exponent;
+        }
+    }
+    raw[..end]
+        .parse::<f64>()
+        .map_err(|_| "Value is not a number".into())
+}
+
 /// Social: communities, the social RPC, comms, notifications, badges, media and profile
 /// images.
 #[derive(Args, Clone, Debug)]
@@ -53,6 +104,7 @@ pub struct SocialConfig {
         long,
         env = "FRIENDSHIP_RATE_LIMIT_WINDOW_SECONDS",
         default_value_t = 60.0,
+        value_parser = source_number,
         allow_hyphen_values = true
     )]
     pub friendship_rate_limit_window_seconds: f64,
@@ -60,6 +112,7 @@ pub struct SocialConfig {
         long,
         env = "FRIENDSHIP_RATE_LIMIT_PER_ACTOR",
         default_value_t = 30.0,
+        value_parser = source_number,
         allow_hyphen_values = true
     )]
     pub friendship_rate_limit_per_actor: f64,
@@ -67,6 +120,7 @@ pub struct SocialConfig {
         long,
         env = "FRIENDSHIP_RATE_LIMIT_PER_PAIR",
         default_value_t = 10.0,
+        value_parser = source_number,
         allow_hyphen_values = true
     )]
     pub friendship_rate_limit_per_pair: f64,
@@ -500,6 +554,29 @@ mod tests {
             ),
             (-1.0, 0.0, 2.5)
         );
+    }
+
+    #[test]
+    fn friendship_numbers_use_source_parse_float_instead_of_strict_rust_parsing() {
+        for (raw, expected) in [
+            ("10abc", 10.0),
+            ("  +.5tail", 0.5),
+            ("1e+2suffix", 100.0),
+            ("1e-", 1.0),
+            ("0x10", 0.0),
+            ("Infinitysuffix", f64::INFINITY),
+            ("-Infinity", f64::NEG_INFINITY),
+            ("1e999", f64::INFINITY),
+        ] {
+            let configured = social(&[("FRIENDSHIP_RATE_LIMIT_PER_PAIR", raw)]).unwrap();
+            assert_eq!(configured.friendship_rate_limit_per_pair, expected, "{raw}");
+        }
+        for raw in ["NaN", "invalid", "", "infinity"] {
+            assert!(
+                social(&[("FRIENDSHIP_RATE_LIMIT_PER_PAIR", raw)]).is_err(),
+                "{raw}"
+            );
+        }
     }
 
     /// The social sockets' limits are upstream social-service-ea's variables
