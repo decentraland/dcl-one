@@ -33,7 +33,6 @@ pub enum Mode {
 
 pub struct RecordingOptions {
     about_urls: Vec<String>,
-    content_urls: Vec<String>,
 }
 
 impl RecordingOptions {
@@ -44,10 +43,55 @@ impl RecordingOptions {
         ];
         let mut about_urls: Vec<_> = peers.iter().map(|peer| format!("{peer}/about")).collect();
         about_urls.push(format!("https://realm-provider-ea.{domain}/main/about"));
-        Self {
-            about_urls,
-            content_urls: peers.iter().map(|peer| format!("{peer}/content")).collect(),
+        Self { about_urls }
+    }
+
+    fn public_realm(&self, realm: Option<&RealmConfig>) -> bool {
+        let Some(realm) = realm else { return false };
+        let trusted_about = |about: &str| {
+            self.about_urls
+                .iter()
+                .any(|url| url == about.trim_end_matches('/'))
+        };
+        if !realm.connected
+            || realm.secret.is_some()
+            || !realm.advertised_by.as_deref().is_some_and(trusted_about)
+            || !trusted_about(&realm.about_url)
+        {
+            return false;
         }
+        let Some(content) = realm
+            .about
+            .content_url()
+            .and_then(|url| url::Url::parse(url).ok())
+        else {
+            return false;
+        };
+        if !content.username().is_empty()
+            || content.password().is_some()
+            || content.query().is_some()
+            || content.fragment().is_some()
+            || content.path().trim_end_matches('/') != "/content"
+        {
+            return false;
+        }
+        // A trusted realm can serve its own content or advertise a different public Catalyst.
+        if url::Url::parse(&realm.about_url).is_ok_and(|about| about.origin() == content.origin()) {
+            return true;
+        }
+        content.scheme() == "https"
+            && match content.host() {
+                Some(url::Host::Domain(host)) => {
+                    let host = host.trim_end_matches('.');
+                    host.contains('.')
+                        && !host.ends_with(".localhost")
+                        && !host.ends_with(".local")
+                        && !host.ends_with(".internal")
+                }
+                Some(url::Host::Ipv4(ip)) => !common::util::is_forbidden_ip(&ip.into()),
+                Some(url::Host::Ipv6(ip)) => !common::util::is_forbidden_ip(&ip.into()),
+                None => false,
+            }
     }
 
     fn public_hash(
@@ -57,11 +101,9 @@ impl RecordingOptions {
         context: &super::IpfsContext,
     ) -> Option<String> {
         let realm = realm?;
-        let content_url = context.about.as_ref()?.content_url()?;
-        if !realm.connected
-            || realm.secret.is_some()
-            || !self.about_urls.contains(&realm.about_url)
-            || !self.content_urls.iter().any(|url| url == content_url)
+        if !self.public_realm(Some(realm))
+            || context.about.as_ref()?.content_url()?.trim_end_matches('/')
+                != realm.about.content_url()?.trim_end_matches('/')
             || path.base_url().is_some()
             || context
                 .modifiers
@@ -80,11 +122,18 @@ impl RecordingOptions {
 pub(super) struct RecordingReader {
     inner: PassThroughReader,
     recording: Arc<Recording>,
+    diagnostic_realm: std::sync::Mutex<tokio::sync::watch::Receiver<Option<RealmConfig>>>,
 }
 
 impl RecordingReader {
     pub(super) fn new(inner: PassThroughReader, recording: Arc<Recording>) -> Self {
-        Self { inner, recording }
+        let mut realm = inner.inner.realm_config_receiver.clone();
+        realm.mark_changed();
+        Self {
+            inner,
+            recording,
+            diagnostic_realm: std::sync::Mutex::new(realm),
+        }
     }
 }
 
@@ -101,6 +150,17 @@ impl AssetReader for RecordingReader {
         // A cold hash read can arrive before /about. Resolve the realm before deciding
         // whether replay may contact the ordinary reader.
         let _ = io.connected().await;
+        {
+            let mut realm = self.diagnostic_realm.lock().unwrap();
+            if realm.has_changed().unwrap_or(false)
+                && !self
+                    .recording
+                    .options
+                    .public_realm(realm.borrow_and_update().as_ref())
+            {
+                warn!("asset recording is inactive in this realm; reads use the ordinary cache and network");
+            }
+        }
         let mut realm = io.realm_config_receiver.clone();
         let select = |context: &super::IpfsContext, realm: &Option<RealmConfig>| {
             self.recording
@@ -128,11 +188,14 @@ impl AssetReader for RecordingReader {
                 if realm.has_changed().unwrap_or(true) || current.as_ref() != Some(&hash) {
                     return Ok(reader);
                 }
+                let mut writer = writer.clone().lock_owned().await;
+                if writer.recorded.contains(&hash) {
+                    return Ok(reader);
+                }
                 let mut bytes = Vec::new();
                 reader.read_to_end(&mut bytes).await?;
                 drop(reader);
                 if bytes.len() as u64 <= MAX_ITEM {
-                    let mut writer = writer.clone().lock_owned().await;
                     bytes = async_std::task::spawn_blocking(move || {
                         if let Err(error) = writer.record(&hash, &bytes) {
                             warn!("asset read was not recorded: {error}");
@@ -140,6 +203,10 @@ impl AssetReader for RecordingReader {
                         bytes
                     })
                     .await;
+                } else {
+                    warn!(
+                        "asset {hash} exceeds the {MAX_ITEM}-byte recording limit and was skipped"
+                    );
                 }
                 Ok(Box::new(VecReader::new(bytes)) as Box<dyn Reader>)
             }
@@ -263,12 +330,15 @@ struct Writer {
     journal_bytes: u64,
     events: usize,
     blobs: HashMap<String, u64>,
-    verified: HashSet<String>,
+    recorded: HashSet<String>,
     bytes: u64,
 }
 
 impl Writer {
     fn record(&mut self, hash: &str, bytes: &[u8]) -> io::Result<()> {
+        if self.recorded.contains(hash) {
+            return Ok(());
+        }
         let len = bytes.len() as u64;
         let line = format!("{hash} {len} read\n");
         if self.events >= MAX_EVENTS || self.journal_bytes + line.len() as u64 > MAX_JOURNAL {
@@ -277,19 +347,16 @@ impl Writer {
         if len > MAX_ITEM || !matches_content_hash(hash, bytes) {
             return Err(invalid("recording content mismatch"));
         }
-        if !self.verified.contains(hash) {
-            if self.blobs.contains_key(hash) {
-                read_verified(&self.directory, hash, len)?;
-            } else {
-                if self.blobs.len() >= MAX_BLOBS || self.bytes + len > MAX_TOTAL {
-                    return Err(invalid("recording exceeds limits"));
-                }
-                let path = blob_path(&self.directory, hash)?;
-                install(&self.directory, ".blob.tmp", &path, bytes)?;
-                self.blobs.insert(hash.to_owned(), len);
-                self.bytes += len;
+        if self.blobs.contains_key(hash) {
+            read_verified(&self.directory, hash, len)?;
+        } else {
+            if self.blobs.len() >= MAX_BLOBS || self.bytes + len > MAX_TOTAL {
+                return Err(invalid("recording exceeds limits"));
             }
-            self.verified.insert(hash.to_owned());
+            let path = blob_path(&self.directory, hash)?;
+            install(&self.directory, ".blob.tmp", &path, bytes)?;
+            self.blobs.insert(hash.to_owned(), len);
+            self.bytes += len;
         }
         // A failed/partial append may still extend the file. Restore the committed
         // boundary and write cursor before retrying under the exclusive writer lock.
@@ -301,6 +368,7 @@ impl Writer {
         self.journal.sync_data()?;
         self.journal_bytes += line.len() as u64;
         self.events += 1;
+        self.recorded.insert(hash.to_owned());
         Ok(())
     }
 }
@@ -363,10 +431,14 @@ impl Recording {
             let path = entry?.path();
             let meta = fs::symlink_metadata(&path)?;
             if !meta.is_file() {
-                return Err(invalid("invalid recording entry"));
+                return Err(invalid(&format!(
+                    "invalid recording entry {:?}",
+                    path.file_name().unwrap_or_default()
+                )));
             }
             match path.file_name().and_then(|name| name.to_str()) {
                 Some(".writer.lock") if meta.len() == 0 => {}
+                Some(".DS_Store" | "Thumbs.db" | "desktop.ini") => {}
                 Some(".blob.tmp") if meta.len() <= MAX_ITEM => staging.push(path),
                 Some(".reads.tmp") if meta.len() <= MAX_JOURNAL => staging.push(path),
                 Some("reads.log") if meta.len() <= MAX_JOURNAL => {
@@ -384,7 +456,12 @@ impl Recording {
                         return Err(invalid("recording exceeds limits"));
                     }
                 }
-                _ => return Err(invalid("invalid recording entry")),
+                _ => {
+                    return Err(invalid(&format!(
+                        "unexpected recording entry {:?}",
+                        path.file_name().unwrap_or_default()
+                    )))
+                }
             }
         }
         let complete = journal
@@ -396,6 +473,7 @@ impl Recording {
             std::str::from_utf8(&journal).map_err(|_| invalid("invalid recording journal"))?;
         let mut entries = HashMap::new();
         let mut events = 0;
+        let mut unique = Vec::new();
         for line in log.lines() {
             let mut fields = line.split(' ');
             let hash = fields.next().unwrap_or_default();
@@ -410,7 +488,10 @@ impl Recording {
             {
                 return Err(invalid("invalid recording journal entry"));
             }
-            entries.insert(hash.to_owned(), len);
+            if entries.insert(hash.to_owned(), len).is_none() && mode == Mode::Capture {
+                unique.extend_from_slice(line.as_bytes());
+                unique.push(b'\n');
+            }
             events += 1;
         }
         let store = if let Some(lock) = lock {
@@ -419,18 +500,18 @@ impl Recording {
             }
             // Detach an imported/hard-linked journal before appending, and discard
             // its torn tail. This single bounded copy is made only when opening a writer.
-            install(&directory, ".reads.tmp", &journal_path, &journal)?;
+            install(&directory, ".reads.tmp", &journal_path, &unique)?;
             let mut handle = OpenOptions::new().write(true).open(journal_path)?;
             handle.seek(SeekFrom::End(0))?;
             let writer = Writer {
                 directory: directory.clone(),
                 _lock: lock,
                 journal: handle,
-                journal_bytes: complete as u64,
-                events,
+                journal_bytes: unique.len() as u64,
+                events: entries.len(),
                 blobs,
                 bytes,
-                verified: HashSet::new(),
+                recorded: entries.into_keys().collect(),
             };
             Store::Capture(Arc::new(tokio::sync::Mutex::new(writer)))
         } else {
@@ -496,12 +577,13 @@ mod tests {
         RealmConfig {
             about_url: "https://realm-provider-ea.example.test/main/about".into(),
             connected: true,
+            advertised_by: Some("https://realm-provider-ea.example.test/main/about".into()),
             secret: None,
             address: String::new(),
             about: ServerAbout {
                 content: Some(EndpointConfig {
                     healthy: true,
-                    public_url: "https://peer-ap1.example.test/content".into(),
+                    public_url: "https://catalyst.operator.example/content/".into(),
                 }),
                 ..Default::default()
             },
@@ -522,9 +604,31 @@ mod tests {
             Some(EMPTY)
         );
         assert!(options.public_hash(None, &path, &ctx).is_none());
+        // Both layouts occur in Genesis: a regional host under the base domain, and
+        // a Catalyst operator on a separate domain. /about can include a final slash.
+        let mut regional = public_realm();
+        regional.about_url = "https://peer.example.test/about/".into();
+        regional.advertised_by = Some(regional.about_url.clone());
+        regional.about.content.as_mut().unwrap().public_url =
+            "https://peer-ec1.example.test/content/".into();
+        ctx.about = Some(regional.about.clone());
+        ctx.about.as_mut().unwrap().trim_public_urls();
+        assert_eq!(
+            options.public_hash(Some(&regional), &path, &ctx).as_deref(),
+            Some(EMPTY)
+        );
+        ctx.about = Some(realm.about.clone());
         for changed in [
             RealmConfig {
+                advertised_by: None,
+                ..public_realm()
+            },
+            RealmConfig {
                 connected: false,
+                ..public_realm()
+            },
+            RealmConfig {
+                advertised_by: Some("https://user:secret@peer.example.test/about".into()),
                 ..public_realm()
             },
             RealmConfig {
@@ -566,17 +670,22 @@ mod tests {
             "https://peer-ap1.example.test/content?token=value",
             "https://user@peer-ap1.example.test/content",
             "https://peer.example.test/private",
-            "https://other.example.test/content",
+            "https://127.0.0.1/content",
+            "https://[::1]/content",
+            "https://service.localhost/content",
+            "http://operator.example/content",
+            "https://operator.example/content#secret",
         ] {
-            ctx.about
-                .as_mut()
-                .unwrap()
-                .content
-                .as_mut()
-                .unwrap()
-                .public_url = base.into();
-            assert!(options.public_hash(Some(&realm), &path, &ctx).is_none());
+            let mut changed = public_realm();
+            changed.about.content.as_mut().unwrap().public_url = base.into();
+            ctx.about = Some(changed.about.clone());
+            assert!(
+                options.public_hash(Some(&changed), &path, &ctx).is_none(),
+                "{base}"
+            );
         }
+        ctx.about = Some(regional.about);
+        assert!(options.public_hash(Some(&realm), &path, &ctx).is_none());
     }
 
     #[tokio::test]
@@ -593,6 +702,7 @@ mod tests {
         let fixture_realm = || {
             let mut realm = public_realm();
             realm.about_url = format!("{base}/about");
+            realm.advertised_by = Some(realm.about_url.clone());
             realm.about.content.as_mut().unwrap().public_url = format!("{base}/content");
             realm
         };
@@ -611,7 +721,6 @@ mod tests {
             io.realm_config_sender.send(Some(realm)).unwrap();
             let options = RecordingOptions {
                 about_urls: vec![format!("{base}/about")],
-                content_urls: vec![format!("{base}/content")],
             };
             RecordingReader::new(
                 PassThroughReader { inner: io },
@@ -703,14 +812,12 @@ mod tests {
         writer.record(EMPTY, b"").unwrap();
         // Failed append before newline, followed by another read in the same run.
         writer.journal.write_all(b"partial").unwrap();
-        writer.record(EMPTY, b"").unwrap();
+        writer.record(OTHER, b"").unwrap();
+        writer.record(OTHER, b"").unwrap();
         drop(writer);
         drop(rec);
         let log = fs::read_to_string(dir.join("reads.log")).unwrap();
-        assert_eq!(
-            log,
-            format!("{EMPTY} 0 network\n{EMPTY} 0 read\n{EMPTY} 0 read\n")
-        );
+        assert_eq!(log, format!("{EMPTY} 0 network\n{OTHER} 0 read\n"));
         let mut appended = String::new();
         opened_log.read_to_string(&mut appended).unwrap();
         assert_eq!(appended, log, "each event appends to the same open journal");
@@ -734,9 +841,22 @@ mod tests {
         let Store::Capture(writer) = &rec.store else {
             panic!()
         };
-        assert!(writer.blocking_lock().record(OTHER, b"").is_err());
-        assert!(!dir.join(OTHER).exists());
+        writer.blocking_lock().record(OTHER, b"").unwrap();
+        assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 2);
+        assert!(dir.join(OTHER).exists());
         drop(rec);
+        for name in [".DS_Store", "Thumbs.db", "desktop.ini"] {
+            fs::write(dir.join(name), b"metadata").unwrap();
+        }
+        fixture.open(Mode::Replay).unwrap();
+        fs::write(dir.join("unexpected.txt"), b"").unwrap();
+        assert!(fixture
+            .open(Mode::Replay)
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("unexpected.txt"));
+        fs::remove_file(dir.join("unexpected.txt")).unwrap();
         fs::write(&log, b"broken\n").unwrap();
         assert!(fixture.open(Mode::Replay).is_err());
         fs::write(&log, format!("{EMPTY} 0 read\n")).unwrap();

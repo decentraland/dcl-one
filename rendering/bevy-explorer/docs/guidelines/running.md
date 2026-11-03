@@ -49,25 +49,30 @@ a new recording directory outside the Explorer cache. In the first run, visit th
 wait for the affected assets to load, then close the client before launching replay.
 
 ```sh
-just native-debug --realm https://peer.decentraland.org --position 0,0 --record-assets ./asset-capture
+capture="${TMPDIR:-/tmp}/dcl-public-asset-capture"
+just native-debug --realm https://peer.decentraland.org --position 0,0 --record-assets "$capture"
 # Inspect the recorded CIDs and byte counts before repeating the visit.
-cat ./asset-capture/reads.log
-just native-debug --realm https://peer.decentraland.org --position 0,0 --replay-assets ./asset-capture
+cat "$capture/reads.log"
+just native-debug --realm https://peer.decentraland.org --position 0,0 --replay-assets "$capture"
 ```
 
 The reader covers Bevy asset loads resolved through a connected, secret-free Genesis realm
-on the selected `--base-domain`. It accepts immutable content under `peer` or `peer-ap1`
-and verifies each CID against the bytes from the normal reader, including warm cache hits.
+on the selected `--base-domain`. The realm's `/about` selects the public HTTPS content
+endpoint. A regional peer or a Catalyst operator on a different domain can serve the bytes.
 Selection uses the logical realm and content endpoints. The reader has no access to transport
-response headers or redirect history. A preview, world, explicit scene content base, URL
-asset or endpoint carrying credentials always takes the ordinary path.
+response headers or redirect history. Worlds, explicit scene content bases, URL assets and
+credential-bearing endpoints use the ordinary reader. The flags conflict with preview and
+content-server overrides. On a hash read outside a supported realm, the client logs once per
+realm change that reads use the ordinary cache and network.
 
-Capture writes a blob once per CID and appends a journal entry for each successful eligible
-read. The directory holds up to 4,096 blobs and 1 GiB in total, at most 16 MiB per blob and
-16,384 completed reads or 2 MiB of journal. Capture skips an oversized or unverifiable read
-and lets the asset load continue. Replay verifies journaled blobs and fails an eligible read
-on a miss or corruption, even if the normal cache has that CID. Realm discovery, scene
-execution, direct IPFS calls and other network traffic still run normally. To repeat a
+Capture verifies each new CID against the bytes from the normal reader, including warm
+cache hits, then stores its blob and journal entry. Repeated CIDs use no additional space.
+The directory holds up to 4,096 blobs and 1 GiB in total, at most 16 MiB per blob. Opening
+an older capture accepts up to 16,384 journal lines or 2 MiB and collapses duplicate entries
+when resuming capture. Oversized or unverifiable reads log a warning and continue normally.
+Replay verifies journaled blobs and fails an eligible read on a miss or corruption, even if
+the normal cache has that CID. Realm discovery, entities loaded directly from `scenesUrn`,
+other direct IPFS calls and scene execution still use their normal paths. To repeat a
 different deployment, capture its assets in a separate directory.
 
 ## Web

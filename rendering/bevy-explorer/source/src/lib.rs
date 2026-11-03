@@ -284,11 +284,11 @@ pub struct DecentralandArguments {
     pub log_file: Option<std::path::PathBuf>,
     /// Record public immutable content reads to this directory
     #[cfg(not(target_arch = "wasm32"))]
-    #[arg(long, conflicts_with = "replay_assets", help_heading = DEBUG)]
+    #[arg(long, conflicts_with_all = ["replay_assets", "preview", "content_server"], help_heading = DEBUG)]
     pub record_assets: Option<PathBuf>,
     /// Replay recorded public immutable content reads without contacting their origin
     #[cfg(not(target_arch = "wasm32"))]
-    #[arg(long, conflicts_with = "record_assets", help_heading = DEBUG)]
+    #[arg(long, conflicts_with_all = ["record_assets", "preview", "content_server"], help_heading = DEBUG)]
     pub replay_assets: Option<PathBuf>,
     // `--automation-token` and `--automation-port`: the loopback console server
     #[cfg(not(target_arch = "wasm32"))]

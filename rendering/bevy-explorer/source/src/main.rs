@@ -511,6 +511,23 @@ mod tests {
             DecentralandArguments::try_parse_from(["explorer", "--replay-assets", "capture"])
                 .unwrap();
         assert_eq!(replay.replay_assets.as_deref(), Some(Path::new("capture")));
+        for flag in ["--record-assets", "--replay-assets"] {
+            assert!(DecentralandArguments::try_parse_from([
+                "explorer",
+                flag,
+                "capture",
+                "--preview"
+            ])
+            .is_err());
+            assert!(DecentralandArguments::try_parse_from([
+                "explorer",
+                flag,
+                "capture",
+                "--content-server",
+                "https://override.example"
+            ])
+            .is_err());
+        }
         assert!(DecentralandArguments::try_parse_from([
             "explorer",
             "--record-assets",

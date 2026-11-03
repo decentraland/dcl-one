@@ -747,6 +747,7 @@ pub fn change_realm(
                     about,
                     connected,
                     secret,
+                    ..
                 }) = &*realm_change.borrow_and_update()
                 {
                     let mut config = about.configurations.clone().unwrap_or_default();
@@ -926,6 +927,9 @@ fn clean_cache(mut exit: EventReader<AppExit>, config: Res<AppConfig>, ipfas: Ip
 /// Realm state broadcast over the realm-config watch channel.
 pub struct RealmConfig {
     pub about_url: String,
+    /// Requested /about for the unmodified content endpoint. An override or manually
+    /// supplied realm has no such provenance. `about_url` is the final response URL.
+    pub advertised_by: Option<String>,
     pub address: String,
     pub about: ServerAbout,
     /// whether we actually connected; false when realm resolution failed
@@ -1163,6 +1167,7 @@ impl IpfsIo {
                 self.realm_config_sender
                     .send(Some(RealmConfig {
                         about_url: new_realm.clone(),
+                        advertised_by: None,
                         address: new_realm,
                         about: Default::default(),
                         connected: false,
@@ -1181,6 +1186,7 @@ impl IpfsIo {
         self.realm_config_sender
             .send(Some(RealmConfig {
                 about_url: "manual value".to_owned(),
+                advertised_by: None,
                 address: "manual value".to_owned(),
                 about,
                 connected: true,
@@ -1210,10 +1216,12 @@ impl IpfsIo {
         let mut retries = 0;
         let mut about;
         let mut final_url;
+        let new_realm = new_realm.trim_end_matches('/');
+        let requested_about = format!("{new_realm}/about");
         loop {
             let about_raw = self
                 .client
-                .get(format!("{new_realm}/about"))
+                .get(&requested_about)
                 .send()
                 .await
                 .map_err(|e| anyhow!(e))?;
@@ -1253,7 +1261,7 @@ impl IpfsIo {
         write.about = None;
         drop(write);
 
-        if let Err(e) = self.update_scene_urns(&mut about, &new_realm).await {
+        if let Err(e) = self.update_scene_urns(&mut about, new_realm).await {
             error!("failed to update scene urns: {e}");
         }
 
@@ -1271,6 +1279,7 @@ impl IpfsIo {
         self.realm_config_sender
             .send(Some(RealmConfig {
                 about_url: final_url,
+                advertised_by: content_server_override.is_none().then_some(requested_about),
                 address: write.base_url.clone(),
                 about,
                 connected: true,
