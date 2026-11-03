@@ -152,13 +152,11 @@ impl AssetReader for RecordingReader {
         let _ = io.connected().await;
         {
             let mut realm = self.diagnostic_realm.lock().unwrap();
-            if realm.has_changed().unwrap_or(false)
-                && !self
-                    .recording
-                    .options
-                    .public_realm(realm.borrow_and_update().as_ref())
-            {
-                warn!("asset recording is inactive in this realm; reads use the ordinary cache and network");
+            if realm.has_changed().unwrap_or(false) {
+                let current = realm.borrow_and_update();
+                if current.is_some() && !self.recording.options.public_realm(current.as_ref()) {
+                    warn!("asset recording is inactive in this realm; reads use the ordinary cache and network");
+                }
             }
         }
         let mut realm = io.realm_config_receiver.clone();
@@ -439,9 +437,13 @@ impl Recording {
             match path.file_name().and_then(|name| name.to_str()) {
                 Some(".writer.lock") if meta.len() == 0 => {}
                 Some(".DS_Store" | "Thumbs.db" | "desktop.ini") => {}
+                Some(name) if name.starts_with("._") => {} // AppleDouble metadata on shared volumes.
                 Some(".blob.tmp") if meta.len() <= MAX_ITEM => staging.push(path),
                 Some(".reads.tmp") if meta.len() <= MAX_JOURNAL => staging.push(path),
-                Some("reads.log") if meta.len() <= MAX_JOURNAL => {
+                Some("reads.log") => {
+                    if meta.len() > MAX_JOURNAL {
+                        return Err(invalid("recording journal too large"));
+                    }
                     File::open(path)?
                         .take(MAX_JOURNAL + 1)
                         .read_to_end(&mut journal)?;
@@ -843,7 +845,7 @@ mod tests {
         assert_eq!(fs::read_to_string(&log).unwrap().lines().count(), 2);
         assert!(dir.join(OTHER).exists());
         drop(rec);
-        for name in [".DS_Store", "Thumbs.db", "desktop.ini"] {
+        for name in [".DS_Store", "Thumbs.db", "desktop.ini", "._reads.log"] {
             fs::write(dir.join(name), b"metadata").unwrap();
         }
         fixture.open(Mode::Replay).unwrap();
