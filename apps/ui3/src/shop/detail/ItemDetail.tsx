@@ -68,6 +68,7 @@ import NotifyMe from "./components/NotifyMe";
 import { pdpText } from "./copy";
 import PaymentPanel from "./components/PaymentPanel";
 import ResaleOffers from "./components/ResaleOffers";
+import { ItemOwners, LatestSales } from "./components/TradeHistory";
 import { itemIdFromTokenId } from "./lib/token-id";
 import { itemUrn } from "./lib/urn";
 import { fetchVrmExportBlocked } from "./lib/wearable-rules";
@@ -839,6 +840,13 @@ export default function ItemDetail() {
 
       {showResales ? (
         <ResaleOffers contractAddress={contractAddress} resales={resales} classic={classicQ.data ?? []} network={network} currentTokenId={routeTokenId ?? undefined} viewer={account} />
+      ) : null}
+
+      {/* A token route waits for its token: until then the category (LAND has its own sales table) and the
+          chain are the placeholder's. */}
+      {validContract && !isTokenRoute && !isLand && pageItemId ? <ItemOwners contractAddress={contractAddress} itemId={pageItemId} /> : null}
+      {validContract && !isLand && (isTokenRoute ? routeTokenId && token : pageItemId) ? (
+        <LatestSales contractAddress={contractAddress} tokenId={isTokenRoute ? routeTokenId! : undefined} itemId={isTokenRoute ? undefined : pageItemId!} network={network} />
       ) : null}
 
       <SuggestedForYouRow exclude={personalExclude} title={pdpText("itemDetail.becauseYouOwn")} first={PERSONAL_RAIL_SIZE} />
