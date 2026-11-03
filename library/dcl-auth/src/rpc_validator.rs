@@ -63,8 +63,6 @@ pub struct RpcEip1654Validator {
     rpc_url: String,
     client: Client,
     timeout: Duration,
-    /// The blocks read so far, for the historical questions.
-    blocks: jsonrpc::BlockSearch,
 }
 
 impl RpcEip1654Validator {
@@ -77,7 +75,6 @@ impl RpcEip1654Validator {
             rpc_url: rpc_url.into(),
             client,
             timeout,
-            blocks: jsonrpc::BlockSearch::new(),
         }
     }
 
@@ -94,33 +91,6 @@ impl RpcEip1654Validator {
             Value::Null => Err(failed("RPC returned null result with no error".into())),
             other => Err(failed(format!("Unexpected RPC result type: {other}"))),
         }
-    }
-
-    /// The block `tag` names.
-    async fn block(&self, tag: jsonrpc::BlockTag) -> Result<jsonrpc::BlockInfo, AuthError> {
-        let result = self
-            .rpc("eth_getBlockByNumber", jsonrpc::get_block_params(tag))
-            .await
-            .map_err(EthCallError::into_auth)?;
-        jsonrpc::block_info(&result)
-            .map_err(|e| AuthError::Eip1654ValidationFailed(e.to_string()))?
-            .ok_or_else(|| {
-                AuthError::Eip1654ValidationFailed(format!(
-                    "RPC returned no block for {}",
-                    tag.param()
-                ))
-            })
-    }
-
-    /// The last block at or before `timestamp_ms`.
-    async fn block_at(&self, timestamp_ms: i64) -> Result<u64, AuthError> {
-        self.blocks
-            .block_at(timestamp_ms.div_euclid(1000), |tag| self.block(tag))
-            .await?
-            .map(|b| b.number)
-            .ok_or_else(|| {
-                AuthError::Eip1654ValidationFailed("no block before the timestamp".to_string())
-            })
     }
 
     async fn is_valid_signature(
@@ -193,16 +163,15 @@ impl Eip1654Validator for RpcEip1654Validator {
             .await
     }
 
-    /// At the last block at or before `timestamp_ms`. An RPC that cannot answer for that
-    /// block (not an archive node) fails the call: undecidable, never a refusal.
-    async fn validate_signature_at(
+    /// An RPC that cannot answer for `block` (not an archive node) fails the call:
+    /// undecidable, never a refusal.
+    async fn validate_signature_at_block(
         &self,
         contract_address: &str,
         hash: &[u8],
         signature: &[u8],
-        timestamp_ms: i64,
+        block: u64,
     ) -> Result<bool, AuthError> {
-        let block = self.block_at(timestamp_ms).await?;
         self.is_valid_signature(contract_address, hash, signature, &format!("0x{block:x}"))
             .await
     }
@@ -213,18 +182,6 @@ impl Eip1654Validator for RpcEip1654Validator {
 enum EthCallError {
     Reverted,
     Failed(AuthError),
-}
-
-impl EthCallError {
-    /// Outside `eth_call` a revert is no answer either.
-    fn into_auth(self) -> AuthError {
-        match self {
-            EthCallError::Reverted => {
-                AuthError::Eip1654ValidationFailed("RPC call reverted".to_string())
-            }
-            EthCallError::Failed(e) => e,
-        }
-    }
 }
 
 /// A JSON-RPC error that reports the call's own revert: code 3 with revert data, or the
@@ -385,42 +342,29 @@ mod tests {
         );
     }
 
-    /// A chain of 1000 blocks, 12 s apart from second 1_000_000, whose wallet accepted
-    /// `accepted` only up to block `valid_until`. `archive: false` answers state reads for
-    /// past blocks the way a pruned node does.
+    /// A chain whose head is block 999 and whose wallet accepted `accepted` only up to block
+    /// `valid_until`. `archive: false` answers state reads for past blocks the way a pruned
+    /// node does.
     async fn fake_chain(accepted: [u8; 32], valid_until: u64, archive: bool) -> String {
         use axum::{Json, Router, routing::post};
         const LATEST: u64 = 999;
         let app = Router::new().route(
             "/",
             post(move |Json(body): Json<Value>| async move {
-                let block_of = |tag: &str| -> u64 {
-                    if tag == "latest" {
-                        LATEST
-                    } else {
-                        u64::from_str_radix(tag.trim_start_matches("0x"), 16).unwrap()
-                    }
+                assert_eq!(body["method"], "eth_call");
+                let tag = body["params"][1].as_str().unwrap();
+                let n = if tag == "latest" {
+                    LATEST
+                } else {
+                    u64::from_str_radix(tag.trim_start_matches("0x"), 16).unwrap()
                 };
-                let mut answer = match body["method"].as_str().unwrap_or_default() {
-                    "eth_getBlockByNumber" => {
-                        let n = block_of(body["params"][0].as_str().unwrap());
-                        serde_json::json!({ "result": {
-                            "number": format!("0x{n:x}"),
-                            "timestamp": format!("0x{:x}", 1_000_000 + n * 12),
-                        }})
-                    }
-                    "eth_call" => {
-                        let n = block_of(body["params"][1].as_str().unwrap());
-                        let data = body["params"][0]["data"].as_str().unwrap_or_default();
-                        if !archive && n != LATEST {
-                            serde_json::json!({ "error": { "code": -32000, "message": "missing trie node" } })
-                        } else if n <= valid_until && data.contains(&hex::encode(accepted)) {
-                            serde_json::json!({ "result": format!("0x1626ba7e{}", "0".repeat(56)) })
-                        } else {
-                            serde_json::json!({ "error": { "code": 3, "message": "execution reverted" } })
-                        }
-                    }
-                    other => panic!("unexpected method {other}"),
+                let data = body["params"][0]["data"].as_str().unwrap_or_default();
+                let mut answer = if !archive && n != LATEST {
+                    serde_json::json!({ "error": { "code": -32000, "message": "missing trie node" } })
+                } else if n <= valid_until && data.contains(&hex::encode(accepted)) {
+                    serde_json::json!({ "result": format!("0x1626ba7e{}", "0".repeat(56)) })
+                } else {
+                    serde_json::json!({ "error": { "code": 3, "message": "execution reverted" } })
                 };
                 answer["jsonrpc"] = "2.0".into();
                 answer["id"] = 1.into();
@@ -433,32 +377,20 @@ mod tests {
         url
     }
 
-    /// Block 500 is at second 1_006_000; an entity signed then is judged there, whatever
-    /// the wallet answers today.
     #[tokio::test]
-    async fn a_historical_signature_is_asked_at_the_block_of_the_timestamp() {
+    async fn a_historical_signature_is_asked_at_its_block() {
         let hash = [0x42u8; 32];
         let v = RpcEip1654Validator::new(fake_chain(hash, 500, true).await, Client::new());
-        let at = |second: i64| second * 1000 + 999;
+        let sig = [0u8; 65];
 
+        assert!(!v.validate_signature("0xabc", &hash, &sig).await.unwrap());
         assert!(
-            !v.validate_signature("0xabc", &hash, &[0u8; 65])
+            v.validate_signature_at_block("0xabc", &hash, &sig, 500)
                 .await
                 .unwrap()
         );
         assert!(
-            v.validate_signature_at("0xabc", &hash, &[0u8; 65], at(1_006_000))
-                .await
-                .unwrap()
-        );
-        assert!(
-            v.validate_signature_at("0xabc", &hash, &[0u8; 65], at(1_006_011))
-                .await
-                .unwrap(),
-            "the last block at or before the timestamp"
-        );
-        assert!(
-            !v.validate_signature_at("0xabc", &hash, &[0u8; 65], at(1_006_012))
+            !v.validate_signature_at_block("0xabc", &hash, &sig, 501)
                 .await
                 .unwrap()
         );
@@ -469,7 +401,7 @@ mod tests {
         let hash = [0x42u8; 32];
         let v = RpcEip1654Validator::new(fake_chain(hash, 999, false).await, Client::new());
         let err = v
-            .validate_signature_at("0xabc", &hash, &[0u8; 65], 1_006_000_000)
+            .validate_signature_at_block("0xabc", &hash, &[0u8; 65], 500)
             .await
             .unwrap_err();
         assert!(

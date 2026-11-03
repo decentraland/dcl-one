@@ -36,12 +36,12 @@ struct CacheKey {
     contract_address: String,
     hash_digest: [u8; 32],
     sig_digest: [u8; 32],
-    /// The entity timestamp a historical answer was asked at.
-    at: Option<i64>,
+    /// The block a historical answer was asked at (`None`: latest).
+    block: Option<u64>,
 }
 
 impl CacheKey {
-    fn new(contract_address: &str, hash: &[u8], signature: &[u8], at: Option<i64>) -> Self {
+    fn new(contract_address: &str, hash: &[u8], signature: &[u8], block: Option<u64>) -> Self {
         use sha2::{Digest, Sha256};
 
         let hash_digest: [u8; 32] = Sha256::digest(hash).into();
@@ -51,7 +51,7 @@ impl CacheKey {
             contract_address: contract_address.to_lowercase(),
             hash_digest,
             sig_digest,
-            at,
+            block,
         }
     }
 }
@@ -183,17 +183,17 @@ impl Eip1654Validator for ValidationCache {
         .await
     }
 
-    async fn validate_signature_at(
+    async fn validate_signature_at_block(
         &self,
         contract_address: &str,
         hash: &[u8],
         signature: &[u8],
-        timestamp_ms: i64,
+        block: u64,
     ) -> Result<bool, AuthError> {
-        let key = CacheKey::new(contract_address, hash, signature, Some(timestamp_ms));
+        let key = CacheKey::new(contract_address, hash, signature, Some(block));
         self.cached(key, || {
             self.inner
-                .validate_signature_at(contract_address, hash, signature, timestamp_ms)
+                .validate_signature_at_block(contract_address, hash, signature, block)
         })
         .await
     }
@@ -304,6 +304,35 @@ mod tests {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(true)
         }
+
+        async fn validate_signature_at_block(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+            _block: u64,
+        ) -> Result<bool, AuthError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn historical_answers_are_cached_per_block() {
+        let inner = Arc::new(CountingValidator::new());
+        let cache = ValidationCache::new(inner.clone());
+        let ask = |block| cache.validate_signature_at_block("0xabc", b"h", b"s", block);
+
+        assert!(ask(7).await.unwrap());
+        assert!(ask(7).await.unwrap());
+        assert_eq!(inner.call_count(), 1, "same block: one call");
+        assert!(ask(8).await.unwrap());
+        assert!(cache.validate_signature("0xabc", b"h", b"s").await.unwrap());
+        assert_eq!(
+            inner.call_count(),
+            3,
+            "another block and latest are their own keys"
+        );
     }
 
     struct FailingValidator;

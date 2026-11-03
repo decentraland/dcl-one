@@ -573,6 +573,16 @@ impl OnChainAccess {
         Ok(())
     }
 
+    /// The last L1 block at or before `timestamp_ms`, from the same search the
+    /// access checks use; `None` before the first block.
+    pub async fn l1_block_at(&self, timestamp_ms: i64) -> Result<Option<u64>, ValidatorError> {
+        let chain = &self.l1()?.chain;
+        let block = self
+            .within_deadline("L1 block", chain.block_at(timestamp_ms.div_euclid(1000)))
+            .await?;
+        Ok(block.map(|b| b.number))
+    }
+
     /// Per parcel, whether `address` may deploy on it (owner, operator,
     /// update operator, update manager or approved, of the LAND or its estate).
     pub async fn land(

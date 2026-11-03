@@ -674,14 +674,15 @@ mod tests {
             Ok(false)
         }
 
-        async fn validate_signature_at(
+        async fn validate_signature_at_block(
             &self,
             _contract_address: &str,
             _hash: &[u8],
             _signature: &[u8],
-            timestamp_ms: i64,
+            block: u64,
         ) -> Result<bool, crate::auth::AuthError> {
-            assert_eq!(timestamp_ms, 1_700_000_000_000);
+            use crate::validator::fake_chain::{GENESIS, INTERVAL};
+            assert_eq!(block, ((1_700_000_000 - GENESIS) / INTERVAL) as u64);
             if self.answers_at_block {
                 Ok(true)
             } else {
@@ -694,24 +695,20 @@ mod tests {
 
     /// Syncs one outfits entity on `owner`'s pointer, signed as `chain` says, through a
     /// deployer with the content validator attached and `eip1654` as its contract-wallet
-    /// validator.
+    /// validator. The chain answers block lookups only.
     async fn sync_outfits(
         owner: &str,
         chain: Chain,
         eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
     ) -> Option<SyncOutcome> {
+        let blocks =
+            crate::validator::fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
         let entity = serde_json::json!({
             "version": "v3", "type": "outfits", "pointers": [format!("{owner}:outfits")],
             "timestamp": 1_700_000_000_000i64, "content": [],
             "metadata": {"outfits": [], "namesForExtraSlots": [], "tag": unique()}
         });
-        sync_one(
-            entity,
-            chain,
-            eip1654,
-            crate::validator::Settings::default(),
-        )
-        .await
+        sync_one(entity, chain, eip1654, over(&blocks)).await
     }
 
     /// Syncs `entity` (its first pointer the one checked), signed as `chain` says, through a

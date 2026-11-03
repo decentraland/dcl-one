@@ -34,7 +34,7 @@ use super::rules::{ContentValidator, ExternalCalls};
 use super::types::{Deployment, Entity, EntityType, Timestamp};
 use super::{Sources, entity_parser};
 use crate::auth::verify::{ChainVerdict, verify_synced_auth_chain};
-use crate::auth::{AuthChain, AuthError};
+use crate::auth::{AuthChain, AuthError, Eip1654Validator};
 
 /// Whether the entity's content files are in the store yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -96,13 +96,54 @@ impl ExternalCalls for Synced<'_> {
         auth_chain: &AuthChain,
         timestamp: Timestamp,
     ) -> Result<(), AuthError> {
-        let verdict =
-            verify_synced_auth_chain(auth_chain, entity_id, timestamp, self.sources.eip1654())
-                .await?;
+        let at_block = self.sources.eip1654().map(|inner| AtEntityBlock {
+            inner,
+            sources: self.sources,
+            timestamp_ms: timestamp,
+        });
+        let verdict = verify_synced_auth_chain(
+            auth_chain,
+            entity_id,
+            timestamp,
+            at_block.as_ref().map(|v| v as &dyn Eip1654Validator),
+        )
+        .await?;
         if let Ok(mut trusted) = self.trusted_expirations.lock() {
             trusted.extend(verdict.trusted_expirations);
         }
         Ok(())
+    }
+}
+
+/// The node's EIP-1654 validator asked at the last L1 block at or before the
+/// entity timestamp, found by the search the access checks share.
+struct AtEntityBlock<'a> {
+    inner: &'a dyn Eip1654Validator,
+    sources: &'a Sources,
+    timestamp_ms: i64,
+}
+
+#[async_trait]
+impl Eip1654Validator for AtEntityBlock<'_> {
+    async fn validate_signature(
+        &self,
+        contract_address: &str,
+        hash: &[u8],
+        signature: &[u8],
+    ) -> Result<bool, AuthError> {
+        let block = self
+            .sources
+            .access
+            .l1_block_at(self.timestamp_ms)
+            .await
+            .map_err(|e| AuthError::Eip1654ValidationFailed(e.to_string()))?;
+        // Before the first block no contract could have signed.
+        let Some(block) = block else {
+            return Ok(false);
+        };
+        self.inner
+            .validate_signature_at_block(contract_address, hash, signature, block)
+            .await
     }
 }
 
@@ -346,6 +387,82 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(tmp);
         let _ = std::fs::remove_dir_all(tmp2);
+    }
+
+    /// Records the block each historical ask names.
+    #[derive(Default)]
+    struct AsksAt(std::sync::Mutex<Vec<u64>>);
+
+    #[async_trait]
+    impl Eip1654Validator for AsksAt {
+        async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+            panic!("a synced link is never asked at latest")
+        }
+
+        async fn validate_signature_at_block(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+            block: u64,
+        ) -> Result<bool, AuthError> {
+            self.0.lock().unwrap().push(block);
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallet_is_asked_at_the_block_the_access_checks_found() {
+        use super::super::fake_chain::{self, GENESIS, INTERVAL};
+        let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+        let (storage, tmp) = crate::sync_test_support::temp_storage("synced-block").await;
+        let sources = Sources::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage,
+            crate::http::Outbound::for_tests(),
+            None,
+            super::super::Settings {
+                eth_network: "mainnet".into(),
+                l1_rpc_url: Some(chain.url.clone()),
+                ..Default::default()
+            },
+        );
+        let asks = AsksAt::default();
+        let at = |timestamp_ms| AtEntityBlock {
+            inner: &asks,
+            sources: &sources,
+            timestamp_ms,
+        };
+        let timestamp_ms = 1_700_000_000_500;
+
+        sources.access.l1_block_at(timestamp_ms).await.unwrap();
+        chain.clear();
+        assert!(
+            at(timestamp_ms)
+                .validate_signature("0xabc", &[0; 32], &[0; 65])
+                .await
+                .unwrap()
+        );
+        assert_eq!(
+            *asks.0.lock().unwrap(),
+            [((1_700_000_000 - GENESIS) / INTERVAL) as u64]
+        );
+        assert!(
+            chain.calls().is_empty(),
+            "the block search is shared: {:?}",
+            chain.calls()
+        );
+
+        let before_genesis = (GENESIS - 1) * 1000;
+        assert!(
+            !at(before_genesis)
+                .validate_signature("0xabc", &[0; 32], &[0; 65])
+                .await
+                .unwrap(),
+            "no block yet: a refusal"
+        );
+        assert_eq!(asks.0.lock().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(tmp);
     }
 
     #[test]
