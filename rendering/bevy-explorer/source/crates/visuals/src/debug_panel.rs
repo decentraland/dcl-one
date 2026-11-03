@@ -180,11 +180,12 @@ fn landscape_command(
 }
 
 type LandscapeObjects = Or<(With<Ground>, With<Tree>, With<ParcelGrass>)>;
+type AddedLandscapeObjects = Or<(Added<Ground>, Added<Tree>, Added<ParcelGrass>)>;
 
 fn apply_landscape_visibility(
     layers: Res<LandscapeLayers>,
     mut objects: Query<(Has<Ground>, Has<Tree>, &mut Visibility), LandscapeObjects>,
-    added: Query<Entity, Or<(Added<Ground>, Added<Tree>, Added<ParcelGrass>)>>,
+    added: Query<Entity, AddedLandscapeObjects>,
 ) {
     let set = |(ground, tree, mut visibility): (bool, bool, Mut<Visibility>)| {
         let show = if ground {

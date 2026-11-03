@@ -31,7 +31,7 @@ pub(super) fn register(app: &mut App) {
 #[command(name = "/media_state")]
 struct MediaState;
 
-#[allow(clippy::type_complexity)]
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn media_state(
     mut cmd: ConsoleCommand<MediaState>,
     video: Query<(

@@ -86,6 +86,7 @@ pub(super) fn register(app: &mut App) {
 #[command(name = "/microphone_info")]
 struct MicrophoneInfo;
 
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn microphone_info(
     mut input: ConsoleCommand<MicrophoneInfo>,
     mic: Res<MicState>,
