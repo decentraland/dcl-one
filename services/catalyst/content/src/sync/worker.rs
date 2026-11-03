@@ -222,14 +222,20 @@ pub async fn start(
 }
 
 /// Without a sync worker in this process: the deleter repair the sync leader
-/// runs at its bootstrap, once, as job `deleter-repair`. It runs under the
-/// `sync` lease so it never overlaps a leader's flushes; while another process
-/// holds that lease the leader's own bootstrap repair covers the database.
+/// runs at its bootstrap, as job `deleter-repair`, once per database and repair
+/// version. It runs under the `sync` lease so it never overlaps a leader's
+/// flushes; while another process holds that lease the leader's own bootstrap
+/// repair covers the database. Losing the lease rolls the repair back.
 pub fn spawn_startup_repair(jobs: &Arc<Jobs>, pool: PgPool) {
     let leases = jobs.leases().cloned();
     jobs.spawn_leased("deleter-repair", move |ctx| {
         let (leases, pool) = (leases.clone(), pool.clone());
         async move {
+            let repo = LiveDeploymentRepository::new(pool, Arc::new(SyncStatus::default()));
+            if repo.deleter_repair_done().await? {
+                ctx.progress("skipped: this database already had this repair");
+                return Ok(());
+            }
             let guard = match &leases {
                 Some(leases) => match leases.try_acquire("sync").await? {
                     Some(guard) => Some(guard),
@@ -240,14 +246,30 @@ pub fn spawn_startup_repair(jobs: &Arc<Jobs>, pool: PgPool) {
                 },
                 None => None,
             };
-            let result = LiveDeploymentRepository::new(pool, Arc::new(SyncStatus::default()))
-                .resolve_deleter_deployments()
-                .await;
+            let lost = guard
+                .as_ref()
+                .map(|g| g.lost().clone())
+                .unwrap_or_default();
+            let result = if repo.deleter_repair_done().await? {
+                Ok(false)
+            } else {
+                tokio::select! {
+                    result = repo.resolve_deleter_deployments() => result
+                        .map(|()| true)
+                        .map_err(|e| anyhow::anyhow!("deleter repair: {e}")),
+                    _ = lost.cancelled() => Err(anyhow::anyhow!("deleter repair: the sync lease was lost")),
+                    _ = ctx.cancel.cancelled() => Err(anyhow::anyhow!("deleter repair: cancelled")),
+                }
+            };
             if let Some(guard) = guard {
                 guard.release().await;
             }
-            result.map_err(|e| anyhow::anyhow!("deleter repair: {e}"))?;
-            ctx.progress("done");
+            let repaired = result?;
+            ctx.progress(if repaired {
+                "done"
+            } else {
+                "skipped: this database already had this repair"
+            });
             Ok(())
         }
     });

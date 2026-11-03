@@ -138,6 +138,17 @@ impl LiveDeploymentRepository {
         Ok(())
     }
 
+    /// Whether this version of the deleter repair has already run on this database.
+    pub async fn deleter_repair_done(&self) -> Result<bool, SyncError> {
+        let value: Option<String> =
+            sqlx::query_scalar("SELECT value FROM content.system_properties WHERE key = $1")
+                .bind(DELETER_REPAIR_KEY)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(|e| SyncError::Storage(e.to_string()))?;
+        Ok(value.as_deref() == Some(DELETER_REPAIR_VERSION))
+    }
+
     /// Repairs `deleter_deployment` for every row an intra-batch overwrite could not see:
     /// each pointer's successor chain, ordered by (entity_timestamp, lower(entity_id)), per type.
     /// An unpublished local scene is a link of the chain like any other (its parcels stay
@@ -201,6 +212,15 @@ impl LiveDeploymentRepository {
         .fetch_one(&mut *tx)
         .await
         .map_err(storage)?;
+        sqlx::query(
+            "INSERT INTO content.system_properties (key, value) VALUES ($1, $2)
+             ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value",
+        )
+        .bind(DELETER_REPAIR_KEY)
+        .bind(DELETER_REPAIR_VERSION)
+        .execute(&mut *tx)
+        .await
+        .map_err(storage)?;
         tx.commit().await.map_err(storage)?;
 
         tracing::info!(
@@ -213,6 +233,11 @@ impl LiveDeploymentRepository {
         Ok(())
     }
 }
+
+/// The `content.system_properties` key the deleter repair records its version under.
+const DELETER_REPAIR_KEY: &str = "deleter_repair_version";
+/// Bumped whenever the repair's rules change, so every database runs the new rules once.
+const DELETER_REPAIR_VERSION: &str = "2";
 
 /// GREATEST-monotonic upsert: a stale offer can never rewind the persisted frontier.
 const ADVANCE_SYNC_FRONTIER_SQL: &str = "INSERT INTO content.system_properties (key, value) VALUES ('sync_frontier', $1) ON CONFLICT (key) DO UPDATE SET value = GREATEST(content.system_properties.value::bigint, EXCLUDED.value::bigint)::text";
@@ -348,7 +373,7 @@ mod tests {
             .await
             .unwrap();
         let pool = sqlx::postgres::PgPoolOptions::new()
-            .max_connections(2)
+            .max_connections(6)
             .connect_with(opts.database(&name))
             .await
             .unwrap();
@@ -446,7 +471,7 @@ mod tests {
         );
 
         held.release().await;
-        let jobs = Arc::new(Jobs::with_leases(pool.clone(), lease_settings));
+        let jobs = Arc::new(Jobs::with_leases(pool.clone(), lease_settings.clone()));
         assert_eq!(run(jobs.clone()).await.as_deref(), Some("done"));
         jobs.shutdown(std::time::Duration::from_secs(5)).await;
         assert_eq!(
@@ -456,8 +481,112 @@ mod tests {
                 ("bafyolder".into(), Some("bafynewer".into())),
             ]
         );
+
+        // Once per database: the next start skips it, whatever it would find.
+        sqlx::query("UPDATE content.deployments SET deleter_deployment = NULL")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let jobs = Arc::new(Jobs::with_leases(pool.clone(), lease_settings));
+        assert_eq!(
+            run(jobs.clone()).await.as_deref(),
+            Some("skipped: this database already had this repair")
+        );
+        jobs.shutdown(std::time::Duration::from_secs(5)).await;
+        assert_eq!(
+            deleters(&pool).await,
+            vec![("bafynewer".into(), None), ("bafyolder".into(), None)]
+        );
         drop(leader);
 
+        drop_repair_database(admin, pool, &name).await;
+    }
+
+    /// The startup repair stops when the lease connection drops: what it had
+    /// written rolls back, and a sync leader that takes the lease meanwhile
+    /// owns the database.
+    #[tokio::test]
+    async fn the_startup_repair_rolls_back_when_its_lease_is_lost() {
+        use crate::jobs::{Jobs, LeaseSettings, Leases};
+        use std::time::Duration;
+        let Some((admin, pool, name)) = repair_database().await else {
+            return;
+        };
+        insert_scene(&pool, "bafyolder", 1_000.0, "0,0").await;
+        insert_scene(&pool, "bafynewer", 2_000.0, "0,0").await;
+        let lease_settings = LeaseSettings {
+            namespace: format!("repair-{}", &unique()[..12]),
+            keepalive: Duration::from_millis(200),
+            ..LeaseSettings::default()
+        };
+        let waiters = || async {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT count(*) FROM pg_stat_activity
+                 WHERE datname = current_database() AND wait_event_type = 'Lock'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        // The row the repair updates is held, so the repair stops mid-statement.
+        let mut hold = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM content.deployments WHERE entity_id = 'bafyolder' FOR UPDATE")
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        let jobs = Arc::new(Jobs::with_leases(pool.clone(), lease_settings.clone()));
+        super::super::worker::spawn_startup_repair(&jobs, pool.clone());
+        let deadline = std::time::Instant::now() + Duration::from_secs(20);
+        while waiters().await < 1 {
+            assert!(std::time::Instant::now() < deadline, "the repair never ran");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        let pid = jobs.leases().unwrap().backend_pid().await.unwrap();
+        let killed: bool = sqlx::query_scalar("SELECT pg_terminate_backend($1)")
+            .bind(pid)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert!(killed);
+        let leader = Arc::new(Leases::new(pool.clone(), lease_settings));
+        let held = loop {
+            if let Some(guard) = leader.try_acquire("sync").await.unwrap() {
+                break guard;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the sync lease never freed"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        while !jobs.report().iter().any(|j| {
+            j.name == "deleter-repair"
+                && j.last_error.as_deref().is_some_and(|e| e.contains("lost"))
+        }) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the loss was never seen"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        hold.rollback().await.unwrap();
+        while waiters().await > 0 {
+            assert!(std::time::Instant::now() < deadline, "a waiter is stuck");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert_eq!(
+            deleters(&pool).await,
+            vec![("bafynewer".into(), None), ("bafyolder".into(), None)]
+        );
+
+        jobs.shutdown(Duration::from_secs(5)).await;
+        held.release().await;
+        drop(leader);
         drop_repair_database(admin, pool, &name).await;
     }
 
