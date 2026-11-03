@@ -79,6 +79,11 @@ async fn real_http_body_precedence_and_all_body_readers_match_configured_source(
     let actor = wallet();
     let missing = CommunityId::new().to_string();
     for (index, case) in fixture["cases"].as_array().unwrap().iter().enumerate() {
+        // This capture has no upstream mirror. Other tests share the database
+        // and seed global mirror pass rows; hold this State's actual marker
+        // cache at the fixture's no-copy fact for each exchange.
+        rig.state.pass_markers.insert(None, None);
+
         let source_path = case["path"]
             .as_str()
             .unwrap()
