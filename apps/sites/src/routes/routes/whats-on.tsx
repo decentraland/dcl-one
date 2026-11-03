@@ -6,6 +6,7 @@ import FreshnessNotice from "@ui/components/FreshnessNotice";
 import { olderCopy, type CopyStamp } from "@ui/data/copyAsOf";
 
 import {
+  EVENT_CALENDAR_LIMIT,
   fetchEvents,
   fetchEventPage,
   groupEventsByDay,
@@ -31,7 +32,6 @@ export const handle = { agentMarkdown: "whatsOn" } satisfies AgentMarkdownHandle
 const STORY: StoryId = "admin/whats-on";
 const LIVE_LIMIT = 8;
 const UPCOMING_LIMIT = 24;
-const CALENDAR_LIMIT = 500;
 
 
 const FILTERS = [
@@ -88,7 +88,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const unavailable = activeRes.unavailable;
   const liveUnavailable = liveRes.unavailable;
   const calendarUnavailable = calendarRes.unavailable;
-  const calendarLimited = ("received" in calendarRes ? calendarRes.received : calendarRes.data.length) === CALENDAR_LIMIT;
+  const calendarLimited = ("received" in calendarRes ? calendarRes.received : calendarRes.data.length) === EVENT_CALENDAR_LIMIT;
   const invalidCount = [activeRes, liveRes, calendarRes].reduce((count, result) => count + ("invalidCount" in result ? result.invalidCount ?? 0 : 0), 0);
   const payload = {
     sid,
@@ -226,7 +226,7 @@ function WhatsOnFeed({
         {unavailable && <p>Hangouts are temporarily unavailable.</p>}
         {liveUnavailable && <p>Live hangouts are temporarily unavailable.</p>}
         {calendarUnavailable && <p>The hangout calendar is temporarily unavailable.</p>}
-        {calendarLimited && <p>The calendar shows the first 500 matching hangouts. Narrow your search to see more.</p>}
+        {calendarLimited && <p>The calendar shows the first {EVENT_CALENDAR_LIMIT} matching hangouts. Narrow your search to see more.</p>}
         {invalidCount > 0 && <p>Some hangouts could not be displayed.</p>}
         {(unavailable || liveUnavailable || calendarUnavailable) && <button onClick={() => { void revalidator.revalidate(); }}>Retry</button>}
       </div> : undefined}
