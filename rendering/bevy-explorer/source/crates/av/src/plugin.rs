@@ -304,6 +304,7 @@ fn should_be_playing_on_remove<T: AVPlayer>(
         container_entity,
         &frame,
         VideoState::VsPaused,
+        #[cfg(any(feature = "ffmpeg", feature = "html"))]
         None,
     );
 }
