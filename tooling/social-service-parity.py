@@ -122,6 +122,12 @@ def validate(data):
     assert len(operations) == len(ids), "duplicate backlog entries"
     expected_counts = dict(sorted(Counter(row["kind"] for row in registrations).items()))
     assert baseline["counts"] == expected_counts, "incorrect inventory counts"
+    shared_gaps = data.get("cross_cutting_gaps", [])
+    assert len({gap["id"] for gap in shared_gaps}) == len(shared_gaps), "duplicate cross-cutting gap"
+    for gap in shared_gaps:
+        assert gap["status"] in {"known_gap", "unverified"}, gap["id"]
+        assert gap["description"], gap["id"]
+        assert set(gap["operations"]) <= set(ids), "cross-cutting gap references an unknown operation"
     upstream_rpc = {row["name"][0].upper() + row["name"][1:] for row in registrations if row["kind"].startswith("rpc_")}
     assert upstream_rpc == set(re.findall(r"\brpc\s+(\w+)\s*\(", (ROOT / PROTO).read_text())), "RPC/proto registration set differs"
     for source in baseline["sources"]:
@@ -154,6 +160,13 @@ def report(data):
              "Source hashes include the pinned service registrations, handlers, stream definitions, lockfile and the installed framework code that supplies health, CORS, metrics and fallback handling. `tooling/social-service-parity.py --upstream <checkout>` re-derives that inventory; the default check validates its complete backlog, local evidence references and the 33-method protocol set without an external checkout.",
              "", "Executed upstream handler cases live in [source-cases.json](source-cases.json); their Protobuf bytes are replayed by `rpc_wire_answers_match_executed_upstream_source_cases`. Those cases use injected dependencies and do not prove deployed HTTP, Redis, SNS, PostgreSQL or live-client equivalence.", ""]
     byid = {row["id"]: row for row in data["operations"]}
+    if data.get("cross_cutting_gaps"):
+        lines += ["## Shared gaps and replacement requirements", "",
+                  "These requirements remain open even when an operation's focused review passes. A local implementation or a matching fixture does not establish a completed cutover.", "",
+                  "| Requirement | Status | Evidence and remaining work |", "| --- | --- | --- |"]
+        for gap in data["cross_cutting_gaps"]:
+            lines.append(f"| `{gap['id']}` | {gap['status']} | {gap['description'].replace('|', '&#124;')} |")
+        lines.append("")
     for kind in counts:
         lines += [f"## {kind}", "", "| Operation | Review | Result and remaining work | Evidence |", "| --- | --- | --- | --- |"]
         for reg in data["baseline"]["registrations"]:

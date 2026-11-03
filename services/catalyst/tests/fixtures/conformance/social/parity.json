@@ -3,48 +3,101 @@
   "operations": [
     {
       "id": "api_auxiliary:ANY:/*",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "auxiliary-http",
+      "status": "known_gap",
+      "result": "Compared framework defaultHandler and allowedMethods with the social-api nested router; the unknown-path body is currently different.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/cors.rs",
+          "scope": "Compared b6b2cef source components.ts and installed @dcl/http-server cors.js, logic.js and router.js; older dated captures do not override the current pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/lib.rs",
+          "scope": "Checked middleware coverage and fallback placement for /social-api separately from unrelated root routes."
+        }
+      ],
+      "gaps": [
+        "Source unknown path returns 404 with plain body Not found; the local nested router does not yet provide that fallback."
+      ],
+      "remaining_verification": "Implement and replay executable framework goldens for current CORS, unknown routes and unsupported HTTP methods; preserve unrelated domain routes."
     },
     {
       "id": "api_auxiliary:GET:/health/live",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "auxiliary-http",
+      "status": "reviewed",
+      "result": "Compared the pinned framework GET/HEAD liveness body and the gateway-prefixed local handler.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/mod.rs",
+          "scope": "Pinned @dcl/http-server status-checks.js compared with health_router; source accepts HEAD for registered GET routes."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
+          "test": "the_probes_answer_under_the_gateway_prefix_only",
+          "scope": "Local stable-state health responses, MIME and prefix mounting; seeded production captures are supplementary evidence."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify deployment prefix routing. Startup/initializing/unready states and component failure probes have not been replayed against the unified serve lifecycle; healthy-response matching alone does not prove lifecycle equivalence."
     },
     {
       "id": "api_auxiliary:GET:/health/ready",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "auxiliary-http",
+      "status": "reviewed",
+      "result": "Compared the pinned framework healthy/listening response, health MIME and httpServer detail with the gateway-prefixed local handler; local response is constant after serve binds.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/mod.rs",
+          "scope": "Pinned @dcl/http-server status-checks.js compared with health_router; source accepts HEAD for registered GET routes."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
+          "test": "the_probes_answer_under_the_gateway_prefix_only",
+          "scope": "Local stable-state health responses, MIME and prefix mounting; seeded production captures are supplementary evidence."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify deployment prefix routing. Startup/initializing/unready states and component failure probes have not been replayed against the unified serve lifecycle; healthy-response matching alone does not prove lifecycle equivalence."
     },
     {
       "id": "api_auxiliary:GET:/health/startup",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "auxiliary-http",
+      "status": "reviewed",
+      "result": "Compared the pinned framework healthy/listening response, health MIME and httpServer detail with the gateway-prefixed local handler; local response is constant after serve binds.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/mod.rs",
+          "scope": "Pinned @dcl/http-server status-checks.js compared with health_router; source accepts HEAD for registered GET routes."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/social_api_parity.rs",
+          "test": "the_probes_answer_under_the_gateway_prefix_only",
+          "scope": "Local stable-state health responses, MIME and prefix mounting; seeded production captures are supplementary evidence."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Verify deployment prefix routing. Startup/initializing/unready states and component failure probes have not been replayed against the unified serve lifecycle; healthy-response matching alone does not prove lifecycle equivalence."
     },
     {
       "id": "api_auxiliary:OPTIONS:/*",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
-      "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "owner": "auxiliary-http",
+      "status": "known_gap",
+      "result": "Compared current pinned framework CORS middleware against the local dated-capture implementation; requested-header reflection, method ordering, origin-less preflight and unknown-path handling differ.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/cors.rs",
+          "scope": "Compared b6b2cef source components.ts and installed @dcl/http-server cors.js, logic.js and router.js; older dated captures do not override the current pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/lib.rs",
+          "scope": "Checked middleware coverage and fallback placement for /social-api separately from unrelated root routes."
+        }
+      ],
+      "gaps": [
+        "Current source reflects Access-Control-Request-Headers; local implementation emits a fixed wildcard.",
+        "Source preflight applies to unknown paths and emits Access-Control-Allow-Origin even without Origin; local route layers do not."
+      ],
+      "remaining_verification": "Implement and replay executable framework goldens for current CORS, unknown routes and unsupported HTTP methods; preserve unrelated domain routes."
     },
     {
       "id": "api_http:DELETE:/v1/blocks/:address",
@@ -2258,21 +2311,51 @@
     },
     {
       "id": "uws_http:ANY:/*",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "auxiliary-http",
+      "status": "reviewed",
+      "result": "Compared the pinned uWS registration, supported HTTP methods, body and unconditional Access-Control-Allow-Origin with the prefixed local handler; writes-enabled operation is a precondition.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/mod.rs",
+          "scope": "Literal response and registration compared with src/controllers/routes/uws.routes.ts at the pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "test": "the_rpc_host_routes_follow_upstream_and_keep_the_local_ones",
+          "scope": "Local method matrix including HEAD, plain health body, JSON404, prefix and wildcard CORS; all pass in the combined social suite."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "test": "with_writes_off_the_guard_answers_non_gets_first",
+          "scope": "Documents the explicit target write-disable configuration behavior; replacement requires writes enabled."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Confirm edge prefix and writes-enabled deployment configuration; response content-type/header details and real uWS transport serialization are not fully replayed by these in-process tests."
     },
     {
       "id": "uws_http:ANY:/health/live",
-      "owner": "realtime-transport",
-      "status": "not_reviewed",
-      "result": "Registered upstream; behaviour has not been audited in this backlog.",
-      "evidence": [],
+      "owner": "auxiliary-http",
+      "status": "reviewed",
+      "result": "Compared the pinned uWS registration, supported HTTP methods, body and unconditional Access-Control-Allow-Origin with the prefixed local handler; writes-enabled operation is a precondition.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/mod.rs",
+          "scope": "Literal response and registration compared with src/controllers/routes/uws.routes.ts at the pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "test": "the_rpc_host_routes_follow_upstream_and_keep_the_local_ones",
+          "scope": "Local method matrix including HEAD, plain health body, JSON404, prefix and wildcard CORS; all pass in the combined social suite."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/http.rs",
+          "test": "with_writes_off_the_guard_answers_non_gets_first",
+          "scope": "Documents the explicit target write-disable configuration behavior; replacement requires writes enabled."
+        }
+      ],
       "gaps": [],
-      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+      "remaining_verification": "Confirm edge prefix and writes-enabled deployment configuration; response content-type/header details and real uWS transport serialization are not fully replayed by these in-process tests."
     },
     {
       "id": "uws_http:GET:/metrics",
@@ -4386,8 +4469,8 @@
     },
     {
       "id": "shared-fixed-window-friendship-limit",
-      "status": "known_gap",
-      "description": "The current friendship limiter does not yet implement upstream shared fixed-window counters, per-actor/pair ordering and configuration edge behavior.",
+      "status": "unverified",
+      "description": "The implemented SQL limiter now matches eight executed source/Redis scenarios plus concurrent replica, fixed-expiry and configuration regressions. Existing Redis counter state has not been imported or drained during a nonempty cutover; a fresh SQL counter resets the active window.",
       "operations": [
         "rpc_unary:RPC:upsertFriendship"
       ]
