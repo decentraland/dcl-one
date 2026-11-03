@@ -14,7 +14,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
-use tokio::sync::Notify;
+
+use crate::shared::rpc::ws::SocketClose;
 
 pub use crate::comms::limits::{RateLimitDecision, RateLimiter};
 
@@ -76,38 +77,52 @@ impl FriendshipMutationLimiter {
     }
 }
 
-/// Authenticated sockets an address may hold across the RPC socket and
-/// `/v1/stream` (upstream `WS_MAX_CONNECTIONS_PER_ADDRESS`, default 8,
-/// `src/logic/ws-admission/component.ts:19`).
-pub const MAX_SOCKETS_PER_ADDRESS: usize = 8;
-/// The per-address subscription-start bucket of `/v1/stream`
-/// (`WS_SUBSCRIPTIONS_PER_SECOND` 2, `WS_SUBSCRIPTION_BURST` 24).
-const SUBSCRIPTIONS_PER_SECOND: f64 = 2.0;
-const SUBSCRIPTION_BURST: f64 = 24.0;
-/// Disconnected addresses whose partly spent bucket is remembered
-/// (`WS_ADDRESS_BUDGET_CAPACITY` 10,000); forgetting one grants a full bucket.
-const IDLE_BUDGET_CAPACITY: usize = 10_000;
-
-/// How a socket displaced by a newer one of its address is ended: an RPC
-/// transport through its kill handle, a stream socket by its own loop, which
-/// closes it `3005`.
-pub enum Eviction {
-    Rpc(Arc<Notify>),
-    Stream(Arc<Notify>),
+/// Which socket: the RPC socket or `/v1/stream` (upstream's `WsProtocol`,
+/// the `protocol` label of the socket metrics).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Protocol {
+    Rpc,
+    Stream,
 }
 
-impl Eviction {
-    fn fire(&self) {
+impl Protocol {
+    pub fn label(self) -> &'static str {
         match self {
-            Eviction::Rpc(kill) => kill.notify_waiters(),
-            // A permit, so a loop between two selects still sees it.
-            Eviction::Stream(evicted) => evicted.notify_one(),
+            Protocol::Rpc => "rpc",
+            Protocol::Stream => "stream",
         }
     }
+}
 
-    fn is(&self, handle: &Arc<Notify>) -> bool {
-        match self {
-            Eviction::Rpc(h) | Eviction::Stream(h) => Arc::ptr_eq(h, handle),
+/// The close a socket displaced by a newer one of its address gets.
+pub const REPLACED: (u16, &str) = (3005, "Replaced by a newer connection");
+
+/// The per-address limits both protocols share (upstream
+/// `src/logic/ws-admission/component.ts:19-22`, each a positive number).
+#[derive(Clone, Copy, Debug)]
+pub struct AdmissionLimits {
+    /// `WS_MAX_CONNECTIONS_PER_ADDRESS`: authenticated sockets per address.
+    pub max_per_address: usize,
+    /// `WS_SUBSCRIPTIONS_PER_SECOND`: the subscription bucket's refill.
+    pub subscriptions_per_second: f64,
+    /// `WS_SUBSCRIPTION_BURST`: the bucket's size.
+    pub subscription_burst: usize,
+    /// `WS_ADDRESS_BUDGET_CAPACITY`: disconnected addresses whose partly
+    /// spent bucket is remembered; forgetting one grants a full bucket.
+    pub idle_budget_capacity: usize,
+}
+
+/// Upstream's defaults: 8 sockets, 2 subscriptions a second, a burst of 24,
+/// 10,000 idle buckets.
+pub const DEFAULT_MAX_SOCKETS_PER_ADDRESS: usize = 8;
+
+impl Default for AdmissionLimits {
+    fn default() -> Self {
+        Self {
+            max_per_address: DEFAULT_MAX_SOCKETS_PER_ADDRESS,
+            subscriptions_per_second: 2.0,
+            subscription_burst: 24,
+            idle_budget_capacity: 10_000,
         }
     }
 }
@@ -119,32 +134,33 @@ struct Budget {
 }
 
 impl Budget {
-    fn full(now: Instant) -> Self {
+    fn full(limits: &AdmissionLimits, now: Instant) -> Self {
         Self {
-            tokens: SUBSCRIPTION_BURST,
+            tokens: limits.subscription_burst as f64,
             updated_at: now,
         }
     }
 
-    fn replenish(&mut self, now: Instant) {
+    fn replenish(&mut self, limits: &AdmissionLimits, now: Instant) {
         let elapsed = now.saturating_duration_since(self.updated_at).as_secs_f64();
-        self.tokens = (self.tokens + elapsed * SUBSCRIPTIONS_PER_SECOND).min(SUBSCRIPTION_BURST);
+        self.tokens = (self.tokens + elapsed * limits.subscriptions_per_second)
+            .min(limits.subscription_burst as f64);
         self.updated_at = now;
     }
 }
 
 struct AddressSockets {
     /// Oldest first.
-    sockets: VecDeque<Eviction>,
+    sockets: VecDeque<(Arc<SocketClose>, Protocol)>,
     budget: Budget,
 }
 
 /// The per-address WebSocket limits both protocols share (upstream
 /// `ws-admission`, #503): a socket cap whose overflow closes the address's
-/// OLDEST socket instead of refusing the new one, so a half-open socket or a
-/// replayed chain cannot lock the owner out; and the subscription-start
-/// bucket of `/v1/stream`, which survives reconnects. In-process, like the
-/// rest of this module's state.
+/// OLDEST socket (3005) instead of refusing the new one, so a half-open
+/// socket or a replayed chain cannot lock the owner out; and the
+/// subscription-start bucket of `/v1/stream`, which survives reconnects.
+/// In-process, like the rest of this module's state.
 #[derive(Default)]
 pub struct Admission {
     inner: Mutex<AdmissionInner>,
@@ -152,33 +168,43 @@ pub struct Admission {
 
 #[derive(Default)]
 struct AdmissionInner {
+    limits: AdmissionLimits,
     connected: HashMap<String, AddressSockets>,
     idle: HashMap<String, Budget>,
 }
 
 impl Admission {
+    /// The process's limits (`Settings::admission`), set before any socket opens.
+    pub fn configure(&self, limits: AdmissionLimits) {
+        self.inner.lock().limits = limits;
+    }
+
     /// Admits an authenticated socket of `address`; past the cap the oldest
-    /// one is told to end. Answers whether one was displaced.
-    pub fn claim(&self, address: &str, socket: Eviction) -> bool {
+    /// one is ended with [`REPLACED`]. Answers whether one was displaced.
+    pub fn claim(&self, address: &str, socket: Arc<SocketClose>, protocol: Protocol) -> bool {
         let address = address.to_lowercase();
         let now = Instant::now();
         let mut inner = self.inner.lock();
+        let limits = inner.limits;
         let budget = inner.idle.remove(&address);
         let state = inner
             .connected
             .entry(address)
             .or_insert_with(|| AddressSockets {
                 sockets: VecDeque::new(),
-                budget: budget.unwrap_or_else(|| Budget::full(now)),
+                budget: budget.unwrap_or_else(|| Budget::full(&limits, now)),
             });
         let mut displaced = false;
-        while state.sockets.len() >= MAX_SOCKETS_PER_ADDRESS {
-            if let Some(oldest) = state.sockets.pop_front() {
-                oldest.fire();
+        while state.sockets.len() >= limits.max_per_address {
+            if let Some((oldest, protocol)) = state.sockets.pop_front() {
+                let (code, reason) = REPLACED;
+                oldest.end(code, reason);
+                metrics::counter!("ws_admission_evictions", "protocol" => protocol.label())
+                    .increment(1);
                 displaced = true;
             }
         }
-        state.sockets.push_back(socket);
+        state.sockets.push_back((socket, protocol));
         displaced
     }
 
@@ -186,11 +212,18 @@ impl Admission {
     pub fn admit_subscription(&self, address: &str) -> bool {
         let now = Instant::now();
         let mut inner = self.inner.lock();
+        let limits = inner.limits;
         let Some(state) = inner.connected.get_mut(&address.to_lowercase()) else {
             return false;
         };
-        state.budget.replenish(now);
+        state.budget.replenish(&limits, now);
         if state.budget.tokens < 1.0 {
+            metrics::counter!(
+                "ws_admission_rejections",
+                "protocol" => Protocol::Stream.label(),
+                "reason" => "subscriptions"
+            )
+            .increment(1);
             return false;
         }
         state.budget.tokens -= 1.0;
@@ -198,33 +231,34 @@ impl Admission {
     }
 
     /// Whether the socket still holds its slot (a displaced one does not).
-    pub fn holds(&self, address: &str, handle: &Arc<Notify>) -> bool {
+    pub fn holds(&self, address: &str, handle: &Arc<SocketClose>) -> bool {
         self.inner
             .lock()
             .connected
             .get(&address.to_lowercase())
-            .is_some_and(|state| state.sockets.iter().any(|s| s.is(handle)))
+            .is_some_and(|state| state.sockets.iter().any(|(s, _)| Arc::ptr_eq(s, handle)))
     }
 
     /// Frees the socket's slot; the address's last socket leaves its partly
     /// spent bucket behind, the least recently used of those forgotten first.
-    pub fn release(&self, address: &str, handle: &Arc<Notify>) {
+    pub fn release(&self, address: &str, handle: &Arc<SocketClose>) {
         let address = address.to_lowercase();
         let now = Instant::now();
         let mut inner = self.inner.lock();
+        let limits = inner.limits;
         let Some(state) = inner.connected.get_mut(&address) else {
             return;
         };
-        state.sockets.retain(|s| !s.is(handle));
+        state.sockets.retain(|(s, _)| !Arc::ptr_eq(s, handle));
         if !state.sockets.is_empty() {
             return;
         }
         let mut budget = inner.connected.remove(&address).map(|s| s.budget).unwrap();
-        budget.replenish(now);
-        if budget.tokens >= SUBSCRIPTION_BURST {
+        budget.replenish(&limits, now);
+        if budget.tokens >= limits.subscription_burst as f64 {
             return;
         }
-        if inner.idle.len() >= IDLE_BUDGET_CAPACITY
+        if inner.idle.len() >= limits.idle_budget_capacity
             && let Some(oldest) = inner
                 .idle
                 .iter()
@@ -253,56 +287,100 @@ mod tests {
     #[test]
     fn the_ninth_socket_displaces_the_oldest() {
         let admission = Admission::default();
-        let handles: Vec<Arc<Notify>> = (0..=MAX_SOCKETS_PER_ADDRESS)
-            .map(|_| Arc::new(Notify::new()))
+        let handles: Vec<Arc<SocketClose>> = (0..=DEFAULT_MAX_SOCKETS_PER_ADDRESS)
+            .map(|_| Arc::new(SocketClose::default()))
             .collect();
         for (i, h) in handles.iter().enumerate() {
-            let socket = if i % 2 == 0 {
-                Eviction::Stream(h.clone())
+            let protocol = if i % 2 == 0 {
+                Protocol::Stream
             } else {
-                Eviction::Rpc(h.clone())
+                Protocol::Rpc
             };
             assert_eq!(
-                admission.claim("0xAbC", socket),
-                i == MAX_SOCKETS_PER_ADDRESS,
+                admission.claim("0xAbC", h.clone(), protocol),
+                i == DEFAULT_MAX_SOCKETS_PER_ADDRESS,
                 "socket {i}"
             );
         }
-        assert_eq!(admission.sockets_of("0xabc"), MAX_SOCKETS_PER_ADDRESS);
+        assert_eq!(
+            admission.sockets_of("0xabc"),
+            DEFAULT_MAX_SOCKETS_PER_ADDRESS
+        );
         assert!(!admission.holds("0xabc", &handles[0]));
         assert!(admission.holds("0xabc", &handles[1]));
-        // The displaced stream socket holds a permit until its loop reads it.
-        assert!(
-            futures::FutureExt::now_or_never(handles[0].notified()).is_some(),
+        assert_eq!(
+            handles[0].frame(),
+            Some(REPLACED),
             "the oldest was told to end"
         );
+        assert!(!handles[1].is_ended());
         admission.release("0xabc", &handles[0]);
-        assert_eq!(admission.sockets_of("0xabc"), MAX_SOCKETS_PER_ADDRESS);
+        assert_eq!(
+            admission.sockets_of("0xabc"),
+            DEFAULT_MAX_SOCKETS_PER_ADDRESS
+        );
         for h in &handles[1..] {
             admission.release("0xabc", h);
         }
         assert_eq!(admission.sockets_of("0xabc"), 0);
     }
 
+    /// The limits are configuration (`WS_MAX_CONNECTIONS_PER_ADDRESS`,
+    /// `WS_SUBSCRIPTION_BURST`), and a displacement and a refused
+    /// subscription are counted as upstream counts them.
+    #[test]
+    fn configured_limits_apply_and_are_counted() {
+        let admission = Admission::default();
+        admission.configure(AdmissionLimits {
+            max_per_address: 1,
+            subscription_burst: 2,
+            ..AdmissionLimits::default()
+        });
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let first = Arc::new(SocketClose::default());
+        metrics::with_local_recorder(&recorder, || {
+            assert!(!admission.claim("0xa", first.clone(), Protocol::Rpc));
+            assert!(admission.claim("0xa", Arc::new(SocketClose::default()), Protocol::Stream));
+            assert!(admission.admit_subscription("0xa"));
+            assert!(admission.admit_subscription("0xa"));
+            assert!(!admission.admit_subscription("0xa"));
+        });
+        assert_eq!(first.frame(), Some(REPLACED));
+        let rendered = handle.render();
+        assert!(
+            rendered.contains("ws_admission_evictions{protocol=\"rpc\"} 1"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains(
+                "ws_admission_rejections{protocol=\"stream\",reason=\"subscriptions\"} 1"
+            ),
+            "{rendered}"
+        );
+    }
+
     #[test]
     fn the_subscription_bucket_survives_a_reconnect() {
         let admission = Admission::default();
-        let first = Arc::new(Notify::new());
+        let first = Arc::new(SocketClose::default());
         assert!(!admission.admit_subscription("0xa"), "no socket, no budget");
-        admission.claim("0xa", Eviction::Stream(first.clone()));
+        admission.claim("0xa", first.clone(), Protocol::Stream);
         let spent = (0..100)
             .take_while(|_| admission.admit_subscription("0xa"))
             .count();
-        assert_eq!(spent, SUBSCRIPTION_BURST as usize);
+        assert_eq!(spent, AdmissionLimits::default().subscription_burst);
         admission.release("0xa", &first);
-        let second = Arc::new(Notify::new());
-        admission.claim("0xa", Eviction::Stream(second.clone()));
+        let second = Arc::new(SocketClose::default());
+        admission.claim("0xa", second.clone(), Protocol::Stream);
         assert!(
             !admission.admit_subscription("0xa"),
             "reconnecting does not refill the bucket"
         );
-        let other = Arc::new(Notify::new());
-        admission.claim("0xb", Eviction::Stream(other));
+        let other = Arc::new(SocketClose::default());
+        admission.claim("0xb", other, Protocol::Stream);
         assert!(
             admission.admit_subscription("0xb"),
             "buckets are per address"

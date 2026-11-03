@@ -2048,6 +2048,7 @@ dependencies = [
  "icu_properties",
  "image",
  "libc",
+ "metrics",
  "multer",
  "openmls",
  "openmls_basic_credential",

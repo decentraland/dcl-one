@@ -191,60 +191,148 @@ enum Kind {
     Bool,
 }
 
-/// A JSON object body checked against upstream's schema: every listed
-/// property of its kind, `required` present, nothing else, at least
-/// `min_properties`. A refusal is a 400; its message names the rule, the
-/// way AJV words it.
+/// Upstream `UUID_PATTERN` (`src/utils/uuid.ts`).
+const UUID_PATTERN: &str =
+    "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
+
+/// One AJV error object (`instancePath`, `schemaPath`, `keyword`, `params`, `message`).
+fn ajv_error(property: Option<&str>, keyword: &str, params: Value, message: String) -> Value {
+    let (instance_path, schema_path) = match property {
+        Some(name) => (format!("/{name}"), format!("#/properties/{name}/{keyword}")),
+        None => (String::new(), format!("#/{keyword}")),
+    };
+    json!({
+        "instancePath": instance_path,
+        "schemaPath": schema_path,
+        "keyword": keyword,
+        "params": params,
+        "message": message,
+    })
+}
+
+/// `@dcl/schema-validator-component` 1.0.1's 400: `{ ok: false, message }`
+/// when the body is not JSON, `{ ok: false, message: "Invalid JSON body",
+/// data: [<AJV error>] }` when it fails the schema.
+fn schema_refusal(message: String, error: Option<Value>) -> CommError {
+    let mut body = json!({ "ok": false, "message": message });
+    if let Some(error) = error {
+        body["data"] = json!([error]);
+    }
+    CommError::Body(StatusCode::BAD_REQUEST, body)
+}
+
+/// A JSON object body checked against upstream's schema as AJV checks it
+/// (one error, the first in AJV's order: the type, `minProperties`,
+/// `required`, `additionalProperties` in the body's order, then each
+/// property in the schema's order: its type, then its pattern, enum or
+/// length). The refusal is the schema validator's 400.
 fn body(
     bytes: &[u8],
     properties: &[(&str, Kind)],
     required: &[&str],
     min_properties: usize,
 ) -> Result<Map<String, Value>, CommError> {
-    let invalid = |m: String| CommError::bad_request(m);
-    let Ok(Value::Object(object)) = serde_json::from_slice::<Value>(bytes) else {
-        return Err(invalid("Invalid JSON body: must be object".into()));
+    let invalid = |property: Option<&str>, keyword: &str, params: Value, message: String| {
+        schema_refusal(
+            "Invalid JSON body".into(),
+            Some(ajv_error(property, keyword, params, message)),
+        )
     };
-    for name in required {
-        if !object.contains_key(*name) {
-            return Err(invalid(format!("must have required property '{name}'")));
-        }
-    }
-    if object.len() < min_properties {
-        return Err(invalid(format!(
-            "must NOT have fewer than {min_properties} properties"
-        )));
-    }
-    for (name, value) in &object {
-        let Some((_, kind)) = properties.iter().find(|(p, _)| p == name) else {
-            return Err(invalid("must NOT have additional properties".into()));
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| {
+        // V8's message for the common empty body; any other parse error
+        // carries serde's wording.
+        let message = if bytes.iter().all(u8::is_ascii_whitespace) {
+            "Unexpected end of JSON input".to_string()
+        } else {
+            e.to_string()
         };
-        let field = format!("/{name}");
-        match (kind, value) {
-            (Kind::Bool, Value::Bool(_)) => {}
-            (Kind::Bool, _) => return Err(invalid(format!("{field} must be boolean"))),
-            (_, Value::String(text)) => match kind {
-                Kind::Address if !crate::auth::is_eth_address(text) => {
-                    return Err(invalid(format!(
-                        "{field} must match pattern \"{ADDRESS_PATTERN}\""
-                    )));
-                }
-                Kind::Uuid if !is_uuid(text) => {
-                    return Err(invalid(format!("{field} must match format \"uuid\"")));
-                }
-                Kind::OneOf(allowed) if !allowed.contains(&text.as_str()) => {
-                    return Err(invalid(format!(
-                        "{field} must be equal to one of the allowed values"
-                    )));
-                }
-                Kind::Text { max } if text.chars().count() > *max => {
-                    return Err(invalid(format!(
-                        "{field} must NOT have more than {max} characters"
-                    )));
-                }
-                _ => {}
-            },
-            _ => return Err(invalid(format!("{field} must be string"))),
+        schema_refusal(message, None)
+    })?;
+    let Value::Object(object) = value else {
+        return Err(invalid(
+            None,
+            "type",
+            json!({ "type": "object" }),
+            "must be object".into(),
+        ));
+    };
+    if object.len() < min_properties {
+        return Err(invalid(
+            None,
+            "minProperties",
+            json!({ "limit": min_properties }),
+            format!("must NOT have fewer than {min_properties} properties"),
+        ));
+    }
+    if let Some(name) = required.iter().find(|name| !object.contains_key(**name)) {
+        return Err(invalid(
+            None,
+            "required",
+            json!({ "missingProperty": name }),
+            format!("must have required property '{name}'"),
+        ));
+    }
+    if let Some(name) = object
+        .keys()
+        .find(|name| !properties.iter().any(|(p, _)| p == name))
+    {
+        return Err(invalid(
+            None,
+            "additionalProperties",
+            json!({ "additionalProperty": name }),
+            "must NOT have additional properties".into(),
+        ));
+    }
+    for (name, kind) in properties {
+        let Some(value) = object.get(*name) else {
+            continue;
+        };
+        let field = Some(*name);
+        let wrong_type = |expected: &str| {
+            invalid(
+                field,
+                "type",
+                json!({ "type": expected }),
+                format!("must be {expected}"),
+            )
+        };
+        let text = match (kind, value) {
+            (Kind::Bool, Value::Bool(_)) => continue,
+            (Kind::Bool, _) => return Err(wrong_type("boolean")),
+            (_, Value::String(text)) => text,
+            _ => return Err(wrong_type("string")),
+        };
+        let pattern = |pattern: &str| {
+            invalid(
+                field,
+                "pattern",
+                json!({ "pattern": pattern }),
+                format!("must match pattern \"{pattern}\""),
+            )
+        };
+        match kind {
+            Kind::Address if !crate::auth::is_eth_address(text) => {
+                return Err(pattern(ADDRESS_PATTERN));
+            }
+            Kind::Uuid if !is_uuid(text) => return Err(pattern(UUID_PATTERN)),
+            Kind::OneOf(allowed) if !allowed.contains(&text.as_str()) => {
+                return Err(invalid(
+                    field,
+                    "enum",
+                    json!({ "allowedValues": allowed }),
+                    "must be equal to one of the allowed values".into(),
+                ));
+            }
+            // AJV counts code points (`ucs2length`).
+            Kind::Text { max } if text.chars().count() > *max => {
+                return Err(invalid(
+                    field,
+                    "maxLength",
+                    json!({ "limit": max }),
+                    format!("must NOT have more than {max} characters"),
+                ));
+            }
+            _ => {}
         }
     }
     Ok(object)
@@ -980,5 +1068,160 @@ mod tests {
             0,
         );
         assert!(request.is_err());
+    }
+
+    fn refusal(result: Result<Map<String, Value>, CommError>) -> Value {
+        match result {
+            Err(CommError::Body(status, body)) => {
+                assert_eq!(status, StatusCode::BAD_REQUEST);
+                body
+            }
+            other => panic!("not a schema refusal: {other:?}"),
+        }
+    }
+
+    /// `@dcl/schema-validator-component` 1.0.1 (`dist/src/component.js`):
+    /// `{ ok: false, message: "Invalid JSON body", data: [<AJV error>] }`,
+    /// the first error in AJV's order, and the parse error's message alone
+    /// for a body that is not JSON.
+    #[test]
+    fn a_body_failing_the_schema_answers_as_the_schema_validator() {
+        let request = |raw: &str| {
+            body(
+                raw.as_bytes(),
+                &[
+                    ("address", Kind::Address),
+                    ("message", Kind::Text { max: 3 }),
+                ],
+                &["address"],
+                0,
+            )
+        };
+        assert_eq!(
+            refusal(request("")),
+            json!({ "ok": false, "message": "Unexpected end of JSON input" })
+        );
+        let cases = [
+            (
+                "[]",
+                json!({ "instancePath": "", "schemaPath": "#/type", "keyword": "type",
+                    "params": { "type": "object" }, "message": "must be object" }),
+            ),
+            (
+                r#"{"extra":1}"#,
+                json!({ "instancePath": "", "schemaPath": "#/required", "keyword": "required",
+                    "params": { "missingProperty": "address" },
+                    "message": "must have required property 'address'" }),
+            ),
+            (
+                r#"{"address":7,"extra":1}"#,
+                json!({ "instancePath": "", "schemaPath": "#/additionalProperties",
+                    "keyword": "additionalProperties", "params": { "additionalProperty": "extra" },
+                    "message": "must NOT have additional properties" }),
+            ),
+            (
+                r#"{"message":"long","address":"0x1"}"#,
+                json!({ "instancePath": "/address", "schemaPath": "#/properties/address/pattern",
+                    "keyword": "pattern", "params": { "pattern": ADDRESS_PATTERN },
+                    "message": format!("must match pattern \"{ADDRESS_PATTERN}\"") }),
+            ),
+            (
+                r#"{"address":"0x0000000000000000000000000000000000000001","message":"long"}"#,
+                json!({ "instancePath": "/message", "schemaPath": "#/properties/message/maxLength",
+                    "keyword": "maxLength", "params": { "limit": 3 },
+                    "message": "must NOT have more than 3 characters" }),
+            ),
+        ];
+        for (raw, error) in cases {
+            assert_eq!(
+                refusal(request(raw)),
+                json!({ "ok": false, "message": "Invalid JSON body", "data": [error] }),
+                "{raw}"
+            );
+        }
+        let intention = body(
+            br#"{"intention":"maybe"}"#,
+            &[("intention", Kind::OneOf(&["accepted", "rejected"]))],
+            &["intention"],
+            0,
+        );
+        assert_eq!(
+            refusal(intention)["data"][0]["params"],
+            json!({ "allowedValues": ["accepted", "rejected"] })
+        );
+        let settings = body(b"{}", &[("x", Kind::Bool)], &[], 1);
+        assert_eq!(
+            refusal(settings)["data"][0]["message"],
+            "must NOT have fewer than 1 properties"
+        );
+        let community = body(
+            br#"{"communityId":"nope"}"#,
+            &[("communityId", Kind::Uuid)],
+            &["communityId"],
+            0,
+        );
+        assert_eq!(
+            refusal(community)["data"][0]["params"]["pattern"],
+            UUID_PATTERN
+        );
+    }
+
+    /// The served `/social-api/openapi.json` documents every twin route
+    /// (upstream `docs/openapi.yaml` at `b6b2cef`).
+    #[test]
+    fn the_served_openapi_documents_every_route() {
+        let doc: Value = serde_json::from_str(crate::shared::openapi::COMMUNITIES).unwrap();
+        for (path, method) in [
+            ("/v2/friends", "get"),
+            ("/v1/friends/{address}", "delete"),
+            ("/v2/users/{address}/mutual-friends", "get"),
+            ("/v1/users/{address}/friendship-status", "get"),
+            ("/v2/friendship-requests", "get"),
+            ("/v1/friendship-requests", "post"),
+            ("/v1/friendship-requests/{address}", "patch"),
+            ("/v2/blocks", "get"),
+            ("/v1/blocks", "post"),
+            ("/v1/blocks/{address}", "delete"),
+            ("/v1/blocking-status", "get"),
+            ("/v1/social-settings", "get"),
+            ("/v1/social-settings", "patch"),
+            ("/v1/private-messages-settings", "get"),
+            ("/v1/private-voice-chats", "post"),
+            ("/v1/private-voice-chats/incoming", "get"),
+            ("/v1/private-voice-chats/{callId}", "patch"),
+            ("/v1/private-voice-chats/{callId}", "delete"),
+            ("/v1/community-voice-chats", "post"),
+            ("/v1/community-voice-chats/{communityId}", "delete"),
+            (
+                "/v1/community-voice-chats/{communityId}/participants",
+                "post",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/participants/{address}",
+                "delete",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/speakers/{address}",
+                "put",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/speakers/{address}",
+                "patch",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/speakers/{address}",
+                "delete",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/speak-requests",
+                "post",
+            ),
+            (
+                "/v1/community-voice-chats/{communityId}/speak-requests/{address}",
+                "delete",
+            ),
+        ] {
+            assert!(doc["paths"][path][method].is_object(), "{method} {path}");
+        }
     }
 }

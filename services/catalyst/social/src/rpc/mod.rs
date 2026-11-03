@@ -91,6 +91,15 @@ pub struct Settings {
     pub ws_max_concurrent_connections: Option<usize>,
     /// `WS_MAX_PAYLOAD_LENGTH`: the largest inbound frame.
     pub ws_max_payload_bytes: usize,
+    /// `WS_MAX_BACKPRESSURE`: bytes a `/v1/stream` socket may have waiting to
+    /// be written when another is sent; past it the send closes the socket
+    /// 1008 `Slow consumer`.
+    pub ws_max_backpressure_bytes: usize,
+    /// The per-address limits both sockets share (`WS_MAX_CONNECTIONS_PER_ADDRESS`,
+    /// `WS_SUBSCRIPTIONS_PER_SECOND`, `WS_SUBSCRIPTION_BURST`, `WS_ADDRESS_BUDGET_CAPACITY`).
+    pub admission: limits::AdmissionLimits,
+    /// `/v1/stream`'s own (`STREAM_WS_*`).
+    pub stream: stream::StreamLimits,
     /// `CATALYRST_SOCIAL_RPC_ADMIN_TOKEN`: the `/admin/social` bearer; unset refuses.
     pub admin_token: Option<String>,
     /// Where profile pictures are served.
@@ -111,6 +120,9 @@ impl Default for Settings {
             private_voice_chat_expiration_batch_size: 20,
             ws_max_concurrent_connections: None,
             ws_max_payload_bytes: 1024 * 1024,
+            ws_max_backpressure_bytes: 128 * 1024,
+            admission: Default::default(),
+            stream: Default::default(),
             admin_token: None,
             faces: Default::default(),
             writes_enabled: true,
@@ -157,6 +169,7 @@ impl State {
         ctx: Context,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
+        ctx.admission().configure(settings.admission);
         let (sender, server) = build_rpc_server(ctx.clone());
         let rpc_events = OnceCell::new();
         rpc_events.set(sender).ok();
@@ -175,15 +188,20 @@ impl State {
         self.rpc_events.get()
     }
 
-    /// The RPC server loop (one job; it ends at shutdown) and the private-
-    /// voice expiry sweep (a periodic job on the configured tick).
+    /// The RPC server loop (one job; at shutdown it ends every socket of
+    /// both protocols with 1001 "Server shutting down", as upstream's
+    /// `ws-pool` stop) and the private-voice expiry sweep (a periodic job on
+    /// the configured tick).
     pub fn spawn_jobs(self: &Arc<Self>, jobs: &Jobs) {
         if let Some(mut server) = self.server.lock().take() {
+            let sockets = self.ctx.clone();
             jobs.spawn("social-rpc-server", move |ctx| async move {
                 tokio::select! {
                     _ = ctx.cancel.cancelled() => {}
                     _ = server.run() => {}
                 }
+                let (code, reason) = SHUTTING_DOWN;
+                sockets.end_sockets(code, reason, SHUTDOWN_BUDGET).await;
                 Ok(())
             });
         }
@@ -207,6 +225,11 @@ impl State {
     }
 }
 
+/// The close every socket gets at shutdown (upstream `src/logic/ws-pool/component.ts:85`).
+pub const SHUTTING_DOWN: (u16, &str) = (1001, "Server shutting down");
+/// How long shutdown waits for the sockets to close.
+const SHUTDOWN_BUDGET: Duration = Duration::from_secs(2);
+
 /// The server with its transport handlers: a connected socket registers its
 /// identity, takes its address's socket slot (displacing the oldest past the
 /// cap, `limits::Admission`) and counts the address present (across its
@@ -223,23 +246,21 @@ fn build_rpc_server(
 
     let bind_ctx = ctx.clone();
     server.set_on_transport_connected_handler(move |transport, transport_id| {
-        bind_ctx.connection_opened();
         let address = transport.address().to_string();
         bind_ctx.register_identity(transport_id, address.clone());
-        bind_ctx.register_kill_handle(transport_id, transport.kill_handle());
+        bind_ctx.register_kill_handle(transport_id, transport.close_handle());
         bind_ctx
             .admission()
-            .claim(&address, limits::Eviction::Rpc(transport.kill_handle()));
+            .claim(&address, transport.close_handle(), limits::Protocol::Rpc);
         bind_ctx.mark_online(&address);
     });
     let forget_ctx = ctx.clone();
     server.set_on_transport_closes_handler(move |transport, transport_id| {
-        forget_ctx.connection_closed();
         forget_ctx.forget_identity(transport_id);
         let address = transport.address().to_string();
         forget_ctx
             .admission()
-            .release(&address, &transport.kill_handle());
+            .release(&address, &transport.close_handle());
         if forget_ctx.mark_offline(&address) {
             let voice_ctx = forget_ctx.clone();
             tokio::spawn(async move {
