@@ -31,7 +31,7 @@ fn capture_prepared(pool: &PgPool, label: &str) {
         let result = std::process::Command::new(bin).args(["--no-owner", "--no-privileges", "--inserts"])
             .args(args).arg(url.as_str()).output().unwrap();
         assert!(result.status.success(), "pg_dump: {}", String::from_utf8_lossy(&result.stderr));
-        String::from_utf8(result.stdout).unwrap().lines().filter(|line| !line.starts_with("\\restrict ") && !line.starts_with("\\unrestrict ") && !line.starts_with("CREATE COLLATION ") && line != "SET transaction_timeout = 0;")
+        String::from_utf8(result.stdout).unwrap().lines().filter(|line| !line.starts_with("\\restrict ") && !line.starts_with("\\unrestrict ") && !line.starts_with("CREATE COLLATION ") && *line != "SET transaction_timeout = 0;")
             .collect::<Vec<_>>().join("\n").trim_end().to_owned() + "\n"
     };
     if label == "upgrade" {
