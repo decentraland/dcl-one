@@ -424,7 +424,7 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
         }
     }
     let other = Bytes::from_static(b"{}");
-    let (status, _, _) = call(
+    let (status, _, body) = call(
         &node.router(),
         deploy_request(
             "/content/entities",
@@ -435,8 +435,11 @@ async fn an_unsynced_copy_takes_the_deploy_types_it_names() {
     )
     .await;
     assert_eq!(
-        status,
-        StatusCode::SERVICE_UNAVAILABLE,
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "The entity file was not part of the uploaded files or has no type."})
+        ),
         "no entity file, no type: refused"
     );
 }
@@ -921,6 +924,8 @@ fn profile(owner: &str, wearables: &[&str]) -> Value {
 /// validator's token tier), another token of an item one holds is not
 /// ownership, and a profile wearing only base items asks the subgraph
 /// nothing.
+const PROFILE_CLIENT_IP: &str = "203.0.113.30";
+
 #[tokio::test]
 async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
     require_test_db!(Some(pool) = crate::db::scratch::pool(4).await);
@@ -983,11 +988,10 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
             let refs: Vec<&str> = wearables.iter().map(String::as_str).collect();
             let (bytes, id, chain) =
                 signed_entity(&signer, profile(&address(&signer), &refs)).await;
-            let (status, _, body) = call(
-                &router,
-                deploy_request("/content/entities", &id, &chain, &[(&id, &bytes)]),
-            )
-            .await;
+            let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &bytes)]);
+            req.headers_mut()
+                .insert("x-real-ip", HeaderValue::from_static(PROFILE_CLIENT_IP));
+            let (status, _, body) = call(&router, req).await;
             (status, json_of(&body), id)
         }
     };
@@ -1038,6 +1042,11 @@ async fn a_profile_deploy_keeps_owner_scope_without_usage_grants() {
         hits.load(Ordering::SeqCst),
         before,
         "base items are never asked about"
+    );
+    assert_eq!(
+        state.deploy_quota.counted_for(PROFILE_CLIENT_IP),
+        6,
+        "the 400s and 200s all count"
     );
 
     let mut scope: HashMap<String, String> = HashMap::new();
@@ -1252,28 +1261,85 @@ async fn forms_refused_for_their_field_limits_count_toward_the_quota() {
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
 }
 
+/// An unsynced copy taking only scenes: a form with no typed entity file is
+/// 400 and a profile 503, and both count, since the client chose them.
 #[tokio::test]
-async fn deploys_the_node_answers_503_are_given_back() {
+async fn an_unsynced_copys_refusals_count_toward_the_quota() {
     let settings = Settings {
-        post_entities_daily_quota_max: 1,
+        post_entities_daily_quota_max: 2,
         ..Settings::for_tests()
     };
-    let node = deploying_node("quota-refund", settings).await;
-    // An unsynced copy taking only scenes: a form without a scene file is 503.
+    let node = deploying_node("quota-copy", settings).await;
     node.state.sync.set_unsynced_copy(true);
     node.state
         .sync
         .set_copy_deploy_types(vec!["scene".to_string()]);
     let router = node.router();
-    for _ in 0..3 {
-        let (status, _, _) = call(&router, form_request("203.0.113.11", &entity_form())).await;
-        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    }
-    node.state.sync.set_unsynced_copy(false);
-    let (status, _, _) = call(&router, form_request("203.0.113.11", &entity_form())).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "the quota is untouched");
-    let (status, _, _) = call(&router, form_request("203.0.113.11", &entity_form())).await;
+    let (status, _, body) = call(&router, form_request("203.0.113.11", &entity_form())).await;
+    assert_eq!(
+        (status, json_of(&body)),
+        (
+            StatusCode::BAD_REQUEST,
+            json!({"error": "The entity file was not part of the uploaded files or has no type."})
+        )
+    );
+    let file = Bytes::from(
+        json!({"version": "v3", "type": "profile", "pointers": ["0x00000000000000000000000000000000000000aa"],
+               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
+        .to_string(),
+    );
+    let id = hash_bytes_v1(&file);
+    let profile = || {
+        let mut req = deploy_request("/content/entities", &id, &json!([]), &[(&id, &file)]);
+        req.headers_mut()
+            .insert("x-real-ip", HeaderValue::from_static("203.0.113.11"));
+        req
+    };
+    let (status, _, _) = call(&router, profile()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    let (status, _, _) = call(&router, profile()).await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+/// The deployer's 503 (here a contract-wallet chain with no `ETH_RPC_URL`)
+/// is the node's: the quota gets it back.
+#[tokio::test]
+async fn deploys_the_deployer_cannot_decide_are_given_back() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-refund", settings).await;
+    let router = node.router();
+    let file = Bytes::from(
+        json!({"version": "v3", "type": "profile", "pointers": ["0x0000000000000000000000000000000000000002"],
+               "timestamp": chrono::Utc::now().timestamp_millis(), "content": [], "metadata": {}})
+        .to_string(),
+    );
+    let id = hash_bytes_v1(&file);
+    let chain = serde_json::to_value(
+        crate::sync_test_support::signed_chain_behind_contract(
+            &id,
+            &(chrono::Utc::now() + chrono::Duration::days(1)).to_rfc3339(),
+        )
+        .await,
+    )
+    .unwrap();
+    for _ in 0..3 {
+        node.state.deployer().unwrap().clear_rate_limits();
+        let mut req = deploy_request("/content/entities", &id, &chain, &[(&id, &file)]);
+        req.headers_mut()
+            .insert("x-real-ip", HeaderValue::from_static("203.0.113.13"));
+        let (status, headers, body) = call(&router, req).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body:?}");
+        assert!(json_of(&body)["errors"].is_array(), "{body:?}");
+        assert!(headers.contains_key(header::RETRY_AFTER));
+    }
+    assert_eq!(node.state.deploy_quota.counted_for("203.0.113.13"), 0);
+    let (status, _, _) = call(&router, form_request("203.0.113.13", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the quota is untouched");
+    let (status, _, _) = call(&router, form_request("203.0.113.13", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "a 400 is kept");
 }
 
 #[tokio::test]

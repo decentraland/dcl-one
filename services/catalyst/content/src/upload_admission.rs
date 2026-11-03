@@ -4,6 +4,20 @@
 //! are in-process state, never the database: each upstream behind the
 //! gateway keeps its own, so N upstreams admit N times the quota, and a
 //! restart resets it.
+//!
+//! The table holds [`MAX_QUOTA_SOURCES`] windows; a new source past it
+//! evicts the oldest, whose next deploy starts a fresh window. A client
+//! holding more /64s than that (a /48 alone has 65,536) can so cycle its
+//! own windows; the per-second gateway limit and the upload budget still
+//! bound it. A coarser prefix would put unrelated hosts of one provider
+//! under one quota.
+//!
+//! The source is the address the gateway stamps, so a node forwarding its
+//! accepted deploys here (`content::forward`) is one source: every deploy
+//! it forwards shares its quota, and past it the forwarder's sends get 429,
+//! retry and end `failed`. No forwarder is trusted to name its
+//! own clients; such an upstream raises `POST_ENTITIES_DAILY_QUOTA_MAX` or
+//! sets it to 0.
 
 use std::collections::{HashMap, VecDeque};
 use std::net::{IpAddr, Ipv6Addr};
@@ -213,6 +227,18 @@ impl DailyQuota {
     }
 }
 
+#[cfg(test)]
+impl DailyQuota {
+    /// Deploys counted for `client_ip` in its live window.
+    pub(crate) fn counted_for(&self, client_ip: &str) -> u32 {
+        self.windows
+            .lock()
+            .by_source
+            .get(&source_key(client_ip))
+            .map_or(0, |w| w.count)
+    }
+}
+
 /// Whole seconds until a live `window` ends, at least 1.
 fn retry_after(window: &Window, now: Instant) -> u64 {
     DAILY_WINDOW
@@ -297,6 +323,20 @@ mod tests {
         assert!(quota.try_consume("203.0.113.1").is_err());
         charge.refund();
         assert!(quota.try_consume("203.0.113.1").unwrap().is_some());
+    }
+
+    #[test]
+    fn a_refund_after_its_window_ended_is_ignored() {
+        let quota = DailyQuota::new(1);
+        let now = Instant::now();
+        let charge = quota.try_consume_at("203.0.113.1", now).unwrap().unwrap();
+        let next_day = now + DAILY_WINDOW;
+        assert!(counted(&quota, "203.0.113.1", next_day));
+        charge.refund();
+        assert!(
+            quota.try_consume_at("203.0.113.1", next_day).is_err(),
+            "the new window keeps its count"
+        );
     }
 
     #[test]

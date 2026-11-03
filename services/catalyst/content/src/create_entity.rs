@@ -19,7 +19,9 @@
 //! in-memory upload budget answers 503 and a client address past its daily
 //! quota 429, both with `Retry-After` ([`super::upload_admission`], per
 //! process). The quota counts every admitted request, a form refused for
-//! its field limits (400) included, and gives back the ones answered 503.
+//! its field limits (400) included, and gives back only the ones the
+//! deployer could not decide (its 503). An unsynced copy refusing the
+//! entity's type (503) still counts: the client chose the type.
 //! The per-second request rate is the gateway's (`limit_req zone=deploy`,
 //! `infra/gateway/gateway.py`); the per-pointer TTLs are the deployer's.
 
@@ -309,16 +311,25 @@ pub async fn create_entity(
         Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
     };
 
-    let response = deploy_form(&state, deployer, &headers, multipart, request_started)
-        .await
-        .unwrap_or_else(IntoResponse::into_response);
-    // The node could not take it: not the client's deploy to spend.
-    if response.status() == StatusCode::SERVICE_UNAVAILABLE
-        && let Some(charge) = charge
-    {
-        charge.refund();
-    }
-    Ok(response)
+    Ok(
+        match deploy_form(&state, deployer, &headers, multipart, request_started).await {
+            Ok(Answer::Decided(response)) => response,
+            Ok(Answer::Undecided(response)) => {
+                if let Some(charge) = charge {
+                    charge.refund();
+                }
+                response
+            }
+            Err(e) => e.into_response(),
+        },
+    )
+}
+
+/// An admitted deploy's answer: [`Answer::Undecided`] is the deployer's
+/// 503, which the client's quota gets back.
+enum Answer {
+    Decided(Response),
+    Undecided(Response),
 }
 
 /// Reads an admitted form and deploys it.
@@ -328,7 +339,7 @@ async fn deploy_form(
     headers: &HeaderMap,
     mut multipart: Multipart,
     request_started: std::time::Instant,
-) -> AppResult<Response> {
+) -> AppResult<Answer> {
     let settings = &state.settings;
     let (fields, files) = read_form(
         &mut multipart,
@@ -340,12 +351,15 @@ async fn deploy_form(
         .get("entityId")
         .ok_or_else(|| invalid("Missing entityId field"))?
         .clone();
-    if !state.sync.takes_deploys()
-        && !entity_type_of(&files, &entity_id).is_some_and(|t| state.sync.takes_deploys_of(&t))
-    {
-        return Err(AppError::ServiceUnavailable(
-            writes::BOOTSTRAPPING_MESSAGE.to_string(),
-        ));
+    if !state.sync.takes_deploys() {
+        let entity_type = entity_type_of(&files, &entity_id).ok_or_else(|| {
+            invalid("The entity file was not part of the uploaded files or has no type.")
+        })?;
+        if !state.sync.takes_deploys_of(&entity_type) {
+            return Err(AppError::ServiceUnavailable(
+                writes::BOOTSTRAPPING_MESSAGE.to_string(),
+            ));
+        }
     }
     let auth_chain = auth_chain_of(&fields, &entity_id)?;
 
@@ -377,15 +391,23 @@ async fn deploy_form(
                 deploy_us = deploy_started.elapsed().as_micros() as u64,
                 elapsed_us = request_started.elapsed().as_micros() as u64
             );
-            Ok((
-                StatusCode::OK,
-                Json(json!({ "creationTimestamp": creation_timestamp })),
-            )
-                .into_response())
+            Ok(Answer::Decided(
+                (
+                    StatusCode::OK,
+                    Json(json!({ "creationTimestamp": creation_timestamp })),
+                )
+                    .into_response(),
+            ))
         }
         Err(failure) => {
             tracing::warn!(entity_id = %entity_id, errors = ?failure.errors(), "POST /entities - Deployment failed");
-            Ok(deployment_failure_response(failure))
+            let undecided = matches!(failure, DeployFailure::Unavailable(_));
+            let response = deployment_failure_response(failure);
+            Ok(if undecided {
+                Answer::Undecided(response)
+            } else {
+                Answer::Decided(response)
+            })
         }
     }
 }
