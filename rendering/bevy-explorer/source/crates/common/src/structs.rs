@@ -894,6 +894,8 @@ pub struct GraphicsSettings {
     pub cel_shading: bool,
     /// draw the dark edge outline around avatars
     pub avatar_outline: bool,
+    /// draw the lens flare of the sun, or of the moon at night
+    pub lens_flare: bool,
     /// show a hologram ghost where an avatar is still loading
     pub avatar_ghosts: bool,
     pub gpu_bytes_per_frame: usize,
@@ -923,6 +925,7 @@ impl Default for GraphicsSettings {
             ambient_brightness: 50,
             cel_shading: true,
             avatar_outline: true,
+            lens_flare: true,
             avatar_ghosts: true,
             gpu_bytes_per_frame: if cfg!(target_arch = "wasm32") {
                 10_000_000
@@ -1094,6 +1097,10 @@ pub enum DofSetting {
     Low,
     High,
 }
+
+/// A camera that draws the lens flare of the directional light (the lens flare setting).
+#[derive(Component, Clone, Copy, Default)]
+pub struct LensFlare;
 
 #[derive(Component)]
 // (sensor height, extra focal distance)

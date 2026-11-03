@@ -38,6 +38,7 @@ use common::{
 use constrain_ui::ConstrainUiSetting;
 use frame_rate::FpsTargetSetting;
 use language_setting::LanguageSetting;
+use lens_flare_setting::LensFlareSetting;
 use load_distance::{LoadDistanceSetting, UnloadDistanceSetting};
 use max_avatars::MaxAvatarsSetting;
 use max_downloads::MaxDownloadsSetting;
@@ -66,6 +67,7 @@ pub mod fog_settings;
 pub mod frame_rate;
 pub mod imposter_settings;
 pub mod language_setting;
+pub mod lens_flare_setting;
 pub mod load_distance;
 pub mod max_avatars;
 pub mod max_downloads;
@@ -184,6 +186,7 @@ impl Plugin for SettingBridgePlugin {
         add_enum_setting::<CelShadingSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarOutlineSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AvatarGhostsSetting>(app, &mut settings, &mut schedule, &config);
+        add_enum_setting::<LensFlareSetting>(app, &mut settings, &mut schedule, &config);
         add_enum_setting::<AaSetting>(app, &mut settings, &mut schedule, &config);
         add_int_setting::<AmbientSetting>(app, &mut settings, &mut schedule, &config);
         if is_fullscreen_available() {

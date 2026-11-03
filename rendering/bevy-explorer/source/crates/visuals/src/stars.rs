@@ -44,7 +44,7 @@ use bevy::{
     },
 };
 use bevy_atmosphere::{pipeline::AtmosphereImage, prelude::AtmosphereCamera};
-use common::structs::SceneGlobalLight;
+use common::structs::{LensFlare, SceneGlobalLight};
 use scene_material::highlight::HighlightLabel;
 
 pub struct StarsPlugin;
@@ -140,8 +140,12 @@ fn update_stars_settings(
     settings.time = time.elapsed_secs();
 }
 
-/// The star pass reads the view's depth texture, which bevy only makes bindable on request.
-fn bind_depth_texture(mut cameras: Query<&mut Camera3d, With<AtmosphereCamera>>) {
+/// The star and lens flare passes read the view's depth texture, which bevy only makes bindable
+/// on request.
+#[allow(clippy::type_complexity)]
+fn bind_depth_texture(
+    mut cameras: Query<&mut Camera3d, Or<(With<AtmosphereCamera>, With<LensFlare>)>>,
+) {
     for mut camera in cameras.iter_mut() {
         let usages = TextureUsages::from(camera.depth_texture_usages);
         if !usages.contains(TextureUsages::TEXTURE_BINDING) {

@@ -13611,6 +13611,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "visuals"
 version = "0.1.0"
 dependencies = [
+ "assets",
  "bevy",
  "bevy_atmosphere",
  "bevy_console",
@@ -13621,6 +13622,7 @@ dependencies = [
  "dcl_component",
  "dcl_types",
  "ipfs",
+ "naga_oil",
  "noise",
  "scene_material",
  "scene_runner",

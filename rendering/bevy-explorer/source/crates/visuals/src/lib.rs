@@ -1,6 +1,7 @@
 mod atmosphere_params;
 mod coast;
 mod day_night;
+mod lens_flare;
 mod nishita_cloud;
 mod props;
 pub mod shell_texturing;
@@ -93,7 +94,8 @@ impl Plugin for VisualsPlugin {
         .insert_resource(AtmosphereModel::new(NishitaCloud::default()))
         .add_plugins(AtmospherePlugin)
         .add_plugins(SkyEnvmapPlugin)
-        .add_plugins(stars::StarsPlugin);
+        .add_plugins(stars::StarsPlugin)
+        .add_plugins(lens_flare::LensFlarePlugin);
 
         app.add_console_command::<ShadowConsoleCommand, _>(shadow_console_command);
         app.add_console_command::<FogConsoleCommand, _>(fog_console_command);
