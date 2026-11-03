@@ -22,7 +22,8 @@
 //! - access: every check asks the chain at the entity timestamp's block, then
 //!   five minutes before it ([`super::onchain`]), as for a local deploy; item
 //!   ownership leaves out the escrow lease overlay, which knows only the
-//!   leases active now. A source unset or failing, or a node without that
+//!   leases active now, and counts a collection URN naming no item as owned
+//!   (the reference skips URNs it cannot parse). A source unset or failing, or a node without that
 //!   block's state, is undecidable; a revert is a "no".
 
 use std::collections::{HashMap, HashSet};
@@ -187,10 +188,11 @@ impl BlockchainChecker for Synced<'_> {
             .access()
             .items(eth_address, urns, timestamp)
             .await?;
+        // The reference skips URNs it cannot parse, so they count as owned.
         Ok(PermissionResult::from_failing(
             urns.iter()
                 .zip(owned)
-                .filter(|(_, o)| !o)
+                .filter(|(u, o)| !o && !super::onchain::is_malformed_item(u))
                 .map(|(u, _)| u.clone())
                 .collect(),
         ))
@@ -617,6 +619,61 @@ mod tests {
             n as f64 / elapsed.as_secs_f64(),
             (calls.len() - blocks) as f64 / n as f64,
             blocks as f64 / n as f64,
+        );
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[tokio::test]
+    async fn a_synced_profile_may_wear_a_collection_urn_naming_no_item_a_local_one_may_not() {
+        const OWNER: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+        let malformed = "urn:decentraland:matic:collections-v2:0xc1f4b0eea2bd6690930e6c66efd3e197d620b9c2:0:0x2a";
+        let entity = Entity {
+            metadata: Some(serde_json::json!({ "avatars": [{
+                "name": "", "hasClaimedName": false,
+                "avatar": { "wearables": [malformed], "emotes": [] }
+            }]})),
+            pointers: vec![OWNER.into()],
+            timestamp: 1_700_000_000_000,
+            ..profile(&[])
+        };
+        let files = HashMap::new();
+        let chain = AuthChain::new();
+        let deployment = Deployment {
+            entity: &entity,
+            files: &files,
+            auth_chain: &chain,
+        };
+        // The local check reads the escrow overlay.
+        let Some(pool) = crate::sync_test_support::test_pool(1).await else {
+            return;
+        };
+        let (storage, tmp) = crate::sync_test_support::temp_storage("malformed-urn").await;
+        let sources = Sources::new(
+            pool,
+            storage,
+            crate::http::Outbound::for_tests(),
+            None,
+            super::super::Settings {
+                eth_network: "mainnet".into(),
+                ..Default::default()
+            },
+        );
+        let synced = Synced {
+            sources: &sources,
+            not_fetched: HashSet::new(),
+            content: SyncedContent::Fetched,
+            trusted_expirations: Mutex::new(Vec::new()),
+        };
+
+        let verdict =
+            super::super::checker::validate_profile_access(&deployment, &synced, OWNER).await;
+        assert!(verdict.is_ok(), "{verdict:?}");
+        let local =
+            super::super::checker::validate_profile_access(&deployment, &sources, OWNER).await;
+        let local = local.into_result().unwrap_err();
+        assert!(
+            matches!(&local[..], [ValidationError::Rejected(m)] if m.contains(malformed)),
+            "a local deploy stays strict: {local:?}"
         );
         let _ = std::fs::remove_dir_all(tmp);
     }

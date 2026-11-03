@@ -32,8 +32,12 @@ use crate::http::jsonrpc::{
     BlockInfo, BlockSearch, BlockTag, Rpc, RpcError, hex_of, request, result_of,
 };
 
-#[allow(unused_imports)] // peer sync validation reads it
 pub use items::v1_collection_contract;
+
+/// A collection URN naming no item the ownership check can ask about.
+pub(crate) fn is_malformed_item(urn: &str) -> bool {
+    matches!(items::item_ref(urn), items::ItemRef::Malformed)
+}
 
 sol! {
     interface Checker {
