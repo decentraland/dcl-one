@@ -384,3 +384,61 @@ async fn a_large_guarded_profile_retires_a_real_socket_that_stops_reading() {
     cleanup_pair(server.state.ctx.db(), &me, &friend).await;
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }
+
+#[tokio::test]
+async fn rpc_connectivity_enriches_historical_aliases_but_guards_the_requested_actor() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let server = spawn_server(Some(pool.clone()), 5).await;
+    let (me, _client, social) = explorer_as(&server, &PrivateKeySigner::random()).await;
+    let actor = addr("alias-actor");
+    let alias = addr("alias-public");
+    let entity = seed_profile(&pool, &actor, "Historical alias").await;
+    let metadata = serde_json::json!({"v":{"avatars":[{"userId":alias,"name":"Historical alias","hasClaimedName":true,"avatar":{"snapshots":{"face256":"https://profiles.example/alias.png"}}}]}});
+    sqlx::query("UPDATE content.deployments SET entity_metadata=$2 WHERE entity_id=$1")
+        .bind(&entity)
+        .bind(metadata)
+        .execute(&pool)
+        .await
+        .unwrap();
+    server
+        .state
+        .ctx
+        .db()
+        .apply_friendship_action(&me, &actor, "accept", true, None, None)
+        .await
+        .unwrap();
+    server
+        .state
+        .ctx
+        .topology()
+        .receive(&pulse_frame(vec![me.clone(), actor.clone()]))
+        .unwrap();
+    assert!(!server.state.ctx.topology().snapshot().is_online(&alias));
+    let mut updates = subscribed(
+        &server,
+        &me,
+        social.subscribe_to_friend_connectivity_updates(),
+    )
+    .await;
+    assert_eq!(
+        next_update(&mut updates).await.friend.unwrap().address,
+        alias
+    );
+    server.state.ctx.pubsub().publish(
+        &me,
+        SocialEvent::FriendConnectivity(FriendConnectivityUpdate {
+            stream_closed: None,
+            status: ConnectivityStatus::Online as i32,
+            friend: Some(crate::rpc::profiles::friend_profile(&actor, None)),
+        }),
+    );
+    assert_eq!(
+        next_update(&mut updates).await.friend.unwrap().address,
+        alias
+    );
+    drop_profile(&pool, &actor, &entity).await;
+    cleanup_pair(server.state.ctx.db(), &me, &actor).await;
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}

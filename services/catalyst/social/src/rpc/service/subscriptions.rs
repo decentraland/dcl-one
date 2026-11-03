@@ -55,14 +55,7 @@ impl SocialServiceImpl {
                 };
                 // The source RPC subscription retrieves a profile for every action.
                 // The raw event remains available to the address-only JSON stream.
-                let Ok(mut profiles) = ctx
-                    .profiles()
-                    .get_profiles_result(std::slice::from_ref(&actor))
-                    .await
-                else {
-                    continue;
-                };
-                let Some(profile) = profiles.remove(&actor.to_lowercase()) else {
+                let Ok(Some(profile)) = ctx.profiles().get_profile_result(&actor).await else {
                     continue;
                 };
                 if let Some(friendship_update::Update::Request(request)) = update.update.as_mut() {
@@ -119,24 +112,21 @@ impl SocialServiceImpl {
                 after = page.last().unwrap().clone();
                 let Ok(Ok(profiles)) = tokio::time::timeout(
                     crate::comms::topology::TOPOLOGY_RECEIPT_TTL,
-                    ctx.profiles().friend_profiles(&page),
+                    ctx.profiles().get_profiles_with_actors_result(&page),
                 )
                 .await
                 else {
                     break;
                 };
-                for friend in profiles {
+                for (actor, profile) in profiles {
+                    let friend = crate::rpc::profiles::friend_profile(&actor, Some(&profile));
                     let snapshot = ctx.topology().snapshot();
-                    let online = snapshot.is_online(&friend.address);
+                    let online = snapshot.is_online(&actor);
                     if !online {
                         continue;
                     }
-                    let guard = ctx.friend_delivery_guard(
-                        me.clone(),
-                        friend.address.clone(),
-                        online,
-                        snapshot.generation,
-                    );
+                    let guard =
+                        ctx.friend_delivery_guard(me.clone(), actor, online, snapshot.generation);
                     let update = friend_replay_update(friend, online);
                     if yielder.yield_confirmed(update, guard).await.is_err() {
                         return;
@@ -173,22 +163,13 @@ impl SocialServiceImpl {
                             let Some(friend) = update.friend.as_ref() else {
                                 continue;
                             };
-                            let Ok(mut profiles) = ctx
-                                .profiles()
-                                .get_profiles_result(std::slice::from_ref(&friend.address))
-                                .await
+                            let actor = friend.address.clone();
+                            let Ok(Some(profile)) = ctx.profiles().get_profile_result(&actor).await
                             else {
                                 continue;
                             };
-                            let Some(profile) = profiles.remove(&friend.address.to_lowercase())
-                            else {
-                                continue;
-                            };
-                            update.friend = Some(crate::rpc::profiles::friend_profile(
-                                &friend.address,
-                                Some(&profile),
-                            ));
-                            let friend = update.friend.as_ref().unwrap();
+                            update.friend =
+                                Some(crate::rpc::profiles::friend_profile(&actor, Some(&profile)));
                             let generation = match &*ev {
                                 SocialEvent::TopologyFriendConnectivity(_, generation) => {
                                     *generation
@@ -197,7 +178,7 @@ impl SocialServiceImpl {
                             };
                             let guard = ctx.friend_delivery_guard(
                                 me.clone(),
-                                friend.address.clone(),
+                                actor,
                                 update.status == ConnectivityStatus::Online as i32,
                                 generation,
                             );
