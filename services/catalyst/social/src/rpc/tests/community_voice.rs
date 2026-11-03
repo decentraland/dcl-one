@@ -1052,7 +1052,7 @@ async fn the_profile_reaches_the_room_metadata() {
         Some(serde_json::json!({
             "name": "Owner",
             "has_claimed_name": true,
-            "profile_picture_url": format!("https://peer.test/profile-images/entities/{entity}/face.png"),
+            "profile_picture_url": "bafkreiface",
         }))
     );
     assert_eq!(profiles.get(&rig.guest), Some(&None));

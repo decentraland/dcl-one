@@ -14,15 +14,74 @@ impl SocialServiceImpl {
         cancellation: tokio_util::sync::CancellationToken,
     ) -> Result<ServerStreamResponse<FriendshipUpdate>, SocialError> {
         let me = Self::caller(&context)?;
-        Ok(stream_for(
-            context.server_context.pubsub(),
-            &me,
-            |e| match e {
-                SocialEvent::Friendship(u) => Some(u.clone()),
-                _ => None,
-            },
-            cancellation,
-        ))
+        let ctx = context.server_context.clone();
+        let mut rx = ctx.pubsub().subscribe(&me);
+        let (generator, yielder) = Generator::create();
+        let closed = yielder.clone();
+        let updates = async move {
+            loop {
+                let event = match rx.recv().await {
+                    Ok(event) => event,
+                    Err(RecvError::Lagged(skipped)) => {
+                        tracing::warn!(skipped, "friendship subscription lagged; events dropped");
+                        continue;
+                    }
+                    Err(RecvError::Closed) => break,
+                };
+                let SocialEvent::Friendship(update) = &*event else {
+                    continue;
+                };
+                let mut update = update.clone();
+                let actor = match update.update.as_ref() {
+                    Some(friendship_update::Update::Request(request)) => {
+                        request.friend.as_ref().map(|friend| &friend.address)
+                    }
+                    Some(friendship_update::Update::Accept(response)) => {
+                        response.user.as_ref().map(|user| &user.address)
+                    }
+                    Some(friendship_update::Update::Reject(response)) => {
+                        response.user.as_ref().map(|user| &user.address)
+                    }
+                    Some(friendship_update::Update::Delete(response)) => {
+                        response.user.as_ref().map(|user| &user.address)
+                    }
+                    Some(friendship_update::Update::Cancel(response)) => {
+                        response.user.as_ref().map(|user| &user.address)
+                    }
+                    _ => None,
+                };
+                let Some(actor) = actor.cloned() else {
+                    continue;
+                };
+                // The source RPC subscription retrieves a profile for every action.
+                // The raw event remains available to the address-only JSON stream.
+                let Ok(mut profiles) = ctx
+                    .profiles()
+                    .get_profiles_result(std::slice::from_ref(&actor))
+                    .await
+                else {
+                    continue;
+                };
+                let Some(profile) = profiles.remove(&actor.to_lowercase()) else {
+                    continue;
+                };
+                if let Some(friendship_update::Update::Request(request)) = update.update.as_mut() {
+                    request.friend =
+                        Some(crate::rpc::profiles::friend_profile(&actor, Some(&profile)));
+                }
+                if yielder.r#yield(update).await.is_err() {
+                    break;
+                }
+            }
+        };
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = cancellation.cancelled() => {},
+                _ = closed.closed() => {},
+                _ = updates => {},
+            }
+        });
+        Ok(generator)
     }
 
     /// Replays both current statuses for every eligible friend before live updates.

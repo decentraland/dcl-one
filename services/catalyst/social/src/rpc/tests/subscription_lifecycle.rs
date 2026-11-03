@@ -261,3 +261,95 @@ async fn a_detached_guard_cannot_clear_a_reused_transport_subscription() {
     assert!(!current.cancellation().is_cancelled());
     assert!(ctx.try_subscription(1, "SubscribeToBlockUpdates").is_none());
 }
+
+/// The pinned RPC update handler retrieves the actor's profile for every action
+/// (`updates.ts:540-545`), while the JSON stream consumes the raw address event.
+#[tokio::test]
+async fn friendship_rpc_resolves_profiles_for_every_action_without_hiding_raw_events() {
+    let Some(pool) = scratch_pool().await else {
+        return;
+    };
+    let ctx = test_ctx(
+        Db::new(pool.clone()),
+        Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
+    );
+    let me = addr("profile-stream");
+    let known = addr("known");
+    let missing = addr("missing");
+    let entity = seed_profile(&pool, &known, "Current name").await;
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let mut rpc = SocialServiceImpl
+        .subscribe_to_friendship_updates(procedure_ctx(&ctx, &me, 6002), cancellation.clone())
+        .await
+        .unwrap();
+    let mut raw = ctx.pubsub().subscribe(&me);
+    fn update(actor: &str, action: usize) -> FriendshipUpdate {
+        use friendship_update::*;
+        let user = Some(User {
+            address: actor.into(),
+        });
+        let update = match action {
+            0 => Update::Request(RequestResponse {
+                friend: Some(FriendProfile {
+                    address: actor.into(),
+                    name: "stale name".into(),
+                    ..Default::default()
+                }),
+                id: Uuid::new_v4().to_string(),
+                created_at: 123,
+                message: Some("hello".into()),
+            }),
+            1 => Update::Accept(AcceptResponse { user }),
+            2 => Update::Reject(RejectResponse { user }),
+            3 => Update::Delete(DeleteResponse { user }),
+            _ => Update::Cancel(CancelResponse { user }),
+        };
+        FriendshipUpdate {
+            update: Some(update),
+            stream_closed: None,
+        }
+    }
+    for action in 0..5 {
+        ctx.pubsub()
+            .publish(&me, SocialEvent::Friendship(update(&missing, action)));
+        let expected = update(&known, action);
+        ctx.pubsub()
+            .publish(&me, SocialEvent::Friendship(expected.clone()));
+        // Both events remain available to the JSON transport's raw subscriber.
+        assert!(matches!(
+            &*raw.recv().await.unwrap(),
+            SocialEvent::Friendship(_)
+        ));
+        assert!(matches!(
+            &*raw.recv().await.unwrap(),
+            SocialEvent::Friendship(_)
+        ));
+        let actual = tokio::time::timeout(Duration::from_secs(3), rpc.next())
+            .await
+            .unwrap()
+            .unwrap();
+        if let Some(friendship_update::Update::Request(request)) = actual.update.as_ref() {
+            assert_eq!(request.friend.as_ref().unwrap().address, known);
+            assert_eq!(request.friend.as_ref().unwrap().name, "Current name");
+            assert_eq!(request.created_at, 123);
+            assert_eq!(request.message.as_deref(), Some("hello"));
+            assert_eq!(
+                request.id,
+                match expected.update.unwrap() {
+                    friendship_update::Update::Request(request) => request.id,
+                    _ => unreachable!(),
+                }
+            );
+        } else {
+            assert_eq!(actual, expected);
+        }
+    }
+    cancellation.cancel();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), rpc.next())
+            .await
+            .unwrap()
+            .is_none()
+    );
+    drop_profile(&pool, &known, &entity).await;
+}
