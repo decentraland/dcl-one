@@ -5,14 +5,14 @@
 //!   (the old `community_ranking_metrics` flag column);
 //! - the voice-chat status derives from `social.community_voice_chat_users`
 //!   (the old `community_voice_chats` projection had no writer): a room is
-//!   live while it has a participant whose status is `connected` or
-//!   `connection_interrupted`; participants and moderators are counts over
-//!   those rows, `started_at` the earliest join;
+//!   live while a moderator satisfies comms' configured presence predicate;
+//!   participant and moderator counts use that same predicate;
 //! - `community_places.id` became `place_id`.
 //!
 //! The public listing carries exactly `c.active AND NOT c.unlisted AND NOT
 //! c.suspended` so `communities_ranking_idx` serves its `ORDER BY`.
 
+use crate::comms::gatekeeper::voice::db::VoiceDbConfig;
 use chrono::NaiveDateTime;
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -41,15 +41,18 @@ fn mirror_thumbnail_sql(alias: &str) -> String {
     )
 }
 
-/// The derived voice-room state per community.
-const VOICE_CTE: &str = "voice AS ( \
-    SELECT community_id, \
-           COUNT(*)::int4 AS participants, \
-           COUNT(*) FILTER (WHERE is_moderator)::int4 AS moderators, \
-           MIN(joined_at) AS started_at \
-    FROM social.community_voice_chat_users \
-    WHERE status IN ('connected', 'connection_interrupted') \
-    GROUP BY community_id)";
+/// Reuses the exact configured comms predicate, including initial admission and
+/// interrupted-connection windows. Bulk status keeps present participant counts
+/// even without a moderator; active-room filters require a present moderator.
+fn voice_cte(interrupted: &str, initial: &str) -> String {
+    let connected = VoiceDbConfig::connected_sql("u", interrupted, initial);
+    format!(
+        "voice AS (SELECT u.community_id,
+        COUNT(*) FILTER(WHERE {connected})::int4 AS participants,
+        COUNT(*) FILTER(WHERE u.is_moderator AND {connected})::int4 AS moderators
+        FROM social.community_voice_chat_users u GROUP BY u.community_id)"
+    )
+}
 
 const MEMBER_EXPR: &str = "EXISTS (SELECT 1 FROM social.community_members m WHERE m.community_id = c.id AND m.member_address = $USER)";
 
@@ -166,11 +169,14 @@ pub async fn get_by_id(
     pool: &PgPool,
     id: CommunityId,
     viewer: Option<&Address>,
+    cfg: VoiceDbConfig,
 ) -> sqlx::Result<Option<CommunityDetail>> {
+    let voice = voice_cte("$3", "$4");
+    let (interrupted, initial) = cfg.sql_cutoffs();
     let members_count = members_count_sql("c");
     let mirror_thumbnail = mirror_thumbnail_sql("c");
     let sql = format!(
-        "WITH {VOICE_CTE} \
+        "WITH {voice} \
          SELECT c.id, c.name, c.description, c.owner_address, c.private, c.active, c.unlisted, \
                 m.role, b.active, \
                 {members_count}, \
@@ -189,6 +195,8 @@ pub async fn get_by_id(
     let row = sqlx::query_as::<_, DetailRow>(sqlx::AssertSqlSafe(sql))
         .bind(id)
         .bind(viewer)
+        .bind(interrupted)
+        .bind(initial)
         .fetch_optional(pool)
         .await?;
     let Some((
@@ -233,14 +241,18 @@ pub async fn get_by_id(
         detail.role = Some(member_role.unwrap_or_else(|| "none".to_string()));
         detail.is_banned = Some(banned.unwrap_or(false));
     }
-    if (!private || detail.role.as_deref().is_some_and(|r| r != "none"))
-        && let Some((participants, moderators)) = participants.zip(moderators)
-    {
-        detail.is_live = true;
-        detail.voice_chat_status = Some(VoiceChatStatus {
-            is_active: true,
-            participant_count: participants as i64,
-            moderator_count: moderators as i64,
+    if !private || detail.role.as_deref().is_some_and(|role| role != "none") {
+        let moderators = moderators.unwrap_or(0);
+        let live = moderators > 0;
+        detail.is_live = live;
+        detail.voice_chat_status = Some(if live {
+            VoiceChatStatus {
+                is_active: true,
+                participant_count: participants.unwrap_or(0) as i64,
+                moderator_count: moderators as i64,
+            }
+        } else {
+            VoiceChatStatus::idle()
         });
     }
     Ok(Some(detail))
@@ -274,14 +286,17 @@ pub async fn list(
     only_with_active_voice_chat: bool,
     roles: &[String],
     community_id: Option<CommunityId>,
+    cfg: VoiceDbConfig,
 ) -> sqlx::Result<(Vec<CommunityListItem>, i64)> {
+    let voice = voice_cte("$1", "$2");
+    let (interrupted, initial) = cfg.sql_cutoffs();
     let mut where_clauses: Vec<String> =
         vec!["c.active".to_string(), "NOT c.suspended".to_string()];
     let mut params: Vec<String> = Vec::new();
 
     if let Some(id) = community_id {
         params.push(id.to_string());
-        where_clauses.push(format!("c.id = ${}::uuid", params.len()));
+        where_clauses.push(format!("c.id = ${}::uuid", params.len() + 2));
     }
 
     if let Some(clause) = default_visibility_clause(
@@ -303,12 +318,12 @@ pub async fn list(
     }
     if let Some(s) = search {
         params.push(format!("%{}%", escape_like(s)));
-        let i = params.len();
+        let i = params.len() + 2;
         where_clauses.push(format!("(c.name ILIKE ${i} OR c.description ILIKE ${i})"));
     }
     let user_param_idx = viewer.map(|u| {
         params.push(u.as_str().to_string());
-        params.len()
+        params.len() + 2
     });
     for clause in where_clauses.iter_mut() {
         *clause = match user_param_idx {
@@ -325,13 +340,13 @@ pub async fn list(
         }
     }
     if only_with_active_voice_chat {
-        where_clauses.push("v.community_id IS NOT NULL".to_string());
+        where_clauses.push("COALESCE(v.moderators,0)>0".to_string());
     }
     if !roles.is_empty() {
         match user_param_idx {
             Some(i) => {
                 params.push(roles.join(","));
-                let r = params.len();
+                let r = params.len() + 2;
                 where_clauses.push(format!(
                     "EXISTS (SELECT 1 FROM social.community_members m WHERE m.community_id = c.id AND m.member_address = ${i} AND m.role = ANY(string_to_array(${r}, ',')))"
                 ));
@@ -340,8 +355,8 @@ pub async fn list(
         }
     }
     let where_sql = where_clauses.join(" AND ");
-    let limit_idx = params.len() + 1;
-    let offset_idx = params.len() + 2;
+    let limit_idx = params.len() + 2 + 1;
+    let offset_idx = params.len() + 2 + 2;
     let role_select = match user_param_idx {
         Some(i) => format!(
             "COALESCE((SELECT m.role FROM social.community_members m WHERE m.community_id = c.id AND m.member_address = ${i}), 'none')"
@@ -374,11 +389,11 @@ pub async fn list(
     // memberships and grew with the table, not the page (METRICS.md,
     // "Stage 5: social bundle").
     let select_sql = format!(
-        "WITH {VOICE_CTE}, page AS ( \
+        "WITH {voice}, page AS ( \
          SELECT c.id, c.name, c.description, c.owner_address, c.private, c.active, c.unlisted, \
                 {role_select} AS role, \
                 (t.community_id IS NOT NULL) AS has_thumbnail, \
-                (v.community_id IS NOT NULL) AS has_voice, \
+                (COALESCE(v.moderators,0)>0) AS has_voice, \
                 COALESCE(v.participants, 0) AS vc_participants, \
                 COALESCE(v.moderators, 0) AS vc_moderators, \
                 COUNT(*) OVER () AS total, \
@@ -396,7 +411,9 @@ pub async fn list(
          FROM page p \
          ORDER BY {outer_order}"
     );
-    let mut q = sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(select_sql));
+    let mut q = sqlx::query_as::<_, ListRow>(sqlx::AssertSqlSafe(select_sql))
+        .bind(interrupted)
+        .bind(initial);
     for p in &params {
         q = q.bind(p);
     }
@@ -405,8 +422,8 @@ pub async fn list(
 
     let total = page_total(rows.first().map(|r| r.14), pagination.offset, async {
         let count_sql =
-            format!("WITH {VOICE_CTE} SELECT COUNT(*) FROM social.communities c LEFT JOIN voice v ON v.community_id = c.id WHERE {where_sql}");
-        let mut cq = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql));
+            format!("WITH {voice} SELECT COUNT(*) FROM social.communities c LEFT JOIN voice v ON v.community_id = c.id WHERE {where_sql}");
+        let mut cq = sqlx::query_scalar::<_, i64>(sqlx::AssertSqlSafe(count_sql)).bind(interrupted).bind(initial);
         for p in &params {
             cq = cq.bind(p);
         }
@@ -439,17 +456,15 @@ pub async fn list(
                 _total,
             )| {
                 let voice_visible = !private || role != "none";
-                let (is_live, voice_chat_status) = if voice_visible && has_voice {
-                    (
-                        true,
-                        VoiceChatStatus {
-                            is_active: true,
-                            participant_count: vc_participants as i64,
-                            moderator_count: vc_moderators as i64,
-                        },
-                    )
+                let is_live = voice_visible && has_voice;
+                let voice_chat_status = if voice_visible {
+                    VoiceChatStatus {
+                        is_active: has_voice,
+                        participant_count: vc_participants as i64,
+                        moderator_count: vc_moderators as i64,
+                    }
                 } else {
-                    (false, VoiceChatStatus::idle())
+                    VoiceChatStatus::idle()
                 };
                 CommunityListItem {
                     id,
@@ -460,7 +475,7 @@ pub async fn list(
                     active,
                     members_count,
                     is_live,
-                    voice_chat_status: (signed || is_live).then_some(voice_chat_status),
+                    voice_chat_status: Some(voice_chat_status),
                     visibility: signed
                         .then(|| if unlisted { "unlisted" } else { "all" }.to_string()),
                     role: signed.then_some(role),
@@ -958,6 +973,7 @@ pub async fn list_requests_by_member(
     member: &Address,
     kind: Option<&str>,
     pagination: &Pagination,
+    cfg: VoiceDbConfig,
 ) -> sqlx::Result<(Vec<serde_json::Value>, i64)> {
     let mut where_sql = "member_address = $1 AND status = 'pending'".to_string();
     if kind.is_some() {
@@ -965,8 +981,13 @@ pub async fn list_requests_by_member(
     }
     let limit_idx = if kind.is_some() { 3 } else { 2 };
     let offset_idx = limit_idx + 1;
+    let voice = voice_cte(
+        &format!("${}", offset_idx + 1),
+        &format!("${}", offset_idx + 2),
+    );
+    let (interrupted, initial) = cfg.sql_cutoffs();
     let select_sql = format!(
-        "WITH {VOICE_CTE} SELECT r.id, r.community_id, r.member_address, r.status, r.type, \
+        "WITH {voice} SELECT r.id, r.community_id, r.member_address, r.status, r.type, \
                 c.name, c.description, c.owner_address, c.private, c.active, \
                 (SELECT COUNT(*) FROM social.community_members m WHERE m.community_id = c.id) AS members_count, \
                 c.unlisted, COALESCE(m.role, 'none'), COALESCE(v.participants, 0), COALESCE(v.moderators, 0) \
@@ -987,7 +1008,11 @@ pub async fn list_requests_by_member(
         q = q.bind(k);
         cq = cq.bind(k);
     }
-    q = q.bind(pagination.limit).bind(pagination.offset);
+    q = q
+        .bind(pagination.limit)
+        .bind(pagination.offset)
+        .bind(interrupted)
+        .bind(initial);
     let rows = q.fetch_all(pool).await?;
     let total = cq.fetch_one(pool).await?;
     let out = rows
@@ -1022,7 +1047,7 @@ pub async fn list_requests_by_member(
                     "role": role,
                     "visibility": if unlisted { "unlisted" } else { "all" },
                     "voiceChatStatus": if !private || role != "none" {
-                        serde_json::json!({ "isActive": participants > 0, "participantCount": participants, "moderatorCount": moderators })
+                        serde_json::json!({ "isActive": moderators > 0, "participantCount": participants, "moderatorCount": moderators })
                     } else { serde_json::json!({ "isActive": false, "participantCount": 0, "moderatorCount": 0 }) },
                     "friends": serde_json::Value::Array(vec![]),
                 })
@@ -1228,70 +1253,65 @@ pub async fn moderation_all(
 pub struct ActiveVoiceRow {
     pub community_id: Uuid,
     pub community_name: String,
-    pub has_thumbnail: bool,
     pub is_member: bool,
     pub participant_count: i32,
     pub moderator_count: i32,
-    /// The community's places, read for a non-member only (upstream fetches
-    /// positions and worlds for non-members alone).
-    pub place_ids: Vec<String>,
 }
 
 /// The live rooms the viewer may see: public listed communities plus the
 /// ones the viewer belongs to, never one that bans the viewer (upstream
-/// reads them through `getCommunities`), newest room first.
+/// reads them through `getCommunities`), in the comms reader's order.
 pub async fn active_voice_for_user(
     pool: &PgPool,
     viewer: &Address,
+    active: &[crate::comms::gatekeeper::voice::db::ActiveCommunityVoiceChat],
 ) -> sqlx::Result<Vec<ActiveVoiceRow>> {
-    let sql = format!(
-        "WITH {VOICE_CTE}, rooms AS ( \
-         SELECT v.community_id, c.name, v.started_at, \
-                (t.community_id IS NOT NULL) AS has_thumbnail, \
-                EXISTS (SELECT 1 FROM social.community_members m WHERE m.community_id = v.community_id AND m.member_address = $1) AS is_member, \
-                c.private, c.unlisted, v.participants, v.moderators \
-         FROM voice v \
-         JOIN social.communities c ON c.id = v.community_id \
-         LEFT JOIN social.community_thumbnails t ON t.community_id = v.community_id \
-         WHERE c.active \
-           AND NOT EXISTS (SELECT 1 FROM social.community_bans b \
-                           WHERE b.community_id = v.community_id AND b.banned_address = $1 AND b.active)) \
-         SELECT r.community_id, r.name, r.has_thumbnail, r.is_member, r.participants, r.moderators, \
-                CASE WHEN r.is_member THEN '{{}}'::text[] ELSE \
-                  COALESCE((SELECT array_agg(p.place_id ORDER BY p.added_at DESC) FROM social.community_places p \
-                            WHERE p.community_id = r.community_id), '{{}}'::text[]) END \
-         FROM rooms r \
-         WHERE r.is_member OR (NOT r.private AND NOT r.unlisted) \
-         ORDER BY r.started_at DESC"
-    );
-    let rows = sqlx::query_as::<_, (Uuid, String, bool, bool, i32, i32, Vec<String>)>(
-        sqlx::AssertSqlSafe(sql),
-    )
-    .bind(viewer)
-    .fetch_all(pool)
-    .await?;
-    Ok(rows
+    let ids: Vec<Uuid> = active
+        .iter()
+        .map(|row| row.community_id.as_uuid())
+        .collect();
+    let rows:Vec<(Uuid,String,bool)>=sqlx::query_as("SELECT c.id,c.name,
+        EXISTS(SELECT 1 FROM social.community_members m WHERE m.community_id=c.id AND m.member_address=$1) AS is_member
+        FROM social.communities c WHERE c.id=ANY($2) AND c.active AND NOT c.suspended
+        AND NOT EXISTS(SELECT 1 FROM social.community_bans b WHERE b.community_id=c.id AND b.banned_address=$1 AND b.active)
+        AND (NOT c.private AND NOT c.unlisted OR EXISTS(SELECT 1 FROM social.community_members m WHERE m.community_id=c.id AND m.member_address=$1))")
+        .bind(viewer).bind(&ids).fetch_all(pool).await?;
+    let rows: std::collections::HashMap<Uuid, (String, bool)> = rows
         .into_iter()
-        .map(
-            |(
-                community_id,
-                community_name,
-                has_thumbnail,
-                is_member,
-                participant_count,
-                moderator_count,
-                place_ids,
-            )| ActiveVoiceRow {
-                community_id,
-                community_name,
-                has_thumbnail,
-                is_member,
-                participant_count,
-                moderator_count,
-                place_ids,
-            },
-        )
+        .map(|(id, name, member)| (id, (name, member)))
+        .collect();
+    Ok(active
+        .iter()
+        .filter_map(|status| {
+            rows.get(&status.community_id.as_uuid())
+                .map(|(name, member)| ActiveVoiceRow {
+                    community_id: status.community_id.as_uuid(),
+                    community_name: name.clone(),
+                    is_member: *member,
+                    participant_count: status.participant_count as i32,
+                    moderator_count: status.moderator_count as i32,
+                })
+        })
         .collect())
+}
+
+pub(super) async fn voice_thumbnail_hashes(
+    pool: &PgPool,
+    ids: &[Uuid],
+) -> sqlx::Result<std::collections::HashMap<Uuid, String>> {
+    let rows:Vec<(Uuid,String)>=sqlx::query_as("SELECT community_id,thumbnail_hash FROM social.community_thumbnails WHERE community_id=ANY($1)").bind(ids).fetch_all(pool).await?;
+    Ok(rows.into_iter().collect())
+}
+pub(super) async fn voice_place_ids(
+    pool: &PgPool,
+    ids: &[Uuid],
+) -> sqlx::Result<std::collections::HashMap<Uuid, Vec<String>>> {
+    let rows:Vec<(Uuid,String)>=sqlx::query_as("SELECT community_id,place_id FROM social.community_places WHERE community_id=ANY($1) ORDER BY added_at DESC").bind(ids).fetch_all(pool).await?;
+    let mut out = std::collections::HashMap::<Uuid, Vec<String>>::new();
+    for (id, place) in rows {
+        out.entry(id).or_default().push(place);
+    }
+    Ok(out)
 }
 
 #[cfg(test)]

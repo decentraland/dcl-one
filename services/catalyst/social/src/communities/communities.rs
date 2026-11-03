@@ -291,6 +291,7 @@ pub async fn get_communities(
         only_with_active_voice_chat,
         &roles,
         community_id,
+        state.voice_presence_config(),
     )
     .await?;
 
@@ -357,7 +358,20 @@ pub async fn get_community(
             &signed_path(&original, format!("/v1/communities/{id_str}")),
         )
         .await;
-    let Some(mut detail) = queries::get_by_id(&state.pool, id, signer.as_ref()).await? else {
+    let Some(mut detail) = queries::get_by_id(
+        &state.pool,
+        id,
+        signer.as_ref(),
+        state.voice_presence_config(),
+    )
+    .await
+    .map_err(|error| {
+        CommError::MessageOnly(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            super::http::database_message(&error),
+        )
+    })?
+    else {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
         )));
@@ -417,6 +431,7 @@ pub async fn get_communities_v2(
         only_with_active_voice_chat,
         &roles,
         community_id,
+        state.voice_presence_config(),
     )
     .await?;
     for item in results.iter_mut() {
@@ -459,7 +474,20 @@ pub async fn get_community_v2(
             &signed_path(&original, format!("/v2/communities/{id_str}")),
         )
         .await;
-    let Some(mut detail) = queries::get_by_id(&state.pool, id, signer.as_ref()).await? else {
+    let Some(mut detail) = queries::get_by_id(
+        &state.pool,
+        id,
+        signer.as_ref(),
+        state.voice_presence_config(),
+    )
+    .await
+    .map_err(|error| {
+        CommError::MessageOnly(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            super::http::database_message(&error),
+        )
+    })?
+    else {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
         )));
@@ -952,7 +980,14 @@ pub async fn update_community(
             "failed to store thumbnail",
         );
     }
-    let detail = match queries::get_by_id(&state.pool, uuid, Some(&signer)).await {
+    let detail = match queries::get_by_id(
+        &state.pool,
+        uuid,
+        Some(&signer),
+        state.voice_presence_config(),
+    )
+    .await
+    {
         Ok(Some(mut obj)) => {
             if obj.has_thumbnail {
                 obj.thumbnail_url = Some(state.thumbnail_url(uuid));

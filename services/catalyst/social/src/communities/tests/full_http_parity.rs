@@ -282,7 +282,10 @@ async fn source_dtos_have_nullable_voice_and_base_write_replies() {
             "voiceChatStatus"
         ]
     );
-    assert!(detail["data"]["voiceChatStatus"].is_null());
+    assert_eq!(
+        detail["data"]["voiceChatStatus"],
+        json!({"isActive":false,"participantCount":0,"moderatorCount":0})
+    );
     let (bytes, content_type) = multipart(&[("description", b"changed")]);
     let (status, updated) = hit(
         &rig.app,

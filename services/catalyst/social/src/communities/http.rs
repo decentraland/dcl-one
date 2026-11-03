@@ -31,6 +31,15 @@ pub const ADR44_MESSAGE: &str = "This endpoint requires a signed fetch request. 
 /// `{ error: "Bad request", message }` (capture `social/community-by-id-bad-id`).
 pub const INVALID_IDENTIFIER: &str = "Invalid identifier";
 
+/// `pg` exposes the server message directly. SQLx's Display adds a client
+/// prefix; handlers which return the source's `{message}` use this extractor.
+pub(crate) fn database_message(error: &sqlx::Error) -> String {
+    error
+        .as_database_error()
+        .map(|error| error.message().to_owned())
+        .unwrap_or_else(|| error.to_string())
+}
+
 #[derive(Clone)]
 pub(crate) struct SocialApiNotFound;
 

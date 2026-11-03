@@ -425,3 +425,46 @@ the stricter media identifier check. It reads no application row, takes no row
 lock and needs no index. HTTP keeps its own canonical UUID validation and calls
 the typed operation directly. Query-only observations are recorded in `METRICS.md`;
 they do not establish equal latency with the source's combined lookup.
+
+## Social community ranking and compliance workload
+
+Community ranking reads current membership, posts, places and thumbnail facts in
+pages of 100 communities. Five lifetime counters on `social.communities` retain
+photos, ended events, event attendees, ended streams and ended voice chats. The
+ranking job updates local authoritative communities only. Mirrored ranking scores
+remain upstream facts. `ranking_tracking_since` bounds local event occurrences
+eligible for collection; zero counter defaults do not reconstruct history. An
+authoritative cutover must import the lifetime counters, collection watermark and
+local producer receipts together before enabling local ranking ownership.
+
+`social.community_ranking_events` retains local producer receipts with primary key
+`(kind,event_key,community_id)`. One photo may contribute to several communities;
+receipt insertion and counter changes share a transaction. Receipts have no expiry.
+External decoded events preserve the upstream consumer's repeated increments,
+including its finally-acknowledge behavior on handler failure. The receipt relation
+does not turn that transport into an exactly-once consumer.
+
+New camera uploads start with `ranking_published=false`. After both blobs are
+written, one transaction marks the row and applies local photo contributions.
+Existing photos receive `true` during migration, preserving the history boundary.
+The existing job repairs at most 100 pending photos per pass, reading the partial
+`images_ranking_pending_idx`; it checks both blobs before taking SQL locks. Deletion
+does not decrement lifetime counters. A failed best-effort publication followed by
+photo deletion before repair can lose the contribution.
+
+Community create and edit compliance share `social.community_compliance_cache`
+through the existing pool. Its primary key is `(model,input_hash)`, where the hash
+is 32 bytes of SHA-256 over the source's name, description and image-digest
+serialization. Rows store the whole validated provider result, including rejected
+content, for two hours; they do not store the input text or image. Reads require a
+fresh expiry. The expiry index supports removal of at most 1,000 expired rows per
+hour, rechecking expiry to preserve concurrent refreshes. Provider failures are not
+cached. Cache-read SQL failures remain handler failures; a cache-write failure is
+reported by the source's compliance-unavailable branch.
+
+The compliance adapter builds one lazy Outbound client per community State. Its
+600-second whole-response deadline and 4 MiB response cap are explicit bounds.
+The pinned OpenAI SDK clears its 600-second timer at response headers and relies
+on the runtime's body inactivity timeout, so these bounds have a narrower scope
+than unrestricted SDK responses. The POST/PUT source contracts exercise 20 mocked
+provider cases; they do not establish exhaustive provider equivalence.

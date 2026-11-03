@@ -199,6 +199,9 @@ pub struct State {
 /// Removes a wallet from a community's voice room (the old gatekeeper's
 /// `DELETE /community-voice-chat/{id}/users/{address}`).
 pub trait VoiceEviction: Send + Sync {
+    fn presence_config(&self) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig {
+        Default::default()
+    }
     fn evict<'a>(
         &'a self,
         community_id: CommunityId,
@@ -209,6 +212,9 @@ pub trait VoiceEviction: Send + Sync {
 /// The gatekeeper's eviction (upstream #482): the same removal as its
 /// `DELETE /community-voice-chat/{id}/users/{address}`.
 impl VoiceEviction for crate::comms::gatekeeper::CommsState {
+    fn presence_config(&self) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig {
+        crate::comms::gatekeeper::voice::rooms::VoiceRooms::presence_config(self)
+    }
     fn evict<'a>(
         &'a self,
         community_id: CommunityId,
@@ -335,6 +341,15 @@ impl State {
     /// Attaches the comms module's voice-room kick (once).
     pub fn set_voice_eviction(&self, voice: Arc<dyn VoiceEviction>) {
         let _ = self.voice.set(voice);
+    }
+
+    pub(crate) fn voice_presence_config(
+        &self,
+    ) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig {
+        self.voice
+            .get()
+            .map(|voice| voice.presence_config())
+            .unwrap_or_default()
     }
 
     pub fn set_chain_index(&self, index: Arc<crate::chain_index::ChainIndex>) {

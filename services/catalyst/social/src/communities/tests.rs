@@ -40,6 +40,7 @@ mod selected_community;
 mod social_api_parity;
 mod upstream_rules;
 mod upstream_writes;
+mod voice_parity;
 pub(super) mod world_access;
 
 const ADMIN_TOKEN: &str = "cg-social-admin";
@@ -2387,7 +2388,10 @@ async fn voice_status_derives_from_the_presence_rows() {
 
     sqlx::query("UPDATE social.community_voice_chat_users SET status = 'disconnected' WHERE community_id = $1").bind(c).execute(&rig.pool).await.unwrap();
     let (_, v) = hit(app, Case::new("get", format!("/v1/communities/{c}"))).await;
-    assert!(v["data"]["voiceChatStatus"].is_null());
+    assert_eq!(
+        v["data"]["voiceChatStatus"],
+        json!({"isActive":false,"participantCount":0,"moderatorCount":0})
+    );
     rig.clear_world_place(place).await;
     rig.finish();
 }

@@ -305,7 +305,7 @@ pub struct ActiveCommunityVoiceChat {
     pub community_id: Uuid,
     #[serde(rename = "communityName")]
     pub community_name: String,
-    #[serde(rename = "communityImage")]
+    #[serde(rename = "communityImage", skip_serializing_if = "Option::is_none")]
     pub community_image: Option<String>,
     #[serde(rename = "isMember")]
     pub is_member: bool,

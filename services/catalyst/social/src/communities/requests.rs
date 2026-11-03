@@ -143,8 +143,14 @@ async fn member_requests_page(
     }
     let pagination = get_pagination_params(pairs);
     let type_filter = parse_type(get_first(pairs, "type").as_deref());
-    let (mut rows, total) =
-        queries::list_requests_by_member(&state.pool, &signer, type_filter, &pagination).await?;
+    let (mut rows, total) = queries::list_requests_by_member(
+        &state.pool,
+        &signer,
+        type_filter,
+        &pagination,
+        state.voice_presence_config(),
+    )
+    .await?;
     let ids: Vec<CommunityId> = rows
         .iter()
         .filter_map(|row| {
