@@ -475,7 +475,7 @@ mod tests {
             std::env::temp_dir().join(format!("social-legacy-events-{}", uuid::Uuid::new_v4()));
         let storage = Arc::new(crate::storage::Storage::from_config(&dir).await.unwrap());
         let mut settings = communities::Settings::for_tests();
-        settings.referral.min_login_days = 0;
+        settings.referral.min_login_days = 0.0;
         let state = communities::State::new(
             pool.clone(),
             storage,

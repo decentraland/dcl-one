@@ -214,10 +214,12 @@ pub struct SocialConfig {
     #[arg(long, env = "REFERRAL_FIVE_MINUTES_IN_MS", default_value_t = 300_000.0,
         value_parser = source_number, allow_hyphen_values = true)]
     pub referral_suspicious_window_ms: f64,
-    #[arg(long, env = "REFERRAL_MAX_IP_MATCHES", default_value_t = 2)]
-    pub referral_max_ip_matches: i64,
-    #[arg(long, env = "REFERRAL_MIN_LOGIN_DAYS", default_value_t = 3)]
-    pub referral_min_login_days: i64,
+    #[arg(long, env = "REFERRAL_MAX_IP_MATCHES", default_value_t = 2.0,
+        value_parser = source_number, allow_hyphen_values = true)]
+    pub referral_max_ip_matches: f64,
+    #[arg(long, env = "REFERRAL_MIN_LOGIN_DAYS", default_value_t = 3.0,
+        value_parser = source_number, allow_hyphen_values = true)]
+    pub referral_min_login_days: f64,
     #[arg(long, env = "REWARD_SERVER_URL")]
     pub referral_reward_server_url: Option<String>,
     #[arg(
@@ -778,6 +780,33 @@ mod tests {
             ),
             (-1.0, 0.0, 2.5)
         );
+    }
+
+    // Executed source values: source-contracts/referral-numbers.json.
+    #[test]
+    fn referral_numbers_use_the_executed_source_configuration_values() {
+        for name in ["REFERRAL_MAX_IP_MATCHES", "REFERRAL_MIN_LOGIN_DAYS"] {
+            for (raw, expected) in [
+                ("2tail", 2.0),
+                ("2.5days", 2.5),
+                ("0", 0.0),
+                ("-1", -1.0),
+                ("Infinity", f64::INFINITY),
+                ("-Infinity", f64::NEG_INFINITY),
+                ("1e20", 1e20),
+                ("1e21", 1e21),
+                ("1e-7", 1e-7),
+            ] {
+                let parsed = social(&[(name, raw)]).unwrap();
+                let value = if name == "REFERRAL_MAX_IP_MATCHES" {
+                    parsed.referral_max_ip_matches
+                } else {
+                    parsed.referral_min_login_days
+                };
+                assert_eq!(value, expected, "{name}={raw}");
+            }
+            assert!(social(&[(name, "NaN")]).is_err());
+        }
     }
 
     #[test]

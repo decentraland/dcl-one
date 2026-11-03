@@ -47,7 +47,7 @@ impl Adapter {
     pub fn timing(&self, referrer: &str, newest: i64, previous: i64) -> Value {
         timing_message(&self.settings, referrer, newest, previous)
     }
-    pub fn ip(&self, referrer: &str, invited: &str, ip: &str, maximum: i64) -> Value {
+    pub fn ip(&self, referrer: &str, invited: &str, ip: &str, maximum: f64) -> Value {
         ip_message(&self.settings, referrer, invited, ip, maximum)
     }
     pub fn milestone(&self, referrer: &str) -> Value {
@@ -263,7 +263,7 @@ fn timing_message(settings: &Settings, referrer: &str, newest: i64, previous: i6
         section(format!("*📊 Invitation Details:*\n*New Invited User:* `{newest}`\n*Time:* {}\n\n*Previous Invited User:* `{previous}`\n*Time:* {}",iso(newest),iso(previous))),
         section(format!("*🔍 Analysis:*\n• Two invitations created within {minutes} minutes\n• Potential automated behavior or coordination\n• May require manual review")), action(settings,"primary") ]})
 }
-fn ip_message(settings: &Settings, referrer: &str, invited: &str, ip: &str, maximum: i64) -> Value {
+fn ip_message(settings: &Settings, referrer: &str, invited: &str, ip: &str, maximum: f64) -> Value {
     json!({"channel":channel(settings),"text":"🚨 IP Match Rejection - Referral blocked due to IP limit exceeded","blocks":[
         header("🚨 IP Match Rejection Detected"),
         section(format!("*⚠️ Suspicious Activity Detected*\n\n*Invited User:* `{invited}`\n*IP Address:* `{ip}`\n*Referrer:* `{referrer}`")),
@@ -412,7 +412,12 @@ mod tests {
                     case["newest_ms"].as_i64().unwrap(),
                     case["previous_ms"].as_i64().unwrap(),
                 ),
-                "ip" => adapter.ip(referrer, case["invited"].as_str().unwrap(), "192.0.2.1", 2),
+                "ip" => adapter.ip(
+                    referrer,
+                    case["invited"].as_str().unwrap(),
+                    "192.0.2.1",
+                    2.0,
+                ),
                 "milestone" => adapter.milestone(referrer),
                 other => panic!("unknown source kind {other}"),
             };
@@ -548,7 +553,7 @@ mod tests {
             sqlx::query("INSERT INTO social.referral_progress(invited_user,referrer,status,tier_granted) VALUES($1,$2,'tier_granted',true)").bind(address()).bind(&referrer).execute(&pool).await.unwrap();
         }
         let mut settings = settings;
-        settings.min_login_days = 0;
+        settings.min_login_days = 0.0;
         settings.suspicious_window_ms = 0.0;
         let mut referral =
             super::super::referral::Referral::new(pool.clone(), Outbound::for_tests(), settings);

@@ -35,11 +35,36 @@ fn database_error(error: sqlx::Error) -> CommError {
     )
 }
 
+/// node-pg sends a JavaScript numeric parameter as Number.toString(). In
+/// particular fractional MAX values reach bigint parsing and are refused; they
+/// must not silently round, and Infinity must not become an unbounded quota.
+fn source_number_text(number: f64) -> String {
+    if number == 0.0 {
+        return "0".into();
+    }
+    if number.is_infinite() {
+        return if number.is_sign_negative() {
+            "-Infinity"
+        } else {
+            "Infinity"
+        }
+        .into();
+    }
+    if number.abs() >= 1e21 || number.abs() < 1e-6 {
+        let text = format!("{number:e}");
+        let (mantissa, exponent) = text.split_once('e').expect("scientific number");
+        let exponent: i32 = exponent.parse().expect("float exponent");
+        format!("{mantissa}e{exponent:+}")
+    } else {
+        number.to_string()
+    }
+}
+
 /// Source referral settings; external operations use the process outbound client.
 #[derive(Clone, Debug)]
 pub struct Settings {
-    pub max_ip_matches: i64,
-    pub min_login_days: i64,
+    pub max_ip_matches: f64,
+    pub min_login_days: f64,
     pub suspicious_window_ms: f64,
     pub slack: SlackSettings,
     pub profile_url: String,
@@ -50,8 +75,8 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            max_ip_matches: 2,
-            min_login_days: 3,
+            max_ip_matches: 2.0,
+            min_login_days: 3.0,
             suspicious_window_ms: 300_000.0,
             slack: Default::default(),
             profile_url: "https://decentraland.org".into(),
@@ -173,8 +198,8 @@ impl Referral {
             return Ok(());
         }
         self.assert_not_banned(referrer.as_str(), Some(ip)).await?;
-        let status: Option<String> = sqlx::query_scalar("WITH other_users_invited AS (SELECT count(*) AS count FROM social.referral_progress WHERE referrer=$1 AND invited_user_ip=$3) INSERT INTO social.referral_progress(referrer,invited_user,invited_user_ip,status) SELECT $1,$2,$3,CASE WHEN count < $4 THEN 'pending' ELSE 'rejected_ip_match' END FROM other_users_invited ON CONFLICT(invited_user) DO NOTHING RETURNING status")
-            .bind(referrer).bind(invited).bind(ip).bind(self.settings.max_ip_matches).fetch_optional(&self.pool).await.map_err(database_error)?;
+        let status: Option<String> = sqlx::query_scalar("WITH other_users_invited AS (SELECT count(*) AS count FROM social.referral_progress WHERE referrer=$1 AND invited_user_ip=$3) INSERT INTO social.referral_progress(referrer,invited_user,invited_user_ip,status) SELECT $1,$2,$3,CASE WHEN count < $4::text::bigint THEN 'pending' ELSE 'rejected_ip_match' END FROM other_users_invited ON CONFLICT(invited_user) DO NOTHING RETURNING status")
+            .bind(referrer).bind(invited).bind(ip).bind(source_number_text(self.settings.max_ip_matches)).fetch_optional(&self.pool).await.map_err(database_error)?;
         let status = match status {
             Some(status) => status,
             None => {
@@ -270,7 +295,7 @@ impl Referral {
         if granted || status == "tier_granted" || status == "rejected_ip_match" {
             return Ok(());
         }
-        if (days.len() as i64) < self.settings.min_login_days {
+        if (days.len() as f64) < self.settings.min_login_days {
             let today = match today {
                 Some(day) => day,
                 None => sqlx::query_scalar("SELECT timezone('UTC',clock_timestamp())::date")
@@ -1105,12 +1130,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn referral_numeric_configuration_matches_executed_source_pg_and_login_days() {
+        use axum::response::IntoResponse;
+        let Some(pool) = crate::db::scratch::pool(4).await else {
+            return;
+        };
+        let fixture: Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/social/source-contracts/referral-numbers.json"))).unwrap();
+        let referrer = Address::parse(fixture["referrer"].as_str().unwrap()).unwrap();
+        let invited = fixture["invited"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| Address::parse(value.as_str().unwrap()).unwrap())
+            .collect::<Vec<_>>();
+        for case in fixture["cases"].as_array().unwrap() {
+            if case["startup_error"].is_string() {
+                continue;
+            } // Actual Clap fields reject these in config tests.
+            sqlx::query("DELETE FROM social.referral_progress WHERE referrer=$1")
+                .bind(&referrer)
+                .execute(&pool)
+                .await
+                .unwrap();
+            let number: f64 = case["number"].as_str().unwrap().parse().unwrap();
+            assert_eq!(source_number_text(number), case["number"].as_str().unwrap());
+            let mut settings = Settings::for_tests();
+            if case["kind"] == "max" {
+                settings.max_ip_matches = number
+            } else {
+                settings.min_login_days = number
+            }
+            let referral = Referral::new(pool.clone(), Outbound::for_tests(), settings);
+            if case["kind"] == "max" {
+                for (index, step) in case["steps"].as_array().unwrap().iter().enumerate() {
+                    let response = match referral
+                        .create(&referrer, &invited[index], "192.0.2.1")
+                        .await
+                    {
+                        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+                        Err(error) => error.into_response(),
+                    };
+                    assert_eq!(
+                        response.status().as_u16(),
+                        step["response"]["status"].as_u64().unwrap() as u16,
+                        "{}",
+                        case["raw"]
+                    );
+                    let bytes = axum::body::to_bytes(response.into_body(), 8192)
+                        .await
+                        .unwrap();
+                    if let Some(body) = step["response"].get("body") {
+                        assert_eq!(
+                            serde_json::from_slice::<Value>(&bytes).unwrap(),
+                            *body,
+                            "{}",
+                            case["raw"]
+                        )
+                    } else {
+                        assert!(bytes.is_empty())
+                    }
+                    let rows: Vec<String> = sqlx::query_scalar("SELECT status FROM social.referral_progress WHERE referrer=$1 ORDER BY invited_user").bind(&referrer).fetch_all(&pool).await.unwrap();
+                    assert_eq!(serde_json::to_value(rows).unwrap(), step["rows"]);
+                }
+            } else {
+                referral
+                    .create(&referrer, &invited[0], "192.0.2.1")
+                    .await
+                    .unwrap();
+                for step in case["steps"].as_array().unwrap() {
+                    let day = step["day"]
+                        .as_str()
+                        .unwrap()
+                        .parse::<chrono::NaiveDate>()
+                        .unwrap();
+                    referral
+                        .finalize_at(invited[0].as_str(), Some(day))
+                        .await
+                        .unwrap();
+                    let (status,granted,days):(String,bool,Vec<chrono::NaiveDate>) = sqlx::query_as("SELECT status,tier_granted,login_days FROM social.referral_progress WHERE invited_user=$1").bind(&invited[0]).fetch_one(&pool).await.unwrap();
+                    assert_eq!(
+                        serde_json::json!({"status":status,"tier_granted":granted}),
+                        step["row"],
+                        "{}",
+                        case["raw"]
+                    );
+                    assert_eq!(
+                        serde_json::to_value(
+                            days.iter().map(ToString::to_string).collect::<Vec<_>>()
+                        )
+                        .unwrap(),
+                        step["days"],
+                        "{}",
+                        case["raw"]
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn concurrent_login_finalization_grants_and_notifies_once() {
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
         let settings = Settings {
-            min_login_days: 0,
+            min_login_days: 0.0,
             ..Settings::for_tests()
         };
         let referral =
