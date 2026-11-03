@@ -102,7 +102,12 @@ pub async fn unpublish_scene(
     };
     let decisions = crate::land_authz::can_deploy_batch(land, &parcels, &signer)
         .await
-        .map_err(|e| AppError::ServiceUnavailable(format!("parcel access check failed: {e}")))?;
+        .map_err(|e| {
+            tracing::warn!(error = %e, "DELETE /scenes - parcel access check failed");
+            AppError::ServiceUnavailable(
+                "LAND rights cannot be decided right now; please retry.".to_string(),
+            )
+        })?;
     let denied: Vec<String> = parcels
         .iter()
         .zip(&decisions)
