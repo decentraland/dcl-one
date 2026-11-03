@@ -264,10 +264,13 @@ async fn sustained_excess_heartbeats_close_the_real_socket_with_1008() {
     let (port, _) = server(1).await;
     let (socket, _) = authenticated(port).await;
     let (mut send, mut read) = socket.split();
+    // Five per tick: the limiter keeps 21 arrivals, so a host stall under 900 ms stays in-window.
     let flood = async {
         loop {
-            if send.send(heartbeat(1.0)).await.is_err() {
-                std::future::pending::<()>().await;
+            for _ in 0..5 {
+                if send.send(heartbeat(1.0)).await.is_err() {
+                    std::future::pending::<()>().await;
+                }
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
@@ -279,7 +282,8 @@ async fn sustained_excess_heartbeats_close_the_real_socket_with_1008() {
             }
         }
     };
-    let frame = tokio::time::timeout(Duration::from_secs(13), async {
+    // Room for a second ten-second cycle when one longer stall resets the first.
+    let frame = tokio::time::timeout(Duration::from_secs(25), async {
         tokio::select! { frame = close => frame, _ = flood => unreachable!() }
     })
     .await

@@ -3,9 +3,19 @@ use crate::pulse::metrics::{CLUSTER_SIZE_BUCKETS, RESYNC_SEQ_GAP_BUCKETS};
 use metrics_exporter_prometheus::{BuildError, Matcher, PrometheusBuilder};
 use std::net::SocketAddr;
 
+/// The social sockets' lifetime buckets (upstream social-service-ea
+/// `ws_connection_duration_seconds_by_protocol`, seconds).
+const SOCIAL_SOCKET_DURATION_BUCKETS: [f64; 11] = [
+    1.0, 5.0, 10.0, 30.0, 60.0, 300.0, 600.0, 1800.0, 3600.0, 7200.0, 14400.0,
+];
+
 /// Preserve aggregatable Pulse histograms in every recorder, including tests.
 pub fn prometheus_builder() -> Result<PrometheusBuilder, BuildError> {
     PrometheusBuilder::new()
+        .set_buckets_for_metric(
+            Matcher::Full("ws_connection_duration_seconds_by_protocol".into()),
+            &SOCIAL_SOCKET_DURATION_BUCKETS,
+        )?
         .set_buckets_for_metric(
             Matcher::Full("pulse_resync_seq_gap".into()),
             &RESYNC_SEQ_GAP_BUCKETS,

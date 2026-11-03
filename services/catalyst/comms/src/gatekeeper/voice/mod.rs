@@ -922,6 +922,7 @@ async fn finish_webhook_community(
         .voice_db
         .delete_community_voice_chat(community_id)
         .await?;
+    state.social.community_voice_room_closed(community_id).await;
     Ok(())
 }
 
@@ -1072,6 +1073,7 @@ pub(super) async fn destroy_community_voice_chat(
     }
     let participant_count = deleted?;
     notify_community_streaming_ended(state, &[(community_id, participant_count)]).await;
+    state.social.community_voice_room_closed(community_id).await;
     Ok(())
 }
 
@@ -1202,6 +1204,9 @@ pub async fn expire_community_voice_chats(state: &CommsState) -> Result<(), ApiE
         delete_livekit_rooms(state, &rooms, "expired community voice room"),
         notify_community_streaming_ended(state, &ended)
     );
+    for id in &expired {
+        state.social.community_voice_room_closed(*id).await;
+    }
     Ok(())
 }
 

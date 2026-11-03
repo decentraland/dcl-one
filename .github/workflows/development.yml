@@ -43,12 +43,29 @@ concurrency:
   group: development-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  changes:
+    name: Changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    outputs:
+      macos: ${{ steps.plan.outputs.macos }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+      - name: Select the Rust test platforms
+        id: plan
+        run: python3 tooling/dev-ci.py plan
   rust:
     name: Rust tests
+    needs: changes
+    # Runs whatever the plan's outcome; without a plan (other events, a failed job) it includes macOS.
+    if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-26.04, macos-26]
+        os: ${{ fromJSON((needs.changes.outputs.macos != 'false' || contains(github.event.pull_request.labels.*.name, 'ci:macos')) && '["ubuntu-26.04", "macos-26"]' || '["ubuntu-26.04"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 100
     env:

@@ -91,13 +91,21 @@ impl VoiceRooms for Faulty {
         address: &str,
         role: &str,
         action: CommunityVoiceAction,
+        profile: Option<serde_json::Value>,
     ) -> Result<String, VoiceUnavailable> {
         if self.fail_grants.load(Ordering::SeqCst) {
             return Err(Self::failed());
         }
         self.inner
-            .community_voice_credentials(community_id, address, role, action)
+            .community_voice_credentials(community_id, address, role, action, profile)
             .await
+    }
+
+    async fn community_voice_chat_active(
+        &self,
+        community_id: Uuid,
+    ) -> Result<bool, VoiceUnavailable> {
+        self.inner.community_voice_chat_active(community_id).await
     }
 
     async fn end_community_voice_chat(
@@ -269,10 +277,9 @@ async fn a_failed_private_grant_is_an_internal_error_without_accepted() {
 }
 
 /// A community grant the runtime cannot mint answers an internal error on
-/// start and on join, and no member hears STARTED. Recorded difference on the
-/// join: with no live room upstream answers not found before any grant
-/// (RPC.md, community voice, "start-, end-, join-, raise a hand, self-unmute";
-/// `src/logic/community-voice/validation.ts:41-42`).
+/// start and on join (upstream "Failed to start community voice chat",
+/// "Failed to join community voice chat"), and no member hears STARTED. The
+/// join is tried on a live room: without one it is not found before any grant.
 #[tokio::test]
 async fn a_failed_community_grant_is_an_internal_error() {
     let Some(rig) = Rig::new().await else {
@@ -302,12 +309,14 @@ async fn a_failed_community_grant_is_an_internal_error() {
         .response;
     assert!(
         matches!(
-            start,
-            Some(start_community_voice_chat_response::Response::InternalServerError(_))
+            &start,
+            Some(start_community_voice_chat_response::Response::InternalServerError(e))
+                if e.message.as_deref() == Some("Failed to start community voice chat")
         ),
         "{start:?}"
     );
     assert_eq!(drained(&mut to_member), 0);
+    rig.runtime.inner.live.lock().insert(community);
     let join = SocialServiceImpl
         .join_community_voice_chat(
             JoinCommunityVoiceChatPayload {
@@ -320,8 +329,9 @@ async fn a_failed_community_grant_is_an_internal_error() {
         .response;
     assert!(
         matches!(
-            join,
-            Some(join_community_voice_chat_response::Response::InternalServerError(_))
+            &join,
+            Some(join_community_voice_chat_response::Response::InternalServerError(e))
+                if e.message.as_deref() == Some("Failed to join community voice chat")
         ),
         "{join:?}"
     );
