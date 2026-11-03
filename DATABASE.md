@@ -59,8 +59,9 @@ the data and its operations.
    A changed body of a hash-named write function (`content.deploy_entity_<hash>`,
    `content.unpublish_scene_<hash>`) is a new function; `migrate` creates it and
    leaves the old one for binaries still calling it. `catalyst schema status`
-   lists the old ones as superseded; drop them by hand once no process runs an
-   older binary.
+   lists the old ones as superseded after migrate (run before `migrate`, that
+   includes the one the running binary still calls); drop them by hand once no
+   process runs an older binary.
 
 ## Worlds, persistent storage and scene hosting
 

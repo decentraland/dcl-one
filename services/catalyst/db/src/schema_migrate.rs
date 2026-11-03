@@ -1070,7 +1070,7 @@ impl SchemaStatus {
         ));
         if !self.superseded_functions.is_empty() {
             out.push(format!(
-                "superseded functions (drop once no process runs an older binary): {}",
+                "functions superseded after migrate (drop once no process runs an older binary): {}",
                 self.superseded_functions.join(", ")
             ));
         }
