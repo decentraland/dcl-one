@@ -341,6 +341,51 @@ async fn signed_scene(pointers: &[String], timestamp: i64) -> (Bytes, String, Va
 }
 
 #[tokio::test]
+async fn a_deploy_with_a_bad_or_missing_signature_does_not_hold_its_pointers() {
+    let (deployer, tmp) = deployer_over_temp_storage("bad-signature").await;
+    let pointers = vec!["3,3".to_string()];
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (bytes, id, chain) = signed_scene(&pointers, now_ms).await;
+    let forged = serde_json::json!([
+        {"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001"},
+        {"type": "ECDSA_SIGNED_ENTITY", "payload": id, "signature": chain[1]["signature"]}
+    ]);
+    let unsigned = serde_json::json!([chain[0].clone()]);
+    for bad in [forged, unsigned] {
+        let err = deployer
+            .deploy_entity(vec![bytes.clone()], &id, bad, "LOCAL")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&err, DeployFailure::Rejected(errors) if errors[0].starts_with("The auth chain is invalid")),
+            "{err:?}"
+        );
+        assert!(!deployer.is_rate_limited("scene", "3,3"));
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[tokio::test]
+async fn a_rejected_deploy_with_an_oversized_pointer_list_does_not_fill_the_bucket() {
+    let (deployer, tmp) = deployer_over_temp_storage("oversized").await;
+    let pointers: Vec<String> = (0..1001).map(|y| format!("0,{y}")).collect();
+    let now_ms = chrono::Utc::now().timestamp_millis();
+    let (bytes, id, _) = signed_scene(&pointers, now_ms).await;
+    let unsigned = serde_json::json!([
+        {"type": "SIGNER", "payload": "0x0000000000000000000000000000000000000001"}
+    ]);
+    deployer
+        .deploy_entity(vec![bytes], &id, unsigned, "LOCAL")
+        .await
+        .unwrap_err();
+    assert!(
+        !deployer.is_rate_limited("scene", "100,100"),
+        "an unrelated pointer is still free"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
+#[tokio::test]
 async fn a_deploy_whose_write_fails_does_not_hold_its_pointers() {
     let (deployer, tmp) = deployer_over_temp_storage("persist-fails").await;
     let pointers = vec!["4,4".to_string()];
