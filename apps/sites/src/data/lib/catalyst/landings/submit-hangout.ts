@@ -88,6 +88,9 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
   const until = draft.recurrent && draft.recurrentUntil
     ? original?.recurrent_until?.slice(0, 10) === draft.recurrentUntil ? original.recurrent_until : `${draft.recurrentUntil}T23:59:59.000Z`
     : null;
+  const scheduleIds = draft.scheduleIds ?? original?.schedules ?? [];
+  const joinUrl = draft.joinUrl?.trim() || null;
+  const schedulesChanged = !original || JSON.stringify([...scheduleIds].sort()) !== JSON.stringify([...original.schedules].sort());
   return {
     name: draft.name.trim(),
     description: draft.description.trim(),
@@ -114,7 +117,8 @@ export function toCreateEventBody(draft: HangoutDraft, original?: z.infer<typeof
     image_vertical: draft.verticalImagePreviewUrl,
     ...(!original || own ? { contact: draft.contact.trim() || null, details: draft.details.trim() || null } : {}),
     featured_item: draft.featuredItem?.trim() || null,
-    ...(privileged ? { schedules: draft.scheduleIds ?? original?.schedules ?? [], url: draft.joinUrl?.trim() || null } : {}),
+    ...(privileged && schedulesChanged ? { schedules: scheduleIds } : {}),
+    ...(privileged && (!original || joinUrl !== original.url) ? { url: joinUrl } : {}),
   };
 }
 

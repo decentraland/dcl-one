@@ -88,6 +88,7 @@ describe("when submitting a hangout", () => {
     describe("and an authorized editor manages another creator's event", () => {
       beforeEach(() => {
         original.user = "0x3333333333333333333333333333333333333333";
+        original.url = "https://example.test/old-join";
         draft.contact = "private@example.test"; draft.details = "Hidden"; draft.communityId = "different-community";
         draft.scheduleIds = ["campaign"]; draft.joinUrl = "";
         submit = buildHangoutSubmit(() => identity, original, () => true);
@@ -98,6 +99,45 @@ describe("when submitting a hangout", () => {
         expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("details");
         expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("community_id");
         expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toMatchObject({ schedules: ["campaign"], url: null });
+      });
+    });
+
+    describe("and a privileged editor moves the venue", () => {
+      beforeEach(() => {
+        original.url = "https://example.test/play/?position=10,10";
+        original.schedules = ["existing-campaign"];
+        draft = eventToDraft(original);
+        draft.location = "land";
+        draft.coordX = -50;
+        draft.coordY = 20;
+        submit = buildHangoutSubmit(() => identity, original, () => true);
+      });
+      it("should omit the unchanged join URL and campaigns so the server can regenerate travel", async () => {
+        await submit({ draft });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toMatchObject({ x: -50, y: 20 });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("schedules");
+      });
+      describe("and the editor explicitly changes the join link", () => {
+        beforeEach(() => { draft.joinUrl = "https://example.test/custom"; });
+        it("should send the newly chosen custom URL", async () => {
+          await submit({ draft });
+          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toHaveProperty("url", "https://example.test/custom");
+        });
+      });
+      describe("and the editor explicitly clears the join link", () => {
+        beforeEach(() => { draft.joinUrl = ""; });
+        it("should send null to restore generated travel", async () => {
+          await submit({ draft });
+          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toHaveProperty("url", null);
+        });
+      });
+      describe("and the editor reorders unchanged campaign choices", () => {
+        beforeEach(() => { original.schedules = ["second", "first"]; draft.scheduleIds = ["first", "second"]; });
+        it("should avoid revalidating unchanged associations", async () => {
+          await submit({ draft });
+          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("schedules");
+        });
       });
     });
 
