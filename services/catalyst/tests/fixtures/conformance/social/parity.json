@@ -330,7 +330,7 @@
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -345,6 +345,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -354,7 +359,7 @@
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/participants/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -369,6 +374,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -378,7 +388,7 @@
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/speak-requests/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -393,6 +403,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -402,7 +417,7 @@
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/speakers/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -417,6 +432,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -479,7 +499,7 @@
       "id": "api_http:DELETE:/v1/private-voice-chats/:callId",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -494,6 +514,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -907,7 +932,7 @@
       "id": "api_http:GET:/v1/private-voice-chats/incoming",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -922,6 +947,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1387,7 +1417,7 @@
       "id": "api_http:PATCH:/v1/community-voice-chats/:communityId/speakers/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 6 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -1402,6 +1432,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1450,7 +1485,7 @@
       "id": "api_http:PATCH:/v1/private-voice-chats/:callId",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 10 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -1465,6 +1500,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1766,7 +1806,7 @@
       "id": "api_http:POST:/v1/community-voice-chats",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -1781,6 +1821,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1790,7 +1835,7 @@
       "id": "api_http:POST:/v1/community-voice-chats/:communityId/participants",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -1805,6 +1850,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1814,7 +1864,7 @@
       "id": "api_http:POST:/v1/community-voice-chats/:communityId/speak-requests",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -1829,6 +1879,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -1924,7 +1979,7 @@
       "id": "api_http:POST:/v1/private-voice-chats",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -1939,6 +1994,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -2043,7 +2103,7 @@
       "id": "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 5 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -2058,6 +2118,11 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/http.rs",
           "scope": "Local regression of the stated source-audited contract; source providers are injected unless a real broker is explicitly stated."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
+          "test": "voice_http_answers_match_executed_upstream_controllers_and_middlewares",
+          "scope": "61 cases across 13 unique HTTP operations (14 controller branches); real source community domain with injected providers and injected private outcomes. Does not cover active-listing HTTP or the source authentication boundary."
         }
       ],
       "gaps": [],
@@ -2502,7 +2567,7 @@
       "id": "rpc_unary:RPC:acceptPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -2512,6 +2577,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/private_voice.rs",
+          "test": "private_identifier_wire_and_pending_side_effects_match_executed_upstream",
+          "scope": "48 actual source PostgreSQL/private-domain/RPC cases across accept/reject/end, with deterministic media HTTP; wire bytes, raw event identifiers and remaining pending rows replayed."
         }
       ],
       "gaps": [],
@@ -2603,7 +2673,7 @@
       "id": "rpc_unary:RPC:endPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -2613,6 +2683,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/private_voice.rs",
+          "test": "private_identifier_wire_and_pending_side_effects_match_executed_upstream",
+          "scope": "48 actual source PostgreSQL/private-domain/RPC cases across accept/reject/end, with deterministic media HTTP; wire bytes, raw event identifiers and remaining pending rows replayed."
         }
       ],
       "gaps": [],
@@ -2968,7 +3043,7 @@
       "id": "rpc_unary:RPC:rejectPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -2978,6 +3053,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/private_voice.rs",
+          "test": "private_identifier_wire_and_pending_side_effects_match_executed_upstream",
+          "scope": "48 actual source PostgreSQL/private-domain/RPC cases across accept/reject/end, with deterministic media HTTP; wire bytes, raw event identifiers and remaining pending rows replayed."
         }
       ],
       "gaps": [],
