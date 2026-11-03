@@ -620,7 +620,7 @@ pub struct AppConfig {
 
 /// bump to run one-time migrations of the preset-managed settings in existing configs
 /// (see [`AppConfig::reset_outdated_settings`])
-pub const SETTINGS_GENERATION: u32 = 3;
+pub const SETTINGS_GENERATION: u32 = 4;
 
 /// bump to run one-time migrations of saved input binding tables
 /// (see [`AppConfig::migrate_inputs`])
@@ -714,6 +714,7 @@ impl AppConfig {
     /// gen 2: default bloom dropped High -> Low; move configs still on the old default.
     /// gen 3: sun shadows follow Unity's cascades; reset the shadow distance, quality and
     /// caster count to the new defaults.
+    /// gen 4: the defaults are Unity's Medium preset; reset the fields the presets manage.
     pub fn reset_outdated_settings(&mut self) {
         if self.settings_generation >= SETTINGS_GENERATION {
             return;
@@ -729,6 +730,24 @@ impl AppConfig {
             self.graphics.shadow_distance = default.graphics.shadow_distance;
             self.graphics.shadow_settings = default.graphics.shadow_settings;
             self.graphics.shadow_caster_count = default.graphics.shadow_caster_count;
+        }
+        if self.settings_generation < 4 {
+            let (g, d) = (&mut self.graphics, &default.graphics);
+            g.vsync = d.vsync;
+            g.msaa = d.msaa;
+            g.fps_target = d.fps_target;
+            g.render_scale = d.render_scale;
+            g.bloom = d.bloom;
+            g.avatar_outline = d.avatar_outline;
+            g.shadow_settings = d.shadow_settings;
+            g.shadow_distance = d.shadow_distance;
+            g.light_count = d.light_count;
+            g.shadow_caster_count = d.shadow_caster_count;
+            g.lens_flare = d.lens_flare;
+            g.dof = d.dof;
+            g.ssao = d.ssao;
+            g.fog = d.fog;
+            g.sky_reflections = d.sky_reflections;
         }
         self.settings_generation = SETTINGS_GENERATION;
     }
@@ -906,19 +925,25 @@ pub struct GraphicsSettings {
 impl Default for GraphicsSettings {
     fn default() -> Self {
         Self {
-            vsync: false,
+            // unity:Explorer/Assets/DCL/Settings/Settings/QualityPresetMedium.asset
+            vsync: true,
             log_fps: !cfg!(target_arch = "wasm32"),
-            msaa: AaSetting::FxaaLow,
+            // msaaLevel 2x; the web build has no MSAA
+            msaa: if cfg!(target_arch = "wasm32") {
+                AaSetting::FxaaHigh
+            } else {
+                AaSetting::Msaa2x
+            },
             fps_target: 60,
             shadow_distance: 60.0,
             shadow_settings: ShadowSetting::Low,
-            light_count: 4,
+            light_count: 6, // maxSceneLights 6
             shadow_caster_count: 3,
             window: WindowSetting::Windowed,
             // fullscreen_res: FullscreenResSetting(UVec2::new(1280,720)),
             fog: FogSetting::On,
-            bloom: BloomSetting::Low,
-            dof: DofSetting::High,
+            bloom: BloomSetting::Off, // Medium's bloom is on without HDR, so invisible
+            dof: DofSetting::Off,     // Unity has none
             ssao: SsaoSetting::Off,
             sky_reflections: SkyReflectionSetting::High,
             oob: 2.0,
@@ -1960,6 +1985,58 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_graphics_are_unity_medium() {
+        let g = GraphicsSettings::default();
+        assert_eq!((g.fps_target, g.vsync, g.render_scale), (60, true, 1.0));
+        assert_eq!(
+            (g.bloom, g.avatar_outline, g.lens_flare),
+            (BloomSetting::Off, true, true)
+        );
+        assert_eq!(
+            (
+                g.shadow_settings,
+                g.shadow_distance,
+                g.light_count,
+                g.shadow_caster_count
+            ),
+            (ShadowSetting::Low, 60.0, 6, 3)
+        );
+        assert_eq!(
+            (g.dof, g.ssao, g.fog, g.sky_reflections),
+            (
+                DofSetting::Off,
+                SsaoSetting::Off,
+                FogSetting::On,
+                SkyReflectionSetting::High
+            )
+        );
+        #[cfg(not(target_arch = "wasm32"))]
+        assert_eq!(g.msaa, AaSetting::Msaa2x);
+        #[cfg(target_arch = "wasm32")]
+        assert_eq!(g.msaa, AaSetting::FxaaHigh);
+    }
+
+    #[test]
+    fn generation_4_resets_managed_fields_and_keeps_the_rest() {
+        let mut cfg = AppConfig::default();
+        cfg.settings_generation = 3;
+        cfg.graphics.ambient_brightness = 10;
+        cfg.graphics.oob = 0.0;
+        cfg.graphics.dof = DofSetting::High;
+        cfg.graphics.light_count = 4;
+        cfg.reset_outdated_settings();
+        assert_eq!(cfg.settings_generation, SETTINGS_GENERATION);
+        assert_eq!(
+            (cfg.graphics.dof, cfg.graphics.light_count),
+            (DofSetting::Off, 6)
+        );
+        assert_eq!(
+            (cfg.graphics.ambient_brightness, cfg.graphics.oob),
+            (10, 0.0)
+        );
+    }
 
     #[test]
     fn grading_lifts_shadows_and_keeps_gamma_neutral() {
