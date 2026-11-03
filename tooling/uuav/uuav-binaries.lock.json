@@ -1,0 +1,480 @@
+{
+  "schema": 1,
+  "name": "uuav",
+  "docs": "library/uuav/README.md",
+  "comment": [
+    "Hash lock for the prebuilt UUAV native binaries committed under",
+    "library/uuav/dist/<target>/ (Git LFS).",
+    "Verified by tooling/native-lock/verify-binaries.py --lock <this file>; regenerate with --update.",
+    "See library/uuav/README.md."
+  ],
+  "rust_source": {
+    "comment": "The decode core (uuav-core) has no upstream repository - it is built from this repo's own library/uuav tree. source_digest below is what ties each target's shipped binaries to the exact library/uuav/src state that produced them.",
+    "path": "library/uuav/src",
+    "suffix": ".rs"
+  },
+  "build_inputs": {
+    "cargo_manifest": {
+      "kind": "file",
+      "path": "library/uuav/Cargo.toml",
+      "sha256": "dc17056d13a05f336ec00c04b792c7ed607d222ca4d0cd5f4474b3ff625f499b"
+    },
+    "cargo_lock": {
+      "comment": [
+        "Narrowed to the dependency closure of the one package that",
+        "produces a shipped artifact: uuav-server (the uuav-helper child",
+        "process). uuav-core and uuav-ipc are path dependencies of it and",
+        "enter the closure through it. uuav-client ships nothing from here:",
+        "the host compiles it from the same source, whose digest",
+        "client_source pins. A dependency added to something that ships",
+        "nothing must not demand a three-platform rebuild of byte-identical",
+        "binaries."
+      ],
+      "kind": "cargo-lock-closure",
+      "path": "library/uuav/Cargo.lock",
+      "roots": [
+        "uuav-server"
+      ],
+      "sha256": "95e48b8e063f4595fdff8388141832d0343ed7236179327711c404af9cfd636a",
+      "entries": 106
+    },
+    "cargo_config": {
+      "comment": [
+        "FFMPEG_DIR, the windows-gnu linker and the @loader_path/$ORIGIN",
+        "rpath flags all live here; each one changes the shipped bytes."
+      ],
+      "kind": "file",
+      "path": "library/uuav/.cargo/config.toml",
+      "sha256": "895f54d92f7276c2c6f0a746cf5d1dd96b03e9fc81d05cc711dceddf0a6ac4dd"
+    },
+    "rust_toolchain": {
+      "comment": [
+        "The pinned compiler is an input to the shipped bytes. Bumping the",
+        "channel is a rebuild-and-relock event for every target, not a",
+        "routine edit."
+      ],
+      "kind": "file",
+      "path": "library/uuav/rust-toolchain.toml",
+      "sha256": "f5869f074c102104b012fa03ee2819984cb1b63d7898746e0870a16ec4a7a6a7"
+    },
+    "client_manifest": {
+      "kind": "file",
+      "path": "library/uuav/uuav-client/Cargo.toml",
+      "sha256": "aecdfcf3eb8b976ee1c89149355eff0676ec080bee7d4f1e29f55d9e458f1ca9"
+    },
+    "server_manifest": {
+      "kind": "file",
+      "path": "library/uuav/uuav-server/Cargo.toml",
+      "sha256": "fb6d6335e17293a1cf39f7c576627dbdb98daf5017ca6dae97e6947dd6ef703e"
+    },
+    "ipc_manifest": {
+      "kind": "file",
+      "path": "library/uuav/uuav-ipc/Cargo.toml",
+      "sha256": "15be99c4f8337ce4fadbe16e804941ffccfa2a933be0fb76b37edc8dfa99d542"
+    },
+    "client_source": {
+      "comment": [
+        "The source of the client library the host links. It ships no",
+        "binary from here, but the IPC protocol it speaks must match the",
+        "committed helper: an edit here that changes the wire or the ABI",
+        "version is a relock event. examples/ (the headless smoke harness)",
+        "is outside this tree on purpose."
+      ],
+      "kind": "tree",
+      "path": "library/uuav/uuav-client/src",
+      "suffix": [
+        ".rs"
+      ],
+      "sha256": "e0d34544f96011ceddc4aa89171cd622fd71dfd05c5f6723fd7e94a3001682cd",
+      "entries": 12
+    },
+    "server_source": {
+      "comment": [
+        "The source of the shipped uuav-helper executable. helper.sb is in",
+        "here too: the seatbelt profile is a runtime input to the child and",
+        "a silent edit to it weakens the sandbox without changing any .rs",
+        "file."
+      ],
+      "kind": "tree",
+      "path": "library/uuav/uuav-server",
+      "suffix": [
+        ".rs",
+        ".sb"
+      ],
+      "prune": [
+        "target",
+        ".target"
+      ],
+      "sha256": "70517fb55566236a057c892eb08300288208ceca241bccc62eb0251f6e788934",
+      "entries": 15
+    },
+    "ipc_source": {
+      "comment": [
+        "Transport, descriptor passing and framing - linked as an rlib into",
+        "both the host's client and the shipped helper."
+      ],
+      "kind": "tree",
+      "path": "library/uuav/uuav-ipc/src",
+      "suffix": [
+        ".rs"
+      ],
+      "sha256": "9e108497eb801b488ebe66730cb86024155ec517fb43864c6d5d7f87ac0ae323",
+      "entries": 7
+    }
+  },
+  "targets": {
+    "macos-universal": {
+      "runtime_dir": "library/uuav/dist/macos-universal",
+      "rust": {
+        "target": "universal (aarch64-apple-darwin + x86_64-apple-darwin)",
+        "profile": "release",
+        "crate_version": "0.4.0",
+        "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+        "link_args": [
+          "-C",
+          "link-arg=-Wl,-rpath,@loader_path"
+        ],
+        "source_digest": "641a33d0e2a9186df9dab579ccabb2884417305393547bf94c11e87b81ad2d70",
+        "source_files": 22,
+        "repo_commit": "abd73adf363fb1010bdf13966bda182ce9900c3e",
+        "toolchain": {
+          "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+          "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+          "clang": "Apple clang version 17.0.0 (clang-1700.4.4.1)",
+          "xcode": "Xcode 26.1.1 Build version 17B100",
+          "sdk": "macosx26.1 (25B74)"
+        }
+      },
+      "ffmpeg": {
+        "provenance": "built-from-source",
+        "repo": "https://github.com/FFmpeg/FFmpeg.git",
+        "tag": "n8.1",
+        "commit": "9047fa1b084f76b1b4d065af2d743df1b40dfb56",
+        "license": "LGPL-3.0-or-later (--enable-version3, required by mbedTLS)",
+        "macosx_deployment_target": "11.0",
+        "mbedtls": {
+          "comment": [
+            "TLS backend, statically linked into libavformat by the builder",
+            "(no OpenSSL/SecureTransport dependency inside the sandboxed helper).",
+            "Cloned with submodules at this tag; nothing from it ships as a",
+            "separate file, so it is pinned by source only."
+          ],
+          "repo": "https://github.com/Mbed-TLS/mbedtls.git",
+          "tag": "mbedtls-3.6.7",
+          "commit": "068ff080b369adfac81509f9b57b2afabaf82dc5",
+          "license": "Apache-2.0 OR GPL-2.0-or-later"
+        },
+        "builder": "library/uuav/scripts/build-ffmpeg-macos.sh",
+        "builder_sha256_comment": [
+          "Digest over the build script's SUBSTANCE, not its text: comments",
+          "are stripped (quote- and backtick-aware) and each line's",
+          "whitespace is collapsed. Nothing a shell comment can do reaches",
+          "the compiled FFmpeg, so reflowing one must not demand a",
+          "15-minute rebuild.",
+          "Recompute with verify-binaries.py's build_script_sha256()."
+        ],
+        "builder_sha256": "c19fc81007691778df06208c4b129a2b5465141851270399dca5f5afbc6ce008",
+        "configure_expected": [
+          "--disable-doc --disable-libxcb --disable-programs --disable-sdl2 --disable-static --disable-xlib --enable-libxml2 --enable-mbedtls --enable-shared --enable-version3 --enable-videotoolbox --install-name-dir=@rpath --pkg-config-flags=--static"
+        ],
+        "configure_observed": [
+          "--disable-doc --disable-libxcb --disable-programs --disable-sdl2 --disable-static --disable-xlib --enable-libxml2 --enable-mbedtls --enable-shared --enable-version3 --enable-videotoolbox --install-name-dir=@rpath --pkg-config-flags=--static"
+        ],
+        "drift_acknowledged": false,
+        "drift_note": "Universal (arm64 + x86_64) from-source LGPL shared build; the shipped dylibs match the recipe."
+      },
+      "artifacts": [
+        {
+          "path": "library/uuav/dist/macos-universal/libavcodec.62.dylib",
+          "sha256": "e9922452af6813186c4c3ebf79e9a2a80812a97bb269467010b7e845fc0b9c79",
+          "bytes": 29020960,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/macos-universal/libavdevice.62.dylib",
+          "sha256": "b34eeb89230373b9f511fdeb803265e62153872d978968655a22f569471f79c8",
+          "bytes": 214624,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/macos-universal/libavfilter.11.dylib",
+          "sha256": "f4ea8c5dd31546bffc3b3a1ee37d59deea06e0fbc81716a7fb05b36fe0b0daa3",
+          "bytes": 8502256,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/macos-universal/libavformat.62.dylib",
+          "sha256": "9c15271d7c52bd02c224eb8e7829163cec6c78777589a009be7470d9c7eed9f5",
+          "bytes": 6647136,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/macos-universal/libavutil.60.dylib",
+          "sha256": "177f478f4945af1fae2951da1e3f18f70ea8bef9b11bb701574c5253d50d704e",
+          "bytes": 1643040,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/macos-universal/libswresample.6.dylib",
+          "sha256": "65b6a6fdfdf83cfc6701b9ef0e570c499a5f869a03e250588f2b93992423f929",
+          "bytes": 317904,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/macos-universal/libswscale.9.dylib",
+          "sha256": "009e1975c76a0a112c5f34207ed7d6bbdc2687ee72c5c6639c019300b7cfec0d",
+          "bytes": 2718048,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/macos-universal/uuav-helper",
+          "sha256": "88d6e256ff2c7c841b480084532de9ea96e6fc8767eaae64ed7ab453b6722a5f",
+          "bytes": 1758768,
+          "produced_by": "cargo"
+        },
+        {
+          "path": "library/uuav/dist/macos-universal/LICENSE-ffmpeg.txt",
+          "sha256": "a65982fd470b9834b199513d8c09049f22146cb6076c2e521923eac46d299eea",
+          "bytes": 11997,
+          "produced_by": "text"
+        },
+        {
+          "path": "library/uuav/dist/macos-universal/LICENSE-mbedtls.txt",
+          "sha256": "9b405ef4c89342f5eae1dd828882f931747f71001cfba7d114801039b52ad09b",
+          "bytes": 29852,
+          "produced_by": "text"
+        }
+      ]
+    },
+    "windows-x86_64": {
+      "pending": "no binaries committed yet; built by the ci:uuav-native workflow, committed and relocked by hand",
+      "runtime_dir": "library/uuav/dist/windows-x86_64",
+      "rust": {
+        "target": "x86_64-pc-windows-gnu",
+        "profile": "release",
+        "crate_version": "0.4.0",
+        "rustc": "",
+        "toolchain_comment": [
+          "Seeded by the first relock from toolchain-windows.txt."
+        ],
+        "source_digest": "",
+        "source_files": 0,
+        "repo_commit": ""
+      },
+      "ffmpeg": {
+        "provenance": "third-party-release-asset",
+        "repo": "https://github.com/BtbN/FFmpeg-Builds",
+        "release_tag": "autobuild-2026-07-31-14-10",
+        "asset": "ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1.zip",
+        "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-07-31-14-10/ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1.zip",
+        "asset_sha256": "c222a490dde4e7059f45495deef6bfb98dbcacc2b43df5b607546252037aa95c",
+        "upstream_describe": "n8.1.2-34-g9b6c8969e0-20260731",
+        "license": "LGPL-3.0-or-later (BtbN lgpl-shared variant, --enable-version3)",
+        "provenance_comment": [
+          "Pin a MONTH-END autobuild only: BtbN retains ~2 weeks of daily",
+          "releases plus one month-end build long-term, so a mid-month pin",
+          "404s once it ages out. Same recipe as the dailies; only",
+          "--extra-version differs. Fetch and unpack with",
+          "tooling/uuav/fetch-ffmpeg-windows.sh, which refuses an archive",
+          "whose sha256 does not match asset_sha256 above.",
+          "configure_expected mirrors configure_observed by definition here:",
+          "for a fetched asset the asset IS the recipe."
+        ],
+        "configure_expected": [],
+        "configure_observed": [],
+        "drift_acknowledged": false,
+        "drift_note": "Stock BtbN win64 lgpl-shared 8.1 build, consumed as-is; only the five DLLs in uuav-helper's import closure ship."
+      },
+      "artifacts": [
+        {
+          "path": "library/uuav/dist/windows-x86_64/avcodec-62.dll",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/windows-x86_64/avformat-62.dll",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/windows-x86_64/avutil-60.dll",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/windows-x86_64/swresample-6.dll",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/windows-x86_64/swscale-9.dll",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/windows-x86_64/uuav-helper.exe",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "cargo"
+        },
+        {
+          "path": "library/uuav/dist/windows-x86_64/LICENSE-ffmpeg.txt",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "text"
+        }
+      ]
+    },
+    "linux-x86_64": {
+      "pending": "no binaries committed yet; built by the ci:uuav-native workflow, committed and relocked by hand",
+      "runtime_dir": "library/uuav/dist/linux-x86_64",
+      "rust": {
+        "target": "x86_64-unknown-linux-gnu",
+        "profile": "release",
+        "crate_version": "0.4.0",
+        "rustc": "",
+        "toolchain_comment": [
+          "Seeded by the first relock from toolchain-linux.txt."
+        ],
+        "link_args": [
+          "-C",
+          "link-arg=-Wl,-rpath,$ORIGIN"
+        ],
+        "source_digest": "",
+        "source_files": 0,
+        "repo_commit": ""
+      },
+      "ffmpeg": {
+        "provenance": "built-from-source",
+        "repo": "https://github.com/FFmpeg/FFmpeg.git",
+        "tag": "n8.1",
+        "commit": "9047fa1b084f76b1b4d065af2d743df1b40dfb56",
+        "license": "LGPL-3.0-or-later (--enable-version3, required by mbedTLS)",
+        "mbedtls": {
+          "comment": [
+            "TLS backend, statically linked into libavformat by the builder",
+            "(no OpenSSL/SecureTransport dependency inside the sandboxed helper).",
+            "Cloned with submodules at this tag; nothing from it ships as a",
+            "separate file, so it is pinned by source only."
+          ],
+          "repo": "https://github.com/Mbed-TLS/mbedtls.git",
+          "tag": "mbedtls-3.6.7",
+          "commit": "068ff080b369adfac81509f9b57b2afabaf82dc5",
+          "license": "Apache-2.0 OR GPL-2.0-or-later"
+        },
+        "libva": {
+          "comment": [
+            "The VAAPI client library the hardware decoder talks to, built",
+            "from source by the builder and shipped (libva.so.2,",
+            "libva-drm.so.2) so the package does not depend on the",
+            "distribution's libva; the hardware driver itself is dlopened",
+            "from the distribution's DRI directories at runtime."
+          ],
+          "repo": "https://github.com/intel/libva.git",
+          "tag": "2.22.0",
+          "commit": "217da1c28336d6a7e9c0c4cb8f1c303968a675f1",
+          "license": "MIT"
+        },
+        "builder": "library/uuav/scripts/build-ffmpeg-linux.sh",
+        "builder_sha256_comment": [
+          "Digest over the build script's SUBSTANCE, not its text: comments",
+          "are stripped (quote- and backtick-aware) and each line's",
+          "whitespace is collapsed. Nothing a shell comment can do reaches",
+          "the compiled FFmpeg, so reflowing one must not demand a",
+          "15-minute rebuild.",
+          "Recompute with verify-binaries.py's build_script_sha256()."
+        ],
+        "builder_sha256": "",
+        "configure_expected": [],
+        "configure_observed": [],
+        "drift_acknowledged": false,
+        "drift_note": "From-source LGPL shared build with VAAPI; the shipped libraries match the recipe."
+      },
+      "artifacts": [
+        {
+          "path": "library/uuav/dist/linux-x86_64/libavcodec.so.62",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/libavdevice.so.62",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/libavfilter.so.11",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/libavformat.so.62",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/libavutil.so.60",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/libswresample.so.6",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/libswscale.so.9",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "ffmpeg"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/libva.so.2",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "libva"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/libva-drm.so.2",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "libva"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/uuav-helper",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "cargo"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/LICENSE-ffmpeg.txt",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "text"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/LICENSE-mbedtls.txt",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "text"
+        },
+        {
+          "path": "library/uuav/dist/linux-x86_64/LICENSE-libva.txt",
+          "sha256": "",
+          "bytes": 0,
+          "produced_by": "text"
+        }
+      ]
+    }
+  }
+}
