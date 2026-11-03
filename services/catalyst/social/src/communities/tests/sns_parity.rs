@@ -680,3 +680,72 @@ async fn real_mutations_publish_all_twelve_source_community_subtypes() {
     assert_eq!(exercised.len(), 12);
     rig.finish();
 }
+
+#[tokio::test]
+async fn broadcaster_excludes_every_address_and_pages_equal_join_dates_deterministically() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let sns = Sns::new().await;
+    let id = CommunityId::new();
+    sqlx::query(
+        "INSERT INTO social.communities(id,name,owner_address) VALUES($1,'pagination fixture',$2)",
+    )
+    .bind(id)
+    .bind(address(1))
+    .execute(&rig.pool)
+    .await
+    .unwrap();
+    // Insertion order deliberately differs from the required tie breaker.
+    sqlx::query("INSERT INTO social.community_members(community_id,member_address,role,joined_at) SELECT $1,'0x'||lpad(to_hex(n),40,'0'),'member',timestamp '2026-01-01' FROM generate_series(230,1,-1) n").bind(id).execute(&rig.pool).await.unwrap();
+    let event = json!({"type":"community", "subType":"community-voice-chat-started", "key":"paging", "timestamp":1, "metadata":{"communityId":id.to_string(),"communityName":"fixture"}});
+    let excluded = vec![address(10).to_uppercase(), address(11)];
+    crate::notifications::community::broadcast_legacy(
+        &rig.pool,
+        &sns.publisher,
+        event,
+        None,
+        excluded,
+    )
+    .await;
+    let mut entries = sns
+        .requests
+        .lock()
+        .iter()
+        .flat_map(|request| {
+            request["input"]["PublishBatchRequestEntries"]
+                .as_array()
+                .unwrap()
+                .clone()
+        })
+        .collect::<Vec<_>>();
+    entries.sort_by_key(|entry| entry["Message"]["key"].as_str().unwrap().to_owned());
+    let recipients = entries
+        .iter()
+        .flat_map(|entry| {
+            entry["Message"]["metadata"]["addressesToNotify"]
+                .as_array()
+                .unwrap()
+        })
+        .map(|value| value.as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    let expected = (1..=230)
+        .filter(|n| ![10, 11].contains(n))
+        .map(address)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        recipients, expected,
+        "all tied rows appear exactly once in stable pages and both exclusions apply"
+    );
+    assert_eq!(
+        entries
+            .iter()
+            .map(|entry| entry["Message"]["metadata"]["addressesToNotify"]
+                .as_array()
+                .unwrap()
+                .len())
+            .collect::<Vec<_>>(),
+        [100, 100, 28]
+    );
+    rig.finish();
+}

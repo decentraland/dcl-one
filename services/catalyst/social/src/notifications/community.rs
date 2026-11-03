@@ -170,10 +170,13 @@ async fn broadcast_legacy_inner(
         .or_else(|| event["metadata"]["id"].as_str())
         .ok_or_else(|| anyhow::anyhow!("Community event lacks community id"))?;
     let community = Uuid::parse_str(community)?;
+    for address in &mut excluded {
+        address.make_ascii_lowercase();
+    }
     let mut recipients = Vec::<String>::new();
     let mut offset = 0_i64;
     loop {
-        let page:Vec<String>=sqlx::query_scalar("SELECT member_address FROM social.community_members WHERE community_id=$1 AND ($2::text[] IS NULL OR role=ANY($2)) AND ($3::text[] IS NULL OR member_address=ANY($3)) AND (cardinality($4::text[])=0 OR member_address<>ANY($4)) ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END,joined_at LIMIT 100 OFFSET $5")
+        let page:Vec<String>=sqlx::query_scalar("SELECT member_address FROM social.community_members WHERE community_id=$1 AND ($2::text[] IS NULL OR role=ANY($2)) AND ($3::text[] IS NULL OR member_address=ANY($3)) AND (cardinality($4::text[])=0 OR member_address<>ALL($4)) ORDER BY CASE role WHEN 'owner' THEN 1 WHEN 'moderator' THEN 2 WHEN 'member' THEN 3 ELSE 4 END,joined_at,member_address LIMIT 100 OFFSET $5")
             .bind(community).bind(&roles).bind(&online).bind(&excluded).bind(offset).fetch_all(pool).await?;
         let done = page.len() < 100;
         recipients.extend(page);

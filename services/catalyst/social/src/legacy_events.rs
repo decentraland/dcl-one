@@ -2,6 +2,7 @@
 //! Wire events remain the source's raw JSON Events. Its queue consumer deletes
 //! in finally, including malformed/unknown events and failed domain handlers.
 use crate::communities;
+use futures::StreamExt;
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
@@ -131,78 +132,84 @@ impl LegacyEvents {
         Ok(())
     }
 
-    /// `@dcl/sns-component` publishMessages: chunks of ten, concurrent sends,
-    /// ids local to each request, and allSettled results in input-chunk order.
+    /// SNS groups of ten, with at most eight requests in flight per call.
+    /// IDs stay local to each request; allSettled results retain chunk order.
     pub async fn publish_batch(&self, events: &[Value]) -> anyhow::Result<PublishBatchResult> {
         let Some((client, arn)) = &self.publisher else {
             anyhow::bail!("AWS_SNS_ARN is not configured");
         };
-        let chunks = events.chunks(10).map(|chunk| async move {
-            let send = async {
-                let mut request = client.publish_batch().topic_arn(arn);
-                for (index, event) in chunk.iter().enumerate() {
-                    let attribute = |value: &str| {
-                        aws_sdk_sns::types::MessageAttributeValue::builder()
-                            .data_type("String")
-                            .string_value(value)
-                            .build()
-                    };
-                    let mut entry = aws_sdk_sns::types::PublishBatchRequestEntry::builder()
-                        .id(format!("msg_{index}"))
-                        .message(serde_json::to_string(event)?)
-                        .message_attributes(
-                            "type",
-                            attribute(
-                                event["type"]
-                                    .as_str()
-                                    .filter(|value| !value.is_empty())
-                                    .unwrap_or("unknown"),
-                            )?,
-                        );
-                    if let Some(subtype) = event["subType"].as_str() {
-                        entry = entry.message_attributes("subType", attribute(subtype)?);
+        let chunks = events
+            .chunks(10)
+            .map(|chunk: &[Value]| async move {
+                let send = async {
+                    let mut request = client.publish_batch().topic_arn(arn);
+                    for (index, event) in chunk.iter().enumerate() {
+                        let attribute = |value: &str| {
+                            aws_sdk_sns::types::MessageAttributeValue::builder()
+                                .data_type("String")
+                                .string_value(value)
+                                .build()
+                        };
+                        let mut entry = aws_sdk_sns::types::PublishBatchRequestEntry::builder()
+                            .id(format!("msg_{index}"))
+                            .message(serde_json::to_string(event)?)
+                            .message_attributes(
+                                "type",
+                                attribute(
+                                    event["type"]
+                                        .as_str()
+                                        .filter(|value| !value.is_empty())
+                                        .unwrap_or("unknown"),
+                                )?,
+                            );
+                        if let Some(subtype) = event["subType"].as_str() {
+                            entry = entry.message_attributes("subType", attribute(subtype)?);
+                        }
+                        request = request.publish_batch_request_entries(entry.build()?);
                     }
-                    request = request.publish_batch_request_entries(entry.build()?);
+                    Ok::<_, anyhow::Error>(
+                        tokio::time::timeout(Duration::from_secs(30), request.send()).await??,
+                    )
                 }
-                Ok::<_, anyhow::Error>(
-                    tokio::time::timeout(Duration::from_secs(30), request.send()).await??,
-                )
-            }
-            .await;
-            match send {
-                Ok(output) => PublishBatchResult {
-                    successful_message_ids: output
-                        .successful()
-                        .iter()
-                        .filter_map(|entry| {
-                            entry
-                                .message_id()
-                                .filter(|id| !id.is_empty())
-                                .map(str::to_owned)
-                        })
-                        .collect(),
-                    failed_events: output
-                        .failed()
-                        .iter()
-                        .filter_map(|failure| {
-                            let digits = failure.id().strip_prefix("msg_")?;
-                            if digits.is_empty()
-                                || !digits.bytes().all(|digit| digit.is_ascii_digit())
-                            {
-                                return None;
-                            }
-                            chunk.get(digits.parse::<usize>().ok()?).cloned()
-                        })
-                        .collect(),
-                },
-                Err(_) => PublishBatchResult {
-                    successful_message_ids: Vec::new(),
-                    failed_events: chunk.to_vec(),
-                },
-            }
-        });
+                .await;
+                match send {
+                    Ok(output) => PublishBatchResult {
+                        successful_message_ids: output
+                            .successful()
+                            .iter()
+                            .filter_map(|entry| {
+                                entry
+                                    .message_id()
+                                    .filter(|id| !id.is_empty())
+                                    .map(str::to_owned)
+                            })
+                            .collect(),
+                        failed_events: output
+                            .failed()
+                            .iter()
+                            .filter_map(|failure| {
+                                let digits = failure.id().strip_prefix("msg_")?;
+                                if digits.is_empty()
+                                    || !digits.bytes().all(|digit| digit.is_ascii_digit())
+                                {
+                                    return None;
+                                }
+                                chunk.get(digits.parse::<usize>().ok()?).cloned()
+                            })
+                            .collect(),
+                    },
+                    Err(_) => PublishBatchResult {
+                        successful_message_ids: Vec::new(),
+                        failed_events: chunk.to_vec(),
+                    },
+                }
+            })
+            .collect::<Vec<_>>();
         let mut result = PublishBatchResult::default();
-        for chunk in futures::future::join_all(chunks).await {
+        // Bound simultaneous SDK requests while preserving source allSettled
+        // result order and awaiting every batch, including failed batches.
+        let mut chunks = futures::stream::iter(chunks).buffered(8);
+        while let Some(chunk) = chunks.next().await {
             result
                 .successful_message_ids
                 .extend(chunk.successful_message_ids);
@@ -632,3 +639,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "legacy_events_review_tests.rs"]
+mod review_tests;

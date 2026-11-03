@@ -198,8 +198,17 @@ impl Referral {
             return Ok(());
         }
         self.assert_not_banned(referrer.as_str(), Some(ip)).await?;
+        let mut tx = self.pool.begin().await.map_err(database_error)?;
+        // Separate statements take a fresh READ COMMITTED snapshot after the
+        // lock is acquired. Count and insert must share that transaction.
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("social-referral-ip:{referrer}:{ip}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(database_error)?;
         let status: Option<String> = sqlx::query_scalar("WITH other_users_invited AS (SELECT count(*) AS count FROM social.referral_progress WHERE referrer=$1 AND invited_user_ip=$3) INSERT INTO social.referral_progress(referrer,invited_user,invited_user_ip,status) SELECT $1,$2,$3,CASE WHEN count < $4::text::bigint THEN 'pending' ELSE 'rejected_ip_match' END FROM other_users_invited ON CONFLICT(invited_user) DO NOTHING RETURNING status")
-            .bind(referrer).bind(invited).bind(ip).bind(source_number_text(self.settings.max_ip_matches)).fetch_optional(&self.pool).await.map_err(database_error)?;
+            .bind(referrer).bind(invited).bind(ip).bind(source_number_text(self.settings.max_ip_matches)).fetch_optional(&mut *tx).await.map_err(database_error)?;
+        tx.commit().await.map_err(database_error)?;
         let status = match status {
             Some(status) => status,
             None => {
@@ -290,6 +299,11 @@ impl Referral {
         };
         self.assert_not_banned(&referrer, ip.as_deref()).await?;
         let mut tx = self.pool.begin().await.map_err(database_error)?;
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
+            .bind(format!("social-referral-tier:{referrer}"))
+            .execute(&mut *tx)
+            .await
+            .map_err(database_error)?;
         let (status,granted,mut days): (String,bool,Vec<chrono::NaiveDate>) = sqlx::query_as("SELECT status,tier_granted,login_days FROM social.referral_progress WHERE invited_user=$1 FOR UPDATE")
             .bind(&invited).fetch_one(&mut *tx).await.map_err(database_error)?;
         if granted || status == "tier_granted" || status == "rejected_ip_match" {
@@ -317,8 +331,14 @@ impl Referral {
         }
         sqlx::query("UPDATE social.referral_progress SET status='tier_granted',tier_granted=true,tier_granted_at=timezone('UTC',now()),updated_at=timezone('UTC',now()),login_days='{}' WHERE invited_user=$1 AND NOT tier_granted")
             .bind(&invited).execute(&mut *tx).await.map_err(database_error)?;
+        let total: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM social.referral_progress WHERE referrer=$1 AND tier_granted",
+        )
+        .bind(&referrer)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(database_error)?;
         tx.commit().await.map_err(database_error)?;
-        let total = self.accepted(&referrer).await?;
         self.notify(&referrer, invited.as_str(), total, None)
             .await?;
         if [5, 10, 20, 25, 30, 50, 60, 75].contains(&total) {
@@ -352,17 +372,30 @@ impl Referral {
                 .as_array()
                 .and_then(|values| values.first())
                 .ok_or(CommError::Internal)?;
-            self.notify(&referrer, invited.as_str(), total, Some(reward))
-                .await?;
-            let image = reward["image"].as_str().ok_or(CommError::Internal)?;
-            sqlx::query("INSERT INTO social.referral_reward_images(referrer,reward_image_url,tier) VALUES($1,$2,$3)")
-                .bind(&referrer).bind(image).bind(total as i32).execute(&self.pool).await.map_err(database_error)?;
+            // Promise.all starts both source operations independently. Once
+            // started, either operation survives the other's early failure.
+            let notice =
+                tokio::spawn(self.notify(&referrer, invited.as_str(), total, Some(reward)));
+            let image = reward["image"].as_str().map(str::to_owned);
+            let image_referrer = referrer.clone();
+            let pool = self.pool.clone();
+            let image = tokio::spawn(async move {
+                let image = image.ok_or(CommError::Internal)?;
+                sqlx::query("INSERT INTO social.referral_reward_images(referrer,reward_image_url,tier) VALUES($1,$2,$3)")
+                    .bind(image_referrer).bind(image).bind(total as i32).execute(&pool).await.map_err(database_error)?;
+                Ok::<_, CommError>(())
+            });
+            futures::try_join!(
+                async { notice.await.map_err(|_| CommError::Internal)? },
+                async { image.await.map_err(|_| CommError::Internal)? }
+            )?;
         }
         if total == TIERS_IRL_SWAG {
             self.slack.send(self.slack.milestone(&referrer)).await;
         }
         Ok(())
     }
+    #[cfg(test)]
     async fn accepted(&self, referrer: &str) -> Result<i64, CommError> {
         Ok(sqlx::query_scalar(
             "SELECT count(*) FROM social.referral_progress WHERE referrer=$1 AND tier_granted",
@@ -372,13 +405,13 @@ impl Referral {
         .await
         .map_err(database_error)?)
     }
-    async fn notify(
+    fn notify(
         &self,
         referrer: &str,
         invited: &str,
         total: i64,
         reward: Option<&Value>,
-    ) -> Result<(), CommError> {
+    ) -> impl std::future::Future<Output = Result<(), CommError>> + Send + 'static + use<> {
         let tier = [5, 10, 20, 25, 30, 50, 60, 75]
             .iter()
             .position(|tier| total <= *tier)
@@ -400,24 +433,30 @@ impl Referral {
             ),
         };
         let metadata = json!({"address":referrer,"title":title,"description":description,"tier":tier,"url":format!("{}/accounts/{referrer}/referral",self.settings.profile_url),"image":image,"invitedUserAddress":invited,"invitedUsers":total,"rarity":rarity});
-        if let Some(publisher) = self.publisher.get() {
-            let subtype = kind.replace('_', "-");
-            let now = chrono::Utc::now().timestamp_millis();
-            let event = json!({"type":"referral","subType":subtype,"key":format!("{subtype}-{referrer}-{invited}-{now}"),"timestamp":now,"metadata":metadata});
-            publisher
-                .publish(&event)
-                .await
-                .map_err(|_| CommError::Internal)?;
+        let publisher = self.publisher.get().cloned();
+        let pool = self.pool.clone();
+        let referrer = referrer.to_owned();
+        let invited = invited.to_owned();
+        async move {
+            if let Some(publisher) = publisher {
+                let subtype = kind.replace('_', "-");
+                let now = chrono::Utc::now().timestamp_millis();
+                let event = json!({"type":"referral","subType":subtype,"key":format!("{subtype}-{referrer}-{invited}-{now}"),"timestamp":now,"metadata":metadata});
+                publisher
+                    .publish(&event)
+                    .await
+                    .map_err(|_| CommError::Internal)?;
+            }
+            let address = Address::parse(&referrer).map_err(|_| CommError::Internal)?;
+            crate::notifications::insert_notifications(
+                &pool,
+                &[crate::notifications::NewNotification::now(
+                    address, kind, metadata,
+                )],
+            )
+            .await?;
+            Ok(())
         }
-        let address = Address::parse(referrer).map_err(|_| CommError::Internal)?;
-        crate::notifications::insert_notifications(
-            &self.pool,
-            &[crate::notifications::NewNotification::now(
-                address, kind, metadata,
-            )],
-        )
-        .await?;
-        Ok(())
     }
 }
 
@@ -1305,3 +1344,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "referral_review_tests.rs"]
+mod review_tests;
