@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Select the Development environment's Rust test platforms: macOS only for changes it can observe.
+"""Select the Development environment's Rust test platforms: macOS for build, toolchain and dev-stack inputs; platform-neutral source runs on Linux on PRs and on macOS on main.
 
   python3 tooling/dev-ci.py plan                     in a pull_request run (compares the merge commit's parents)
   python3 tooling/dev-ci.py plan --base origin/main  locally (compares HEAD with its merge base)
@@ -12,12 +12,15 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = 'development.yml'
-# What the macOS Rust job itself runs: the dev stack, the ENet pin check and dev-test.sh's tests.
+# What the macOS Rust job itself runs (the dev stack, the ENet pin check and dev-test.sh's tests)
+# and what changes how it builds (manifests, lockfiles, build scripts, toolchains, cargo config).
 MACOS = ('tooling/dev*', 'tooling/enet-provenance.py', 'tooling/tests/test_dev_regressions.py',
-         'tooling/tests/test_enet_provenance.py')
-# Watched by the workflow for smoke/web only; the Linux leg covers the Rust job's view of them.
+         'tooling/tests/test_enet_provenance.py', '**/Cargo.toml', '**/Cargo.lock', '**/build.rs',
+         '**/rust-toolchain*', 'services/catalyst/.cargo/**', 'library/vendor/rusty_enet/**')
+# Inputs whose Rust-job behaviour the Linux leg covers: web apps, other Python tooling and Rust/SQL
+# source whose compiled code is the same on both platforms. Main pushes still run them on macOS.
 LINUX_ONLY = ('apps/sites/**', 'apps/ui3/**', 'rendering/bevy-explorer/upstream.lock.json',
-              'tooling/*.py', 'tooling/tests/**')
+              'tooling/*.py', 'tooling/tests/**', 'services/catalyst/**', 'library/**', 'schemas/**')
 
 
 def load_ci_local():
