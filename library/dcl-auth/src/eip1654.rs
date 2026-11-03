@@ -10,6 +10,20 @@ pub trait Eip1654Validator: Send + Sync {
         hash: &[u8],
         signature: &[u8],
     ) -> Result<bool, AuthError>;
+
+    /// The same question at the last block at or before `timestamp_ms`. A validator that
+    /// cannot answer for a past block fails the call (undecidable).
+    async fn validate_signature_at(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+        _timestamp_ms: i64,
+    ) -> Result<bool, AuthError> {
+        Err(AuthError::Eip1654ValidationFailed(
+            "this validator cannot answer for a past block".to_string(),
+        ))
+    }
 }
 
 /// Accepts every contract-wallet link. For entities a peer already holds: the
@@ -30,6 +44,16 @@ impl Eip1654Validator for PeerValidated {
     ) -> Result<bool, AuthError> {
         Ok(true)
     }
+
+    async fn validate_signature_at(
+        &self,
+        _contract_address: &str,
+        _hash: &[u8],
+        _signature: &[u8],
+        _timestamp_ms: i64,
+    ) -> Result<bool, AuthError> {
+        Ok(true)
+    }
 }
 
 /// Asks the contract about keccak256(message), then about its EIP-191 hash, each on its own
@@ -41,18 +65,37 @@ pub async fn verify_eip1654(
     message: &[u8],
     signature: &[u8],
 ) -> Result<bool, AuthError> {
-    let raw_hash = alloy_primitives::keccak256(message);
-    let raw = validator
-        .validate_signature(contract_address, raw_hash.as_slice(), signature)
-        .await;
+    verify_eip1654_at(validator, contract_address, message, signature, None).await
+}
+
+/// [`verify_eip1654`], asked at the block of `at` (epoch ms) when given.
+pub async fn verify_eip1654_at(
+    validator: &dyn Eip1654Validator,
+    contract_address: &str,
+    message: &[u8],
+    signature: &[u8],
+    at: Option<i64>,
+) -> Result<bool, AuthError> {
+    let ask = |hash: alloy_primitives::B256| async move {
+        match at {
+            Some(ts) => {
+                validator
+                    .validate_signature_at(contract_address, hash.as_slice(), signature, ts)
+                    .await
+            }
+            None => {
+                validator
+                    .validate_signature(contract_address, hash.as_slice(), signature)
+                    .await
+            }
+        }
+    };
+    let raw = ask(alloy_primitives::keccak256(message)).await;
     if let Ok(true) = raw {
         return Ok(true);
     }
 
-    let prefixed_hash = alloy_primitives::eip191_hash_message(message);
-    let prefixed = validator
-        .validate_signature(contract_address, prefixed_hash.as_slice(), signature)
-        .await;
+    let prefixed = ask(alloy_primitives::eip191_hash_message(message)).await;
     match (raw, prefixed) {
         (_, Ok(true)) => Ok(true),
         (Err(e), _) | (_, Err(e)) => Err(e),

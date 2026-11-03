@@ -656,9 +656,48 @@ mod tests {
         failure: Option<(i32, String)>,
     }
 
+    /// A contract wallet that refuses today; at a past block it accepts, or cannot answer.
+    struct WalletAtBlock {
+        answers_at_block: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::auth::Eip1654Validator for WalletAtBlock {
+        async fn validate_signature(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+        ) -> Result<bool, crate::auth::AuthError> {
+            Ok(false)
+        }
+
+        async fn validate_signature_at(
+            &self,
+            _contract_address: &str,
+            _hash: &[u8],
+            _signature: &[u8],
+            timestamp_ms: i64,
+        ) -> Result<bool, crate::auth::AuthError> {
+            assert_eq!(timestamp_ms, 1_700_000_000_000);
+            if self.answers_at_block {
+                Ok(true)
+            } else {
+                Err(crate::auth::AuthError::Eip1654ValidationFailed(
+                    "missing trie node".to_string(),
+                ))
+            }
+        }
+    }
+
     /// Syncs one outfits entity on `owner`'s pointer, signed as `chain` says, through a
-    /// deployer with the content validator attached (no EIP-1654 validator configured).
-    async fn sync_outfits(owner: &str, chain: Chain) -> Option<SyncOutcome> {
+    /// deployer with the content validator attached and `eip1654` as its contract-wallet
+    /// validator.
+    async fn sync_outfits(
+        owner: &str,
+        chain: Chain,
+        eip1654: Option<Arc<dyn crate::auth::Eip1654Validator>>,
+    ) -> Option<SyncOutcome> {
         let pool = test_pool(3).await?;
         let pointer = format!("{owner}:outfits");
         let body = serde_json::to_vec(&serde_json::json!({
@@ -685,7 +724,7 @@ mod tests {
             pool.clone(),
             storage.clone(),
             crate::http::Outbound::for_tests(),
-            None,
+            eip1654,
             crate::validator::Settings::default(),
         )));
         let batch = BatchDeployer::new(
@@ -757,7 +796,7 @@ mod tests {
     #[tokio::test]
     async fn a_synced_entity_refused_by_its_access_rule_is_a_failed_deployment_never_active() {
         let other = format!("0x{}", "ab".repeat(20));
-        let Some(outcome) = sync_outfits(&other, Chain::Signed).await else {
+        let Some(outcome) = sync_outfits(&other, Chain::Signed, None).await else {
             return;
         };
         assert!(!outcome.deployed);
@@ -773,7 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_valid_synced_entity_is_deployed_and_active() {
-        let Some(outcome) = sync_outfits(TEST_SIGNER, Chain::Signed).await else {
+        let Some(outcome) = sync_outfits(TEST_SIGNER, Chain::Signed, None).await else {
             return;
         };
         assert!(outcome.deployed);
@@ -783,13 +822,46 @@ mod tests {
 
     #[tokio::test]
     async fn a_contract_wallet_link_without_an_eip1654_validator_is_retried_not_accepted() {
-        let Some(outcome) = sync_outfits(CONTRACT_SIGNER, Chain::BehindContract).await else {
+        let Some(outcome) = sync_outfits(CONTRACT_SIGNER, Chain::BehindContract, None).await else {
             return;
         };
         assert!(!outcome.deployed);
         assert_eq!(outcome.active, None);
         let (retry_count, description) = outcome.failure.expect("queued for a retry");
         assert_eq!(retry_count, 0);
+        assert!(
+            description.starts_with("Validation undecided:"),
+            "{description}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallet_valid_at_the_entity_block_is_accepted_though_it_refuses_today() {
+        let wallet = Arc::new(WalletAtBlock {
+            answers_at_block: true,
+        });
+        let Some(outcome) =
+            sync_outfits(CONTRACT_SIGNER, Chain::BehindContract, Some(wallet)).await
+        else {
+            return;
+        };
+        assert!(outcome.deployed);
+        assert!(outcome.active.is_some());
+        assert!(outcome.failure.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_contract_wallet_the_rpc_cannot_judge_at_the_entity_block_is_retried() {
+        let wallet = Arc::new(WalletAtBlock {
+            answers_at_block: false,
+        });
+        let Some(outcome) =
+            sync_outfits(CONTRACT_SIGNER, Chain::BehindContract, Some(wallet)).await
+        else {
+            return;
+        };
+        assert!(!outcome.deployed);
+        let (_, description) = outcome.failure.expect("queued for a retry");
         assert!(
             description.starts_with("Validation undecided:"),
             "{description}"

@@ -59,6 +59,9 @@ pub struct ContentValidator<'a, E: ExternalCalls, B: BlockchainChecker> {
     /// `IGNORE_BLOCKCHAIN_ACCESS_CHECKS`: only the local pointer-ownership
     /// rule of the access step runs.
     pub ignore_blockchain_access: bool,
+    /// An entity a peer serves: the item thumbnail is not checked and an
+    /// item's equivalent pointers count as one, as the reference does.
+    pub synced: bool,
 }
 
 impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
@@ -424,7 +427,7 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
     async fn validate_item_thumbnail(&self, deployment: &Deployment<'_>) -> ValidationResponse {
         let entity = &deployment.entity;
 
-        if !matches!(entity.entity_type, EntityType::Wearable | EntityType::Emote) {
+        if self.synced || !matches!(entity.entity_type, EntityType::Wearable | EntityType::Emote) {
             return ValidationResponse::Ok;
         }
         if entity.timestamp < adr_timestamps::ADR_45 {
@@ -883,7 +886,26 @@ impl<E: ExternalCalls, B: BlockchainChecker> ContentValidator<'_, E, B> {
             }
             EntityType::Store => validate_store_access(deployment, &deployer),
             EntityType::Wearable | EntityType::Emote => {
-                validate_item_access(deployment, self.blockchain_checker, &deployer).await
+                let single = self
+                    .synced
+                    .then(|| super::collections_v1::single_item_pointer(&entity.pointers))
+                    .flatten();
+                match single {
+                    Some(pointer) => {
+                        let one = Entity {
+                            pointers: vec![pointer],
+                            ..(*entity).clone()
+                        };
+                        let view = Deployment {
+                            entity: &one,
+                            ..*deployment
+                        };
+                        validate_item_access(&view, self.blockchain_checker, &deployer).await
+                    }
+                    None => {
+                        validate_item_access(deployment, self.blockchain_checker, &deployer).await
+                    }
+                }
             }
             EntityType::Outfits => {
                 validate_outfits_access(deployment, self.blockchain_checker, &deployer).await

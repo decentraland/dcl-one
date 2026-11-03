@@ -32,7 +32,7 @@ pub use auth_chain::{
     AuthChain, AuthLink, AuthLinkType, MAX_AUTH_CHAIN_LINKS, MAX_AUTH_LINK_FIELD_LEN,
     is_valid_auth_chain, parse_ephemeral_payload,
 };
-pub use eip1654::{Eip1654Validator, PeerValidated, verify_eip1654};
+pub use eip1654::{Eip1654Validator, PeerValidated, verify_eip1654, verify_eip1654_at};
 pub use error::AuthError;
 pub use eth_address::{EthAddress, is_eth_address, normalize_eth_address};
 pub use hash::{

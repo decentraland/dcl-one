@@ -4,7 +4,7 @@ use super::auth_chain::{
     AuthChain, AuthLink, AuthLinkType, MAX_AUTH_CHAIN_LINKS, is_valid_auth_chain,
     split_ephemeral_payload,
 };
-use super::eip1654::{Eip1654Validator, PeerValidated, verify_eip1654};
+use super::eip1654::{Eip1654Validator, PeerValidated, verify_eip1654_at};
 use super::error::AuthError;
 use super::hex0x::{HexDecodeError, decode_hex_0x};
 use super::recover::recover_address;
@@ -74,6 +74,7 @@ pub async fn verify_auth_chain_async(
         now_ms,
         eip1654_validator,
         ExpirationPolicy::Strict,
+        None,
     )
     .await
     .map(|_| ())
@@ -94,13 +95,14 @@ pub async fn verify_peer_auth_chain(
         Some(entity_timestamp_ms),
         Some(&PeerValidated),
         ExpirationPolicy::TrustPeer,
+        None,
     )
     .await
 }
 
 /// The full validation of an entity a peer serves: as [`verify_peer_auth_chain`], but a
-/// contract-wallet link is asked of `eip1654_validator`; without one it fails with
-/// [`AuthError::Eip1654NotImplemented`] (undecidable, not accepted).
+/// contract-wallet link is asked of `eip1654_validator` at the block of the entity timestamp;
+/// without one it fails with [`AuthError::Eip1654NotImplemented`] (undecidable, not accepted).
 pub async fn verify_synced_auth_chain(
     chain: &AuthChain,
     expected_address: &str,
@@ -113,6 +115,7 @@ pub async fn verify_synced_auth_chain(
         Some(entity_timestamp_ms),
         eip1654_validator,
         ExpirationPolicy::TrustPeer,
+        Some(entity_timestamp_ms),
     )
     .await
 }
@@ -123,6 +126,7 @@ async fn walk_chain(
     now_ms: Option<i64>,
     eip1654_validator: Option<&dyn Eip1654Validator>,
     policy: ExpirationPolicy,
+    eip1654_at: Option<i64>,
 ) -> Result<ChainVerdict, AuthError> {
     check_structure(chain)?;
 
@@ -149,11 +153,12 @@ async fn walk_chain(
 
                 let sig_bytes = decode_hex_signature(&signature)?;
 
-                let valid = verify_eip1654(
+                let valid = verify_eip1654_at(
                     validator,
                     &current_authority,
                     message.as_bytes(),
                     &sig_bytes,
+                    eip1654_at,
                 )
                 .await?;
 
@@ -180,11 +185,12 @@ async fn walk_chain(
 
                 let sig_bytes = decode_hex_signature(&signature)?;
 
-                let valid = verify_eip1654(
+                let valid = verify_eip1654_at(
                     validator,
                     &current_authority,
                     link.payload.as_bytes(),
                     &sig_bytes,
+                    eip1654_at,
                 )
                 .await?;
 

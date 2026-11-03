@@ -9,9 +9,10 @@
 //! write path runs, in its synced form ([`crate::validator::synced`]): no
 //! request-recency, rate-limit or newer-entity checks, the auth chain and the
 //! access rules judged at the entity timestamp, contract-wallet links asked of
-//! the EIP-1654 validator. A refusal comes back as
+//! the EIP-1654 validator at the entity's block. A refusal comes back as
 //! [`SyncError::DeploymentRejected`]; a verdict the node could not reach (a
-//! source unset or failing, no EIP-1654 validator) as
+//! source unset or failing, no EIP-1654 validator, an RPC without that block's
+//! state) as
 //! [`SyncError::ValidationUndecided`]. The callers record both in
 //! `content.failed_deployments`, where the retry worker re-attempts them with
 //! backoff. A deployer without the validator attached checks the auth chain

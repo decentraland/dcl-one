@@ -32,6 +32,7 @@
 
 mod chain;
 pub mod checker;
+mod collections_v1;
 pub mod entity_parser;
 pub mod erc721;
 pub mod error;
@@ -256,6 +257,7 @@ pub async fn validate(
         external_calls: ctx.sources,
         blockchain_checker: ctx.sources,
         ignore_blockchain_access: ctx.sources.ignore_blockchain_access,
+        synced: false,
     }
     .validate(&deployment)
     .await

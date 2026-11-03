@@ -36,10 +36,12 @@ struct CacheKey {
     contract_address: String,
     hash_digest: [u8; 32],
     sig_digest: [u8; 32],
+    /// The entity timestamp a historical answer was asked at.
+    at: Option<i64>,
 }
 
 impl CacheKey {
-    fn new(contract_address: &str, hash: &[u8], signature: &[u8]) -> Self {
+    fn new(contract_address: &str, hash: &[u8], signature: &[u8], at: Option<i64>) -> Self {
         use sha2::{Digest, Sha256};
 
         let hash_digest: [u8; 32] = Sha256::digest(hash).into();
@@ -49,6 +51,7 @@ impl CacheKey {
             contract_address: contract_address.to_lowercase(),
             hash_digest,
             sig_digest,
+            at,
         }
     }
 }
@@ -172,8 +175,36 @@ impl Eip1654Validator for ValidationCache {
         hash: &[u8],
         signature: &[u8],
     ) -> Result<bool, AuthError> {
-        let key = CacheKey::new(contract_address, hash, signature);
+        let key = CacheKey::new(contract_address, hash, signature, None);
+        self.cached(key, || {
+            self.inner
+                .validate_signature(contract_address, hash, signature)
+        })
+        .await
+    }
 
+    async fn validate_signature_at(
+        &self,
+        contract_address: &str,
+        hash: &[u8],
+        signature: &[u8],
+        timestamp_ms: i64,
+    ) -> Result<bool, AuthError> {
+        let key = CacheKey::new(contract_address, hash, signature, Some(timestamp_ms));
+        self.cached(key, || {
+            self.inner
+                .validate_signature_at(contract_address, hash, signature, timestamp_ms)
+        })
+        .await
+    }
+}
+
+impl ValidationCache {
+    async fn cached<F, Fut>(&self, key: CacheKey, ask: F) -> Result<bool, AuthError>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<bool, AuthError>>,
+    {
         {
             let map = self.cache.read();
             if let Some(entry) = map.get(&key)
@@ -209,10 +240,7 @@ impl Eip1654Validator for ValidationCache {
             notify,
         };
 
-        let result = self
-            .inner
-            .validate_signature(contract_address, hash, signature)
-            .await;
+        let result = ask().await;
 
         if let Ok(true) = &result {
             self.insert(lead.key.clone(), true);
@@ -376,7 +404,7 @@ mod tests {
         let inner: Arc<dyn Eip1654Validator> = Arc::new(CountingValidator::new());
         let cache = ValidationCache::new(inner);
 
-        let key = CacheKey::new("0xabc", b"h", b"s");
+        let key = CacheKey::new("0xabc", b"h", b"s", None);
         cache.insert(key, true);
         assert_eq!(cache.len(), 1);
 

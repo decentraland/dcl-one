@@ -12,8 +12,11 @@
 //!   anything) counts every content file as present.
 //! - the auth chain: expiry against the entity timestamp, an expiration that
 //!   parses as no known date kept as the peer's verdict, a contract-wallet
-//!   link asked of the node's EIP-1654 validator (none configured:
-//!   undecidable).
+//!   link asked of the node's EIP-1654 validator at the last block at or
+//!   before the entity timestamp (none configured, or an RPC that cannot
+//!   answer for that block: undecidable).
+//! - items, as the reference validator: no thumbnail check, and pointers
+//!   naming one collections-v1 asset by address and by name count as one.
 //! - access: every check asks the chain at the entity timestamp's block, then
 //!   five minutes before it ([`super::onchain`]), as for a local deploy; item
 //!   ownership leaves out the escrow lease overlay, which knows only the
@@ -229,6 +232,7 @@ pub async fn validate_synced(
         external_calls: &synced,
         blockchain_checker: &synced,
         ignore_blockchain_access: sources.ignore_blockchain_access,
+        synced: true,
     }
     .validate(&Deployment {
         entity: &entity,
@@ -263,6 +267,85 @@ mod tests {
             version: "v3".into(),
             metadata: None,
         }
+    }
+
+    const HAT_BY_NAME: &str = "urn:decentraland:ethereum:collections-v1:halloween_2019:hat";
+    const HAT_BY_ADDRESS: &str =
+        "urn:decentraland:ethereum:collections-v1:0xc1f4b0eea2bd6690930e6c66efd3e197d620b9c2:hat";
+    const MASK_BY_NAME: &str = "urn:decentraland:ethereum:collections-v1:halloween_2019:mask";
+
+    /// A signed wearable with no thumbnail on `pointers`, and the sources over a temp store.
+    async fn wearable(
+        pointers: &[&str],
+    ) -> (Vec<u8>, String, AuthChain, Sources, std::path::PathBuf) {
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "version": "v3", "type": "wearable", "pointers": pointers,
+            "timestamp": 1_700_000_000_000i64, "content": [],
+            "metadata": { "data": { "representations": [] } }
+        }))
+        .unwrap();
+        let id = crate::auth::hash_bytes_v1(&bytes);
+        let chain = crate::sync_test_support::signed_chain(&id).await;
+        let (storage, tmp) = crate::sync_test_support::temp_storage("synced-item").await;
+        let sources = Sources::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage,
+            crate::http::Outbound::for_tests(),
+            None,
+            // collections-v1 items are deployed by the Decentraland address.
+            super::super::Settings {
+                additional_dcl_address: Some(
+                    "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266".to_string(),
+                ),
+                ..Default::default()
+            },
+        );
+        (bytes, id, chain, sources, tmp)
+    }
+
+    #[tokio::test]
+    async fn a_synced_item_skips_the_thumbnail_check_a_local_deploy_keeps() {
+        let (bytes, id, chain, sources, tmp) = wearable(&[HAT_BY_NAME]).await;
+        validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched)
+            .await
+            .expect("no thumbnail check on a synced item");
+
+        let entity = entity_parser::parse_entity_from_bytes(&bytes, &id).unwrap();
+        let files = HashMap::from([(id.clone(), bytes)]);
+        let local = super::super::validate(
+            &entity,
+            &files,
+            &super::super::Context {
+                sources: &sources,
+                auth_chain: &chain,
+            },
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            matches!(&local[..], [ValidationError::Rejected(m)] if m.starts_with("Couldn't find hash for thumbnail")),
+            "{local:?}"
+        );
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    #[tokio::test]
+    async fn a_synced_item_naming_one_asset_two_ways_has_one_pointer() {
+        let (bytes, id, chain, sources, tmp) = wearable(&[HAT_BY_NAME, HAT_BY_ADDRESS]).await;
+        validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched)
+            .await
+            .expect("both pointers resolve to the same asset");
+
+        let (bytes, id, chain, sources, tmp2) = wearable(&[HAT_BY_NAME, MASK_BY_NAME]).await;
+        let errors = validate_synced(&sources, &bytes, &id, &chain, SyncedContent::Fetched)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(&errors[..], [ValidationError::Rejected(m)] if m.starts_with("Only one pointer is allowed")),
+            "{errors:?}"
+        );
+        let _ = std::fs::remove_dir_all(tmp);
+        let _ = std::fs::remove_dir_all(tmp2);
     }
 
     #[test]
