@@ -11,6 +11,7 @@ mod solids;
 mod stars;
 pub mod terrain;
 mod trees;
+pub mod upscale;
 
 use bevy::{
     core_pipeline::dof::{DepthOfField, DepthOfFieldMode},
@@ -95,7 +96,8 @@ impl Plugin for VisualsPlugin {
         .add_plugins(AtmospherePlugin)
         .add_plugins(SkyEnvmapPlugin)
         .add_plugins(stars::StarsPlugin)
-        .add_plugins(lens_flare::LensFlarePlugin);
+        .add_plugins(lens_flare::LensFlarePlugin)
+        .add_plugins(upscale::UpscalePlugin);
 
         app.add_console_command::<ShadowConsoleCommand, _>(shadow_console_command);
         app.add_console_command::<FogConsoleCommand, _>(fog_console_command);

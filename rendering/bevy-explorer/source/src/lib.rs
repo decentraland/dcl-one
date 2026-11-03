@@ -31,7 +31,7 @@ use bevy::{
     app::{PluginGroupBuilder, Propagate, TaskPoolThreadAssignmentPolicy},
     log::LogPlugin,
     prelude::*,
-    render::view::RenderLayers,
+    render::{camera::RenderTarget, view::RenderLayers},
 };
 #[cfg(target_arch = "wasm32")]
 use bevy::{
@@ -92,7 +92,7 @@ use tween::TweenPlugin;
 use ui_core::UiCorePlugin;
 use user_input::{avatar_movement::GroundCollider, UserInputPlugin};
 use uuid::Uuid;
-use visuals::VisualsPlugin;
+use visuals::{upscale::SceneTarget, VisualsPlugin};
 use wallet::WalletPlugin;
 use world_ui::WorldUiPlugin;
 
@@ -725,6 +725,7 @@ fn setup(
     config: Res<AppConfig>,
     boot_location: Res<BootLocation>,
     testing: Res<TestingData>,
+    scene_target: Res<SceneTarget>,
 ) {
     info!("main::setup");
     // create the main player
@@ -758,6 +759,8 @@ fn setup(
                 // Scene tests keep the simulation camera but render only their
                 // explicit snapshot cameras, avoiding an unused software-rendered view.
                 is_active: testing.test_scenes.is_none(),
+                // the compositor draws it onto the window (`visuals::upscale`)
+                target: RenderTarget::Image(scene_target.image.clone().into()),
                 ..Default::default()
             },
             default_camera_components(),

@@ -4542,7 +4542,6 @@ dependencies = [
  "web-time",
  "wgpu",
  "windows 0.58.0",
- "winit",
  "world_ui",
  "zip 2.4.2",
 ]

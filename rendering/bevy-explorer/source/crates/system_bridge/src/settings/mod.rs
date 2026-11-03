@@ -75,7 +75,6 @@ pub mod oob_setting;
 pub mod parcel_grass_settings;
 pub mod player_settings;
 pub mod point_at_marker_visibility;
-#[cfg(target_arch = "wasm32")]
 pub mod render_scale_setting;
 pub mod scene_threads;
 pub mod sensitivity;
@@ -199,8 +198,6 @@ impl Plugin for SettingBridgePlugin {
         }
 
         add_enum_setting::<FpsTargetSetting>(app, &mut settings, &mut schedule, &config);
-        // only the web canvas can be drawn at a share of the screen
-        #[cfg(target_arch = "wasm32")]
         add_int_setting::<render_scale_setting::RenderScaleSetting>(
             app,
             &mut settings,
