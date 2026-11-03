@@ -1,23 +1,27 @@
 import { useEffect, useRef } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { Form, Link, useNavigate, useNavigation, useRevalidator, useSearchParams } from "react-router";
 
 import LdWhatsOnPage, { type LdWhatsOnEventLink } from "@ui/landings/pages/LdWhatsOnPage";
 import FreshnessNotice from "@ui/components/FreshnessNotice";
 import { olderCopy, type CopyStamp } from "@ui/data/copyAsOf";
 
 import {
-  effectiveStartAt,
+  EVENT_CALENDAR_LIMIT,
   fetchEvents,
+  fetchEventPage,
   groupEventsByDay,
   toLiveNowCard,
   toUpcomingCard,
   type DayEvent,
   type Event,
 } from "@/data/lib/catalyst/places/events";
+import { fetchEventCalendar } from "@/data/lib/catalyst/places/event-calendar.server";
 import { pageLoader } from "@/core/lib/telemetry/page-loader";
 import { type PageDefaults } from "@/core/lib/telemetry/page-loader";
 import { track } from "@/core/lib/telemetry/track";
 import EventManagement, { EventDiscoveryNavigation } from "@/features/explorer/event-management/EventManagement";
+
+import styles from "./whats-on.module.css";
 
 import type { Route } from "./+types/whats-on";
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
@@ -28,7 +32,7 @@ export const handle = { agentMarkdown: "whatsOn" } satisfies AgentMarkdownHandle
 const STORY: StoryId = "admin/whats-on";
 const LIVE_LIMIT = 8;
 const UPCOMING_LIMIT = 24;
-const FETCH_LIMIT = 100;
+
 
 const FILTERS = [
   { id: "", label: "All" },
@@ -38,21 +42,6 @@ const FILTERS = [
 ] as const;
 type FilterId = (typeof FILTERS)[number]["id"];
 
-function applyFilter(events: Event[], filter: FilterId, now: Date): Event[] {
-  if (!filter) return events;
-  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  const dayMs = 86_400_000;
-  return events.filter((e) => {
-    if (filter === "recurring") return e.recurrent === true;
-    const iso = effectiveStartAt(e);
-    if (!iso) return false;
-    const t = new Date(iso).getTime();
-    if (Number.isNaN(t)) return false;
-    if (filter === "today") return t >= dayStart && t < dayStart + dayMs;
-    return t >= dayStart && t < dayStart + 7 * dayMs;
-  });
-}
-
 const FALLBACK: PageDefaults = {
   variant: "live_feed",
 };
@@ -60,43 +49,56 @@ const FALLBACK: PageDefaults = {
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   if (url.searchParams.get("tab") === "my") {
-    return { tab: "my" as const, sid: "", filter: "" as FilterId, search: "", live: [], upcoming: [], allDays: [], dayLabels: [], copy: { stamp: null, now: Date.now() } };
+    return { tab: "my" as const, sid: "", offset: 0, hasMore: false, unavailable: false, liveUnavailable: false, calendarUnavailable: false, calendarLimited: false, invalidCount: 0, filter: "" as FilterId, search: "", live: [], upcoming: [], allDays: [], dayLabels: [], copy: { stamp: null, now: Date.now() } };
   }
   const rawFilter = url.searchParams.get("filter")?.trim() ?? "";
   const filter: FilterId = (FILTERS.some((f) => f.id === rawFilter) ? rawFilter : "") as FilterId;
   const search = url.searchParams.get("search")?.trim() ?? "";
 
-  const [{ sid, wrap }, liveRes, activeRes] = await Promise.all([
-    pageLoader(request,  FALLBACK),
-    fetchEvents({
-      list: "live",
-      search: search || undefined,
-      limit: LIVE_LIMIT,
-    }).catch(() => ({ data: [] as Event[], copy: null })),
-    fetchEvents({
-      list: "active",
-      search: search || undefined,
-      limit: FETCH_LIMIT,
-    }).catch(() => ({ data: [] as Event[], copy: null })),
+  const parsedOffset = Number(url.searchParams.get("offset") ?? 0);
+  const offset = Number.isSafeInteger(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0;
+  const now = new Date();
+  const dayStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  const dateFiltered = filter === "today" || filter === "week";
+  const filters = {
+    search: search || undefined,
+    from: dateFiltered ? new Date(dayStart).toISOString() : undefined,
+    to: dateFiltered ? new Date(dayStart + (filter === "today" ? 1 : 7) * 86_400_000).toISOString() : undefined,
+    recurrent: filter === "recurring" ? true : undefined,
+  };
+  const [{ sid, wrap }, liveRes, activeRes, calendarRes] = await Promise.all([
+    pageLoader(request, FALLBACK),
+    fetchEvents({ search: filters.search, recurrent: filters.recurrent, list: "live", limit: LIVE_LIMIT, with_connected_users: true }, { signal: request.signal })
+      .then((result) => ({ ...result, unavailable: false }))
+      .catch(() => ({ data: [] as Event[], copy: null, unavailable: true })),
+    fetchEventPage({ ...filters, list: "active", limit: UPCOMING_LIMIT, offset }, { signal: request.signal })
+      .then((result) => ({ ...result, unavailable: false }))
+      .catch(() => ({ data: [] as Event[], hasMore: false, copy: null, unavailable: true })),
+    fetchEventCalendar({ ...filters, from: filters.from ?? new Date(dayStart).toISOString(), to: filters.to ?? new Date(dayStart + 28 * 86_400_000).toISOString() }, { signal: request.signal })
+      .then((result) => ({ ...result, unavailable: false }))
+      .catch(() => ({ data: [] as Event[], copy: null, unavailable: true })),
   ]);
   const live = liveRes.data;
-  const active = activeRes.data;
-  const copy = { stamp: olderCopy(liveRes.copy, activeRes.copy), now: Date.now() };
-
-  const now = new Date();
-
-  const sorted = [...active].sort((a, b) => {
-    const ta = new Date(effectiveStartAt(a) ?? 8.64e15).getTime();
-    const tb = new Date(effectiveStartAt(b) ?? 8.64e15).getTime();
-    return ta - tb;
-  });
-  const upcoming = applyFilter(sorted, filter, now).slice(0, UPCOMING_LIMIT);
-
-  const liveIds = new Set(live.map((e) => e.id));
-  const { allDays, dayLabels } = groupEventsByDay(sorted, liveIds, 28, now);
-
+  const hasMore = activeRes.hasMore;
+  const upcoming = activeRes.data;
+  const copy = { stamp: olderCopy(olderCopy(liveRes.copy, activeRes.copy), calendarRes.copy), now: now.getTime() };
+  const liveIds = new Set(live.map((event) => event.id));
+  const liveById = new Map(live.map((event) => [event.id, event]));
+  const { allDays, dayLabels } = groupEventsByDay(calendarRes.data.map((event) => liveById.get(event.id) ?? event), liveIds, 28, now);
+  const unavailable = activeRes.unavailable;
+  const liveUnavailable = liveRes.unavailable;
+  const calendarUnavailable = calendarRes.unavailable;
+  const calendarLimited = ("received" in calendarRes ? calendarRes.received : calendarRes.data.length) === EVENT_CALENDAR_LIMIT;
+  const invalidCount = [activeRes, liveRes, calendarRes].reduce((count, result) => count + ("invalidCount" in result ? result.invalidCount ?? 0 : 0), 0);
   const payload = {
     sid,
+    offset,
+    hasMore,
+    unavailable,
+    liveUnavailable,
+    calendarUnavailable,
+    calendarLimited,
+    invalidCount,
     filter,
     search,
     live,
@@ -106,7 +108,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     copy,
   };
 
-  return wrap(payload);
+  return wrap(payload, { status: unavailable ? 503 : 200 });
 }
 
 export default function WhatsOn({ loaderData }: Route.ComponentProps) {
@@ -117,6 +119,13 @@ export default function WhatsOn({ loaderData }: Route.ComponentProps) {
   return (
     <WhatsOnFeed
       sid={d.sid}
+      offset={d.offset}
+      hasMore={d.hasMore}
+      unavailable={d.unavailable}
+      liveUnavailable={d.liveUnavailable}
+      calendarUnavailable={d.calendarUnavailable}
+      calendarLimited={d.calendarLimited}
+      invalidCount={d.invalidCount}
       filter={d.filter}
       search={d.search}
       live={d.live}
@@ -130,6 +139,13 @@ export default function WhatsOn({ loaderData }: Route.ComponentProps) {
 
 type FeedProps = {
   sid: string;
+  offset: number;
+  hasMore: boolean;
+  unavailable: boolean;
+  liveUnavailable: boolean;
+  calendarUnavailable: boolean;
+  calendarLimited: boolean;
+  invalidCount: number;
   filter: FilterId;
   search: string;
   live: Event[];
@@ -142,6 +158,13 @@ type FeedProps = {
 
 function WhatsOnFeed({
   sid,
+  offset,
+  hasMore,
+  unavailable,
+  liveUnavailable,
+  calendarUnavailable,
+  calendarLimited,
+  invalidCount,
   filter,
   search,
   live,
@@ -152,6 +175,15 @@ function WhatsOnFeed({
 }: FeedProps) {
   const [, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const navigation = useNavigation();
+  const revalidator = useRevalidator();
+  const [params] = useSearchParams();
+  const pageHref = (nextOffset: number) => {
+    const next = new URLSearchParams(params);
+    if (nextOffset) next.set("offset", String(nextOffset));
+    else next.delete("offset");
+    return `/whats-on?${next.toString()}`;
+  };
 
   useWhatsOnView(sid, live.length, upcoming.length, filter, search);
 
@@ -169,6 +201,7 @@ function WhatsOnFeed({
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
+        next.delete("offset");
         if (value) next.set(key, value);
         else next.delete(key);
         return next;
@@ -179,7 +212,24 @@ function WhatsOnFeed({
 
   return (
     <LdWhatsOnPage
-      navigationSlot={<EventDiscoveryNavigation />}
+      navigationSlot={<>
+        <EventDiscoveryNavigation />
+        <Form method="get" role="search" className={styles.search}>
+          {filter && <input type="hidden" name="filter" value={filter} />}
+          <label htmlFor="hangout-search">Search hangouts</label>
+          <input key={search} id="hangout-search" name="search" type="search" defaultValue={search} maxLength={150} />
+          <button type="submit" disabled={navigation.state !== "idle"}>Search</button>
+          {search && <Link to={filter ? `/whats-on?filter=${filter}` : "/whats-on"}>Clear search</Link>}
+        </Form>
+      </>}
+      statusSlot={unavailable || liveUnavailable || calendarUnavailable || calendarLimited || invalidCount > 0 ? <div role="alert" className={styles.unavailable}>
+        {unavailable && <p>Hangouts are temporarily unavailable.</p>}
+        {liveUnavailable && <p>Live hangouts are temporarily unavailable.</p>}
+        {calendarUnavailable && <p>The hangout calendar is temporarily unavailable.</p>}
+        {calendarLimited && <p>The calendar shows the first {EVENT_CALENDAR_LIMIT} matching hangouts. Narrow your search to see more.</p>}
+        {invalidCount > 0 && <p>Some hangouts could not be displayed.</p>}
+        {(unavailable || liveUnavailable || calendarUnavailable) && <button onClick={() => { void revalidator.revalidate(); }}>Retry</button>}
+      </div> : undefined}
       liveNow={liveCards}
       upcoming={upcomingCards}
       allDays={allDays}
@@ -194,7 +244,14 @@ function WhatsOnFeed({
         navigate(link.href);
       }}
       promoSlot={
-        <FreshnessNotice copy={copy.stamp} now={copy.now} />
+        <>
+          <FreshnessNotice copy={copy.stamp} now={copy.now} />
+          {!unavailable && <nav className={styles.pager} aria-label="Event pages">
+            {offset > 0 && <Link to={pageHref(Math.max(0, offset - UPCOMING_LIMIT))}>Previous page</Link>}
+            <span>Page {Math.floor(offset / UPCOMING_LIMIT) + 1}</span>
+            {hasMore && <Link to={pageHref(offset + UPCOMING_LIMIT)}>Next page</Link>}
+          </nav>}
+        </>
       }
     />
   );
