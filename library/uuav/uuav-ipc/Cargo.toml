@@ -1,6 +1,6 @@
 [package]
 name = "uuav-ipc"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 
 [dependencies]
@@ -24,3 +24,8 @@ windows = { version = "0.61", features = [
 [target.'cfg(target_os = "macos")'.dependencies]
 libc = "0.2"
 mach2 = "0.4"
+
+# native transport: AF_UNIX socketpair; SCM_RIGHTS plumbing for the memfd
+# slot channel
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"

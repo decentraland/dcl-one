@@ -74,7 +74,7 @@ rm -rf "$PREFIX" "$BUILD_DIR"
 # deprecated and failed every handshake with errSSLBadCert (-9808) for some
 # macOS 14 users from inside the sandboxed helper; mbedTLS talks to no OS
 # trust service at all. Run from $BUILD_DIR: even --help drops an ffbuild/
-# dir into the cwd, which Unity would import from native/.
+# dir into the cwd, which the host would import from native/.
 mkdir -p "$BUILD_DIR"
 if ! (cd "$BUILD_DIR" && "$SRC_DIR/configure" --help | grep mbedtls > /dev/null); then
     echo "error: this FFmpeg has no --enable-mbedtls" >&2

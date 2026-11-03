@@ -1,10 +1,11 @@
 //! Duplex client<->helper control channel over native OS primitives.
 //!
 //! Windows: a message-mode named pipe (overlapped I/O, the helper's
-//! end explicitly inherited at spawn). macOS: an `AF_UNIX` socketpair
-//! (the helper's fd inherited across exec). One postcard-encoded
-//! message per frame; the Windows pipe preserves message boundaries by
-//! itself, the macOS stream carries a u32-LE length prefix.
+//! end explicitly inherited at spawn). macOS and Linux: an `AF_UNIX`
+//! socketpair (the helper's fd inherited across exec). One
+//! postcard-encoded message per frame; the Windows pipe preserves
+//! message boundaries by itself, the Unix stream carries a u32-LE length
+//! prefix.
 //!
 //! The client creates both ends with [`Channel::pair`] before spawning
 //! the helper, hands the [`ChildHandoff`] to the spawn path, and keeps
@@ -17,9 +18,9 @@ use anyhow::Context as _;
 use serde::{Serialize, de::DeserializeOwned};
 use std::time::{Duration, Instant};
 
-#[cfg(target_os = "macos")]
-#[path = "channel_macos.rs"]
-mod imp;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[path = "channel_unix.rs"]
+pub(crate) mod imp;
 #[cfg(target_os = "windows")]
 #[path = "channel_windows.rs"]
 mod imp;
@@ -82,7 +83,9 @@ impl Channel {
             }
             let remaining = deadline.saturating_duration_since(Instant::now());
             anyhow::ensure!(!remaining.is_zero(), "timed out waiting for message");
-            let millis = u32::try_from(remaining.as_millis()).unwrap_or(u32::MAX).max(1);
+            let millis = u32::try_from(remaining.as_millis())
+                .unwrap_or(u32::MAX)
+                .max(1);
             self.imp.poll_readable(millis)?;
         }
     }
@@ -108,7 +111,7 @@ impl Channel {
 
 impl ChildHandoff {
     /// The `--channel` argv value: the decimal handle value (Windows) /
-    /// fd number (macOS), both of which survive into the child
+    /// fd number (macOS, Linux), both of which survive into the child
     /// unchanged (inherited handles keep their numeric value; fds pass
     /// through exec untouched).
     pub fn arg(&self) -> String {
@@ -166,20 +169,26 @@ mod tests {
             data: vec![0xAB; 32],
         };
         parent.send(&ping).unwrap();
-        assert_eq!(child.recv_timeout::<Msg>(Duration::from_secs(5)).unwrap(), ping);
+        assert_eq!(
+            child.recv_timeout::<Msg>(Duration::from_secs(5)).unwrap(),
+            ping
+        );
 
         let pong = Msg {
             id: 2,
             data: vec![0xCD; 32],
         };
         child.send(&pong).unwrap();
-        assert_eq!(parent.recv_timeout::<Msg>(Duration::from_secs(5)).unwrap(), pong);
+        assert_eq!(
+            parent.recv_timeout::<Msg>(Duration::from_secs(5)).unwrap(),
+            pong
+        );
     }
 
     #[test]
     fn large_message_reassembles() {
         // > the 64 KiB read chunk: exercises the ERROR_MORE_DATA growth
-        // loop on Windows / partial-frame reassembly on macOS, while
+        // loop on Windows / partial-frame reassembly on Unix, while
         // staying inside the 1 MiB kernel buffer so a single-threaded
         // send cannot stall
         let (mut parent, mut child) = in_process_pair();
@@ -188,7 +197,10 @@ mod tests {
             data: (0..200_000u32).map(|i| (i % 251) as u8).collect(),
         };
         parent.send(&big).unwrap();
-        assert_eq!(child.recv_timeout::<Msg>(Duration::from_secs(5)).unwrap(), big);
+        assert_eq!(
+            child.recv_timeout::<Msg>(Duration::from_secs(5)).unwrap(),
+            big
+        );
     }
 
     #[test]

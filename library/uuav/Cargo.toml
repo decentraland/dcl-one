@@ -1,16 +1,15 @@
 [workspace]
 members = ["uuav-ipc", "uuav-server", "uuav-client"]
 
-# symbols are dead weight in the shipped artifacts (-32% on the dll and the
-# helper); panic backtraces still resolve through the module+offset Sentry
-# captures
+# symbols are dead weight in the shipped helper (-32%); panic backtraces
+# still resolve through the module+offset the host's crash reporter captures
 [profile.release]
 strip = "symbols"
 
 
 [package]
 name = "uuav-core"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 
 [dependencies]
@@ -47,11 +46,8 @@ objc2-metal = { version = "0.3", features = ["objc2-io-surface"] }
 objc2-core-video = { version = "0.3", features = ["objc2-io-surface"] }
 objc2-io-surface = "0.3"
 
-# The shipped `uuav` cdylib is produced by uuav-client; the core also links
-# into the uuav-helper process as a plain Rust library. The cdylib output
-# here ships uuav_core.dll/.dylib alongside it, an ad-hoc in-process
-# alternative (same FFI surface, no helper process/IPC) selected from Unity
-# via the UUAV_NO_IPC_LAYER define.
+# The core only ever ships inside the uuav-helper process: a plain Rust
+# library the helper links. Its C ABI stays the helper's adapter surface.
 [lib]
 name = "uuav_core"
-crate-type = ["rlib", "cdylib"]
+crate-type = ["rlib"]

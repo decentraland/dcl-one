@@ -1,13 +1,13 @@
-//! Per-player jitter ring between the helper's audio packets and Unity's
+//! Per-player jitter ring between the helper's audio packets and the host's
 //! audio thread. The samples are already media-clock aligned by the core;
 //! this ring only absorbs transport jitter and the slow skew between the
-//! helper's timer and Unity's audio hardware clock:
+//! helper's timer and the host's audio hardware clock:
 //!
 //! - it stays silent until [`PRIME`] worth of audio queued (so a burst of
 //!   underruns doesn't stutter right after start/seek), re-priming after
 //!   every underrun;
 //! - above [`HIGH_WATERMARK`] the oldest samples are dropped, bounding the
-//!   added latency when Unity consumes slower than the helper produces.
+//!   added latency when the host consumes slower than the helper produces.
 //!
 //! The ring also keeps the consumption ledger the pull-pacing feedback is
 //! built on: every sample that leaves the ring — read, dropped at the
@@ -243,7 +243,10 @@ mod tests {
         // over-read: partial fill, one underrun, back to priming
         let mut dst = vec![1.0_f32; fill + 64];
         assert_eq!(ring.read(&mut dst), fill);
-        assert!(dst.get(fill..).is_some_and(|tail| tail.iter().all(|&s| s == 0.0)));
+        assert!(
+            dst.get(fill..)
+                .is_some_and(|tail| tail.iter().all(|&s| s == 0.0))
+        );
         assert_eq!(ring.stats().underruns, 1);
         assert!(!ring.stats().primed);
 
