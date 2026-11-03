@@ -669,3 +669,59 @@ async fn stamped_database_additive_pass_installs_livekit_intents_and_preserves_b
     assert_eq!(claimed, 1);
     old.drop().await;
 }
+
+#[tokio::test]
+async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
+    let Some(old) = stamped_with_the_closure_base().await else {
+        return;
+    };
+    let pool = &old.pool;
+    sqlx::raw_sql(RELEASE_V2).execute(pool).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    // Model a shared development database stamped before creator throttling,
+    // buckets and the prioritized claim index were introduced.
+    sqlx::raw_sql("ALTER TABLE explore.event_moderation_hooks DROP COLUMN creator_address CASCADE;
+        ALTER TABLE explore.event_moderation_hooks DROP COLUMN edit_bucket CASCADE;
+        DROP INDEX explore.event_moderation_hooks_due_idx;
+        CREATE INDEX event_moderation_hooks_due_idx ON explore.event_moderation_hooks(next_attempt_at,id) WHERE completed_at IS NULL AND attempts<6;
+        DELETE FROM meta.schema_steps WHERE step='0018_event_hook_compatibility';
+        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event) VALUES(gen_random_uuid(),'retained-submission','submitted','{\"name\":\"Retained intent\"}')")
+        .execute(pool).await.unwrap();
+    let result =
+        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+            .await
+            .unwrap();
+    assert!(
+        result
+            .steps
+            .iter()
+            .any(|step| step == "0018_event_hook_compatibility")
+    );
+    assert!(has_column(pool, "explore.event_moderation_hooks", "creator_address").await);
+    assert!(has_column(pool, "explore.event_moderation_hooks", "edit_bucket").await);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id='retained-submission' AND event->>'name'='Retained intent'")
+        .fetch_one(pool).await.unwrap(),1);
+    let due:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='explore' AND indexname='event_moderation_hooks_due_idx'")
+        .fetch_one(pool).await.unwrap();
+    assert!(
+        due.contains("CASE"),
+        "the object pass replaces the old due ordering: {due}"
+    );
+    let creator:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='explore' AND indexname='event_moderation_hooks_creator_idx'")
+        .fetch_one(pool).await.unwrap();
+    assert!(
+        creator.contains("kind = 'edited'"),
+        "the creator index covers only throttled edits: {creator}"
+    );
+    sqlx::query("INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,creator_address,edit_bucket) VALUES(gen_random_uuid(),'new-edit','edited','{}','creator',timezone('UTC',now()))")
+        .execute(pool).await.unwrap();
+    assert!(
+        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    old.drop().await;
+}

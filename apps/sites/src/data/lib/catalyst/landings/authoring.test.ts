@@ -141,6 +141,81 @@ describe("when submitting a hangout", () => {
       });
     });
 
+    describe("and the stored join link is the generated Genesis target", () => {
+      beforeEach(() => {
+        original.world = false;
+        original.server = null;
+        original.x = 10;
+        original.y = -20;
+        original.url = "https://decentraland.org/play/?position=10%2C-20";
+        draft = eventToDraft(original);
+        submit = buildHangoutSubmit(() => identity, original, () => true);
+      });
+      it("should leave the custom field blank so it shows the venue-default placeholder", () => {
+        expect(draft.joinUrl).toBe("");
+      });
+      it("should omit the default link after moving the venue", async () => {
+        draft.coordX = -50;
+        draft.coordY = 20;
+        await submit({ draft });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
+      });
+      describe("and the editor chooses a custom destination", () => {
+        beforeEach(() => { draft.joinUrl = "https://example.test/custom"; });
+        it("should submit the explicit custom destination", async () => {
+          await submit({ draft });
+          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toHaveProperty("url", "https://example.test/custom");
+        });
+      });
+    });
+
+    describe("and the stored join link is the generated world target", () => {
+      beforeEach(() => {
+        original.world = true;
+        original.server = "hello.dcl.eth&position=1,2";
+        original.url = "https://decentraland.org/play/?realm=hello.dcl.eth%26position%3D1%2C2";
+        draft = eventToDraft(original);
+        submit = buildHangoutSubmit(() => identity, original, () => true);
+      });
+      it("should leave the custom field blank", () => {
+        expect(draft.joinUrl).toBe("");
+      });
+      it("should omit the default link after changing worlds", async () => {
+        draft.worldName = "new.dcl.eth";
+        await submit({ draft });
+        expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
+      });
+      describe("and the target uses the old unencoded realm format", () => {
+        beforeEach(() => {
+          original.url = "https://decentraland.org/play/?realm=hello.dcl.eth&position=1,2";
+          draft = eventToDraft(original);
+        });
+        it("should also represent legacy generated links as the venue default", async () => {
+          expect(draft.joinUrl).toBe("");
+          await submit({ draft });
+          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
+        });
+      });
+      describe("and the link is a custom play destination", () => {
+        beforeEach(() => {
+          original.url = "https://decentraland.org/play/?realm=another.dcl.eth&position=4,5";
+          draft = eventToDraft(original);
+        });
+        it("should preserve the custom destination in the field and omit it if unchanged", async () => {
+          expect(draft.joinUrl).toBe(original.url);
+          await submit({ draft });
+          expect(vi.mocked(postJSON).mock.calls[0]?.[1]).not.toHaveProperty("url");
+        });
+        describe("and the editor clears the custom destination", () => {
+          beforeEach(() => { draft.joinUrl = ""; });
+          it("should send null to restore the venue default", async () => {
+            await submit({ draft });
+            expect(vi.mocked(postJSON).mock.calls[0]?.[1]).toHaveProperty("url", null);
+          });
+        });
+      });
+    });
+
     describe("and another account lacks edit permissions", () => {
       beforeEach(() => { original.user = "0x3333333333333333333333333333333333333333"; });
       it("should reject the edit without sending a write", async () => {

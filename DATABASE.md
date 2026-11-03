@@ -262,10 +262,15 @@ commit together. Removing a catalogue event does not erase facts; deleting a com
 activation and does not import historical endings. Each subsequent pass reconciles
 currently ended occurrences against the immutable fact keys. Duration-only edits
 that move an end behind an earlier scan are reconsidered. A DTSTART or recurrence
-change records a private database-clock cutoff in the authoring transaction;
-only starts at or after that edit remain eligible. This also excludes unchanged
-but unrecorded earlier starts when an edit changes only the recurrence count
-or end date. Existing immutable facts remain intact. Ordinary
+change records a private database-clock cutoff in the authoring transaction.
+Unchanged eligible starts shared by the old and new materialized schedules
+remain eligible, including live occurrences and deferred endings. A private
+lookup stores only those pre-edit starts still in the current schedule, bounded
+by that schedule rather than growing across edits. Newly introduced backdated
+starts cannot contribute. Creation also sets a database-clock eligibility cutoff,
+so backdated recurring creates cannot import historical attendance. These keys
+are excluded from the public event projection and notification snapshots.
+Existing immutable facts remain intact. Ordinary
 owners must obtain moderation again after changing dates or durations. Recovery
 is limited to the latest 30 days: older unrecorded endings require a separate
 backfill, and existing immutable facts remain untouched. The approved
@@ -281,8 +286,8 @@ outbox with public labels and moderation reasons only. Delivery is at least
 once, bounded to six attempts with five-second HTTP timeouts, and starts at its
 first capture cutoff, written atomically with the intent using the database clock.
 Exhausted delivery attempts remain distinct from successful completion. A creator
-can enqueue at most two submission/edit notices per rolling minute; unsent edits
-coalesce per event, and submissions or administrative transitions take priority
+can enqueue at most two edited notices per rolling minute; unsent edits
+coalesce per event. Every submission retains an alert, and submissions or administrative transitions take priority
 over edits. Deployment configuration supplies the secret endpoint;
 operator writes and deployment posture gate outbound delivery. Unconfigured or
 operator-write-disabled authoring captures no webhook intent. The same worker
@@ -290,7 +295,9 @@ performs bounded cleanup even when its endpoint is disabled: at most 1000 rows
 per pass, with a one-second client budget and transaction-local statement/lock
 timeouts. Completed and exhausted rows are retained for 30 days, as is legacy
 history before activation; eligible unfinished retries and the rolling-minute
-edit throttle window are preserved. `(created_at,id)` supports retention order.
+edit throttle window are preserved. `(created_at,id)` supports retention order. Migration `0018` adds missing creator
+and edit-bucket columns on earlier shared development layouts without removing
+intents, and the object pass recreates the changed due/creator indexes.
 
 Event notification delivery is owned by Social in
 `social.event_notification_intents`. Explore inserts an event transition snapshot
@@ -384,6 +391,16 @@ stored client-supplied sale category never establishes eligibility.
 - Prefer stable keyset pagination for new feeds and mirror scans; keep
   required offset APIs. Define tie-breaking, replay windows and deletion
   handling; a cursor alone does not give snapshot consistency.
+
+The public What's On calendar caches only completed, valid catalogue responses
+for 30 seconds in each Sites process. Its key is the catalogue base, search,
+recurrence selector and exact date window; catalogue page offsets and accounts
+are not inputs. At most eight entries of up to 500 records are retained, with
+expired and least-recently-used entries evicted on reads. Request cancellation
+stays independent, failures and malformed results are not retained, and process
+restart rebuilds from the events API. Sequential page views therefore reuse the
+same calendar read within the freshness budget while live/catalogue reads stay
+uncached.
 
 ## Measurement and acceptance
 

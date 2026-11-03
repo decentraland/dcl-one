@@ -86,25 +86,23 @@ pub(super) async fn record(
         .and_then(Value::as_str)
         .unwrap_or(event_id)
         .to_ascii_lowercase();
-    if kind == "edited" || kind == "submitted" {
+    if kind == "edited" {
         // Serialize per creator across different event row locks. Administrative
         // transitions never wait behind this throttle or lose their alert.
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1, 7421))")
             .bind(&creator)
             .execute(&mut **tx)
             .await?;
-        if kind == "edited" {
-            let updated = sqlx::query("UPDATE explore.event_moderation_hooks SET event=$2 WHERE event_id=$1 AND kind='edited' AND completed_at IS NULL AND attempts=0")
-                .bind(event_id).bind(Value::Object(event.clone())).execute(&mut **tx).await?.rows_affected();
-            if updated > 0 {
-                return Ok(());
-            }
+        let updated = sqlx::query("UPDATE explore.event_moderation_hooks SET event=$2 WHERE event_id=$1 AND kind='edited' AND completed_at IS NULL AND attempts=0")
+            .bind(event_id).bind(Value::Object(event.clone())).execute(&mut **tx).await?.rows_affected();
+        if updated > 0 {
+            return Ok(());
         }
     }
     sqlx::query("INSERT INTO explore.event_moderation_hooks (id,event_id,kind,event,creator_address,edit_bucket,created_at,next_attempt_at) \
         SELECT $1,$2,$3,$4,$5,CASE WHEN $3='edited' THEN date_trunc('minute',$6::timestamp) END,$6,$6 \
-        WHERE ($3 NOT IN ('submitted','edited') OR (SELECT count(*) FROM explore.event_moderation_hooks \
-            WHERE creator_address=$5 AND kind IN ('submitted','edited') AND created_at>$6-interval '1 minute')<2) \
+        WHERE ($3<>'edited' OR (SELECT count(*) FROM explore.event_moderation_hooks \
+            WHERE creator_address=$5 AND kind='edited' AND created_at>$6-interval '1 minute')<2) \
         AND ($3<>'edited' OR NOT EXISTS (SELECT 1 FROM explore.event_moderation_hooks h \
             WHERE h.event_id=$2 AND h.kind='edited' AND h.edit_bucket>=date_trunc('minute',$6::timestamp)-interval '1 minute' \
               AND h.created_at>$6-interval '60 seconds')) ON CONFLICT DO NOTHING")
@@ -504,7 +502,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn creator_throttle_and_edit_coalescing_bound_non_admin_alerts() {
+    async fn creator_throttle_limits_edits_without_dropping_submissions() {
         let Some(pool) = crate::db::scratch::pool(6).await else {
             return;
         };
@@ -529,8 +527,40 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            count, 2,
-            "a creator cannot flood the queue with distinct events"
+            count, 5,
+            "every submitted event retains its moderation alert"
+        );
+        for i in 0..3 {
+            record(
+                &mut tx,
+                &format!("{actor}-edit-{i}"),
+                &json!({"name":"Before","user":actor}),
+                &json!({"name":"Edited","user":actor}),
+                true,
+            )
+            .await
+            .unwrap();
+        }
+        let edits:i64=sqlx::query_scalar("SELECT count(*) FROM explore.event_moderation_hooks WHERE creator_address=$1 AND kind='edited'")
+            .bind(&actor).fetch_one(&mut *tx).await.unwrap();
+        assert_eq!(
+            edits, 2,
+            "only edited notices use the rolling creator budget"
+        );
+        record(
+            &mut tx,
+            &format!("{actor}-after-edits"),
+            &Value::Null,
+            &json!({"name":"Submission after two edits","user":actor}),
+            true,
+        )
+        .await
+        .unwrap();
+        let submissions:i64=sqlx::query_scalar("SELECT count(*) FROM explore.event_moderation_hooks WHERE creator_address=$1 AND kind='submitted'")
+            .bind(&actor).fetch_one(&mut *tx).await.unwrap();
+        assert_eq!(
+            submissions, 6,
+            "a full edit budget cannot discard a new submission"
         );
         let id = format!("{actor}-admin");
         record(
@@ -549,7 +579,7 @@ mod tests {
         .fetch_one(&mut *tx)
         .await
         .unwrap();
-        assert_eq!(count, 3, "operator transitions bypass user throttles");
+        assert_eq!(count, 9, "operator transitions bypass user throttles");
         let other = Uuid::new_v4().to_string();
         let before = json!({"name":"Before","user":other});
         record(

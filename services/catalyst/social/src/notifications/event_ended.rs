@@ -13,7 +13,7 @@ const ENDED_SQL: &str = "WITH candidates AS MATERIALIZED ( \
             d.starts_at + e.duration_ms * interval '1 millisecond' AS ends_at,e.community_id \
          FROM (SELECT * FROM explore.event WHERE approved AND finish_at>$1) e \
          CROSS JOIN LATERAL ( \
-            SELECT CASE WHEN pg_input_is_valid(value,'timestamp with time zone') \
+            SELECT value AS start_key,CASE WHEN pg_input_is_valid(value,'timestamp with time zone') \
                 THEN value::timestamptz AT TIME ZONE 'UTC' END AS starts_at \
             FROM jsonb_array_elements_text(CASE WHEN jsonb_typeof(e.raw->'recurrent_dates')='array' \
                 AND e.raw->'recurrent_dates'<>'[]'::jsonb THEN e.raw->'recurrent_dates' \
@@ -25,8 +25,9 @@ const ENDED_SQL: &str = "WITH candidates AS MATERIALIZED ( \
             AND COALESCE(e.raw->>'deleted_by_admin','false')<>'true' \
             AND d.starts_at + e.duration_ms * interval '1 millisecond'>$1 \
             AND d.starts_at + e.duration_ms * interval '1 millisecond'<=$2 \
-            AND d.starts_at >= CASE WHEN pg_input_is_valid(e.raw->>'_metrics_schedule_after','timestamp with time zone') \
+            AND (d.starts_at >= CASE WHEN pg_input_is_valid(e.raw->>'_metrics_schedule_after','timestamp with time zone') \
                 THEN (e.raw->>'_metrics_schedule_after')::timestamptz AT TIME ZONE 'UTC' ELSE '-infinity'::timestamp END \
+                OR COALESCE(e.raw->'_metrics_preserved_starts' ? d.start_key,false)) \
             AND NOT EXISTS (SELECT 1 FROM social.event_ended_occurrences done \
                 WHERE done.event_id=e.id AND done.occurrence_start=d.starts_at) \
          ORDER BY ends_at,event_id,starts_at LIMIT $3) \
@@ -320,6 +321,10 @@ mod tests {
             let event_id = moderation::create_as(&pool, &body, owner, owner, &settings)
                 .await
                 .unwrap();
+            // This fixture represents a series created before its six recorded occurrences.
+            sqlx::query("UPDATE explore.event SET raw=jsonb_set(jsonb_set(raw,'{_metrics_schedule_after}',to_jsonb($2::text)),'{created_at}',to_jsonb($2::text)) WHERE id=$1")
+                .bind(&event_id).bind((start-Duration::days(1)).and_utc().to_rfc3339())
+                .execute(&pool).await.unwrap();
             moderation::moderate(
                 &pool,
                 &event_id,
@@ -381,6 +386,144 @@ mod tests {
             // Keep the second loop's recovery clock independent of this future scan.
             sqlx::query("DELETE FROM explore.event WHERE id=$1")
                 .bind(&event_id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    }
+
+    async fn created_series(
+        pool: &PgPool,
+        starts_at: NaiveDateTime,
+    ) -> (
+        String,
+        uuid::Uuid,
+        std::sync::Arc<catalyst_explore::ExploreState>,
+    ) {
+        use crate::explore::events::moderation;
+        let owner = "0x1111111111111111111111111111111111111111";
+        let community = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO social.communities(id,name,owner_address) VALUES($1,'Metric series',$2)",
+        )
+        .bind(community)
+        .bind(owner)
+        .execute(pool)
+        .await
+        .unwrap();
+        let body: moderation::CreateEvent = serde_json::from_value(json!({
+            "name":"Metric series", "start_at":starts_at.and_utc().to_rfc3339(),
+            "duration":3600000,"x":0,"y":0,"community_id":community.to_string(),
+            "recurrent":true,"recurrent_frequency":"DAILY","recurrent_count":40
+        }))
+        .unwrap();
+        let mut settings = catalyst_explore::Settings::for_tests();
+        settings.events_admin_token = Some("metric-fixture".into());
+        settings.operator_writes_enabled = true;
+        let id = moderation::create_as(pool, &body, owner, owner, &settings)
+            .await
+            .unwrap();
+        moderation::moderate(
+            pool,
+            &id,
+            &moderation::AdminPatch {
+                approved: Some(true),
+                ..Default::default()
+            },
+            "operator",
+            &settings,
+        )
+        .await
+        .unwrap();
+        crate::explore::events::attendees::rsvp_going(pool, &id, owner, None)
+            .await
+            .unwrap();
+        (
+            id,
+            community,
+            std::sync::Arc::new(catalyst_explore::ExploreState::new(
+                pool.clone(),
+                settings,
+                None,
+            )),
+        )
+    }
+
+    async fn edit_series(
+        state: std::sync::Arc<catalyst_explore::ExploreState>,
+        id: &str,
+        patch: Value,
+    ) {
+        use axum::extract::{OriginalUri, Path, State};
+        use axum::http::{HeaderMap, Method};
+        let mut headers = HeaderMap::new();
+        headers.insert("authorization", "Bearer metric-fixture".parse().unwrap());
+        let axum::Json(response) = crate::explore::events::writes::patch_event(
+            State(state),
+            Method::PATCH,
+            OriginalUri(format!("/api/events/{id}").parse().unwrap()),
+            headers,
+            Path(id.to_owned()),
+            serde_json::to_vec(&patch).unwrap().into(),
+        )
+        .await
+        .unwrap();
+        assert!(
+            !serde_json::to_value(response)
+                .unwrap()
+                .to_string()
+                .contains("_metrics_")
+        );
+    }
+
+    #[tokio::test]
+    async fn backdated_creates_never_import_historical_occurrences() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        sqlx::query("TRUNCATE social.event_ended_occurrences,social.event_ended_activation,social.community_event_metrics").execute(&pool).await.unwrap();
+        let now = chrono::Utc::now().naive_utc();
+        run_once(&pool, now - Duration::days(30)).await.unwrap();
+        let (id, community, _) =
+            created_series(&pool, now - Duration::days(29) - Duration::hours(2)).await;
+        assert_eq!(run_once(&pool, now).await.unwrap(), 0);
+        assert_eq!(run_once(&pool, now + Duration::days(1)).await.unwrap(), 1);
+        let metrics:(i64,i64)=sqlx::query_as("SELECT events_count,events_total_attendees FROM social.community_event_metrics WHERE community_id=$1")
+            .bind(community).fetch_one(&pool).await.unwrap();
+        assert_eq!(metrics, (1, 1));
+        sqlx::query("DELETE FROM explore.event WHERE id=$1")
+            .bind(id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn recurrence_edits_preserve_live_and_deferred_occurrence_identity() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        sqlx::query("TRUNCATE social.event_ended_occurrences,social.event_ended_activation,social.community_event_metrics").execute(&pool).await.unwrap();
+        let now = chrono::Utc::now().naive_utc();
+        run_once(&pool, now - Duration::days(1)).await.unwrap();
+        for elapsed in [Duration::minutes(30), Duration::hours(2)] {
+            let start = now - elapsed;
+            let (id, community, state) = created_series(&pool, start).await;
+            // Represent an existing series created before its first occurrence;
+            // the first case is live and the second awaits a deferred scan.
+            sqlx::query("UPDATE explore.event SET raw=jsonb_set(jsonb_set(raw,'{_metrics_schedule_after}',to_jsonb($2::text)),'{created_at}',to_jsonb($2::text)) WHERE id=$1")
+                .bind(&id).bind((start-Duration::days(1)).and_utc().to_rfc3339()).execute(&pool).await.unwrap();
+            edit_series(state.clone(), &id, json!({"recurrent_count":41})).await;
+            edit_series(state, &id, json!({"recurrent_count":42})).await;
+            assert_eq!(run_once(&pool, now + Duration::hours(1)).await.unwrap(), 1);
+            assert_eq!(run_once(&pool, now + Duration::hours(1)).await.unwrap(), 0);
+            let metrics:(i64,i64)=sqlx::query_as("SELECT events_count,events_total_attendees FROM social.community_event_metrics WHERE community_id=$1")
+                .bind(community).fetch_one(&pool).await.unwrap();
+            assert_eq!(metrics, (1, 1));
+            sqlx::query("DELETE FROM explore.event WHERE id=$1")
+                .bind(id)
                 .execute(&pool)
                 .await
                 .unwrap();
@@ -454,9 +597,12 @@ mod tests {
             .unwrap();
         assert!(!attendee_loops.is_empty());
         assert!(attendee_loops.iter().all(|loops| *loops <= PAGE as u64));
-        // Choice of index versus sequential scan is PostgreSQL's cost decision;
-        // print the measured plan rather than pinning a platform-specific choice.
-        println!("metric query smoke measurement: {plan}");
+        assert!(
+            indexes
+                .iter()
+                .any(|index| index == "event_notifications_live_idx"),
+            "the prepared scan must prefilter expired series with the finish index: {indexes:?}"
+        );
     }
 
     #[tokio::test]

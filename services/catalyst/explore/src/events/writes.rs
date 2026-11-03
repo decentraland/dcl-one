@@ -743,10 +743,7 @@ pub async fn patch_event(
             sqlx::query_scalar("SELECT clock_timestamp() AT TIME ZONE 'UTC'")
                 .fetch_one(&mut *tx)
                 .await?;
-        raw.insert(
-            "_metrics_schedule_after".into(),
-            json!(cutoff.and_utc().to_rfc3339()),
-        );
+        moderation::preserve_metric_starts(&before, &mut raw, cutoff.and_utc());
     }
 
     let mut changed_references = Map::new();

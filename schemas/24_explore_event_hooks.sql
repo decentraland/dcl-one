@@ -19,10 +19,10 @@ CREATE INDEX event_moderation_hooks_due_idx
     ON explore.event_moderation_hooks ((CASE WHEN kind='edited' THEN 1 ELSE 0 END),next_attempt_at,id)
     WHERE completed_at IS NULL AND attempts < 6;
 
--- Bounded rolling creator throttle for submissions and edits.
+-- Bounded rolling creator throttle applies only to edited notices.
 CREATE INDEX event_moderation_hooks_creator_idx
     ON explore.event_moderation_hooks (creator_address,created_at DESC)
-    WHERE kind IN ('submitted','edited');
+    WHERE kind='edited';
 
 CREATE INDEX event_moderation_hooks_retention_idx
     ON explore.event_moderation_hooks (created_at,id);
