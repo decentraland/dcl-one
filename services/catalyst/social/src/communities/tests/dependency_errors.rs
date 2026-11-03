@@ -17,6 +17,9 @@ async fn every_community_http_database_failure_uses_the_source_message_boundary(
     rig.member(id, &target, "member").await;
     let post = rig.post(id, &actor).await;
     let request = rig.request(id, &target, "request_to_join").await;
+    // A raw-empty member-request page correctly skips community SQL. Seed a
+    // pending actor row so this fixture reaches the denied community lookup.
+    rig.request(id, &actor, "request_to_join").await;
     let role = format!("community_errors_{}", Uuid::new_v4().simple());
     sqlx::query(sqlx::AssertSqlSafe(format!("CREATE ROLE {role}")))
         .execute(&rig.pool)
