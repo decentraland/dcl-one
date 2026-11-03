@@ -19,8 +19,7 @@ const reason = getter(AbortSignal, "reason");
 const combine = AbortSignal.any.bind(AbortSignal);
 const listen = uncurry(EventTarget.prototype.addEventListener);
 const unlisten = uncurry(EventTarget.prototype.removeEventListener);
-const schedule = globalThis.setTimeout.bind(globalThis);
-const clear = globalThis.clearTimeout.bind(globalThis);
+const timeout = AbortSignal.timeout.bind(AbortSignal);
 const iterator = Symbol.iterator;
 const next = uncurry(Object.getPrototypeOf(new Set().values()).next);
 
@@ -70,10 +69,14 @@ export function createSceneFetch(nativeFetch, isServer, timeoutMs = isServer ? 1
       }
       outstanding++;
 
-      const timer = schedule(() => abort(deadline, new NativeException("Scene fetch timed out", "TimeoutError")), timeoutMs);
+      // A scene can clear any numeric worker timer. Forward the browser-owned
+      // timeout only until headers arrive so a delivered body can keep streaming.
+      const timer = timeout(timeoutMs);
+      const expire = () => abort(deadline, reason(timer));
+      listen(timer, "abort", expire);
       function cancelQueued() {
         dequeue(start);
-        clear(timer);
+        unlisten(timer, "abort", expire);
         outstanding--;
         rejectUnsent(reason(signal));
       }
@@ -94,7 +97,7 @@ export function createSceneFetch(nativeFetch, isServer, timeoutMs = isServer ? 1
         } finally {
           // The browser owns the response stream. Reading one body must never block
           // another caller waiting for headers. Its original signal remains connected.
-          clear(timer);
+          unlisten(timer, "abort", expire);
           active--;
           outstanding--;
           next(values()).value?.();

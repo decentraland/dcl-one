@@ -95,10 +95,11 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
     const afterError = await a.evaluate(async () => {
       held[0]()
       await requests[0]
-      const init = {targetAddressSpace:'loopback', referrer:location.origin + '/chosen', referrerPolicy:'unsafe-url'}
+      const init = {targetAddressSpace:'loopback', referrer:location.origin + '/chosen', referrerPolicy:'no-referrer'}
       const echo = fetch('/echo', init)
       init.targetAddressSpace = 'local'
       init.referrer = ''
+      init.referrerPolicy = 'unsafe-url'
       // Release waves of headers without consuming their bodies.
       for (let i = 1; i < 32; i++) {
         held[i]()
@@ -107,7 +108,9 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
       const response = await echo
       return { referrer: await response.text(), addressSpace: sent.at(-1), body: await (await requests[0]).text() }
     })
-    assert.deepEqual(afterError, { referrer: new URL('/chosen', page.url()).href, addressSpace:'loopback', body:'ok' })
+    assert.deepEqual(afterError, { referrer:'', addressSpace:'loopback', body:'ok' })
+    const referrer = await a.evaluate(async () => (await fetch('/echo', {referrer:location.origin + '/chosen'})).text())
+    assert.equal(referrer, new URL('/chosen', page.url()).href)
     const upload = await a.evaluate(async () => {
       const request = new Request('/upload', {method:'POST', body:'scene payload'})
       const response = fetch(request)
@@ -123,15 +126,29 @@ test('scene Fetch isolates workers and preserves the browser request', { timeout
     const deadlines = await a.evaluate(async () => {
       const { createSceneFetch } = await import('/engine/scene_fetch.js')
       let transfers = 0
+      let finishBody
+      const stream = createSceneFetch(async (_request, {signal}) => new Response(new ReadableStream({
+        start(controller) {
+          finishBody = () => { controller.enqueue(new TextEncoder().encode('body')); controller.close() }
+          signal.addEventListener('abort', () => controller.error(signal.reason))
+        }
+      })), false, 20)
+      const response = await stream.fetch('/stream')
       const client = createSceneFetch((_request, {signal}) => new Promise((resolve, reject) => {
         transfers++
         signal.addEventListener('abort', () => setTimeout(() => reject(signal.reason), 50))
       }), false, 20)
       const batch = Array.from({length:6}, () => client.fetch('/slow').catch(e => e.name))
-      const queued = await batch[5]
-      return { queued, outcomes: await Promise.all(batch), transfers }
+      // Scene code shares the worker's numeric timer IDs.
+      for (let id = 1; id <= 100_000; id++) clearTimeout(id)
+      const outcomes = await Promise.race([
+        Promise.all(batch),
+        new Promise(resolve => setTimeout(() => resolve('deadline was cleared'), 2_000))
+      ])
+      finishBody()
+      return { outcomes, transfers, streamed:await response.text() }
     })
-    assert.deepEqual(deadlines, { queued:'TimeoutError', outcomes:Array(6).fill('TimeoutError'), transfers:5 })
+    assert.deepEqual(deadlines, { outcomes:Array(6).fill('TimeoutError'), transfers:5, streamed:'body' })
   })
 
   await t.test('cancelling queued uploads and closing active transfers use captured browser operations', async () => {
