@@ -505,3 +505,10 @@ the insert retains attribution and reaches the source handler's error boundary.
 Configured timing/IP Slack calls occur after insertion and the hundred-invite
 alert after the grant and accepted notification; no external await holds an SQL
 transaction. Same-referrer retries exit before recent reads or alert delivery.
+
+Registry cache keys retain the requested spelling, including case; batch key
+uniqueness is case-sensitive. Only the physical content-pointer lookup normalizes
+case and resolves one document per normalized pointer. Batch cache-hit matching
+compares the normalized public user ID to each requested key lowercased, while
+single-read errors retain the original requested key. This keeps mixed-case cache
+facts separate from authenticated wallet normalization and from the public ID.

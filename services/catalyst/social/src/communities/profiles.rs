@@ -127,11 +127,11 @@ pub(crate) fn first_seen<K: Eq + std::hash::Hash + Clone>(
     wanted
 }
 
-fn dedup_lowercased(addresses: &[String]) -> Vec<String> {
-    first_seen(addresses.iter().map(|a| a.to_lowercase()))
+fn dedup_requested(addresses: &[String]) -> Vec<String> {
+    first_seen(addresses.iter().cloned())
 }
 
-/// The key comparisons [`first_seen`] makes deduplicating `addresses`, lowercased:
+/// The key comparisons [`first_seen`] makes deduplicating exact requested keys:
 /// one per repeat (and the odd hash collision) for a set probe, the kept count per
 /// key for a scan.
 #[cfg(test)]
@@ -154,8 +154,8 @@ pub(crate) fn first_seen_comparisons(addresses: &[String]) -> usize {
         }
     }
     COMPARED.set(0);
-    let kept = first_seen(addresses.iter().map(|a| Counted(a.to_lowercase())));
-    assert_eq!(kept.len(), dedup_lowercased(addresses).len());
+    let kept = first_seen(addresses.iter().map(|a| Counted(a.clone())));
+    assert_eq!(kept.len(), dedup_requested(addresses).len());
     COMPARED.get()
 }
 
@@ -308,10 +308,27 @@ impl RegistryReader {
         let Some(pool) = &self.pool else {
             return Ok(Vec::new());
         };
-        sqlx::query_as(PROFILE_SQL).bind(keys).fetch_all(pool).await
+        // Keep the source's requested cache key separate from the local
+        // content pointer, whose storage is case-normalized. The local profile
+        // registry resolves one document per normalized pointer.
+        let mut actors = HashMap::new();
+        for key in keys {
+            actors
+                .entry(key.to_lowercase())
+                .or_insert_with(|| key.clone());
+        }
+        let pointers = first_seen(keys.iter().map(|key| key.to_lowercase()));
+        let rows: Vec<(String, Option<serde_json::Value>)> = sqlx::query_as(PROFILE_SQL)
+            .bind(&pointers)
+            .fetch_all(pool)
+            .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(pointer, avatar)| (actors.remove(&pointer).expect("requested pointer"), avatar))
+            .collect())
     }
     pub async fn single(&self, address: &str) -> Result<RegistryProfile, RegistryError> {
-        let key = address.to_lowercase();
+        let key = address.to_string();
         if let Some(profile) = self.cached(std::slice::from_ref(&key)).await?.remove(&key) {
             return Ok(profile);
         }
@@ -337,7 +354,7 @@ impl RegistryReader {
         if addresses.is_empty() {
             return Ok(Vec::new());
         }
-        let wanted = dedup_lowercased(addresses);
+        let wanted = dedup_requested(addresses);
         let mut cached = self.cached(&wanted).await?;
         let mut profiles = wanted
             .iter()
@@ -349,7 +366,7 @@ impl RegistryReader {
             .collect::<HashSet<_>>();
         let missing = wanted
             .into_iter()
-            .filter(|key| !identities.contains(key))
+            .filter(|key| !identities.contains(&key.to_lowercase()))
             .collect::<Vec<_>>();
         if !missing.is_empty() {
             let mut to_cache = Vec::new();
@@ -812,15 +829,15 @@ mod tests {
     }
 
     #[test]
-    fn dedup_lowercased_preserves_first_seen_order() {
+    fn dedup_requested_preserves_first_seen_order() {
         let mixed: Vec<String> = ["0xAbC", "0xabc", "0xDEF", "0xdef", "0xABC", "0xghi"]
             .iter()
             .map(|s| s.to_string())
             .collect();
-        assert_eq!(dedup_lowercased(&mixed), vec!["0xabc", "0xdef", "0xghi"]);
-        assert!(dedup_lowercased(&[]).is_empty());
+        assert_eq!(dedup_requested(&mixed), mixed);
+        assert!(dedup_requested(&[]).is_empty());
         let dups: Vec<String> = vec!["0xZ".to_string(); 8];
-        assert_eq!(dedup_lowercased(&dups), vec!["0xz"]);
+        assert_eq!(dedup_requested(&dups), vec!["0xZ"]);
     }
 
     #[test]
@@ -835,7 +852,7 @@ mod tests {
                 }
             })
             .collect();
-        assert_eq!(dedup_lowercased(&addrs).len(), 5_000);
+        assert_eq!(dedup_requested(&addrs).len(), 5_000);
         let compared = first_seen_comparisons(&addrs);
         assert!(
             compared < 2 * addrs.len(),
@@ -910,5 +927,88 @@ mod tests {
             assert!(m.contains_key(key), "post missing {key}");
         }
         assert_eq!(m["authorName"], "0xabc");
+    }
+    #[tokio::test]
+    async fn registry_requested_key_case_matches_executed_source_adapter() {
+        let Some(pool) = crate::db::scratch::pool(3).await else {
+            return;
+        };
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/source-contracts/profile-keys.json"
+    )))
+    .unwrap();
+        let pointer = fixture["pointer"].as_str().unwrap();
+        let entity = format!("bafkreiprofilecase{}", uuid::Uuid::new_v4().simple());
+        sqlx::query("INSERT INTO content.deployments(deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES($1,'v3','profile',$2,$3,to_timestamp(1451606400),ARRAY[$1],now(),'[]'::json)")
+            .bind(pointer).bind(&entity).bind(serde_json::json!({"v":fixture["document"]})).execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO content.active_pointers(pointer,entity_id,entity_type) VALUES($1,$2,'profile')")
+            .bind(pointer).bind(&entity).execute(&pool).await.unwrap();
+        let a = RegistryReader::new(Some(pool.clone()));
+        let b = RegistryReader::new(Some(pool.clone()));
+        let present = |profile: RegistryProfile| serde_json::json!({"name":profile.name,"userId":profile.address,"hasClaimedName":profile.has_claimed_name,"profilePictureUrl":profile.profile_picture_url});
+        for (index, step) in fixture["steps"].as_array().unwrap().iter().enumerate() {
+            let addresses = step["addresses"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect::<Vec<_>>();
+            let reader = if index % 2 == 0 { &a } else { &b };
+            match step["operation"].as_str().unwrap() {
+                "single" => match reader.single(&addresses[0]).await {
+                    Ok(profile) => {
+                        assert_eq!(serde_json::json!([present(profile)]), step["profiles"])
+                    }
+                    Err(error) => assert_eq!(error.to_string(), step["error"].as_str().unwrap()),
+                },
+                "batch" => assert_eq!(
+                    serde_json::to_value(
+                        reader
+                            .batch(&addresses)
+                            .await
+                            .unwrap()
+                            .into_iter()
+                            .map(|(_, p)| present(p))
+                            .collect::<Vec<_>>()
+                    )
+                    .unwrap(),
+                    step["profiles"]
+                ),
+                "expire" => {
+                    sqlx::query("DELETE FROM social.registry_profile_cache WHERE profile_key=$1")
+                        .bind(&addresses[0])
+                        .execute(&pool)
+                        .await
+                        .unwrap();
+                }
+                other => panic!("unknown source operation {other}"),
+            }
+            let keys: Vec<String> = sqlx::query_scalar("SELECT profile_key FROM social.registry_profile_cache WHERE lower(profile_key)=$1 ORDER BY profile_key")
+                .bind(pointer).fetch_all(&pool).await.unwrap();
+            let source = step["cache_keys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|key| {
+                    key.as_str()
+                        .unwrap()
+                        .strip_prefix("catalyst:minimal:profile:")
+                        .unwrap()
+                        .to_string()
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(keys, source, "step {index}");
+        }
+        sqlx::query("DELETE FROM content.active_pointers WHERE entity_id=$1")
+            .bind(&entity)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM content.deployments WHERE entity_id=$1")
+            .bind(&entity)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 }
