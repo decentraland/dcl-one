@@ -234,3 +234,79 @@ async fn stopped_writer_bounds_pending_queue_and_retires_socket() {
     assert!(two.await.unwrap().is_err());
     assert_eq!(close.frame(), Some(RPC_TRANSPORT_CLOSED));
 }
+
+#[test]
+fn source_declared_metric_kinds_match_actual_queue_registration() {
+    #[derive(Default)]
+    struct Kinds(std::sync::Mutex<std::collections::HashMap<String, &'static str>>);
+    impl metrics::Recorder for Kinds {
+        fn describe_counter(
+            &self,
+            _: metrics::KeyName,
+            _: Option<metrics::Unit>,
+            _: metrics::SharedString,
+        ) {
+        }
+        fn describe_gauge(
+            &self,
+            _: metrics::KeyName,
+            _: Option<metrics::Unit>,
+            _: metrics::SharedString,
+        ) {
+        }
+        fn describe_histogram(
+            &self,
+            _: metrics::KeyName,
+            _: Option<metrics::Unit>,
+            _: metrics::SharedString,
+        ) {
+        }
+        fn register_counter(
+            &self,
+            key: &metrics::Key,
+            _: &metrics::Metadata<'_>,
+        ) -> metrics::Counter {
+            self.0.lock().unwrap().insert(key.name().into(), "counter");
+            metrics::Counter::noop()
+        }
+        fn register_gauge(&self, key: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Gauge {
+            self.0.lock().unwrap().insert(key.name().into(), "gauge");
+            metrics::Gauge::noop()
+        }
+        fn register_histogram(
+            &self,
+            key: &metrics::Key,
+            _: &metrics::Metadata<'_>,
+        ) -> metrics::Histogram {
+            self.0
+                .lock()
+                .unwrap()
+                .insert(key.name().into(), "histogram");
+            metrics::Histogram::noop()
+        }
+    }
+    let fixture: Value = serde_json::from_str(include_str!(
+        "../../../../../tests/fixtures/conformance/social/ws-transport-source-cases.json"
+    ))
+    .unwrap();
+    let recorder = Kinds::default();
+    metrics::with_local_recorder(&recorder, || {
+        let mut queue = Queue::new(OrdinaryQueueConfig::default(), 131072);
+        let _completion = queue.enqueue(vec![1], true);
+        queue.process(Instant::now(), |_| SendOutcome::Code(1), || 4096);
+    });
+    let actual = recorder.0.lock().unwrap();
+    for name in [
+        "ws_messages_sent",
+        "ws_message_size_bytes",
+        "ws_queue_vs_backpressure_ratio",
+    ] {
+        assert_eq!(
+            actual.get(name).copied().unwrap(),
+            fixture["metric_declarations"][name]["type"]
+                .as_str()
+                .unwrap(),
+            "{name}"
+        );
+    }
+}

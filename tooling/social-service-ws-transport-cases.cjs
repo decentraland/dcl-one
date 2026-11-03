@@ -85,6 +85,7 @@ async function main(){
   cases.push(await capture('zero-backpressure-target-rejects',{...config,WS_MAX_BACKPRESSURE:'0'},[],[1]))
   cases.push(await capture('nonfinite-capacity-target-rejects',{...config,WS_TRANSPORT_MAX_QUEUE_SIZE:'Infinity',WS_TRANSPORT_MIN_QUEUE_SIZE:'Infinity'},[],[1]))
   fs.writeFileSync(process.argv[3],JSON.stringify({baseline:{repository:'decentraland/social-service-ea',revision},
+    metric_declarations:Object.fromEntries(['ws_messages_sent','ws_backpressure_events','ws_unexpected_send_result_events','ws_message_size_bytes','ws_queue_vs_backpressure_ratio','ws_drain_events'].map(name=>[name,load('metrics.ts').metricDeclarations[name]])),
     runtime:{node:process.version},scope:'Executed UWebSocketTransport with controlled send outcomes, mitt callbacks and virtual timers. RPC error-close and ws-handler close listeners are represented by their synchronous teardown contract. Does not exercise kernel or native socket buffering.',cases},null,2)+'\n')
   process.stdout.write(`Captured ${cases.length} upstream ordinary transport traces\n`)
 }

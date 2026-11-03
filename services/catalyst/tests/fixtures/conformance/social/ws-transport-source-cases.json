@@ -3,6 +3,49 @@
     "repository": "decentraland/social-service-ea",
     "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
   },
+  "metric_declarations": {
+    "ws_messages_sent": {
+      "type": "counter",
+      "help": "Number of outbound WebSocket messages accepted by the socket (sent or buffered)"
+    },
+    "ws_backpressure_events": {
+      "type": "counter",
+      "help": "Number of WebSocket messages that encountered backpressure or were dropped",
+      "labelNames": [
+        "result"
+      ]
+    },
+    "ws_unexpected_send_result_events": {
+      "type": "counter",
+      "help": "Number of unexpected send result events"
+    },
+    "ws_message_size_bytes": {
+      "type": "histogram",
+      "help": "Size of WebSocket messages in bytes",
+      "labelNames": [
+        "result"
+      ],
+      "buckets": [
+        64,
+        128,
+        256,
+        512,
+        1024,
+        2048,
+        4096,
+        8192,
+        16384
+      ]
+    },
+    "ws_queue_vs_backpressure_ratio": {
+      "type": "gauge",
+      "help": "Ratio of message queue size to uWebSocket buffered amount"
+    },
+    "ws_drain_events": {
+      "type": "counter",
+      "help": "Number of WebSocket drain events"
+    }
+  },
   "runtime": {
     "node": "v26.12.0"
   },

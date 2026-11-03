@@ -172,7 +172,7 @@ impl Queue {
             if matches!(outcome, SendOutcome::Code(_)) {
                 let pending_bytes = buffered();
                 if pending_bytes > 0 {
-                    metrics::histogram!("ws_queue_vs_backpressure_ratio").record(
+                    metrics::gauge!("ws_queue_vs_backpressure_ratio").set(
                         queued as f64 / (pending_bytes as f64 / self.config.estimated_message_size),
                     );
                 }
