@@ -946,44 +946,93 @@ mod tests {
 
     #[tokio::test]
     async fn referral_migration_preserves_populated_ids_and_is_repeatable() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
+        let Some(pool) = crate::db::scratch::pool(3).await else {
             return;
         };
-        let mut tx = pool.begin().await.unwrap();
         let schema = format!("referral_upgrade_{}", uuid::Uuid::new_v4().simple());
-        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}; CREATE TABLE {schema}.referral_progress (id uuid NOT NULL DEFAULT gen_random_uuid(),invited_user text PRIMARY KEY,referrer text NOT NULL,status text NOT NULL,created_at timestamp NOT NULL DEFAULT timezone('UTC',now()),updated_at timestamp NOT NULL DEFAULT timezone('UTC',now())); INSERT INTO {schema}.referral_progress(invited_user,referrer,status) VALUES('invited','referrer','tier_granted'),('pending','referrer','pending')"))).execute(&mut *tx).await.unwrap();
+        let older = format!(
+            "CREATE SCHEMA {schema}; CREATE TABLE {schema}.referral_progress (id uuid NOT NULL DEFAULT gen_random_uuid(),invited_user text PRIMARY KEY,referrer text NOT NULL,status text NOT NULL,created_at timestamp NOT NULL DEFAULT timezone('UTC',now()),updated_at timestamp NOT NULL DEFAULT timezone('UTC',now())); INSERT INTO {schema}.referral_progress(invited_user,referrer,status) VALUES('invited','referrer','tier_granted'),('pending','referrer','pending')"
+        );
+        sqlx::raw_sql(sqlx::AssertSqlSafe(older))
+            .execute(&pool)
+            .await
+            .unwrap();
         let ids: Vec<uuid::Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT id FROM {schema}.referral_progress ORDER BY invited_user"
         )))
-        .fetch_all(&mut *tx)
+        .fetch_all(&pool)
         .await
         .unwrap();
-        let migration = include_str!(concat!(
-            env!("DCL_ONE_ROOT"),
-            "/schemas/migrations/0021_social_referral_lifecycle.sql"
-        ))
+        let source = include_str!(concat!(env!("DCL_ONE_ROOT"), "/schemas/40_social.sql"));
+        let canonical = source
+            .split("-- ── referral ─")
+            .nth(1)
+            .unwrap()
+            .split("-- ── media:")
+            .next()
+            .unwrap();
+        let canonical = format!(
+            "CREATE SCHEMA {schema};\nCREATE TABLE social.referral_progress {}",
+            canonical
+                .split("CREATE TABLE social.referral_progress")
+                .nth(1)
+                .unwrap()
+        )
         .replace("social.", &format!("{schema}."));
-        for _ in 0..2 {
-            sqlx::raw_sql(sqlx::AssertSqlSafe(migration.clone()))
-                .execute(&mut *tx)
+        let step_name = format!("0021_referral_test_{}", uuid::Uuid::new_v4().simple());
+        let steps = format!(
+            "-- ════ step {step_name} ════\n{}",
+            include_str!(concat!(
+                env!("DCL_ONE_ROOT"),
+                "/schemas/migrations/0021_social_referral_lifecycle.sql"
+            ))
+        )
+        .replace("social.", &format!("{schema}."));
+        let done = crate::db::schema_migrate::migrate(&pool, &canonical, &steps)
+            .await
+            .unwrap();
+        assert_eq!(done.steps, vec![step_name.clone()]);
+        assert!(
+            !done.created.is_empty(),
+            "new reward table and indexes come from canonical bootstrap pass"
+        );
+        assert!(
+            crate::db::schema_migrate::migrate(&pool, &canonical, &steps)
                 .await
-                .unwrap();
-        }
+                .unwrap()
+                .is_empty()
+        );
+        let count: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM meta.schema_steps WHERE step=$1 AND NOT created_fresh",
+        )
+        .bind(&step_name)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count, 1);
         let actual: Vec<uuid::Uuid> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT id FROM {schema}.referral_progress ORDER BY invited_user"
         )))
-        .fetch_all(&mut *tx)
+        .fetch_all(&pool)
         .await
         .unwrap();
         assert_eq!(actual, ids);
         let granted: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT count(*) FROM {schema}.referral_progress WHERE tier_granted"
         )))
-        .fetch_one(&mut *tx)
+        .fetch_one(&pool)
         .await
         .unwrap();
         assert_eq!(granted, 1);
-        tx.rollback().await.unwrap();
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM meta.schema_steps WHERE step=$1")
+            .bind(step_name)
+            .execute(&pool)
+            .await
+            .unwrap();
     }
 
     #[tokio::test]

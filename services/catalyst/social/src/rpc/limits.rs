@@ -718,20 +718,76 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn canonical_limiter_objects_upgrade_a_populated_database_without_a_step() {
+        let Some(pool) = crate::db::scratch::pool(3).await else {
+            return;
+        };
+        let schema = format!("limiter_upgrade_{}", uuid::Uuid::new_v4().simple());
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("CREATE SCHEMA {schema}; CREATE TABLE {schema}.kept(id integer PRIMARY KEY); INSERT INTO {schema}.kept VALUES(42)"))).execute(&pool).await.unwrap();
+        let source = include_str!(concat!(env!("DCL_ONE_ROOT"), "/schemas/40_social.sql"));
+        let tail = &source[source
+            .find("CREATE TABLE social.friendship_mutation_limits")
+            .unwrap()..];
+        let end = tail.find("WHERE expires_at_ms IS NOT NULL;").unwrap()
+            + "WHERE expires_at_ms IS NOT NULL;".len();
+        let canonical = format!(
+            "CREATE SCHEMA {schema};\n{}",
+            tail[..end].replace("social.", &format!("{schema}."))
+        );
+        let first = crate::db::schema_migrate::migrate(&pool, &canonical, "")
+            .await
+            .unwrap();
+        assert_eq!(first.created.len(), 2);
+        assert!(first.steps.is_empty());
+        sqlx::query(sqlx::AssertSqlSafe(format!("INSERT INTO {schema}.friendship_mutation_limits(key,attempts,expires_at_ms) VALUES('existing-counter',7,9999999999999)"))).execute(&pool).await.unwrap();
+        assert!(
+            crate::db::schema_migrate::migrate(&pool, &canonical, "")
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let attempts: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT attempts FROM {schema}.friendship_mutation_limits WHERE key='existing-counter'"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(attempts, 7);
+        let kept: i32 =
+            sqlx::query_scalar(sqlx::AssertSqlSafe(format!("SELECT id FROM {schema}.kept")))
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(kept, 42);
+        sqlx::raw_sql(sqlx::AssertSqlSafe(format!("DROP SCHEMA {schema} CASCADE")))
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
     async fn migration_preserves_existing_counters_and_cleanup_is_bounded() {
         let Some((l, prefix)) = mutation_limiter().await else {
             return;
         };
         assert!(l.allow(&prefix, "target", PairScope::Symmetric).await);
-        for _ in 0..2 {
-            sqlx::raw_sql(include_str!(concat!(
-                env!("DCL_ONE_ROOT"),
-                "/schemas/migrations/0023_social_friendship_limits.sql"
-            )))
-            .execute(&l.pool)
+        // New limiter objects are installed by the canonical bootstrap pass,
+        // including on an existing stamped database, without a DDL step.
+        let canonical = include_str!(concat!(env!("DCL_ONE_ROOT"), "/schemas/40_social.sql"));
+        let start = canonical
+            .find("CREATE TABLE social.friendship_mutation_limits")
+            .unwrap();
+        let tail = &canonical[start..];
+        let end = tail.find("WHERE expires_at_ms IS NOT NULL;").unwrap()
+            + "WHERE expires_at_ms IS NOT NULL;".len();
+        let canonical = &tail[..end];
+        let first = crate::db::schema_migrate::migrate(&l.pool, canonical, "")
             .await
             .unwrap();
-        }
+        assert!(
+            first.is_empty(),
+            "the fresh bootstrap already carries these objects"
+        );
         let attempts: i64 = sqlx::query_scalar(
             "SELECT attempts FROM social.friendship_mutation_limits WHERE key=$1",
         )
