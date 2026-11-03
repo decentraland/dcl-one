@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { redirect, useNavigate } from "react-router";
+import { redirect, useNavigate, useRevalidator } from "react-router";
 
 import type { PlaceViewer } from "@ui/data/catalyst/places";
 import PlaceDetail from "@ui/explorer/pages/PlaceDetail";
@@ -15,7 +15,7 @@ import { loadPlaceViewer, savePlaceFavorite, savePlaceLike } from "@/data/lib/ca
 import type { AgentMarkdownHandle } from "@/data/lib/agent/markdown";
 import { pageLoaderWith } from "@/core/lib/telemetry/page-loader";
 import WorldScenes from "@/features/explorer/WorldScenes";
-import { sceneTravelHref } from "@/data/lib/catalyst/places/world-scenes";
+import { loadPlaceTravel } from "@/data/lib/catalyst/places/world-scenes";
 import { track } from "@/core/lib/telemetry/track";
 
 import type { Route } from "./+types/places_.$id";
@@ -51,8 +51,9 @@ export async function loader({ request, params }: Route.LoaderArgs) {
     return redirect(`/places/${encodeURIComponent(place.id)}${search}`, 301);
   }
 
+  const travel = place ? await loadPlaceTravel(place, { signal: request.signal }) : null;
   return wrap(
-    { id, place, sid, unavailable },
+    { id, place, sid, unavailable, travel },
     { status: place ? 200 : unavailable ? 503 : 404 },
   );
 }
@@ -79,9 +80,10 @@ function usePlaceViewer(signer: AuthIdentity | null, placeId: string | undefined
 }
 
 export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
-  const { place, sid, unavailable } = loaderData;
+  const { place, sid, unavailable, travel } = loaderData;
   const { identity, isConnected } = useAuth();
   const navigate = useNavigate();
+  const revalidator = useRevalidator();
   const signer = isConnected ? identity : null;
   const viewer = usePlaceViewer(signer, place?.id);
 
@@ -127,9 +129,21 @@ export default function PlaceDetailRoute({ loaderData }: Route.ComponentProps) {
             : undefined
         }
         onClose={() => navigate("/places")}
-        jumpHref={place ? sceneTravelHref(place.world ? place.world_name : null, place.base_position) : undefined}
-        onJumpIn={() => { if (place) track("jump_in_started", { place_id: place.id }, { sid, story: "jump-in" }); }}
-        detailSlot={place?.world && place.world_name ? <WorldScenes worldName={place.world_name} selectedId={place.id} /> : undefined}
+        jumpHref={travel?.jumpHref}
+        onJumpIn={() => {
+          if (!place) return;
+          const context = { sid, story: "jump-in" as const };
+          track("jump_in_started", { place_id: place.id }, context);
+          if (travel?.jumpHref) track("jump_in_completed", { place_id: place.id, launch_url: travel.jumpHref }, context);
+          else {
+            track("jump_in_failed", { place_id: place.id, error: travel?.launchError ?? "Travel is unavailable." }, context);
+            void revalidator.revalidate();
+          }
+        }}
+        detailSlot={<>
+          {travel?.launchError && <div role="alert"><p>{travel.launchError}</p><button type="button" disabled={revalidator.state !== "idle"} onClick={() => { void revalidator.revalidate(); }}>Retry travel</button></div>}
+          {place?.world && place.world_name && <WorldScenes worldName={place.world_name} selectedId={place.id} playBase={travel?.playBase} />}
+        </>}
         notFound={!place}
         viewer={viewer}
         onLike={(id, like) => (signer ? savePlaceLike(signer, id, like) : signInFirst())}

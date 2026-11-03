@@ -3,13 +3,13 @@ import { Link } from "react-router";
 import { loadWorldScenes, sceneTravelHref, type WorldScene } from "@/data/lib/catalyst/places/world-scenes";
 import styles from "./WorldScenes.module.css";
 
-type WorldScenesProps = { worldName: string; selectedId: string };
+type WorldScenesProps = { worldName: string; selectedId: string; playBase?: string };
 
 export default function WorldScenes(props: WorldScenesProps) {
   return <WorldScenePages key={props.worldName.toLowerCase()} {...props} />;
 }
 
-function WorldScenePages({ worldName, selectedId }: WorldScenesProps) {
+function WorldScenePages({ worldName, selectedId, playBase }: WorldScenesProps) {
   const [page, setPage] = useState(0);
   const [version, setVersion] = useState(0);
   const [read, setRead] = useState<{ key: string; scenes: WorldScene[]; total: number; error?: string } | null>(null);
@@ -29,7 +29,7 @@ function WorldScenePages({ worldName, selectedId }: WorldScenesProps) {
       <ul className={styles.list}>{current.scenes.map((scene) => <li className={styles.scene} key={scene.id}>
         <Link className={styles.detailLink} to={`/places/${encodeURIComponent(scene.id)}`} aria-current={selectedId === scene.id ? "page" : undefined}>{scene.title || scene.base_position}</Link>
         <span>{scene.base_position}</span>
-        <a className={styles.travelLink} href={sceneTravelHref(worldName, scene.base_position)}>Visit {scene.title || scene.base_position}</a>
+        <a className={styles.travelLink} href={sceneTravelHref(worldName, scene.base_position, playBase)}>Visit {scene.title || scene.base_position}</a>
       </li>)}</ul>
       {current.scenes.length === 0 && <p>No published scenes are listed.</p>}
       {(page > 0 || (page + 1) * 20 < current.total) && <nav className={styles.pager} aria-label="World scene pages">
