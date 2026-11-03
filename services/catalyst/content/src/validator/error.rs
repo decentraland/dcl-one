@@ -132,12 +132,6 @@ pub enum ValidatorError {
     #[error("blockchain query failed: {0}")]
     BlockchainQuery(String),
 
-    #[error("subgraph query failed: {0}")]
-    SubgraphQuery(String),
-
-    #[error("{0}")]
-    Land(#[from] crate::land_authz::Unavailable),
-
     /// The source this check needs is not configured on this node.
     #[error("{0}")]
     Unconfigured(String),

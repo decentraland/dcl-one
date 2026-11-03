@@ -167,7 +167,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 61] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 60] {
         [
             (
                 "CATALYRST_CONTENT_ADMIN_TOKEN",
@@ -324,10 +324,6 @@ impl Config {
             (
                 "THIRD_PARTY_REGISTRY_L2_SUBGRAPH_URL",
                 &mut self.validator.third_party_registry_l2_subgraph_url,
-            ),
-            (
-                "BLOCKS_L2_SUBGRAPH_URL",
-                &mut self.validator.blocks_l2_subgraph_url,
             ),
             ("ONBOARDING_API_KEY", &mut self.node.onboarding_api_key),
             (

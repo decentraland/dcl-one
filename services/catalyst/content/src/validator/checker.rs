@@ -11,8 +11,8 @@ use super::error::{PermissionResult, ValidationResponse, ValidatorError};
 use super::types::*;
 
 /// What the access step reads: [`super::Sources`] is the live implementation
-/// (`chain.rs`: the land_authz index and the marketplace readers where the
-/// old one read the squid); the tests stub it.
+/// (`chain.rs`: the Checker contract and the item contracts at the entity
+/// timestamp's block); the tests stub it.
 #[async_trait]
 pub trait BlockchainChecker: Send + Sync {
     async fn check_land_access(

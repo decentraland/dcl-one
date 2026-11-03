@@ -12,11 +12,11 @@
 //! as `serve` builds it) that is the old `ContentValidator` in full: the
 //! auth chain (the shared EIP-1654 validator for contract wallets), the
 //! per-type rules and size caps, content existence, and the access step per
-//! type, whose LAND leg is `land_authz::can_deploy_batch` (the index once its
-//! fold is published, the marketplace subgraph's owner leg before that,
-//! undecidable when neither can answer). Without it (a deployer built for a
-//! test) the partial checks below run: the chain, the LAND leg of a local
-//! scene and content existence. Peer sync does not use this deployer: it
+//! type, whose LAND leg is the Checker contract's `checkLAND` at the
+//! deploy's block (undecidable when the chain cannot answer). Without it (a
+//! deployer built for a test) the partial checks below run: the chain, the
+//! LAND leg of a local scene over `land_authz::can_deploy_batch` and content
+//! existence. Peer sync does not use this deployer: it
 //! batches through [`super::sync_deployer::LiveSyncDeployer`], which shares
 //! [`lock_deployment_pointers`].
 
@@ -263,11 +263,9 @@ pub struct WriteDeployer {
     /// The shared EIP-1654 validator (`crate::auth::cached_rpc_validator`);
     /// `None` without `ETH_RPC_URL`: a contract-wallet link is undecidable.
     eip1654: Option<Arc<dyn Eip1654Validator>>,
-    /// The LAND rights source of a local scene deploy (`land_authz::can_deploy_batch`:
-    /// the index once its fold is published, the marketplace subgraph's owner
-    /// leg before that; the old `LandOperatorResolver` over the squid index).
-    /// The partial checks' LAND leg (`None` runs none) and the unpublish
-    /// route's parcel check.
+    /// The LAND rights index (`land_authz::can_deploy_batch`): the partial
+    /// checks' LAND leg (`None` runs none) and the unpublish route's parcel
+    /// check.
     land_authz: Option<Arc<LandAuthzState>>,
     /// The full content validator (`super::validator`); when attached it
     /// replaces the partial checks in `validate`.
