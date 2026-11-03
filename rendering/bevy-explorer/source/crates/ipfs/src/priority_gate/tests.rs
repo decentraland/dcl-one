@@ -552,9 +552,8 @@ async fn removing_the_last_reader_wakes_a_queued_attempt_without_a_free_slot() {
     use std::task::Poll;
 
     let gate = PriorityGate::new(0);
-    let registration = DownloadReaders::first(&gate, scene("first"), None);
-    let readers = registration.readers.clone();
-    let mut attempt = Box::pin(readers.acquire());
+    let (registration, mut attempts) = DownloadReaders::first(&gate, scene("first"), None);
+    let mut attempt = Box::pin(attempts.acquire());
     poll_fn(|cx| {
         assert!(attempt.as_mut().poll(cx).is_pending());
         Poll::Ready(())

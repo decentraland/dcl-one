@@ -73,6 +73,12 @@ pub(super) struct DownloadReaders {
     id: u64,
 }
 
+/// The task owns its original place in the queue before its worker is polled.
+pub(super) struct DownloadAttempts {
+    readers: DownloadReaders,
+    first: Option<Arc<Ticket>>,
+}
+
 pub(super) struct Registration {
     pub(super) readers: DownloadReaders,
     owner: Option<String>,
@@ -83,25 +89,35 @@ impl DownloadReaders {
         gate: &Arc<PriorityGate>,
         owner: Option<String>,
         cancel: Option<oneshot::Sender<()>>,
-    ) -> Registration {
+    ) -> (Registration, DownloadAttempts) {
         let mut state = gate.state.lock().unwrap();
         let id = state.next_download;
         state.next_download += 1;
+        let ticket = gate.enqueue(&mut state, [owner.clone()]);
         state.readers.insert(
             id,
             ReaderState {
                 owners: [(owner.clone(), 1)].into_iter().collect(),
-                queued: None,
+                queued: Some(ticket.seq),
                 cancel,
             },
         );
-        Registration {
-            readers: Self {
-                gate: gate.clone(),
-                id,
+        drop(state);
+        gate.grant();
+        let readers = Self {
+            gate: gate.clone(),
+            id,
+        };
+        (
+            Registration {
+                readers: readers.clone(),
+                owner,
             },
-            owner,
-        }
+            DownloadAttempts {
+                readers,
+                first: Some(ticket),
+            },
+        )
     }
 
     pub(super) fn try_register(&self, owner: Option<String>) -> Option<Registration> {
@@ -120,20 +136,33 @@ impl DownloadReaders {
         })
     }
 
-    pub(super) async fn acquire(&self) -> Result<Permit, GateClosed> {
-        let ticket = {
-            let mut state = self.gate.state.lock().unwrap();
-            let seq = state.next_seq;
-            let readers = state.readers.get_mut(&self.id).ok_or(GateClosed)?;
-            readers.queued = Some(seq);
-            let owners: Vec<_> = readers.owners.keys().cloned().collect();
-            self.gate.enqueue(&mut state, owners)
-        };
-        self.gate.grant();
-        let permit = self.gate.acquire(ticket).await?;
+    fn retry_ticket(&self) -> Result<Arc<Ticket>, GateClosed> {
         let mut state = self.gate.state.lock().unwrap();
+        let seq = state.next_seq;
+        let readers = state.readers.get_mut(&self.id).ok_or(GateClosed)?;
+        readers.queued = Some(seq);
+        let owners: Vec<_> = readers.owners.keys().cloned().collect();
+        let ticket = self.gate.enqueue(&mut state, owners);
+        drop(state);
+        self.gate.grant();
+        Ok(ticket)
+    }
+}
+
+impl DownloadAttempts {
+    pub(super) async fn acquire(&mut self) -> Result<Permit, GateClosed> {
+        let ticket = match self.first.take() {
+            Some(ticket) => ticket,
+            None => self.readers.retry_ticket()?,
+        };
+        let permit = self.readers.gate.acquire(ticket).await?;
+        let mut state = self.readers.gate.state.lock().unwrap();
         // The last reader could have left between the grant and this task waking.
-        state.readers.get_mut(&self.id).ok_or(GateClosed)?.queued = None;
+        state
+            .readers
+            .get_mut(&self.readers.id)
+            .ok_or(GateClosed)?
+            .queued = None;
         Ok(permit)
     }
 }

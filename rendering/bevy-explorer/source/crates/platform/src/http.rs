@@ -10,9 +10,7 @@ struct Elapsed;
 
 /// Race `fut` against a `dur` timer, returning `Err(Elapsed)` if the timer wins.
 ///
-/// Cross-target replacement for `tokio::time::timeout` (which isn't available here
-/// â€” tokio is built without the `time` feature, and it wouldn't work on wasm
-/// anyway). `async-std` backs the timer natively and with `setTimeout` on wasm.
+/// The timer uses `async-std` on native and `setTimeout` on WASM.
 async fn with_timeout<F: Future>(dur: Duration, fut: F) -> Result<F::Output, Elapsed> {
     let timer = async_std::task::sleep(dur);
     pin_mut!(fut, timer);
@@ -28,7 +26,7 @@ pub struct FetchedResponse {
     pub body: Vec<u8>,
 }
 
-/// Why a [`fetch`] failed. `E` is the error type of the supplied send future â€”
+/// Why a [`fetch`] failed. `E` is the error type of the supplied send future,
 /// `reqwest::Error` for a bare `RequestBuilder::send`, or e.g. `anyhow::Error` when
 /// the send is routed through a wrapper.
 pub enum FetchError<E> {
@@ -38,7 +36,7 @@ pub enum FetchError<E> {
     Send(E),
     /// The server returned a non-success status; the body is not read.
     Status(reqwest::StatusCode, reqwest::header::HeaderMap),
-    /// The body transfer stalled â€” no chunk arrived within the idle window.
+    /// The body transfer stalled because no chunk arrived within the idle window.
     Stalled,
     /// The body stream errored mid-transfer.
     Body(reqwest::Error),
@@ -47,39 +45,9 @@ pub enum FetchError<E> {
 /// A grant issued by the scheduler that admitted this individual attempt.
 pub trait HttpAttemptPermit {}
 
-/// The grant travels with the response until its consumer finishes or drops it.
-pub struct AdmittedResponse<P> {
-    response: reqwest::Response,
-    _permit: P,
-}
-
-impl<P> AdmittedResponse<P> {
-    pub fn status(&self) -> reqwest::StatusCode {
-        self.response.status()
-    }
-
-    pub async fn text(self) -> Result<String, reqwest::Error> {
-        self.response.text().await
-    }
-}
-
-pub async fn send_with_permit<
-    P: HttpAttemptPermit,
-    E,
-    F: Future<Output = Result<reqwest::Response, E>>,
->(
-    permit: P,
-    send: impl FnOnce() -> F,
-) -> Result<AdmittedResponse<P>, E> {
-    Ok(AdmittedResponse {
-        response: send().await?,
-        _permit: permit,
-    })
-}
-
 /// Buffer an already-admitted attempt and count each chunk while the permit is held.
 pub async fn fetch_with_permit<P, E, F>(
-    permit: P,
+    _permit: P,
     send: impl FnOnce() -> F,
     headers_timeout: Duration,
     idle_timeout: Duration,
@@ -89,11 +57,7 @@ where
     P: HttpAttemptPermit,
     F: Future<Output = Result<reqwest::Response, E>>,
 {
-    let admitted = match with_timeout(headers_timeout, send_with_permit(permit, send)).await {
-        Ok(result) => result.map_err(FetchError::Send)?,
-        Err(Elapsed) => return Err(FetchError::Headers),
-    };
-    read_response(admitted.response, idle_timeout, on_chunk).await
+    fetch_observed(send(), headers_timeout, idle_timeout, on_chunk).await
 }
 
 /// Fetch with separate timeouts for headers and inactivity between body chunks.
@@ -102,18 +66,19 @@ pub async fn fetch<E>(
     headers_timeout: Duration,
     idle_timeout: Duration,
 ) -> Result<FetchedResponse, FetchError<E>> {
+    fetch_observed(send, headers_timeout, idle_timeout, |_| {}).await
+}
+
+async fn fetch_observed<E>(
+    send: impl Future<Output = Result<reqwest::Response, E>>,
+    headers_timeout: Duration,
+    idle_timeout: Duration,
+    on_chunk: impl Fn(usize),
+) -> Result<FetchedResponse, FetchError<E>> {
     let response = match with_timeout(headers_timeout, send).await {
         Ok(result) => result.map_err(FetchError::Send)?,
         Err(Elapsed) => return Err(FetchError::Headers),
     };
-    read_response(response, idle_timeout, |_| {}).await
-}
-
-async fn read_response<E>(
-    response: reqwest::Response,
-    idle_timeout: Duration,
-    on_chunk: impl Fn(usize),
-) -> Result<FetchedResponse, FetchError<E>> {
     if !response.status().is_success() {
         return Err(FetchError::Status(
             response.status(),
@@ -177,39 +142,44 @@ mod admission_tests {
         let request =
             reqwest::Client::new().get(format!("http://{}", listener.local_addr().unwrap()));
         let (finish, resume) = mpsc::channel();
-        let headers = format!("HTTP/1.1 {status}\r\nContent-Length: 4\r\n\r\n");
+        let headers = format!("HTTP/1.1 {status}\r\nContent-Length: 4\r\n\r\nb");
         std::thread::spawn(move || {
             let (mut socket, _) = listener.accept().unwrap();
             let mut request = [0; 2048];
             let _ = socket.read(&mut request).unwrap();
             socket.write_all(headers.as_bytes()).unwrap();
             if resume.recv().is_ok() {
-                let _ = socket.write_all(b"body");
+                let _ = socket.write_all(b"ody");
             }
         });
         (request, finish)
     }
 
     #[test]
-    fn external_grant_outlives_headers_and_error_body_reads() {
+    fn grant_is_held_through_body_read_and_released_on_cancellation() {
         async_std::task::block_on(async_compat::Compat::new(async {
-            for discard in [false, true] {
+            let limit = Duration::from_secs(5);
+            for cancel in [false, true] {
                 let released = Cell::new(false);
-                let (request, finish) = paused_body("429 Too Many Requests");
-                let response = send_with_permit(Grant(&released), || request.send())
-                    .await
-                    .unwrap();
-                assert_eq!(response.status().as_u16(), 429);
+                let (request, finish) = paused_body("200 OK");
+                let (chunks, first_chunk) = async_std::channel::bounded(1);
+                let mut fetch = Box::pin(fetch_with_permit(
+                    Grant(&released),
+                    || request.send(),
+                    limit,
+                    limit,
+                    |_| {
+                        let _ = chunks.try_send(());
+                    },
+                ));
+                let ready = select(Box::pin(first_chunk.recv()), &mut fetch).await;
+                assert!(matches!(ready, Either::Left((Ok(()), _))));
                 assert!(!released.get());
-                if discard {
-                    drop(response);
-                    drop(finish);
+                if cancel {
+                    drop(fetch);
                 } else {
-                    let mut read = Box::pin(response.text());
-                    assert!(futures_util::poll!(&mut read).is_pending());
-                    assert!(!released.get());
                     finish.send(()).unwrap();
-                    assert_eq!(read.await.unwrap(), "body");
+                    assert_eq!(fetch.await.ok().unwrap().body, b"body");
                 }
                 assert!(released.get());
             }
@@ -217,38 +187,37 @@ mod admission_tests {
     }
 
     #[test]
-    fn cancellation_before_and_after_headers_drops_the_grant() {
-        async_std::task::block_on(async_compat::Compat::new(async {
+    fn cancellation_before_headers_drops_the_grant() {
+        async_std::task::block_on(async {
             let released = Cell::new(false);
-            let mut waiting = Box::pin(send_with_permit(Grant(&released), || {
-                std::future::pending::<Result<reqwest::Response, ()>>()
-            }));
+            let limit = Duration::from_secs(5);
+            let mut waiting = Box::pin(fetch_with_permit(
+                Grant(&released),
+                || std::future::pending::<Result<reqwest::Response, ()>>(),
+                limit,
+                limit,
+                |_| {},
+            ));
             assert!(futures_util::poll!(&mut waiting).is_pending());
             drop(waiting);
             assert!(released.get());
-
-            released.set(false);
-            let (request, _finish) = paused_body("200 OK");
-            let response = send_with_permit(Grant(&released), || request.send())
-                .await
-                .unwrap();
-            let mut body = Box::pin(response.text());
-            assert!(futures_util::poll!(&mut body).is_pending());
-            assert!(!released.get());
-            drop(body);
-            assert!(released.get());
-        }));
+        });
     }
 
     #[test]
     fn failed_sends_and_stalled_bodies_return_their_grants() {
         async_std::task::block_on(async_compat::Compat::new(async {
             let released = Cell::new(false);
-            assert!(send_with_permit(Grant(&released), || async {
-                Err::<reqwest::Response, _>(())
-            })
-            .await
-            .is_err());
+            let limit = Duration::from_secs(5);
+            let error = fetch_with_permit(
+                Grant(&released),
+                || async { Err::<reqwest::Response, _>(()) },
+                limit,
+                limit,
+                |_| {},
+            )
+            .await;
+            assert!(matches!(error, Err(FetchError::Send(()))));
             assert!(released.get());
 
             let headers = Duration::from_secs(5);

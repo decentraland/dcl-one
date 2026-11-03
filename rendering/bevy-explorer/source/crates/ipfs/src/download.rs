@@ -1,5 +1,5 @@
 use super::*;
-use priority_gate::{DownloadReaders, GateClosed, Registration};
+use priority_gate::{DownloadAttempts, DownloadReaders, GateClosed, Registration};
 use std::sync::{atomic::AtomicU64, Mutex};
 use tokio::sync::oneshot;
 
@@ -29,7 +29,10 @@ impl IpfsIo {
         path: PathBuf,
         remote: String,
         scene: Option<String>,
-    ) -> (SharedReader, bool) {
+    ) -> (
+        SharedReader,
+        Option<impl ConditionalSendFuture<Output = ()> + 'static>,
+    ) {
         let mut entries = self.in_flight.lock().unwrap();
         if let Some(download) = entries.get(&remote).and_then(Weak::upgrade) {
             if let Some(reader) = download.readers.try_register(scene.clone()) {
@@ -39,17 +42,16 @@ impl IpfsIo {
                         _registration: reader,
                         download,
                     },
-                    true,
+                    None,
                 );
             }
         }
         entries.retain(|_, entry| entry.strong_count() > 0);
         let (cancel, cancelled) = oneshot::channel();
-        let reader = DownloadReaders::first(&self.request_slots, scene, Some(cancel));
-        let readers = reader.readers.clone();
+        let (reader, attempts) = DownloadReaders::first(&self.request_slots, scene, Some(cancel));
         let (sender, result) = watch::channel(None);
         let download = Arc::new(SharedDownload {
-            readers: readers.clone(),
+            readers: reader.readers.clone(),
             result,
         });
         let identity = Arc::downgrade(&download);
@@ -57,36 +59,34 @@ impl IpfsIo {
         drop(entries);
 
         let io = self.clone();
-        IoTaskPool::get()
-            .spawn_compat(async move {
-                // The last registration cancels the transport, queue wait or backoff on both executors.
-                let result = tokio::select! {
-                    biased;
-                    _ = cancelled => None,
-                    result = io.request_metrics.measure(io.clone().download_inner(
-                        token, path, remote.clone(), Some(key), &readers,
-                    )) => Some(result),
-                };
-                // Another reader may already have started a new generation for the same URL.
-                let mut entries = io.in_flight.lock().unwrap();
-                if entries
-                    .get(&remote)
-                    .is_some_and(|entry| entry.ptr_eq(&identity))
-                {
-                    entries.remove(&remote);
-                }
-                drop(entries);
-                if let Some(result) = result {
-                    sender.send_replace(Some(result));
-                }
-            })
-            .detach();
+        let task = async move {
+            // The last registration cancels the transport, queue wait or backoff on both executors.
+            let result = tokio::select! {
+                biased;
+                _ = cancelled => None,
+                result = io.request_metrics.measure(io.clone().download_inner(
+                    token, path, remote.clone(), Some(key), attempts,
+                )) => Some(result),
+            };
+            // Another reader may already have started a new generation for the same URL.
+            let mut entries = io.in_flight.lock().unwrap();
+            if entries
+                .get(&remote)
+                .is_some_and(|entry| entry.ptr_eq(&identity))
+            {
+                entries.remove(&remote);
+            }
+            drop(entries);
+            if let Some(result) = result {
+                sender.send_replace(Some(result));
+            }
+        };
         (
             SharedReader {
                 _registration: reader,
                 download,
             },
-            false,
+            Some(task),
         )
     }
 
@@ -98,11 +98,11 @@ impl IpfsIo {
         cache_key: Option<CacheKey>,
         scene: Option<String>,
     ) -> Result<SharedBytes, AssetReaderError> {
-        let reader = DownloadReaders::first(&self.request_slots, scene, None);
+        let (_reader, attempts) = DownloadReaders::first(&self.request_slots, scene, None);
         self.request_metrics
             .measure(
                 self.clone()
-                    .download_inner(token, path, remote, cache_key, &reader.readers),
+                    .download_inner(token, path, remote, cache_key, attempts),
             )
             .await
     }
@@ -116,10 +116,10 @@ impl IpfsIo {
         idle_timeout: Duration,
         owner: Option<String>,
     ) -> Result<platform::FetchedResponse, platform::FetchError<anyhow::Error>> {
-        let reader = DownloadReaders::first(&self.request_slots, owner, None);
+        let (_reader, attempts) = DownloadReaders::first(&self.request_slots, owner, None);
         self.request_metrics
             .measure(self.fetch_request_inner(
-                &reader.readers,
+                attempts,
                 request,
                 &client,
                 headers_timeout,
@@ -132,7 +132,7 @@ impl IpfsIo {
     /// A retry competes with every other waiting download, even for an immediate timeout retry.
     async fn fetch_request_inner<F: std::future::Future<Output = ()>>(
         &self,
-        readers: &DownloadReaders,
+        mut attempts: DownloadAttempts,
         request: reqwest::Request,
         client: &reqwest::Client,
         headers_timeout: Duration,
@@ -149,7 +149,7 @@ impl IpfsIo {
                 .and_then(reqwest::Request::try_clone)
                 .or_else(|| original.take())
                 .expect("request is replayable or this is its only attempt");
-            let permit = readers
+            let permit = attempts
                 .acquire()
                 .await
                 .map_err(|e| platform::FetchError::Send(anyhow!(e)))?;
@@ -211,7 +211,7 @@ impl IpfsIo {
         path: PathBuf,
         remote: String,
         cache_key: Option<CacheKey>,
-        readers: &DownloadReaders,
+        attempts: DownloadAttempts,
     ) -> Result<SharedBytes, AssetReaderError> {
         let start = web_time::Instant::now();
         let ipfs_io_read_state = IpfsIoReadState {
@@ -251,7 +251,7 @@ impl IpfsIo {
         // killed — only a stall (no chunk for 10s) or a dead connection trips.
         let fetched = match self
             .fetch_request_inner(
-                readers,
+                attempts,
                 request,
                 client,
                 Duration::from_secs(30),

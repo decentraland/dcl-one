@@ -1957,8 +1957,11 @@ impl IpfsIo {
             // under another asset path, say) takes the first's bytes instead of queueing a
             // download of its own behind everything requested since. By url, not by hash: the
             // bytes are shared before the hash check, and a scene names its own server
-            let (download, joined) =
-                self.share_download(key, token, path.to_owned(), remote, scene);
+            let (download, task) = self.share_download(key, token, path.to_owned(), remote, scene);
+            let joined = task.is_none();
+            if let Some(task) = task {
+                IoTaskPool::get().spawn_compat(task).detach();
+            }
             let mut result = download.result();
             let data = result
                 .wait_for(Option::is_some)

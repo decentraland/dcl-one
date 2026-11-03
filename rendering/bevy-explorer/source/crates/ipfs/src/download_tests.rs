@@ -74,14 +74,17 @@ fn asset(
 }
 
 fn shared(io: &Arc<IpfsIo>, server: &Server, path: &str, owner: &str) -> SharedReader {
-    io.share_download(
+    let (reader, task) = io.share_download(
         CacheKey::Url(path.to_owned()),
         1,
         path.into(),
         server.url(path),
         Some(owner.to_owned()),
-    )
-    .0
+    );
+    if let Some(task) = task {
+        IoTaskPool::get().spawn_compat(task).detach();
+    }
+    reader
 }
 
 async fn until(condition: impl Fn() -> bool) {
@@ -98,19 +101,18 @@ async fn retry_uses_live_priorities_after_another_download_completes_in_backoff(
         io.register_download_priority("retry", LoadPriority::TOP);
         io.register_download_priority("competitor", LoadPriority::SCENE_PENDING);
         io.register_download_priority("first-reader", LoadPriority::TOP);
-        let first_reader =
+        let (first_reader, attempts) =
             DownloadReaders::first(&io.request_slots, Some("first-reader".to_owned()), None);
         let owners = first_reader.readers.clone();
         let sleeping = Arc::new(Notify::new());
         let resume = Arc::new(Notify::new());
         let retry = {
             let io = io.clone();
-            let owners = owners.clone();
             let sleeping = sleeping.clone();
             let resume = resume.clone();
             let request = io.client.get(server.url("retry")).build().unwrap();
             tokio::spawn(async move {
-                io.fetch_request_inner(&owners, request, &io.client, LIMIT, LIMIT, |delay| {
+                io.fetch_request_inner(attempts, request, &io.client, LIMIT, LIMIT, |delay| {
                     assert_eq!(delay, Duration::from_secs(60));
                     sleeping.notify_one();
                     resume.notified()
@@ -295,9 +297,9 @@ async fn a_stale_upgrade_cannot_revive_a_download_after_its_last_reader_left() {
         let stale = old.download.clone();
         let mut old_result = old.result();
         drop(old);
-        let (new, joined) = io.share_download(CacheKey::Url("same".into()), 2, "same".into(),
+        let (new, task) = io.share_download(CacheKey::Url("same".into()), 2, "same".into(),
             server.url("same"), Some("next-scene".into()));
-        assert!(!joined, "a generation with zero readers is terminal");
+        IoTaskPool::get().spawn_compat(task.expect("a generation with zero readers is terminal")).detach();
         assert!(!Arc::ptr_eq(&new.download, &stale));
         // A stale lookup can still hold the task handle when the last real reader goes.
         assert!(old_result.changed().await.is_err());
@@ -339,4 +341,38 @@ async fn concurrent_writes_to_one_cache_key_publish_complete_files() {
     std::fs::remove_file(dir.join("shared")).unwrap();
     // Every writer cleaned up its staging file.
     std::fs::remove_dir(dir).unwrap();
+}
+
+#[tokio::test]
+async fn shared_downloads_keep_arrival_order_when_workers_poll_in_reverse() {
+    use std::future::{poll_fn, Future};
+    use std::task::Poll;
+
+    timeout(LIMIT, async {
+        let io = ipfs();
+        let server = Server::start().await;
+        let share = |name: &str| {
+            io.share_download(
+                CacheKey::Url(name.into()),
+                1,
+                name.into(),
+                server.url(name),
+                Some("scene".into()),
+            )
+        };
+        let (_first_reader, first) = share("first");
+        let (_second_reader, second) = share("second");
+        let mut second = Box::pin(second.unwrap());
+        poll_fn(|cx| {
+            assert!(second.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        tokio::join!(first.unwrap(), second, async {
+            server.reply("first", OK).await;
+            server.reply("second", OK).await;
+        });
+    })
+    .await
+    .expect("shared downloads did not finish in FIFO order");
 }

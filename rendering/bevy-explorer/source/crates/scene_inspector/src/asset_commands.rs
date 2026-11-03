@@ -275,7 +275,7 @@ fn init_asset_cmd(
                                     client.clone(),
                                     std::time::Duration::from_secs(30),
                                     std::time::Duration::from_secs(10),
-                                    Some(scene_hash.clone()),
+                                    Some(scene_hash.to_string()),
                                 )
                                 .await
                             {
