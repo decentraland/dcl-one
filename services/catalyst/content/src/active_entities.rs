@@ -260,7 +260,8 @@ pub async fn get_entities_by_collection(
     Path(collection_urn): Path<String>,
     request: Request,
 ) -> AppResult<impl IntoResponse> {
-    if !is_valid_collection_urn(&collection_urn) {
+    let urn = collection_urn.to_lowercase();
+    if !is_valid_collection_urn(&urn) {
         return Err(AppError::invalid(collection_urn_rejection_message(
             &collection_urn,
         )));
@@ -271,7 +272,7 @@ pub async fn get_entities_by_collection(
 
     let result = queries::active_entity_docs_by_prefix(
         &state.pool,
-        &collection_urn,
+        &urn,
         pagination.offset,
         pagination.limit,
     )
