@@ -882,58 +882,27 @@ fn validate_representation_contents(
     ValidationResponse::Ok
 }
 
-const MAX_SOCIAL_EMOTE_OUTCOMES: usize = 3;
-
-/// ADR-287: a social emote sets `startAnimation`, `randomizeOutcomes` and
-/// `outcomes` together, with up to three valid outcomes.
+/// ADR-287 after the metadata schema, which already checked the social emote
+/// shape and allows `null`: `startAnimation` and `outcomes` must be set.
 fn validate_social_emote(data: Option<&serde_json::Value>) -> ValidationResponse {
     let Some(data) = data else {
         return ValidationResponse::fail("No emote data found".to_string());
     };
-    const PROPS: [&str; 3] = ["startAnimation", "randomizeOutcomes", "outcomes"];
-    let missing: Vec<&str> = PROPS
-        .into_iter()
-        .filter(|p| data.get(p).is_none())
-        .collect();
-    if missing.len() == PROPS.len() {
+    if !super::metadata_schema::SOCIAL_EMOTE_PROPS
+        .iter()
+        .any(|p| data.get(p).is_some())
+    {
         return ValidationResponse::Ok;
     }
-    if !missing.is_empty() {
-        return ValidationResponse::fail(format!(
-            "For social emote definition, all properties must be present. Missing: {}",
-            missing.join(", ")
-        ));
-    }
-    if super::metadata_schema::start_animation_error(&data["startAnimation"]).is_some() {
+    if data["startAnimation"].is_null() {
         return ValidationResponse::fail(
             "Some properties of StartAnimation are not valid".to_string(),
         );
     }
-    let outcomes = data["outcomes"].as_array();
-    match outcomes {
-        None => {
-            if data["outcomes"].is_null() {
-                return ValidationResponse::fail("Outcomes array cannot be empty".to_string());
-            }
-            ValidationResponse::fail("Some properties of Outcome are not valid".to_string())
-        }
-        Some(o) if o.is_empty() => {
-            ValidationResponse::fail("Outcomes array cannot be empty".to_string())
-        }
-        Some(o) if o.len() > MAX_SOCIAL_EMOTE_OUTCOMES => ValidationResponse::fail(format!(
-            "Outcomes array can contain up to {MAX_SOCIAL_EMOTE_OUTCOMES} items"
-        )),
-        Some(o) => {
-            if o.iter()
-                .any(|outcome| super::metadata_schema::outcome_error(outcome).is_some())
-            {
-                return ValidationResponse::fail(
-                    "Some properties of Outcome are not valid".to_string(),
-                );
-            }
-            ValidationResponse::Ok
-        }
+    if data["outcomes"].is_null() {
+        return ValidationResponse::fail("Outcomes array cannot be empty".to_string());
     }
+    ValidationResponse::Ok
 }
 
 fn validate_scene_navmap_thumbnail(
@@ -1062,7 +1031,7 @@ mod tests {
     }
 
     #[test]
-    fn social_emotes_follow_adr_287() {
+    fn social_emotes_need_their_start_animation_and_outcomes_set() {
         let plain = serde_json::json!({"loop": false});
         assert!(validate_social_emote(Some(&plain)).is_ok());
         assert!(validate_social_emote(Some(&social(serde_json::json!([outcome()])))).is_ok());
@@ -1070,41 +1039,17 @@ mod tests {
             failure(validate_social_emote(None)),
             vec!["No emote data found".to_string()]
         );
-        let partial = serde_json::json!({"startAnimation": null});
+        let mut no_start = social(serde_json::json!([outcome()]));
+        no_start["startAnimation"] = serde_json::Value::Null;
         assert_eq!(
-            failure(validate_social_emote(Some(&partial))),
-            vec![
-                "For social emote definition, all properties must be present. \
-                 Missing: randomizeOutcomes, outcomes"
-                    .to_string()
-            ]
-        );
-        let mut bad_start = social(serde_json::json!([outcome()]));
-        bad_start["startAnimation"] = serde_json::Value::Null;
-        assert_eq!(
-            failure(validate_social_emote(Some(&bad_start))),
+            failure(validate_social_emote(Some(&no_start))),
             vec!["Some properties of StartAnimation are not valid".to_string()]
         );
-        for empty in [serde_json::json!([]), serde_json::Value::Null] {
-            assert_eq!(
-                failure(validate_social_emote(Some(&social(empty)))),
-                vec!["Outcomes array cannot be empty".to_string()]
-            );
-        }
         assert_eq!(
-            failure(validate_social_emote(Some(&social(serde_json::json!([
-                outcome(),
-                outcome(),
-                outcome(),
-                outcome()
-            ]))))),
-            vec!["Outcomes array can contain up to 3 items".to_string()]
-        );
-        assert_eq!(
-            failure(validate_social_emote(Some(&social(serde_json::json!([
-                {"title": "", "loop": false, "clips": {}}
-            ]))))),
-            vec!["Some properties of Outcome are not valid".to_string()]
+            failure(validate_social_emote(Some(&social(
+                serde_json::Value::Null
+            )))),
+            vec!["Outcomes array cannot be empty".to_string()]
         );
     }
 

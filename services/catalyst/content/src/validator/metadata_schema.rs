@@ -46,15 +46,11 @@ pub fn validate_metadata(entity: &Entity) -> ValidationResponse {
     }
 }
 
-/// ADR-287 `StartAnimation`: why `v` does not match, if it does not.
-pub(super) fn start_animation_error(v: &Value) -> Option<String> {
-    start_animation(v, "startAnimation").err()
-}
+/// The ADR-287 properties that make an emote social, all or none.
+pub(super) const SOCIAL_EMOTE_PROPS: [&str; 3] =
+    ["startAnimation", "randomizeOutcomes", "outcomes"];
 
-/// ADR-287 `OutcomeGroup`: why `v` does not match, if it does not.
-pub(super) fn outcome_error(v: &Value) -> Option<String> {
-    outcome(v, "outcome").err()
-}
+const MAX_SOCIAL_EMOTE_OUTCOMES: usize = 3;
 
 // The primitives.
 
@@ -1041,12 +1037,11 @@ fn emote_data(v: &Value, p: &str) -> Check {
     nullable(m, "outcomes", p, |v, p| {
         let a = array(v, p)?;
         min_items(a, 1, p)?;
-        max_items(a, 3, p)?;
+        max_items(a, MAX_SOCIAL_EMOTE_OUTCOMES, p)?;
         each(a, p, outcome)
     })?;
-    const SOCIAL: [&str; 3] = ["startAnimation", "randomizeOutcomes", "outcomes"];
-    if SOCIAL.iter().any(|k| m.contains_key(*k))
-        && let Some(missing) = SOCIAL.iter().find(|k| !m.contains_key(**k))
+    if SOCIAL_EMOTE_PROPS.iter().any(|k| m.contains_key(*k))
+        && let Some(missing) = SOCIAL_EMOTE_PROPS.iter().find(|k| !m.contains_key(**k))
     {
         return Err(format!(
             "{p} must have property {missing} when a social emote property is present"
@@ -1439,6 +1434,14 @@ mod tests {
             "metadata.emoteDataADR74 must have property randomizeOutcomes when a social emote property is present",
         );
         let mut e = emote();
+        let four = vec![e["emoteDataADR74"]["outcomes"][0].clone(); 4];
+        e["emoteDataADR74"]["outcomes"] = Value::Array(four);
+        assert_invalid(
+            EntityType::Emote,
+            e,
+            "metadata.emoteDataADR74.outcomes must NOT have more than 3 items",
+        );
+        let mut e = emote();
         e["emoteDataADR74"]["outcomes"][0]["extra"] = json!(1);
         assert_invalid(
             EntityType::Emote,
@@ -1599,18 +1602,26 @@ mod tests {
         );
     }
 
+    fn start_animation_err(v: &Value) -> Option<String> {
+        start_animation(v, "startAnimation").err()
+    }
+
+    fn outcome_err(v: &Value) -> Option<String> {
+        outcome(v, "outcome").err()
+    }
+
     #[test]
     fn social_emote_parts_match_adr_287() {
         assert!(
-            start_animation_error(&json!({"loop": true, "Armature": {"animation": "a"}})).is_none()
+            start_animation_err(&json!({"loop": true, "Armature": {"animation": "a"}})).is_none()
         );
-        assert!(start_animation_error(&json!({"loop": true})).is_some());
+        assert!(start_animation_err(&json!({"loop": true})).is_some());
         assert!(
-            start_animation_error(&json!({"loop": true, "Armature": {"animation": ""}})).is_some()
+            start_animation_err(&json!({"loop": true, "Armature": {"animation": ""}})).is_some()
         );
-        assert!(outcome_error(&json!({"title": "t", "loop": false, "clips": {}})).is_some());
+        assert!(outcome_err(&json!({"title": "t", "loop": false, "clips": {}})).is_some());
         assert!(
-            outcome_error(&json!({"title": "t", "loop": false, "clips": {"Armature_Other": {"animation": "a"}}}))
+            outcome_err(&json!({"title": "t", "loop": false, "clips": {"Armature_Other": {"animation": "a"}}}))
                 .is_none()
         );
     }
