@@ -348,6 +348,12 @@ impl WriteDeployer {
         self.rate_limiter.clear();
     }
 
+    #[cfg(test)]
+    pub(crate) fn is_rate_limited(&self, etype: &str, pointer: &str) -> bool {
+        self.rate_limiter
+            .is_rate_limited(etype, &[pointer.to_lowercase()])
+    }
+
     /// The old validator's LAND leg for a local scene: every pointer must be
     /// a parcel the signer may deploy to. A source that cannot decide
     /// (`land_authz::Unavailable`) is `Unavailable`, never a grant and never
@@ -587,12 +593,6 @@ impl WriteDeployer {
             return Err(rate_limited_msg().into());
         }
 
-        self.rate_limiter
-            .record(entity.entity_type.as_str(), &pointers_lc);
-        if content_unchanged {
-            self.rate_limiter.record_unchanged(&pointers_lc);
-        }
-
         let declared: HashSet<&str> = entity
             .content
             .iter()
@@ -644,6 +644,12 @@ impl WriteDeployer {
         let creation_ts = self
             .persist(&entity, &entity_bytes, &uploads, &auth_chain, context)
             .await?;
+        // Only an accepted deploy counts, so rejected ones cannot hold a pointer.
+        self.rate_limiter
+            .record(entity.entity_type.as_str(), &pointers_lc);
+        if content_unchanged {
+            self.rate_limiter.record_unchanged(&pointers_lc);
+        }
 
         let persist_us = persist_started.elapsed().as_micros() as u64;
         let cleanup_started = Instant::now();
