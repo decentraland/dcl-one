@@ -74,11 +74,13 @@ pub(super) async fn record(
     }
     // Use the same database clock for capture and activation, in the author's
     // transaction. The first leader tick cannot discard already queued work.
-    let at: NaiveDateTime = sqlx::query_scalar("SELECT clock_timestamp() AT TIME ZONE 'UTC'")
-        .fetch_one(&mut **tx)
-        .await?;
-    sqlx::query("INSERT INTO explore.event_moderation_hook_activation(activated_at) VALUES($1) ON CONFLICT DO NOTHING")
-        .bind(at).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO explore.event_moderation_hook_activation(activated_at) VALUES(clock_timestamp() AT TIME ZONE 'UTC') ON CONFLICT DO NOTHING")
+        .execute(&mut **tx).await?;
+    // A concurrent author may have won activation while this INSERT waited.
+    // Read that committed cutoff before sampling capture time, and floor the
+    // sample against it so even a backward wall-clock adjustment loses no intent.
+    let at: NaiveDateTime = sqlx::query_scalar("SELECT GREATEST(clock_timestamp() AT TIME ZONE 'UTC',activated_at) FROM explore.event_moderation_hook_activation WHERE singleton")
+        .fetch_one(&mut **tx).await?;
     let creator = after
         .get("user")
         .and_then(Value::as_str)
@@ -258,6 +260,121 @@ mod tests {
     static TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     #[tokio::test]
+    async fn concurrent_first_captures_and_backward_clock_samples_never_precede_activation() {
+        let _guard = TEST_LOCK.lock().await;
+        let Some(pool) = crate::db::scratch::pool(6).await else {
+            return;
+        };
+        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("CREATE FUNCTION explore.test_hook_capture_barrier() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF current_setting('application_name')='hook-capture-race' THEN PERFORM pg_advisory_xact_lock(742119); END IF; RETURN NEW; END $$").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TRIGGER test_hook_capture_barrier BEFORE INSERT ON explore.event_moderation_hook_activation FOR EACH ROW EXECUTE FUNCTION explore.test_hook_capture_barrier()").execute(&pool).await.unwrap();
+        let prefix = Uuid::new_v4().to_string();
+        let mut held = pool.acquire().await.unwrap();
+        sqlx::query("SELECT pg_advisory_lock(742119)")
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        let (ready, waiting) = tokio::sync::oneshot::channel();
+        let clone = pool.clone();
+        let slow_id = format!("{prefix}-slow");
+        let slow = tokio::spawn(async move {
+            let mut tx = clone.begin().await.unwrap();
+            sqlx::query("SET LOCAL application_name='hook-capture-race'")
+                .execute(&mut *tx)
+                .await
+                .unwrap();
+            let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                .fetch_one(&mut *tx)
+                .await
+                .unwrap();
+            ready.send(pid).unwrap();
+            record(
+                &mut tx,
+                &slow_id,
+                &Value::Null,
+                &json!({"name":"Slow first capture"}),
+                true,
+            )
+            .await
+            .unwrap();
+            tx.commit().await.unwrap();
+        });
+        let pid = waiting.await.unwrap();
+        tokio::time::timeout(Duration::from_secs(3),async {
+            loop {
+                let blocked:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND wait_event='advisory')")
+                    .bind(pid).fetch_one(&pool).await.unwrap();
+                if blocked {break;}
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }).await.unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        record(
+            &mut tx,
+            &format!("{prefix}-fast"),
+            &Value::Null,
+            &json!({"name":"Concurrent activation winner"}),
+            true,
+        )
+        .await
+        .unwrap();
+        tx.commit().await.unwrap();
+        sqlx::query("SELECT pg_advisory_unlock(742119)")
+            .execute(&mut *held)
+            .await
+            .unwrap();
+        slow.await.unwrap();
+        let concurrent_eligible:bool=sqlx::query_scalar("SELECT bool_and(h.created_at>=a.activated_at) FROM explore.event_moderation_hooks h CROSS JOIN explore.event_moderation_hook_activation a WHERE h.event_id LIKE $1")
+            .bind(format!("{prefix}-%")).fetch_one(&pool).await.unwrap();
+        // A future cutoff simulates the wall clock stepping backward after activation.
+        let mut tx = pool.begin().await.unwrap();
+        sqlx::query("UPDATE explore.event_moderation_hook_activation SET activated_at=(clock_timestamp() AT TIME ZONE 'UTC')+interval '1 minute'")
+            .execute(&mut *tx).await.unwrap();
+        record(
+            &mut tx,
+            &format!("{prefix}-clock"),
+            &Value::Null,
+            &json!({"name":"Backward clock capture"}),
+            true,
+        )
+        .await
+        .unwrap();
+        let clock_eligible:bool=sqlx::query_scalar("SELECT h.created_at=a.activated_at FROM explore.event_moderation_hooks h CROSS JOIN explore.event_moderation_hook_activation a WHERE h.event_id=$1")
+            .bind(format!("{prefix}-clock")).fetch_one(&mut *tx).await.unwrap();
+        tx.rollback().await.unwrap();
+        sqlx::query(
+            "DROP TRIGGER test_hook_capture_barrier ON explore.event_moderation_hook_activation",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("DROP FUNCTION explore.test_hook_capture_barrier()")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM explore.event_moderation_hooks WHERE event_id LIKE $1")
+            .bind(format!("{prefix}-%"))
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("DELETE FROM explore.event_moderation_hook_activation")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert!(
+            concurrent_eligible,
+            "a delayed first writer must not fall behind another writer's activation"
+        );
+        assert!(
+            clock_eligible,
+            "capture timestamps must never fall behind the durable cutoff"
+        );
+    }
+
+    #[tokio::test]
     async fn capture_activates_with_the_database_clock_before_the_first_worker_tick() {
         let _guard = TEST_LOCK.lock().await;
         let Some(pool) = crate::db::scratch::pool(6).await else {
@@ -281,7 +398,7 @@ mod tests {
         tx.commit().await.unwrap();
         let (created,activated):(NaiveDateTime,NaiveDateTime)=sqlx::query_as("SELECT h.created_at,a.activated_at FROM explore.event_moderation_hooks h CROSS JOIN explore.event_moderation_hook_activation a WHERE h.event_id=$1")
             .bind(&id).fetch_one(&pool).await.unwrap();
-        assert_eq!(created, activated);
+        assert!(created >= activated);
         run_once(
             &pool,
             &crate::http::Outbound::for_tests(),

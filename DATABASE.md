@@ -263,7 +263,9 @@ activation and does not import historical endings. Each subsequent pass reconcil
 currently ended occurrences against the immutable fact keys. Duration-only edits
 that move an end behind an earlier scan are reconsidered. A DTSTART or recurrence
 change records a private database-clock cutoff in the authoring transaction;
-new historical start times before that edit cannot contribute again. Ordinary
+only starts at or after that edit remain eligible. This also excludes unchanged
+but unrecorded earlier starts when an edit changes only the recurrence count
+or end date. Existing immutable facts remain intact. Ordinary
 owners must obtain moderation again after changing dates or durations. Recovery
 is limited to the latest 30 days: older unrecorded endings require a separate
 backfill, and existing immutable facts remain untouched. The approved
