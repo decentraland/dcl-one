@@ -12,7 +12,8 @@
 //! `HandshakeResponse` we send the first gameplay message, a [`pulse::TeleportRequest`] announcing
 //! our realm + position so the server starts streaming same-realm peers — unless the initial state
 //! already carried this realm — and then the profile version, which the servers ignore in the
-//! handshake.
+//! handshake. Teleports and emotes leave through a [`DiscreteEventPacer`]: the servers end the
+//! session of a peer that overruns the budget they share.
 //!
 //! Reconnection model: a driver runs exactly one connection attempt and, when that attempt ends,
 //! drops its channel ends. Its last status (the server's `Disconnected(reason)`, or a failure of its
@@ -40,6 +41,7 @@ use prost::Message as _;
 use tokio::sync::mpsc;
 use wallet::Wallet;
 
+use super::pacing::DiscreteEventPacer;
 use super::reconnect::{Failure, Next, ReconnectPolicy};
 use super::transport::{
     self, FrameKind, PulseDriverHandle, PulseFrame, PulseLink, PulseReliability, PulseStatus,
@@ -75,6 +77,7 @@ pub struct PulseConfig {
 /// `Down` and `Dead` have no driver. There are no side-flags beyond `PulseSession::accepted`, kept
 /// for the reconnect policy: the transport-up signal *is* the `Connecting → Idle` transition, and a
 /// disconnect's reason is consumed the moment it arrives.
+#[derive(Debug)]
 enum Connection {
     /// No live driver. The next tick after `respawn_at` (re)builds one. This is both the initial
     /// state and where every retryable failure lands, at the time the [`ReconnectPolicy`] gives.
@@ -135,15 +138,19 @@ pub(crate) struct PulseSession {
     transport_config: PulseTransportConfig,
     /// Server instance id, folded into the connect signature (re-signed on each attempt).
     server_id: String,
-    /// Last `PlayerState` we sent, cached by movement's `Broadcast::to_pulse`. An outbound
-    /// `EmoteStart` attaches this — the server rejects an emote with a null `player_state` — and
-    /// the next handshake carries it. One connection, one outbound stream, so it lives with the
-    /// session rather than with any one of the transports feeding it.
+    /// Last `PlayerState` we built, cached by movement's `Broadcast::to_pulse` whether or not
+    /// anything is sent. An outbound `EmoteStart` attaches this — the server rejects an emote with
+    /// a null `player_state` — and the next handshake carries it. One connection, one outbound
+    /// stream, so it lives with the session rather than with any one of the transports feeding it.
     last_state: Option<pulse::PlayerState>,
     /// The emote we last started, cached by the emote's `Broadcast::to_pulse` until it is stopped,
     /// for the next handshake's initial state. Kept like `last_state`: whether or not there is a
     /// connection to send it on.
     local_emote: Option<LocalEmote>,
+    /// Teleports and emotes waiting for the servers' event budget. They are let out only while
+    /// `Established`, so a teleport made while the handshake is in flight waits here for the
+    /// acceptance. A new driver starts with none: what waited was meant for the last connection.
+    pacer: DiscreteEventPacer,
     /// When to connect again after a failure, and when to stop.
     policy: ReconnectPolicy,
     /// Whether the current connection's handshake was accepted.
@@ -633,6 +640,7 @@ fn connect_pulse(
         server_id: config.server_id.clone(),
         last_state: None,
         local_emote: None,
+        pacer: DiscreteEventPacer::default(),
         policy: ReconnectPolicy::default(),
         accepted: false,
         initial_realm: None,
@@ -723,7 +731,7 @@ fn follow_realm(
     // the loading screen); the spawn `PlayerTeleported` re-announces realm + position. Otherwise the
     // first handshake's `on_handshake_response` sends the initial teleport once established.
     if matches!(session.state, Connection::Established) && in_world(&player) {
-        send_teleport(&session, &realm, &player);
+        send_teleport(&mut session, &realm, &player);
     }
     // A terminal stop lasts until the user moves to another realm: a recovery they start, so it
     // never loops. Rebuilding a lost routing entity in the same realm is not one.
@@ -736,10 +744,11 @@ fn follow_realm(
 
 /// Drain the Pulse routing entity's channel each frame and convert each queued message to a Pulse
 /// frame via [`Broadcast::to_pulse`] — movement → `PlayerStateInput`, emote → `EmoteStart`/`EmoteStop`
-/// — sending what comes back. Messages with no Pulse form (e.g. byte-only chat/profile that happened
-/// onto this transport) yield `None` and are dropped. The conversion happens whatever the state of
-/// the connection, because it keeps the session's caches current; only an `Established` session
-/// sends.
+/// — sending what comes back, except an emote, which goes to the pacer to wait for the servers'
+/// event budget with the teleports. Messages with no Pulse form (e.g. byte-only chat/profile that
+/// happened onto this transport) yield `None` and are dropped. The conversion happens whatever the
+/// state of the connection, because it keeps the session's caches current; only an `Established`
+/// session sends. Last of all, what the pacer allows now goes out.
 fn drain_pulse_outbox(
     session: Option<ResMut<PulseSession>>,
     time: Res<Time>,
@@ -774,9 +783,25 @@ fn drain_pulse_outbox(
                 continue;
             }
             if let (Some(frame), Some(link)) = (frame, link) {
-                let _ = link.outbound.try_send(frame);
+                if frame.kind == FrameKind::Emote {
+                    session.pacer.offer(frame);
+                } else {
+                    let _ = link.outbound.try_send(frame);
+                }
             }
         }
+    }
+    release_paced(session, now);
+}
+
+/// Send the teleports and emotes the pacer allows at `now`. Only an `Established` connection sends;
+/// in any other state they keep waiting.
+fn release_paced(session: &mut PulseSession, now: f64) {
+    let (Some(link), Connection::Established) = (session.link.as_ref(), &session.state) else {
+        return;
+    };
+    for frame in session.pacer.release(now) {
+        let _ = link.outbound.try_send(frame);
     }
 }
 
@@ -999,6 +1024,9 @@ fn drive_connection(
             session.link = Some(link);
             session._driver = Some(driver);
             session.accepted = false;
+            // A new peer to the servers, with a full budget of its own; nothing waiting was meant
+            // for it.
+            session.pacer = DiscreteEventPacer::default();
             session.state = Connection::Connecting;
         }
         Connection::Idle => {
@@ -1006,8 +1034,9 @@ fn drive_connection(
             if wallet.address().is_none() {
                 return;
             }
-            // Where the player already is, for a handshake that follows a pose sent before. The
-            // realm is named silently: the teleport after acceptance is the one to warn about it.
+            // Where the player already is, for a handshake that follows a pose broadcast before.
+            // The realm is named silently: the teleport after acceptance is the one to warn about
+            // it.
             let initial = initial_state(
                 session.last_state.as_ref(),
                 session.local_emote.as_ref(),
@@ -1331,6 +1360,9 @@ fn on_handshake_response(
     } else {
         send_teleport(session, realm, player);
     }
+    // A fresh connection has its whole budget, so that teleport goes now, and ahead of the
+    // announcement; so does one the player made while the handshake was in flight.
+    release_paced(session, now);
     // The servers ignore the version the handshake carries, so it is announced as a message of its
     // own. Until the profile loads there is none, and the periodic announce (`profile::mod`) takes
     // it from there.
@@ -1710,6 +1742,7 @@ fn resolve_lsd_realm(
         && in_world(&player)
     {
         send_teleport(session, &realm, &player);
+        release_paced(session, now);
     }
 }
 
@@ -1761,10 +1794,11 @@ fn in_world(player: &Query<(&GlobalTransform, Has<OutOfWorld>), With<PrimaryUser
 /// Send a `TeleportRequest` announcing our current realm + position, so the server (re)starts
 /// streaming same-realm peers (peers in different realms never see each other). The `realm` string is
 /// the load-bearing field; a one-frame stale position is corrected by the next movement packet. Sent
-/// reliably. No-op without a live link or realm name. Used both on first handshake and on every later
-/// realm change (the server supports same-peer re-teleports).
+/// reliably, as the pacer lets it out ([`send_teleport_at`]). No-op without a live link or realm
+/// name. Used both on first handshake and on every later realm change (the server supports
+/// same-peer re-teleports).
 fn send_teleport(
-    session: &PulseSession,
+    session: &mut PulseSession,
     realm: &CurrentRealm,
     player: &Query<(&GlobalTransform, Has<OutOfWorld>), With<PrimaryUser>>,
 ) {
@@ -1778,10 +1812,14 @@ fn send_teleport(
 /// Send a `TeleportRequest` for an explicit Bevy world-space position. Used by [`send_teleport`] (the
 /// player's current position) and by [`pulse_teleport_on_local_move`] (an instant move, whose final
 /// position is passed directly so it doesn't depend on transform propagation having run this frame).
-fn send_teleport_at(session: &PulseSession, realm: &CurrentRealm, world: Vec3) {
-    let Some(link) = session.link.as_ref() else {
+///
+/// The request is offered to the session's pacer, which lets it out when the servers' event budget
+/// allows, and drops it for a newer one if that is not yet. Whoever knows the time releases what is
+/// due at once ([`release_paced`]); `drain_pulse_outbox` does so every frame.
+fn send_teleport_at(session: &mut PulseSession, realm: &CurrentRealm, world: Vec3) {
+    if session.link.is_none() {
         return;
-    };
+    }
 
     let Some(realm_name) = announced_realm(session, realm) else {
         return;
@@ -1804,12 +1842,12 @@ fn send_teleport_at(session: &PulseSession, realm: &CurrentRealm, world: Vec3) {
     let message = pulse::ClientMessage {
         message: Some(pulse::client_message::Message::Teleport(teleport)),
     };
-    let _ = link.outbound.try_send(PulseFrame {
+    session.pacer.offer(PulseFrame {
         bytes: message.encode_to_vec(),
         reliability: PulseReliability::Reliable,
         kind: FrameKind::Teleport,
     });
-    info!("pulse: teleport sent (realm {realm_name}, parcel {parcel_index})");
+    info!("pulse: teleport queued (realm {realm_name}, parcel {parcel_index})");
 }
 
 /// Send a `ProfileVersionAnnouncement` for `version`, reliably: peers fetch the profile when it is
@@ -1844,23 +1882,24 @@ fn pulse_teleport_on_local_move(
     let Some(position) = events.read().last().map(|ev| ev.position) else {
         return;
     };
-    let Some(session) = session else {
+    let Some(mut session) = session else {
         return;
     };
     // A listener is never a subject: it has no position to announce, and the server refuses every
-    // post-auth message but `Resync`.
-    if matches!(session.role, PulseRole::Player(_))
-        && matches!(session.state, Connection::Established)
-    {
-        send_teleport_at(&session, &realm, position);
+    // post-auth message but `Resync`. A player's connection need not be up: a teleport made while
+    // the handshake is in flight waits in the pacer, and goes out on acceptance.
+    if matches!(session.role, PulseRole::Player(_)) {
+        send_teleport_at(&mut session, &realm, position);
     }
 }
 
-/// What a handshake says about where the player already is, as unity-explorer's `WriteInitialState`
-/// (`PulseMultiplayerBus.LastState.cs:58-102`) does: the last pose sent, the realm it is in and, if
-/// one is still playing, the emote — a loop, or a one-shot within its duration — with how long ago
-/// it started. `None` unless in world, with a realm and a pose sent before: a position behind the
-/// loading screen is provisional, and with no pose there is nothing to restore.
+/// What a handshake says about where the player already is, after unity-explorer's
+/// `WriteInitialState` (`PulseMultiplayerBus.LastState.cs:58-102`): the last pose built, the realm
+/// it is in and, if an emote is still playing, which one and how long ago it started. `None` with no
+/// pose to restore or no realm to put it in. Two rules are this client's own, not unity-explorer's:
+/// nothing is carried out of world, a position behind the loading screen being provisional; and a
+/// one-shot emote is carried only within its duration, where unity-explorer forgets an emote at the
+/// first movement that is not emoting.
 fn initial_state(
     last_state: Option<&pulse::PlayerState>,
     emote: Option<&LocalEmote>,

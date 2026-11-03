@@ -39,6 +39,7 @@ fn session_with_link(role: PulseRole) -> (PulseSession, PulseDriverChannels) {
         server_id: String::new(),
         last_state: None,
         local_emote: None,
+        pacer: DiscreteEventPacer::default(),
         policy: ReconnectPolicy::default(),
         accepted: false,
         initial_realm: None,
@@ -129,6 +130,28 @@ fn profile_announcement(version: i32) -> Sent {
     )
 }
 
+/// Where a scene puts the player: the middle of parcel `x`, 0.
+fn standing_in(x: i32) -> Vec3 {
+    Vec3::new(16.0 * x as f32 + 8.0, 1.0, 0.0)
+}
+
+/// The index the servers give the parcel `standing_in(x)` is in, as a teleport names it.
+fn parcel_index(x: i32) -> i32 {
+    PulseParcelGrid::default()
+        .encode_to_parcel(standing_in(x))
+        .0
+}
+
+/// The parcel of each teleport among `sent`, in order.
+fn teleported_parcels(sent: &[Sent]) -> Vec<i32> {
+    sent.iter()
+        .filter_map(|(_, message)| match message {
+            pulse::client_message::Message::Teleport(teleport) => Some(teleport.parcel_index),
+            _ => None,
+        })
+        .collect()
+}
+
 /// A player's session in a world on `HOME`. The test holds the far end of each of its channels: the
 /// driver's end of the link, the receiver behind the routing transport's sink, which stands in for
 /// the engine, and the sender behind its outbox, where the engine queues what it broadcasts. The
@@ -167,6 +190,7 @@ impl Harness {
         world.insert_resource(realm(HOME));
         world.init_resource::<Wallet>();
         world.init_resource::<Time>();
+        world.init_resource::<Events<PlayerTeleported>>();
         Self {
             world,
             driver,
@@ -238,11 +262,17 @@ impl Harness {
     }
 
     /// Pumps at `now` until the handshake is signed and sent — the IO pool does that off this
-    /// thread — and returns what it asks.
+    /// thread — and returns what it asks. A connection that is not signing it is not going to
+    /// send it: a sign error closes it.
     fn signed_handshake(&mut self, now: f64) -> pulse::HandshakeRequest {
         let deadline = Instant::now() + Duration::from_secs(30);
         self.pump_at(now);
         while !matches!(self.session().state, Connection::AwaitingResponse { .. }) {
+            assert!(
+                matches!(self.session().state, Connection::Signing(_)),
+                "the handshake was not sent: the connection is {:?}",
+                self.session().state
+            );
             assert!(Instant::now() < deadline, "the handshake was never sent");
             std::thread::sleep(Duration::from_millis(1));
             self.pump_at(now);
@@ -254,6 +284,14 @@ impl Harness {
             panic!("{sent:?}")
         };
         handshake.clone()
+    }
+
+    /// The player is instantly repositioned to `position`, and the engine says so.
+    fn teleport_to(&mut self, position: Vec3) {
+        self.world.send_event(PlayerTeleported { position });
+        self.world
+            .run_system_once(pulse_teleport_on_local_move)
+            .unwrap();
     }
 
     /// The engine broadcasts `message` on the routing transport.
@@ -699,4 +737,107 @@ fn a_handshake_out_of_world_carries_nothing_and_the_acceptance_teleports() {
         panic!("{sent:?}")
     };
     assert_eq!(*announcement, profile_announcement(7));
+}
+
+/// A teleport the player makes while the handshake is in flight is held, not lost: nothing goes
+/// before the connection is accepted, and then it goes ahead of the profile announcement.
+#[test]
+fn a_teleport_made_while_the_handshake_is_in_flight_goes_out_on_acceptance() {
+    let mut harness = Harness::player(Connection::AwaitingResponse { timeout_at: 15.0 });
+    // The handshake carried this realm, so acceptance sends no teleport of its own.
+    harness.session_mut().initial_realm = Some(HOME.to_owned());
+    harness.profile(7);
+
+    harness.teleport_to(standing_in(3));
+    harness.drain_at(2.0);
+    assert!(harness.sent().is_empty());
+
+    harness.receive(handshake_response(true));
+    harness.pump_at(5.0);
+
+    let sent = harness.sent();
+    let [(FrameKind::Teleport, pulse::client_message::Message::Teleport(teleport)), announcement] =
+        sent.as_slice()
+    else {
+        panic!("{sent:?}")
+    };
+    assert_eq!(teleport.realm, HOME);
+    assert_eq!(teleport.parcel_index, parcel_index(3));
+    assert_eq!(*announcement, profile_announcement(7));
+}
+
+/// A scene that repositions the player every frame would empty the servers' bucket in under a
+/// second, and an overrun ends the session. Of twenty teleports in an instant only a burst goes
+/// out; the one after it goes as a token returns, and it is the latest.
+#[test]
+fn a_burst_of_teleports_is_paced_and_ends_at_the_last_one() {
+    let mut harness = Harness::player(Connection::Established);
+
+    for x in 0..20 {
+        harness.teleport_to(standing_in(x));
+        harness.drain_at(10.0);
+    }
+    assert_eq!(
+        teleported_parcels(&harness.sent()),
+        (0..8).map(parcel_index).collect::<Vec<_>>()
+    );
+
+    harness.drain_at(10.11);
+    assert_eq!(teleported_parcels(&harness.sent()), [parcel_index(19)]);
+}
+
+/// Emotes ride the servers' bucket with the teleports: with it empty, an emote waits for a token,
+/// and the latest command is the one that goes.
+#[test]
+fn an_emote_waits_while_the_bucket_is_empty() {
+    let mut harness = Harness::player(Connection::Established);
+    harness.broadcast(movement());
+    for x in 0..8 {
+        harness.teleport_to(standing_in(x));
+        harness.drain_at(10.0);
+    }
+    // The pose and the eight teleports are not what is looked at here.
+    harness.sent();
+
+    harness.broadcast(emote(false));
+    harness.drain_at(10.0);
+    assert!(harness.sent().is_empty());
+
+    // Stopped before it has gone out, the stop takes the start's place.
+    harness.broadcast(emote(true));
+    harness.drain_at(10.05);
+    assert!(harness.sent().is_empty());
+
+    harness.drain_at(10.11);
+    let sent = harness.sent();
+    assert!(
+        matches!(
+            sent.as_slice(),
+            [(
+                FrameKind::Emote,
+                pulse::client_message::Message::EmoteStop(_)
+            )]
+        ),
+        "{sent:?}"
+    );
+}
+
+/// `follow_realm` knows no time, so a realm change only offers its teleport; the frame's drain
+/// lets it out.
+#[test]
+fn a_realm_change_while_connected_teleports_with_the_drain() {
+    let mut harness = Harness::player(Connection::Established);
+    harness.world.insert_resource(realm("away"));
+
+    harness.follow_realm();
+    assert!(harness.sent().is_empty());
+
+    harness.drain_at(5.0);
+    let sent = harness.sent();
+    let [(FrameKind::Teleport, pulse::client_message::Message::Teleport(teleport))] =
+        sent.as_slice()
+    else {
+        panic!("{sent:?}")
+    };
+    assert_eq!(teleport.realm, "away");
 }
