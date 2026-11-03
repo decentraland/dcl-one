@@ -1,0 +1,137 @@
+name = "shop-server"
+repository = "github.com/decentraland/shop-server"
+revision = "609a1f69c0b05295c1535164d604fb2cdc32ca58"
+database_env = "SHOP_SERVER_DATABASE_URL"
+after = []
+notes = """
+Imports outfits and their thumbnail records, the "notify me when available"
+waitlist, and the treasury ledger and refill intents. See MAPPING.md.
+
+Prerequisite, out of scope for a DB import: the bytes of every
+outfit_thumbnails row must be in the ONE blob store and recorded in
+dcl_migration.blob_inventory (source 'shop-server', object_key = the sha256
+hex, hash = the blob cid, size); outfit_thumbnail stops on a missing or
+mis-sized entry. Run the treasury steps at cutover, with upstream's refill
+job stopped: treasury_guard refuses unresolved refill intents.
+
+Not migrated: treasury_proceeds_reconciliation (audit snapshots of the
+proceeds-to-treasury flow, which the node does not run; no target),
+outfit_thumbnails.bytes (blobs), pgmigrations. Left to the node:
+item_notify_outbox (upstream's delivery hop was SQS, nothing durable to
+copy), item_availability_watch (the watcher's first observation is its
+baseline), treasury_drift_checks (no upstream equivalent; the reconciliation
+snapshots measure another flow).
+
+Deletions upstream are not detected (a deleted outfit stays).
+"""
+
+[[step]]
+name = "outfit_thumbnail"
+targets = ["shop.outfit_thumbnails"]
+extract = "outfit_thumbnail.extract.sql"
+load = "outfit_thumbnail.load.sql"
+key = ["hash"]
+watermark = "created_at"
+columns = [
+  { name = "hash", type = "text" },
+  { name = "content_type", type = "text" },
+  { name = "size", type = "integer" },
+  { name = "author_address", type = "text" },
+  { name = "created_at_ms", type = "bigint" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "outfit"
+targets = ["shop.outfits"]
+extract = "outfit.extract.sql"
+load = "outfit.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "text" },
+  { name = "name", type = "text" },
+  { name = "thumbnail_hash", type = "text" },
+  { name = "items", type = "jsonb" },
+  { name = "body_shape", type = "text" },
+  { name = "gradient_from", type = "text" },
+  { name = "gradient_to", type = "text" },
+  { name = "author_address", type = "text" },
+  { name = "published", type = "boolean" },
+  { name = "created_at_ms", type = "bigint" },
+  { name = "updated_at_ms", type = "bigint" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "notify_request"
+targets = ["shop.item_notify_requests"]
+extract = "notify_request.extract.sql"
+load = "notify_request.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "bigint" },
+  { name = "address", type = "text" },
+  { name = "email", type = "text" },
+  { name = "contract_address", type = "text" },
+  { name = "item_id", type = "text" },
+  { name = "chain_id", type = "integer" },
+  { name = "status", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+  { name = "notified_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "treasury_guard"
+targets = []
+extract = "treasury_guard.extract.sql"
+load = "treasury_guard.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "status", type = "text" },
+]
+
+[[step]]
+name = "treasury_ledger"
+targets = ["shop.treasury_ledger"]
+extract = "treasury_ledger.extract.sql"
+load = "treasury_ledger.load.sql"
+key = ["id"]
+watermark = "created_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "type", type = "text" },
+  { name = "usdc_delta", type = "numeric" },
+  { name = "mana_delta", type = "numeric" },
+  { name = "reference", type = "text" },
+  { name = "metadata", type = "jsonb" },
+  { name = "created_at_ms", type = "bigint" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "treasury_pending_refill"
+targets = ["shop.treasury_pending_refill"]
+extract = "treasury_pending_refill.extract.sql"
+load = "treasury_pending_refill.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "idempotency_key", type = "text" },
+  { name = "status", type = "text" },
+  { name = "usdc_to_spend", type = "numeric" },
+  { name = "mana_to_acquire", type = "numeric" },
+  { name = "swap_tx_hash", type = "text" },
+  { name = "usdc_spent", type = "numeric" },
+  { name = "mana_acquired", type = "numeric" },
+  { name = "oracle_price", type = "numeric" },
+  { name = "transfer_tx_hash", type = "text" },
+  { name = "ledger_entry_id", type = "uuid" },
+  { name = "created_at_ms", type = "bigint" },
+  { name = "updated_at_ms", type = "bigint" },
+  { name = "updated_at", type = "timestamptz" },
+]

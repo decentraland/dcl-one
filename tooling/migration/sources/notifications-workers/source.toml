@@ -1,0 +1,112 @@
+name = "notifications-workers"
+repository = "github.com/decentraland/notifications-workers"
+revision = "e2af2eec13a95fd71321822f35d140c6075d98d3"
+database_env = "NOTIFICATIONS_DATABASE_URL"
+after = []
+notes = """See MAPPING.md. Not migrated: `cursors` (upstream producer
+checkpoints; the node's producers keep their own), `pgmigrations`.
+Left to the node: social.notification_deliveries (no email is re-sent for
+imported history), notification_reader_seen, event_notification_intents.
+Upstream deletions (unsubscribed opt-outs, consumed confirmation codes) are
+not detected: run the final pass after upstream writes stop."""
+
+[[step]]
+name = "subscription"
+targets = ["social.subscriptions"]
+extract = "subscription.extract.sql"
+load = "subscription.load.sql"
+key = ["source_address"]
+watermark = "updated_at"
+columns = [
+  { name = "source_address", type = "text" },
+  { name = "address", type = "text" },
+  { name = "email", type = "text" },
+  { name = "details", type = "jsonb" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "unconfirmed_email"
+targets = ["social.unconfirmed_emails"]
+extract = "unconfirmed_email.extract.sql"
+load = "unconfirmed_email.load.sql"
+key = ["source_address"]
+watermark = "updated_at"
+columns = [
+  { name = "source_address", type = "text" },
+  { name = "address", type = "text" },
+  { name = "email", type = "text" },
+  { name = "code", type = "text" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "opt_out"
+targets = ["social.subscription_opt_outs"]
+extract = "opt_out.extract.sql"
+load = "opt_out.load.sql"
+key = ["source_address", "scope", "source_scope_id"]
+watermark = "updated_at"
+columns = [
+  { name = "source_address", type = "text" },
+  { name = "scope", type = "text" },
+  { name = "source_scope_id", type = "text" },
+  { name = "address", type = "text" },
+  { name = "scope_id", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "notification"
+targets = ["social.notifications"]
+extract = "notification.extract.sql"
+load = "notification.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "address", type = "text" },
+  { name = "type", type = "text" },
+  { name = "metadata", type = "jsonb" },
+  { name = "occurred_at", type = "timestamptz" },
+  { name = "read_at", type = "timestamptz" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+# Address-less upstream rows: one per recipient in social.subscriptions,
+# which the subscription step has already filled.
+[[step]]
+name = "broadcast"
+targets = ["social.notifications"]
+extract = "broadcast.extract.sql"
+load = "broadcast.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "type", type = "text" },
+  { name = "metadata", type = "jsonb" },
+  { name = "occurred_at", type = "timestamptz" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "broadcast_read"
+targets = ["social.notifications"]
+extract = "broadcast_read.extract.sql"
+load = "broadcast_read.load.sql"
+key = ["notification_id", "source_address"]
+watermark = "read_at"
+columns = [
+  { name = "notification_id", type = "uuid" },
+  { name = "source_address", type = "text" },
+  { name = "address", type = "text" },
+  { name = "type", type = "text" },
+  { name = "metadata", type = "jsonb" },
+  { name = "occurred_at", type = "timestamptz" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "read_at", type = "timestamptz" },
+]

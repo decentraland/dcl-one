@@ -1,0 +1,242 @@
+name = "social-service-ea"
+repository = "github.com/decentraland/social-service-ea"
+revision = "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+database_env = "SOCIAL_SERVICE_EA_DATABASE_URL"
+after = []
+notes = """
+Friends, blocks, mutes, settings, communities and referral progress; see MAPPING.md.
+Imported communities become local authority (origin 'local', with member roles); a
+community the upstream mirror already holds is taken over and its social.community_mirror
+row is deleted (communities step), and actively banned wallets lose their member row
+(community_bans step), to keep the node's invariants.
+Not migrated: private_voice_chats (live call state, LiveKit rooms do not move),
+community_ranking_metrics and communities.ranking_score (upstream ranking job output, no
+writer on the node), referral_reward_images (no target table), referral_progress.invited_user_ip
+(personal data, no target column), community thumbnails (S3 objects, not in this database;
+blobs are out of scope). No chat tables live in this database.
+"""
+
+[[step]]
+name = "user_settings"
+targets = ["social.user_settings"]
+extract = "user_settings.extract.sql"
+load = "user_settings.load.sql"
+key = ["address"]
+columns = [
+  { name = "address", type = "text" },
+  { name = "private_messages_privacy", type = "text" },
+  { name = "blocked_users_messages_visibility", type = "text" },
+  { name = "show_situation_reactions", type = "text" },
+]
+
+[[step]]
+name = "friendships"
+targets = ["social.friendships"]
+extract = "friendships.extract.sql"
+load = "friendships.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "address_requester", type = "text" },
+  { name = "address_requested", type = "text" },
+  { name = "last_action", type = "text" },
+  { name = "last_actor", type = "text" },
+  { name = "last_action_at", type = "timestamptz" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "friendship_actions"
+targets = ["social.friendship_actions"]
+extract = "friendship_actions.extract.sql"
+load = "friendship_actions.load.sql"
+key = ["id"]
+watermark = "acted_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "friendship_id", type = "uuid" },
+  { name = "action", type = "text" },
+  { name = "acting_user", type = "text" },
+  { name = "metadata", type = "json" },
+  { name = "acted_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "blocks"
+targets = ["social.blocks"]
+extract = "blocks.extract.sql"
+load = "blocks.load.sql"
+key = ["blocker_address", "blocked_address"]
+watermark = "blocked_at"
+columns = [
+  { name = "blocker_address", type = "text" },
+  { name = "blocked_address", type = "text" },
+  { name = "blocked_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "user_mutes"
+targets = ["social.user_mutes"]
+extract = "user_mutes.extract.sql"
+load = "user_mutes.load.sql"
+key = ["muter_address", "muted_address"]
+watermark = "muted_at"
+columns = [
+  { name = "muter_address", type = "text" },
+  { name = "muted_address", type = "text" },
+  { name = "muted_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "communities"
+targets = ["social.communities", "social.community_mirror"]
+extract = "communities.extract.sql"
+load = "communities.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "name", type = "text" },
+  { name = "description", type = "text" },
+  { name = "owner_address", type = "text" },
+  { name = "private", type = "boolean" },
+  { name = "active", type = "boolean" },
+  { name = "unlisted", type = "boolean" },
+  { name = "editors_choice", type = "boolean" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "community_members"
+targets = ["social.community_members"]
+extract = "community_members.extract.sql"
+load = "community_members.load.sql"
+key = ["community_id", "member_address"]
+columns = [
+  { name = "community_id", type = "uuid" },
+  { name = "member_address", type = "text" },
+  { name = "role", type = "text" },
+  { name = "joined_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "community_bans"
+targets = ["social.community_bans", "social.community_members"]
+extract = "community_bans.extract.sql"
+load = "community_bans.load.sql"
+key = ["community_id", "banned_address"]
+columns = [
+  { name = "community_id", type = "uuid" },
+  { name = "banned_address", type = "text" },
+  { name = "banned_by", type = "text" },
+  { name = "banned_at", type = "timestamptz" },
+  { name = "reason", type = "text" },
+  { name = "active", type = "boolean" },
+  { name = "unbanned_by", type = "text" },
+  { name = "unbanned_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "community_requests"
+targets = ["social.community_requests"]
+extract = "community_requests.extract.sql"
+load = "community_requests.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "community_id", type = "uuid" },
+  { name = "member_address", type = "text" },
+  { name = "type", type = "text" },
+  { name = "status", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "community_places"
+targets = ["social.community_places"]
+extract = "community_places.extract.sql"
+load = "community_places.load.sql"
+key = ["place_id", "community_id"]
+watermark = "added_at"
+columns = [
+  { name = "place_id", type = "text" },
+  { name = "community_id", type = "uuid" },
+  { name = "added_by", type = "text" },
+  { name = "added_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "community_posts"
+targets = ["social.community_posts"]
+extract = "community_posts.extract.sql"
+load = "community_posts.load.sql"
+key = ["id"]
+watermark = "created_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "community_id", type = "uuid" },
+  { name = "author_address", type = "text" },
+  { name = "content", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "community_post_likes"
+targets = ["social.community_post_likes"]
+extract = "community_post_likes.extract.sql"
+load = "community_post_likes.load.sql"
+key = ["post_id", "user_address"]
+watermark = "liked_at"
+columns = [
+  { name = "post_id", type = "uuid" },
+  { name = "user_address", type = "text" },
+  { name = "liked_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "referral_progress"
+targets = ["social.referral_progress"]
+extract = "referral_progress.extract.sql"
+load = "referral_progress.load.sql"
+key = ["invited_user"]
+watermark = "updated_at"
+columns = [
+  { name = "invited_user", type = "text" },
+  { name = "referrer", type = "text" },
+  { name = "status", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "referral_progress_viewed"
+targets = ["social.referral_progress_viewed"]
+extract = "referral_progress_viewed.extract.sql"
+load = "referral_progress_viewed.load.sql"
+key = ["referrer"]
+watermark = "updated_at"
+columns = [
+  { name = "referrer", type = "text" },
+  { name = "invites_accepted_viewed", type = "bigint" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "referral_emails"
+targets = ["social.referral_emails"]
+extract = "referral_emails.extract.sql"
+load = "referral_emails.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "referrer", type = "text" },
+  { name = "email", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]

@@ -1,0 +1,123 @@
+name = "builder-server"
+repository = "github.com/decentraland/builder-server"
+revision = "452af1e06cf103ffa4e5b115b002120e98d375c7"
+database_env = "BUILDER_SERVER_DATABASE_URL"
+after = []
+notes = """
+Imports collection and item drafts (publication, approval and curation state
+derived from the upstream columns and item_curations), item contents and
+scene projects. See MAPPING.md.
+
+Prerequisite, out of scope for a DB import: every item content hash must be
+in the ONE blob store and recorded, with its size, in
+dcl_migration.blob_inventory (source 'builder-server', object_key = hash);
+item_content stops on a missing hash.
+
+Not migrated: asset_packs/assets (upstream packs belong to a wallet, the node's
+to a project; the default packs are builder.asset_catalog, built by the
+operator command), project manifests and project files (S3 objects, not rows),
+collection_curations, slot_usage_cheques, virtual_third_parties, deployments,
+pools, pool_groups, pool_likes (no target), the collections' managers,
+minters, reviewed_at, forum_link, forum_id, lock and linked_contract_*
+columns (no target column). collection_publications and
+linked_collection_publications stay the node's.
+
+No step has a watermark: published/curation state is derived from other
+tables, so every run re-scans. Deletions upstream are not detected.
+"""
+
+[[step]]
+name = "collection"
+targets = ["builder.collections"]
+extract = "collection.extract.sql"
+load = "collection.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "name", type = "text" },
+  { name = "eth_address", type = "text" },
+  { name = "salt", type = "text" },
+  { name = "contract_address", type = "text" },
+  { name = "urn_suffix", type = "text" },
+  { name = "third_party_id", type = "text" },
+  { name = "is_published", type = "boolean" },
+  { name = "is_approved", type = "boolean" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "item"
+targets = ["builder.items"]
+extract = "item.extract.sql"
+load = "item.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "collection_id", type = "uuid" },
+  { name = "eth_address", type = "text" },
+  { name = "name", type = "text" },
+  { name = "description", type = "text" },
+  { name = "thumbnail", type = "text" },
+  { name = "video", type = "text" },
+  { name = "type", type = "text" },
+  { name = "rarity", type = "text" },
+  { name = "price", type = "text" },
+  { name = "beneficiary", type = "text" },
+  { name = "data", type = "jsonb" },
+  { name = "metrics", type = "jsonb" },
+  { name = "utility", type = "text" },
+  { name = "mappings", type = "jsonb" },
+  { name = "urn_suffix", type = "text" },
+  { name = "blockchain_item_id", type = "text" },
+  { name = "is_published", type = "boolean" },
+  { name = "curation_status", type = "text" },
+  { name = "total_supply", type = "bigint" },
+  { name = "local_content_hash", type = "text" },
+  { name = "content_hash", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "item_content"
+targets = ["builder.uploaded_contents", "builder.item_contents"]
+extract = "item_content.extract.sql"
+load = "item_content.load.sql"
+key = ["item_id", "file"]
+columns = [
+  { name = "item_id", type = "uuid" },
+  { name = "file", type = "text" },
+  { name = "hash", type = "text" },
+  { name = "owner", type = "text" },
+]
+
+[[step]]
+name = "project"
+targets = ["builder.projects"]
+extract = "project.extract.sql"
+load = "project.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "uuid" },
+  { name = "eth_address", type = "text" },
+  { name = "title", type = "text" },
+  { name = "description", type = "text" },
+  { name = "scene_id", type = "uuid" },
+  { name = "cols", type = "integer" },
+  { name = "rows", type = "integer" },
+  { name = "parcels", type = "integer" },
+  { name = "transforms", type = "integer" },
+  { name = "gltf_shapes", type = "integer" },
+  { name = "nft_shapes", type = "integer" },
+  { name = "scripts", type = "integer" },
+  { name = "entities", type = "integer" },
+  { name = "creation_coords", type = "text" },
+  { name = "is_public", type = "boolean" },
+  { name = "is_template", type = "boolean" },
+  { name = "template_status", type = "text" },
+  { name = "video", type = "text" },
+  { name = "is_deleted", type = "boolean" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]

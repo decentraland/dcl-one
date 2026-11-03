@@ -1,0 +1,43 @@
+name = "referral-server"
+repository = "github.com/decentraland/referral-server"
+revision = "828c30c215e7ce3a2f1d8ea57c202f4a21ebfa0e"
+database_env = "REFERRAL_SERVER_DATABASE_URL"
+after = ["social-service-ea"]
+notes = """
+The standalone referral service, superseded by social-service-ea (same
+tables, plus referral_emails and the invited_user unique key). Runs after
+social-service-ea and only fills gaps: an invited wallet already bound to
+another referrer is left alone (first referrer wins), a status only moves
+forward (pending < signed_up < tier_granted, rejected_ip_match is final) and
+a viewed count only grows. It has no referral_emails table; that comes from
+social-service-ea. Skipped: self-referrals, non-address wallets, unknown
+statuses, and every row but the earliest per invited wallet.
+"""
+
+[[step]]
+name = "referral_progress"
+targets = ["social.referral_progress"]
+extract = "referral_progress.extract.sql"
+load = "referral_progress.load.sql"
+key = ["invited_user"]
+watermark = "updated_at"
+columns = [
+  { name = "invited_user", type = "text" },
+  { name = "referrer", type = "text" },
+  { name = "status", type = "text" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "referral_progress_viewed"
+targets = ["social.referral_progress_viewed"]
+extract = "referral_progress_viewed.extract.sql"
+load = "referral_progress_viewed.load.sql"
+key = ["referrer"]
+watermark = "updated_at"
+columns = [
+  { name = "referrer", type = "text" },
+  { name = "invites_accepted_viewed", type = "bigint" },
+  { name = "updated_at", type = "timestamptz" },
+]

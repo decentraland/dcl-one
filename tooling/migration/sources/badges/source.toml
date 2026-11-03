@@ -1,0 +1,44 @@
+name = "badges"
+repository = "github.com/decentraland/badges"
+revision = "ad8aa13d30f77e454ff4ad3d0e2caf6b820adb00"
+database_env = "BADGES_DATABASE_URL"
+after = []
+notes = """See MAPPING.md. The catalog step makes upstream's catalog the
+node's: it upserts every published, unarchived badge and its tiers over the
+seed, replaces the tiers of each imported badge (deletes the seed's other
+tiers of it) and deletes the seed placeholders decentraland_citizen and
+walkabout when no player holds them. Not migrated: presence_* (in-flight
+visit tracking and event dedupe), pgmigrations. Left to the node:
+badge_admin_audit (no upstream grant log)."""
+
+[[step]]
+name = "catalog"
+targets = ["social.badge_definitions", "social.badge_tiers"]
+extract = "catalog.extract.sql"
+load = "catalog.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "text" },
+  { name = "name", type = "text" },
+  { name = "category", type = "text" },
+  { name = "description", type = "text" },
+  { name = "visible", type = "boolean" },
+  { name = "tiers", type = "jsonb" },
+]
+
+[[step]]
+name = "user_progress"
+targets = ["social.user_badge_progress", "social.user_achieved_tiers"]
+extract = "user_progress.extract.sql"
+load = "user_progress.load.sql"
+key = ["source_address", "badge_id"]
+watermark = "updated_at"
+columns = [
+  { name = "source_address", type = "text" },
+  { name = "address", type = "text" },
+  { name = "badge_id", type = "text" },
+  { name = "steps", type = "bigint" },
+  { name = "achieved_tiers", type = "jsonb" },
+  { name = "completed_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]

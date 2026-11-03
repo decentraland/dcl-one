@@ -1,0 +1,93 @@
+name = "events"
+repository = "github.com/decentraland/events"
+revision = "b60d5bbd6f9497a08f34a150694d37c224df19e2"
+database_env = "EVENTS_DATABASE_URL"
+after = []
+notes = """
+Imports the events catalogue as this node's own ('local') rows; see MAPPING.md.
+Not migrated: event_categories (fixed list in events/categories.rs),
+profile_subscriptions (web-push retired, 410), jobs and notification_cursors
+(upstream scheduler state), the textsearch column (computed at read time).
+No signed envelopes exist upstream, so explore.events_local and
+explore.signed_actions get no rows. Moderators come from upstream
+ADMIN_ADDRESSES, not a table: seed explore.moderators by hand.
+"""
+
+[[step]]
+name = "schedule"
+targets = ["explore.schedules_local"]
+extract = "schedule.extract.sql"
+load = "schedule.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "text" },
+  { name = "name", type = "text" },
+  { name = "description", type = "text" },
+  { name = "image", type = "text" },
+  { name = "theme", type = "text" },
+  { name = "background", type = "jsonb" },
+  { name = "active_since", type = "timestamptz" },
+  { name = "active_until", type = "timestamptz" },
+  { name = "active", type = "boolean" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "event"
+targets = ["explore.event"]
+extract = "event.extract.sql"
+load = "event.load.sql"
+key = ["id"]
+watermark = "updated_at"
+columns = [
+  { name = "id", type = "text" },
+  { name = "name", type = "text" },
+  { name = "start_at", type = "timestamptz" },
+  { name = "finish_at", type = "timestamptz" },
+  { name = "next_start_at", type = "timestamptz" },
+  { name = "next_finish_at", type = "timestamptz" },
+  { name = "duration_ms", type = "bigint" },
+  { name = "recurrent", type = "boolean" },
+  { name = "highlighted", type = "boolean" },
+  { name = "trending", type = "boolean" },
+  { name = "approved", type = "boolean" },
+  { name = "community_id", type = "text" },
+  { name = "user_creator", type = "text" },
+  { name = "coordinates_x", type = "integer" },
+  { name = "coordinates_y", type = "integer" },
+  { name = "description", type = "text" },
+  { name = "raw", type = "jsonb" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "attendance"
+targets = ["explore.event_attendance_local"]
+extract = "attendance.extract.sql"
+load = "attendance.load.sql"
+key = ["event_id", "signer"]
+columns = [
+  { name = "event_id", type = "text" },
+  { name = "signer", type = "text" },
+  { name = "user_name", type = "text" },
+  { name = "signed_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "profile_settings"
+targets = ["explore.event_profile_settings"]
+extract = "profile_settings.extract.sql"
+load = "profile_settings.load.sql"
+key = ["user"]
+columns = [
+  { name = "user", type = "text" },
+  { name = "email", type = "text" },
+  { name = "email_verified", type = "boolean" },
+  { name = "use_local_time", type = "boolean" },
+  { name = "notify_by_email", type = "boolean" },
+  { name = "notify_by_browser", type = "boolean" },
+  { name = "permissions", type = "jsonb" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]

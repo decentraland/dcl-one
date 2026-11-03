@@ -1,0 +1,107 @@
+name = "places"
+repository = "github.com/decentraland/places"
+revision = "e660fbc2d8bbc7c8731e1441dfa3540bb0e8fdc8"
+database_env = "PLACES_DATABASE_URL"
+after = []
+notes = """
+Imports the catalogue as local authority (explore.place origin = 'local',
+raw.source = 'places', raw.local = true), the operator decisions as the
+overlays the node re-applies (place_moderation, place_ranking, set_by =
+'migration:places'), the world-scene place identities, favorites and likes.
+Run it with PLACES_MIRROR_UPSTREAM unset: a mirror pass re-adopts every id
+upstream still lists as origin = 'upstream' and writes upstream's counters
+over the zeroed ones, so imported likes would count twice. See MAPPING.md.
+
+Not migrated: disabled places other than opt_out and moderation (overwritten
+and undeployed history), world-scene places as catalogue rows (they become
+explore.world_scene_place identities), worlds without an enabled scene,
+categories (static on the node), place_positions (index of the positions
+array), entities_places, check_scenes_logs, tasks, world_undeployments,
+world_scene_undeployments, world_deployment_position_watermarks (upstream
+ingestion state), users (admins come from PLACES_ADMIN_ADDRESSES), content
+ratings history (only the standing rating becomes an overlay).
+
+Deletes: place_moderation and place_ranking rows this migration wrote
+(set_by = 'migration:places') once upstream no longer holds that decision.
+Upstream timestamps (timestamp without time zone) are read as UTC.
+"""
+
+[[step]]
+name = "place"
+targets = ["explore.place", "explore.place_moderation", "explore.place_ranking"]
+extract = "place.extract.sql"
+load = "place.load.sql"
+key = ["id"]
+columns = [
+  { name = "id", type = "text" },
+  { name = "base_position", type = "text" },
+  { name = "title", type = "text" },
+  { name = "description", type = "text" },
+  { name = "creator_address", type = "text" },
+  { name = "content_rating", type = "text" },
+  { name = "categories", type = "text[]" },
+  { name = "deployed_at", type = "timestamptz" },
+  { name = "disabled", type = "boolean" },
+  { name = "highlighted", type = "boolean" },
+  { name = "world_name", type = "text" },
+  { name = "raw", type = "jsonb" },
+  { name = "mod_disabled", type = "boolean" },
+  { name = "mod_rating", type = "text" },
+  { name = "ranking_overlay", type = "jsonb" },
+]
+
+[[step]]
+name = "world_scene_place"
+targets = ["explore.world_scene_place"]
+extract = "world_scene_place.extract.sql"
+load = "world_scene_place.load.sql"
+key = ["identity"]
+columns = [
+  { name = "world_name", type = "text" },
+  { name = "identity", type = "uuid" },
+  { name = "entity_id", type = "text" },
+  { name = "parcels", type = "text[]" },
+  { name = "active", type = "boolean" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "user_favorite"
+targets = ["explore.user_favorites", "explore.place_interaction_counts"]
+extract = "user_favorite.extract.sql"
+load = "user_favorite.load.sql"
+key = ["user", "entity_id"]
+watermark = "created_at"
+columns = [
+  { name = "user", type = "text" },
+  { name = "entity_id", type = "text" },
+  { name = "user_activity", type = "double precision" },
+  { name = "created_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "user_like"
+targets = ["explore.user_likes", "explore.place_interaction_counts"]
+extract = "user_like.extract.sql"
+load = "user_like.load.sql"
+key = ["user", "entity_id"]
+watermark = "updated_at"
+columns = [
+  { name = "user", type = "text" },
+  { name = "entity_id", type = "text" },
+  { name = "like", type = "boolean" },
+  { name = "user_activity", type = "double precision" },
+  { name = "created_at", type = "timestamptz" },
+  { name = "updated_at", type = "timestamptz" },
+]
+
+[[step]]
+name = "road_position"
+targets = ["explore.road_positions"]
+extract = "road_position.extract.sql"
+load = "road_position.load.sql"
+key = ["position"]
+columns = [
+  { name = "position", type = "text" },
+]
