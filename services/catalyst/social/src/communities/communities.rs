@@ -36,6 +36,16 @@ use crate::notifications::community::{Audience, CommunityEvent, notify};
 const MIN_SEARCH_LENGTH_FOR_MINIMAL_RESPONSE: usize = 3;
 const MAX_LIMIT_FOR_MINIMAL_RESPONSE: i64 = 50;
 
+/// Both source owner callsites use the strict single-profile reader and catch
+/// registry failures as their own 500 `{message}` response.
+fn owner_profile_failure(error: super::profiles::RegistryError) -> CommError {
+    let message = match &error {
+        super::profiles::RegistryError::Database(error) => super::http::database_message(error),
+        _ => error.to_string(),
+    };
+    CommError::MessageOnly(StatusCode::INTERNAL_SERVER_ERROR, message)
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum MinimalError {
     Unauthorized,
@@ -376,26 +386,16 @@ pub async fn get_community(
             "Community not found: {id_str}"
         )));
     };
-    let owner_names = state
+    let owner_name = state
         .profiles
-        .get_owner_names(&[detail.owner_address.to_lowercase()])
-        .await;
-    if !owner_names.contains_key(&detail.owner_address.to_lowercase()) {
-        return Err(CommError::not_found(format!(
-            "Community owner not found: {id} - {}",
-            detail.owner_address
-        )));
-    }
+        .get_owner_name(&detail.owner_address)
+        .await
+        .map_err(owner_profile_failure)?;
     if signer.is_some() {
         detail.is_hosting_live_event = Some(is_hosting_live_event(&state, id).await);
     }
     set_thumbnail_detail(&state.settings.cdn_url, &mut detail);
-    detail.owner_name = Some(
-        owner_names
-            .get(&detail.owner_address.to_lowercase())
-            .cloned()
-            .unwrap_or_default(),
-    );
+    detail.owner_name = Some(owner_name);
     Ok(Json(EnvelopeData { data: detail }))
 }
 
@@ -632,17 +632,9 @@ pub async fn create_community(
             format!("The user {signer} doesn't have any names"),
         );
     }
-    let owner_name = match state
-        .profiles
-        .get_owner_names(&[signer.as_str().to_string()])
-        .await
-        .remove(signer.as_str())
-    {
-        Some(name) => name,
-        None => {
-            return CommError::not_found(format!("Community owner not found: N/A - {signer}"))
-                .into_response();
-        }
+    let owner_name = match state.profiles.get_owner_name(signer.as_str()).await {
+        Ok(name) => name,
+        Err(error) => return owner_profile_failure(error).into_response(),
     };
     if let Err(e) = state.validate_places_ownership(&place_ids, &signer).await {
         return e.into_response();
