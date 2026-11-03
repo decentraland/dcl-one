@@ -160,8 +160,8 @@ pub enum PulseEvent {
         parcel: IVec2,
         realm: Arc<str>,
     },
-    /// Subject left the interest set (or disconnected). Drop the alias / foreign player. Only for
-    /// a wallet's last subject: while another survives, that one takes the avatar over instead.
+    /// The subject driving a wallet's avatar left the interest set (or disconnected), and no other
+    /// subject of the wallet is in its realm to take over. Drop the alias / foreign player.
     Left { address: Address },
     /// Subject announced a new profile version. `realm` is where the server last placed them, as on
     /// every per-subject event.
@@ -203,7 +203,7 @@ pub struct PulseCtx<'a> {
 /// keep the last reconstructed full state and overlay deltas onto it.
 struct Subject {
     wallet: Address,
-    /// Its place in the order of all joins: of a wallet's subjects, the last to join is selected
+    /// Its place in the order of all joins, for picking the newest of a wallet's subjects
     /// (`PulseDecoder::selected`).
     join_order: u64,
     /// The realm the server last placed them in — from `PlayerJoined`, updated by a
@@ -392,11 +392,11 @@ enum FullKind {
 pub struct PulseDecoder {
     grid: PulseParcelGrid,
     subjects: HashMap<u32, Subject>,
-    /// The subject that drives each held wallet's avatar: of the wallet's subjects, the one that
-    /// joined last. A peer that reconnects is announced under its new id before the old one leaves,
-    /// so a wallet can hold several. Only the selected one reaches the engine; the others are
-    /// shadows, kept current in silence so that the newest can take over when the selected one
-    /// leaves (unity-explorer's `PeerIdCache`).
+    /// The subject that drives each held wallet's avatar. A peer that reconnects is announced under
+    /// its new id before the old one leaves, so a wallet can hold several. A join selects the
+    /// newcomer; when the selected one leaves, the newest left in its realm takes over (`on_left`).
+    /// Only the selected one reaches the engine; the others are shadows, kept current in silence
+    /// for that takeover (unity-explorer's `PeerIdCache`).
     selected: HashMap<Address, u32>,
     /// Joins so far, which number each subject's `join_order`.
     joins: u64,
@@ -564,9 +564,12 @@ impl PulseDecoder {
         events
     }
 
-    /// A shadow leaves in silence. The selected subject takes the avatar with it, unless another
-    /// subject of the wallet survives it: then the newest of those takes over
-    /// (`PeerIdCache.RemovePeer`, `PulseMultiplayerBus.RemovePeerRegistration`).
+    /// A shadow leaves in silence. When the selected subject leaves, the newest subject of the
+    /// wallet still in its realm takes the avatar over. With none there, the wallet leaves that
+    /// realm, and the newest survivor elsewhere, if any, is selected and announced in its own realm
+    /// as a first sighting. This is `PeerIdCache.RemovePeer` with
+    /// `PulseMultiplayerBus.RemovePeerRegistration`, the leaver's realm standing in for the
+    /// observer's, which the decoder does not know.
     fn on_left(&mut self, subject_id: u32) -> Vec<PulseEvent> {
         self.pending_resync.remove(&subject_id);
         let selected = self.is_selected(subject_id);
@@ -576,20 +579,36 @@ impl PulseDecoder {
         if !selected {
             return Vec::new();
         }
-        let survivor = self
-            .subjects
-            .iter()
-            .filter(|(_, subject)| subject.wallet == leaver.wallet)
-            .max_by_key(|(_, subject)| subject.join_order)
-            .map(|(id, _)| *id);
-        let Some(survivor) = survivor else {
+        if let Some(survivor) = self.newest_subject(leaver.wallet, Some(&*leaver.realm)) {
+            self.selected.insert(leaver.wallet, survivor);
+            return self.promote(survivor, leaver.emote.active.is_some());
+        }
+
+        let mut events = vec![PulseEvent::Left {
+            address: leaver.wallet,
+        }];
+        let Some(survivor) = self.newest_subject(leaver.wallet, None) else {
             self.selected.remove(&leaver.wallet);
-            return vec![PulseEvent::Left {
-                address: leaver.wallet,
-            }];
+            return events;
         };
         self.selected.insert(leaver.wallet, survivor);
-        self.promote(survivor, leaver.emote.active.is_some())
+        // Announced in its realm like a first sighting, as entering a realm is (`on_full`). The
+        // leaver's emote went with the `Left`, so there is none to stop.
+        let movement = self.to_movement_for(survivor);
+        events.push(self.joined_event(survivor, &movement));
+        events.extend(self.promote(survivor, false));
+        events
+    }
+
+    /// The newest subject held for `wallet`, in `realm` if one is given.
+    fn newest_subject(&self, wallet: Address, realm: Option<&str>) -> Option<u32> {
+        self.subjects
+            .iter()
+            .filter(|(_, subject)| {
+                subject.wallet == wallet && realm.is_none_or(|wanted| &*subject.realm == wanted)
+            })
+            .max_by_key(|(_, subject)| subject.join_order)
+            .map(|(id, _)| *id)
     }
 
     /// Hand its wallet's avatar to `subject_id`, a shadow until the selected subject left
