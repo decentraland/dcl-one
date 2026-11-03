@@ -244,8 +244,8 @@
     {
       "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -289,11 +289,14 @@
           "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
           "test": "every_community_http_database_failure_uses_the_source_message_boundary",
           "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
+          "test": "community_analytics_payloads_and_no_ops_match_executed_source",
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
         }
       ],
-      "gaps": [
-        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -451,8 +454,8 @@
     {
       "id": "api_http:DELETE:/v1/community-voice-chats/:communityId",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "status": "known_gap",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -486,10 +489,16 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
+        },
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
+          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Functional difference remains; see community-voice-raw-cache-aliases."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
@@ -661,7 +670,7 @@
       "id": "api_http:DELETE:/v1/private-voice-chats/:callId",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 9 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 9 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -690,7 +699,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -1915,8 +1924,8 @@
     {
       "id": "api_http:PATCH:/v1/communities/:id/requests/:requestId",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1964,18 +1973,21 @@
           "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
           "test": "every_community_http_database_failure_uses_the_source_message_boundary",
           "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
+          "test": "community_analytics_payloads_and_no_ops_match_executed_source",
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
         }
       ],
-      "gaps": [
-        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:PATCH:/v1/community-voice-chats/:communityId/speakers/:address",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 6 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 6 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -2004,7 +2016,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -2058,7 +2070,7 @@
       "id": "api_http:PATCH:/v1/private-voice-chats/:callId",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 20 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 20 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -2092,7 +2104,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -2284,8 +2296,8 @@
     {
       "id": "api_http:POST:/v1/communities/:id/members",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -2314,18 +2326,21 @@
           "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
           "test": "every_community_http_database_failure_uses_the_source_message_boundary",
           "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
+          "test": "community_analytics_payloads_and_no_ops_match_executed_source",
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
         }
       ],
-      "gaps": [
-        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/members.rs",
@@ -2369,10 +2384,15 @@
           "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
           "test": "every_community_http_database_failure_uses_the_source_message_boundary",
           "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
+          "test": "community_analytics_payloads_and_no_ops_match_executed_source",
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
         }
       ],
       "gaps": [
-        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+        "Functional difference remains; see community-client-write-failure-phases."
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
@@ -2513,8 +2533,8 @@
     {
       "id": "api_http:POST:/v1/communities/:id/requests",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -2562,18 +2582,21 @@
           "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
           "test": "every_community_http_database_failure_uses_the_source_message_boundary",
           "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
+          "test": "community_analytics_payloads_and_no_ops_match_executed_source",
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
         }
       ],
-      "gaps": [
-        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:POST:/v1/community-voice-chats",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "status": "known_gap",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -2622,17 +2645,23 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
+        },
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
+          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Functional difference remains; see community-voice-raw-cache-aliases."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
     {
       "id": "api_http:POST:/v1/community-voice-chats/:communityId/participants",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 4 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -2661,7 +2690,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -2811,7 +2840,7 @@
       "id": "api_http:POST:/v1/private-voice-chats",
       "owner": "realtime-voice-and-streams",
       "status": "known_gap",
-      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Read pinned handler path/body validation, normalization, status/envelope and domain calls against local twin. HTTP start/join now omit profile metadata (source includeProfile:false), RPC keeps profile metadata. Private PATCH includes accept/reject; community DELETE speak request includes self lower-hand/other rejection. Typed404/403/409 map source voice middleware; generic failures remain generic500. 3 executed-source HTTP cases now replay status and JSON from the actual controller, AJV and voice/generic error middlewares. Source authentication is injected; Rust requests are signed. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
@@ -2840,11 +2869,15 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
+        },
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/private-lifecycle-source-cases.json",
+          "scope": "Six actual source Social/companion PostgreSQL presence cases; confirms source allowance/denial and retained media rows. Candidate correction is pending, not a passing parity proof."
         }
       ],
       "gaps": [
-        "Unaccepted private-call lifecycle difference; see private-call-pending-expiry-start-order."
+        "Functional difference remains; see private-call-stale-media-coexistence."
       ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Executable HTTP middleware comparisons for the14 voice operations are still incomplete; shared-domain Protobuf cases do not test that boundary."
     },
@@ -2964,7 +2997,7 @@
       "id": "api_http:PUT:/v1/communities/:id",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Community analytics now match seven source event kinds in 17 normal/no-op scenarios; partial-write failure parity is tracked separately.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -3028,11 +3061,16 @@
           "path": "services/catalyst/social/src/communities/tests/dependency_errors.rs",
           "test": "every_community_http_database_failure_uses_the_source_message_boundary",
           "scope": "All 37 actual pinned community handlers receive a real node-pg P0001 through injected domain dependencies; their message-only 500 responses replay through real candidate gateway requests with restricted-role SQL faults. Includes paired standing failures and preserves federation envelopes. This is a common unexpected-core-SQL boundary, not every dependency failure."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/analytics_parity.rs",
+          "test": "community_analytics_payloads_and_no_ops_match_executed_source",
+          "scope": "Seventeen normal/no-op scenarios through real candidate routes and PostgreSQL compare ten exact payloads across seven community analytics kinds against 19 actual-source captures. Source adapter query text is captured with a controlled transaction client; target SQL covers historical request statuses and ban exclusion. Two source write-failure scenarios remain separate open boundary work."
         }
       ],
       "gaps": [
         "Provider transport bounds differ: the candidate caps response bodies at 4 MiB and applies 600s as a total request timeout, while the pinned Node SDK applies its abort timer until headers and uses runtime-specific body inactivity handling. Missing API credentials fail lazily rather than at the source component bootstrap; these startup/provider boundaries remain differences.",
-        "Configured source analytics event effects are not yet emitted; see configured-social-analytics-effects. Response/notification proofs do not establish this external side effect."
+        "Functional difference remains; see community-client-write-failure-phases."
       ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Resolve the listed observed differences."
     },
@@ -3163,7 +3201,7 @@
     {
       "id": "json_stream:SUBSCRIBE:community_voice_chat_updates",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
@@ -3205,9 +3243,15 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout_membership.rs",
           "test": "community_voice_membership_pages_match_executed_source_failure_boundaries",
           "scope": "Six actual-source update-handler/generator captures with 513 eligible subscribers replay against owned PostgreSQL; a test-local view raises on the second membership statement. Covers whole-audience failure and healthy recipient/Protobuf payload groups. No deployed broker/cutover equivalence is inferred."
+        },
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
+          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Functional difference remains; see community-voice-raw-cache-aliases."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -3458,7 +3502,7 @@
     {
       "id": "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
@@ -3510,9 +3554,15 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout_membership.rs",
           "test": "community_voice_membership_pages_match_executed_source_failure_boundaries",
           "scope": "Six actual-source update-handler/generator captures with 513 eligible subscribers replay against owned PostgreSQL; a test-local view raises on the second membership statement. Covers whole-audience failure and healthy recipient/Protobuf payload groups. No deployed broker/cutover equivalence is inferred."
+        },
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
+          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Functional difference remains; see community-voice-raw-cache-aliases."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -3699,7 +3749,7 @@
       "id": "rpc_unary:RPC:acceptPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -3743,7 +3793,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -3860,8 +3910,8 @@
     {
       "id": "rpc_unary:RPC:endCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "status": "known_gap",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -3900,17 +3950,23 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
+        },
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
+          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Functional difference remains; see community-voice-raw-cache-aliases."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:endPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -3949,7 +4005,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -4454,7 +4510,7 @@
       "id": "rpc_unary:RPC:joinCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -4488,7 +4544,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -4537,7 +4593,7 @@
       "id": "rpc_unary:RPC:muteSpeakerFromCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 8 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 8 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -4571,7 +4627,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -4620,7 +4676,7 @@
       "id": "rpc_unary:RPC:rejectPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Sixteen additional actual PostgreSQL/domain/RPC cases for this method preserve accepted UUID spellings, raw response/event IDs, syntax-error application oneofs and pending-row effects before media identifier guards. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -4659,7 +4715,7 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -4746,8 +4802,8 @@
     {
       "id": "rpc_unary:RPC:startCommunityVoiceChat",
       "owner": "realtime-voice-and-streams",
-      "status": "reviewed",
-      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "status": "known_gap",
+      "result": "Compared pinned source handler/domain branches; 6 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -4801,17 +4857,23 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
+        },
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/community-raw-lifecycle-source-cases.json",
+          "scope": "Actual source domain, raw cache, poller, update handler and both wire mappers over two multi-alias lifecycles with controlled media status. This records the source contract; candidate lifecycle equivalence remains open."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "Functional difference remains; see community-voice-raw-cache-aliases."
+      ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_unary:RPC:startPrivateVoiceChat",
       "owner": "realtime-voice-and-streams",
       "status": "known_gap",
-      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 28 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
+      "result": "Compared pinned source handler/domain branches; 3 executed handler cases for this method replay as identical Protobuf bytes. Private-call domain outcomes use injected providers; real PostgreSQL/LiveKit equivalence is not inferred. Nine voice analytics kinds now have 29 paired source-domain/SDK regressions through the shared adapter; ordinary responses alone are not the side-effect proof.",
       "evidence": [
         {
           "path": "services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json",
@@ -4845,11 +4907,15 @@
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_runtime.rs",
           "test": "voice_analytics_payloads_and_failure_isolation_match_executed_source",
-          "scope": "Twenty-eight paired actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, omitted credentials, no-ops, partial failures and raw identifier spelling. A separately tagged expired-start source case remains an explicit lifecycle gap; network completion ordering is not promised."
+          "scope": "All 29 actual-source voice-domain/analytics SDK scenarios replay through candidate mutations, PostgreSQL and a local failing HTTP provider, covering nine voice event kinds, credential omissions, no-ops, partial failures, identifier spelling and the expired-pending BUSY boundary. Network completion ordering and deployed media behavior remain outside this proof."
+        },
+        {
+          "path": "services/catalyst/tests/fixtures/conformance/social/private-lifecycle-source-cases.json",
+          "scope": "Six actual source Social/companion PostgreSQL presence cases; confirms source allowance/denial and retained media rows. Candidate correction is pending, not a passing parity proof."
         }
       ],
       "gaps": [
-        "Unaccepted private-call lifecycle difference; see private-call-pending-expiry-start-order."
+        "Functional difference remains; see private-call-stale-media-coexistence."
       ],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
@@ -5155,7 +5221,7 @@
     {
       "id": "websocket:UPGRADE:/",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
+      "status": "reviewed",
       "result": "Source numeric conversions are now replayed: 13 auth settings, 16 native idle inputs and 100 actual signed-timestamp decisions. Independent f64 signature window and Node timer buckets preserve prefix/fraction/overflow behavior; native ushort conversion preserves idle admission. Package config 51, handshake 21 and socket 18 tests pass; root all-targets passes.",
       "evidence": [
         {
@@ -5193,15 +5259,13 @@
           "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [
-        "Unaccepted private-call lifecycle difference; see private-call-disconnect-accepted-media."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Native uWS timer-wheel scheduling and every numeric configuration edge have not been exhaustively compared."
     },
     {
       "id": "websocket:UPGRADE:/v1/stream",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
+      "status": "reviewed",
       "result": "Source numeric conversions are now replayed: 13 auth settings, 16 native idle inputs and 100 actual signed-timestamp decisions. Independent f64 signature window and Node timer buckets preserve prefix/fraction/overflow behavior; native ushort conversion preserves idle admission. Package config 51, handshake 21 and socket 18 tests pass; root all-targets passes.",
       "evidence": [
         {
@@ -5229,9 +5293,7 @@
           "scope": "Six official lifecycle/component source stages with controlled Redis/listen dependencies compare startup order. Candidate tests hold the existing subscription fence unready, reject both upgrades with empty 503 before auth/slots, then prove delivery after readiness and admission after a later outage. The source standalone listener is not yet open; these transport unavailability shapes differ."
         }
       ],
-      "gaps": [
-        "Unaccepted private-call lifecycle difference; see private-call-disconnect-accepted-media."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Native uWS timer-wheel scheduling and every numeric configuration edge have not been exhaustively compared."
     }
   ],
@@ -7521,7 +7583,7 @@
         "rpc_unary:RPC:upsertSocialSettings",
         "websocket:UPGRADE:/"
       ],
-      "description": "The existing Social opt-in writer now bounds ordinary pending frames with the source adaptive count, retry/backoff/drain policy and accepted-once semantics. Fifteen supported-policy source traces replay; two additional cases document candidate startup rejection for maxBackpressure0 and computed nonfinite queue capacity where the source can admit unbounded buffering. WS_MAX_BACKPRESSURE still uses a strict unsigned parser rather than native numeric-prefix/fraction/wrap conversion. Application writer admission/flush is measured separately from native uWS kernel behavior; deployed performance equivalence is unverified."
+      "description": "The existing Social opt-in writer now bounds ordinary pending frames with the source adaptive count, retry/backoff/drain policy and accepted-once semantics. Fifteen supported-policy source traces replay; two additional cases document candidate startup rejection for maxBackpressure0 and computed nonfinite queue capacity where the source can admit unbounded buffering. WS_MAX_BACKPRESSURE still uses a strict unsigned parser rather than native numeric-prefix/fraction/wrap conversion. Application writer admission/flush is measured separately from native uWS kernel behavior; deployed performance equivalence is unverified. Twenty executed source backpressure-number cases now separate raw f64 queue capacity from native unsigned32 truncation/wrap. Prefix, fraction and representable wrap inputs are implemented; native-zero and nonfinite-capacity configurations remain unsupported and unaccepted, and kernel/performance equivalence remains unverified."
     },
     {
       "id": "community-voice-status-failure-degradation",
@@ -7671,25 +7733,25 @@
         "api_http:POST:/v1/communities/:id/requests",
         "api_http:PATCH:/v1/communities/:id/requests/:requestId"
       ],
-      "description": "Pinned Social uses 16 analytics event kinds across 17 voice/community call sites. The shared concrete adapter implements the source event/body-with-env/context HTTP contract, one attempt, cancellation after headers, guarded Fetch redirects and fire-and-forget failure isolation. Nine voice kinds now emit from their ten source producer sites, with 29 independently regenerated source scenarios, 28 paired mutation regressions and one explicit expiry-start lifecycle gap. Seven community producer sites remain under implementation, including ban failure timing. Shared connect timeout8s/read timeout25s and host guarding can terminate earlier than longer source analytics deadlines; entirely absent analytics configuration disables the adapter while source requires four strings. Those operating differences are unaccepted. Deployed routing/provider behavior and transient-event cutover remain unverified."
+      "description": "All 16 source analytics event kinds are connected at the 17 voice/community producer sites through the shared concrete adapter. Source captures cover 29 voice scenarios and 19 community scenarios; candidate regressions pair all 29 voice and 17 normal/no-op community scenarios, with partial-write failures tracked separately. Source SDK configuration, response cancellation, cross-host redirects and whole-chain deadlines are independently recaptured. Known unaccepted transport differences remain: shared connect8s/read25s, host guarding and optional monolith startup when all analytics strings are absent. Deployed routing/provider behavior and transient-event cutover remain unverified."
     },
     {
       "id": "private-call-pending-expiry-start-order",
-      "status": "known_gap",
+      "status": "unverified",
       "operations": [
         "rpc_unary:RPC:startPrivateVoiceChat",
         "api_http:POST:/v1/private-voice-chats"
       ],
-      "description": "Pinned voice-db.ts busy checks and createPrivateVoiceChat consider every pending row regardless of age; expiry is a separate sweep. Candidate private_voice_preflight filters expired rows and create_pending_private_call reclaims them while starting, emitting EXPIRED before a new request. This can accept a start that the source rejects until its sweep. The difference has no recorded acceptance; an executed-source regression and focused correction are pending."
+      "description": "Pending calls now keep both parties busy until the expiry sweep deletes them; starting a call never reclaims expired pending rows or emits their EXPIRED event. All 29 voice analytics/source scenarios are now paired, including the expired-start case. Voice package 51 tests and comms voice-database six tests pass. Production sweep timing and existing-state cutover remain unverified."
     },
     {
       "id": "private-call-disconnect-accepted-media",
-      "status": "known_gap",
+      "status": "unverified",
       "operations": [
         "websocket:UPGRADE:/",
         "websocket:UPGRADE:/v1/stream"
       ],
-      "description": "Pinned logic/voice/voice.ts endIncomingOrOutgoingPrivateVoiceChatForUser looks only in the pending-call relation; accepted calls have already left it. Candidate end_private_voice_chat_on_disconnect first terminates an accepted media call. Closing a Social socket can therefore end an ongoing media call that the source leaves running. The difference has no recorded acceptance; actual pending/accepted disconnect captures and a focused correction are pending."
+      "description": "Social disconnect now finishes only pending calls. An accepted row, its two participants and media room remain until explicit media end; the owned-PostgreSQL regression and source domain captures match. Package voice 51 tests pass. Live clients and media-room cutover remain unverified."
     },
     {
       "id": "community-registry-read-failure-propagation",
@@ -7703,6 +7765,37 @@
         "api_http:GET:/v1/communities/:id/posts"
       ],
       "description": "Pinned registry.getProfiles propagates Redis mGet and provider read failures; owners.getOwnersNames skips malformed profiles but does not swallow those read failures. Six candidate v1 list/enrichment operations use the best-effort ProfilesCache.get_profiles wrapper, which can answer 200 with empty profile fields instead of the handler source 500 {message}. An existing-reader Result path and source read-versus-write failure regressions are pending; cache write failures remain best-effort."
+    },
+    {
+      "id": "private-call-stale-media-coexistence",
+      "status": "known_gap",
+      "operations": [
+        "rpc_unary:RPC:startPrivateVoiceChat",
+        "api_http:POST:/v1/private-voice-chats"
+      ],
+      "description": "Actual Social and companion PostgreSQL components permit a new pending call when existing accepted media presence is initial-expired, interrupted-expired or disconnected, retaining both media rows until their sweep. Candidate preflight agrees but reservation and caller/callee UNIQUE constraints still reject coexistence. Six source captures and a local RED reproduction exist. A data-preserving reviewed schema release, explicit transaction isolation and concurrency proof are under implementation; no production DDL has run."
+    },
+    {
+      "id": "community-client-write-failure-phases",
+      "status": "known_gap",
+      "operations": [
+        "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
+        "api_http:PUT:/v1/communities/:id"
+      ],
+      "description": "Source BAN commits member removal and unlikes, emits analytics, then writes ban and removes requests; candidate currently rolls those writes back together. Source update also commits community changes before separate place changes and atomic bulk acceptance; candidate combines those phases. Late failures can therefore leave different data and events. Source fault captures and same-pool, client-only boundary corrections are under implementation. Federation and source-atomic join transactions must retain their contracts."
+    },
+    {
+      "id": "community-voice-raw-cache-aliases",
+      "status": "known_gap",
+      "operations": [
+        "rpc_unary:RPC:startCommunityVoiceChat",
+        "rpc_unary:RPC:endCommunityVoiceChat",
+        "api_http:POST:/v1/community-voice-chats",
+        "api_http:DELETE:/v1/community-voice-chats/:communityId",
+        "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
+        "json_stream:SUBSCRIBE:community_voice_chat_updates"
+      ],
+      "description": "Two complete executed-source lifecycles show independent raw UUID cache keys, their original wire spellings and restart/poll behavior. Candidate stores one notification generation/scope per canonical UUID, losing that cardinality and lexical identity. Analytics spelling is already preserved; stream/cache lifecycle parity remains open. A single authoritative raw-key relation, bounded polling and data-safe migration are being reviewed before implementation."
     }
   ]
 }

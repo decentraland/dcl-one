@@ -408,7 +408,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 686,
+          "line": 689,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -417,7 +417,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 696,
+          "line": 699,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -437,7 +437,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 670,
+          "line": 673,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -466,7 +466,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 464,
+          "line": 467,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -475,7 +475,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 470,
+          "line": 473,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -495,7 +495,7 @@
       "candidate": [
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 503,
+          "line": 506,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -504,7 +504,7 @@
         },
         {
           "path": "services/catalyst/social/src/rpc/stream.rs",
-          "line": 586,
+          "line": 589,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -560,7 +560,7 @@
       "candidate": [
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 342,
+          "line": 352,
           "kind": "counter",
           "scope": "production_file_inline_test_possible",
           "labels": []
@@ -588,7 +588,7 @@
       "candidate": [
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 186,
+          "line": 196,
           "kind": "histogram",
           "scope": "production_file_inline_test_possible",
           "labels": [
@@ -606,7 +606,7 @@
       "candidate": [
         {
           "path": "services/catalyst/shared/src/rpc/ws/ordinary.rs",
-          "line": 175,
+          "line": 185,
           "kind": "gauge",
           "scope": "production_file_inline_test_possible",
           "labels": []
