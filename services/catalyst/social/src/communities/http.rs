@@ -31,6 +31,76 @@ pub const ADR44_MESSAGE: &str = "This endpoint requires a signed fetch request. 
 /// `{ error: "Bad request", message }` (capture `social/community-by-id-bad-id`).
 pub const INVALID_IDENTIFIER: &str = "Invalid identifier";
 
+#[derive(Clone)]
+pub(crate) struct SocialApiNotFound;
+
+/// The source router's allowedMethods boundary. CORS wraps this function and
+/// intercepts OPTIONS first; unsupported verbs still need the route's Allow set.
+pub async fn social_api_methods(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    use axum::http::{Method, header};
+    let method = req.method().clone();
+    let path = req
+        .uri()
+        .path()
+        .strip_prefix("/social-api")
+        .unwrap_or(req.uri().path())
+        .to_string();
+    let mut response = next.run(req).await;
+    let implemented = matches!(
+        method,
+        Method::HEAD
+            | Method::OPTIONS
+            | Method::GET
+            | Method::PUT
+            | Method::PATCH
+            | Method::POST
+            | Method::DELETE
+    );
+    if !implemented || response.status() == StatusCode::METHOD_NOT_ALLOWED {
+        let allowed = response
+            .headers()
+            .get(header::ALLOW)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        let methods: Vec<&str> = allowed
+            .split(',')
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .collect();
+        let parts: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+        let order: &[&str] = match parts.as_slice() {
+            ["v1", "referral-progress"] => &["POST", "PATCH", "HEAD", "GET"],
+            ["v1", "communities", _, "members", _] => &["DELETE", "PATCH"],
+            _ => &["HEAD", "GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+        };
+        let allow = order
+            .iter()
+            .copied()
+            .filter(|value| methods.contains(value))
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Response::builder()
+            .status(if implemented {
+                StatusCode::METHOD_NOT_ALLOWED
+            } else {
+                StatusCode::NOT_IMPLEMENTED
+            })
+            .header(header::ALLOW, allow)
+            .header(header::CONTENT_LENGTH, "0")
+            .body(axum::body::Body::empty())
+            .unwrap();
+    }
+    if method == Method::HEAD && response.extensions().get::<SocialApiNotFound>().is_some() {
+        response.headers_mut().remove(header::CONTENT_TYPE);
+        response.headers_mut().remove(header::CONTENT_LENGTH);
+        *response.body_mut() = axum::body::Body::empty();
+    }
+    response
+}
+
 /// Matches upstream's own cut.
 const METADATA_ECHO_MAX: usize = 64;
 

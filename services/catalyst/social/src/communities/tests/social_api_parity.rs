@@ -1,8 +1,9 @@
 //! The social-api answers production gives (`decentraland/social-service-ea`
 //! at `fb3dcb8`; captures `tests/fixtures/conformance/social/social/`): the
-//! CORS layer, the probes under the gateway prefix, the error bodies, the
+//! probes under the gateway prefix, the error bodies, the
 //! member-communities order and the community places merged with their
-//! destinations.
+//! destinations. CORS uses executed b6b2cef source goldens: that source's
+//! preflight contract supersedes the older fb3dcb8 capture.
 
 use axum::http::{HeaderMap, Method};
 
@@ -59,11 +60,6 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     let Some(rig) = Rig::new(Settings::for_tests()).await else {
         return;
     };
-    for prefix in ["", "/social-api"] {
-        let notes = replayed(&rig.app, prefix, "preflight-communities").await;
-        assert!(notes.is_empty(), "{prefix}: {notes:#?}");
-    }
-
     // every route of the router, the local extensions too, and any requested headers
     let (status, headers, body) = send(
         &rig.app,
@@ -92,14 +88,17 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
         ]
     );
     for (name, value) in [
-        ("access-control-allow-headers", "*"),
+        (
+            "access-control-allow-headers",
+            "x-identity-auth-chain-0, content-type",
+        ),
         (
             "access-control-allow-methods",
-            "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS",
+            "GET,HEAD,OPTIONS,DELETE,POST,PUT,PATCH",
         ),
         ("access-control-allow-origin", "*"),
         ("access-control-max-age", "86400"),
-        ("vary", "accept-encoding"),
+        ("vary", "Access-Control-Request-Headers"),
         ("x-content-type-options", "nosniff"),
     ] {
         assert_eq!(headers[name], value, "{name}");
@@ -116,6 +115,13 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     .await;
     assert_eq!(status.as_u16(), fx.response.status);
     for (name, value) in &fx.response.headers {
+        if name == "vary" {
+            assert!(
+                headers.get("vary").is_none(),
+                "the pinned source adds no compression Vary"
+            );
+            continue;
+        }
         let actual = headers[name.as_str()].to_str().unwrap();
         if name == "content-type" {
             assert!(actual.starts_with(value.as_str()), "{name}: {actual}");
@@ -131,6 +137,120 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     assert!(headers.get("access-control-allow-origin").is_none());
     assert!(headers.get("vary").is_none());
     assert_eq!(headers["x-content-type-options"], "nosniff");
+    rig.finish();
+}
+
+#[tokio::test]
+async fn social_api_gateway_cors_and_unknown_paths_match_executed_source() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-cors.json"
+    )))
+    .unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        let request_headers: Vec<(&str, &str)> = case["headers"]
+            .as_object()
+            .unwrap()
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str().unwrap()))
+            .collect();
+        let method = Method::from_bytes(case["method"].as_str().unwrap().as_bytes()).unwrap();
+        let path = format!("/social-api{}", case["path"].as_str().unwrap());
+        let (status, headers, body) = send(&rig.app, method, &path, &request_headers).await;
+        assert_eq!(
+            status.as_u16(),
+            case["status"].as_u64().unwrap() as u16,
+            "{}",
+            case["name"]
+        );
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            case["body"].as_str().unwrap()
+        );
+        for (key, value) in case["responseHeaders"].as_object().unwrap() {
+            assert_eq!(
+                headers[key].to_str().unwrap(),
+                value.as_str().unwrap(),
+                "{} {key}",
+                case["name"]
+            );
+        }
+        for key in [
+            "access-control-allow-origin",
+            "access-control-allow-methods",
+            "access-control-allow-headers",
+            "access-control-max-age",
+            "vary",
+        ] {
+            if case["responseHeaders"].get(key).is_none() {
+                assert!(!headers.contains_key(key), "{} {key}", case["name"]);
+            }
+        }
+    }
+    let (status, _, body) = send(&rig.app, Method::GET, "/unknown-root-path", &[ORIGIN]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert!(body.is_empty());
+    rig.finish();
+}
+
+#[tokio::test]
+async fn social_api_methods_match_the_executed_source_server() {
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let rpc = Arc::new(crate::rpc::State::new(
+        rig.pool.clone(),
+        crate::rpc::Settings::default(),
+        None,
+        Arc::new(crate::rpc::voice::fake::FakeVoiceRooms::new(
+            rig.pool.clone(),
+        )),
+    ));
+    let app = Router::new().nest(
+        "/social-api",
+        crate::social_api_gateway(router(rig.state.clone()).merge(crate::rpc::http::router(rpc))),
+    );
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/source-contracts/community-routing.json"
+    )))
+    .unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        let method = Method::from_bytes(case["method"].as_str().unwrap().as_bytes()).unwrap();
+        let path = format!("/social-api{}", case["path"].as_str().unwrap());
+        let (status, headers, body) = send(&app, method.clone(), &path, &[ORIGIN]).await;
+        assert_eq!(
+            status.as_u16(),
+            case["status"].as_u64().unwrap() as u16,
+            "{method} {path}"
+        );
+        assert_eq!(
+            String::from_utf8(body).unwrap(),
+            case["body"].as_str().unwrap(),
+            "{method} {path}"
+        );
+        for (key, value) in case["headers"].as_object().unwrap() {
+            assert_eq!(
+                headers.get(key).and_then(|v| v.to_str().ok()),
+                value.as_str(),
+                "{method} {path} {key}"
+            );
+        }
+        for key in [
+            "allow",
+            "content-type",
+            "access-control-allow-origin",
+            "access-control-allow-methods",
+            "vary",
+        ] {
+            if case["headers"].get(key).is_none() {
+                assert!(!headers.contains_key(key), "{method} {path} {key}");
+            }
+        }
+    }
     rig.finish();
 }
 

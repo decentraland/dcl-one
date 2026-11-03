@@ -227,9 +227,10 @@ impl Rig {
             crate::http::Outbound::for_tests(),
             crate::chain_index::IndexSettings::for_tests(),
         )));
-        let app = Router::new()
-            .merge(router(state.clone()))
-            .nest("/social-api", router(state.clone()));
+        let app = Router::new().merge(router(state.clone())).nest(
+            "/social-api",
+            crate::social_api_gateway(router(state.clone())),
+        );
         Some(Self {
             pool,
             app,

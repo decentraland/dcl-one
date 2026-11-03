@@ -66,6 +66,29 @@ pub struct States {
     pub rpc: Arc<rpc::State>,
 }
 
+/// The social API host's unmatched paths and preflights apply to its entire
+/// gateway prefix, including paths no domain router registered.
+pub fn social_api_gateway(router: Router) -> Router {
+    // Wrap the complete method router: Axum adds Allow after each individual
+    // route's layers, whereas source allowedMethods and CORS surround routing.
+    let router = router.fallback(|| async {
+        use axum::response::IntoResponse;
+        let mut response = (axum::http::StatusCode::NOT_FOUND, "Not found").into_response();
+        response
+            .extensions_mut()
+            .insert(communities::http::SocialApiNotFound);
+        response
+    });
+    Router::new()
+        .fallback_service(router)
+        .layer(axum::middleware::from_fn(
+            communities::http::social_api_methods,
+        ))
+        .layer(axum::middleware::from_fn(
+            communities::cors::social_api_cors,
+        ))
+}
+
 /// The old gateway's location table for the social bundle
 /// (`catalyrst/nixos/web-gateway.nix`): `/social-api`, `/comms-gatekeeper`,
 /// `/notifications`, `/badges`, `/autotranslate-server` and
@@ -100,14 +123,16 @@ pub fn router(states: &States, writes_enabled: bool) -> Router {
         .merge(social_api())
         .nest(
             "/social-api",
-            social_api()
-                .route(
-                    "/openapi.json",
-                    axum::routing::get(|| async {
-                        crate::shared::openapi::document(crate::shared::openapi::COMMUNITIES)
-                    }),
-                )
-                .merge(communities::health_router()),
+            social_api_gateway(
+                social_api()
+                    .route(
+                        "/openapi.json",
+                        axum::routing::get(|| async {
+                            crate::shared::openapi::document(crate::shared::openapi::COMMUNITIES)
+                        }),
+                    )
+                    .merge(communities::health_router()),
+            ),
         )
         .nest(
             "/notifications",
