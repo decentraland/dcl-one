@@ -201,6 +201,10 @@ pub struct DecentralandArguments {
     pub launch: LaunchOptions,
     #[command(flatten)]
     pub client: ClientOptions,
+    /// Route supported first-party services via this deployment's HTTP(S) gateway.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "url", help_heading = system_api_types::launch_options::help_heading::SERVICES)]
+    pub gateway: Option<String>,
     /// Skip the sign-in screen with an auto guest-login (default HUD only; `?guest=1` on web)
     #[arg(long)]
     pub guest: bool,
@@ -278,6 +282,10 @@ pub struct DecentralandArguments {
     /// harness's spelling `-logFile` is accepted too
     #[arg(long, value_name = "path", help_heading = DEBUG)]
     pub log_file: Option<std::path::PathBuf>,
+    /// Serve the read-only engine Network inspector on this loopback port.
+    #[cfg(not(target_arch = "wasm32"))]
+    #[arg(long, value_name = "port", help_heading = DEBUG)]
+    pub network_devtools: Option<u16>,
     // `--automation-token` and `--automation-port`: the loopback console server
     #[cfg(not(target_arch = "wasm32"))]
     #[command(flatten)]

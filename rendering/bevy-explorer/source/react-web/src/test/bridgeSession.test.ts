@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs'
+import { URL as NodeURL } from 'node:url'
+import { runInNewContext } from 'node:vm'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Ctx } from '../../bridge-scene/src/bridge'
 import type { PageToScene, SceneToPage } from '../engine/protocol'
@@ -13,10 +16,13 @@ vi.mock('../../bridge-scene/node_modules/@dcl/sdk/ecs.js', () => ({
     }
   }
 }))
+vi.mock('../../bridge-scene/src/domains/profile', () => ({fetchIdentities: vi.fn(async () => () => ({}))}))
 let player: { userId: string } | null = null
 vi.mock('../../bridge-scene/node_modules/@dcl/sdk/players/index.js', () => ({ getPlayer: () => player }))
 vi.mock('../../bridge-scene/src/bevy-api', () => ({
   BevyApi: {
+    kernelFetch: vi.fn(async () => ({ ok: true, body: '{"data":{"notifications":[]}}' })),
+    getRealmProvider: vi.fn(async () => 'https://peer.decentraland.zone'),
     loginPrevious: vi.fn(async () => ({ success: true, error: '' })),
     logout: vi.fn(),
     getSceneLoadingUIStream: vi.fn(() => new Promise(() => {}))
@@ -74,6 +80,63 @@ describe('bridge session', () => {
     player = { userId: '0xb' } // a login the bridge did not relay (the web console command)
     frame()
     expect(readies(sent)).toBe(2)
+  })
+})
+
+describe('native bridge service configuration', () => {
+  it('the native channel gets its service map only from the engine frame, never a page envelope', async () => {
+    const source = readFileSync(new NodeURL('../../../crates/dcl_deno/src/js/modules/init.js', import.meta.url), 'utf8')
+    const start = source.indexOf('globalThis.BroadcastChannel =')
+    const transport = source.slice(start, source.indexOf('\n};', start) + 3)
+    const fake = {to:'scene', msg:{kind:'nativeHudServices', bases:{events:'https://bad.invalid/events'}}}
+    const real = {to:'nativeHudServices', bases:{events:'https://gateway.example.org/events'}}
+    const queue = [JSON.stringify(fake), JSON.stringify(real), '']
+    const sandbox = {denoRef:{core:{ops:{
+      op_get_bridge_stream: async () => 1,
+      op_read_bridge_stream: async () => queue.shift()
+    }}}}
+    const channel = runInNewContext(transport + '\nnew BroadcastChannel("bevy-ui-bridge")', sandbox)
+    channel.onmessage = vi.fn()
+    expect(await channel.nativeHudServices).toEqual(real.bases)
+    expect(channel.onmessage).toHaveBeenCalledWith({data:fake})
+  })
+
+  it('uses the engine stream bootstrap for signed notifications and explicit catalyst overrides', async () => {
+    const { startBridge } = await import('../../bridge-scene/src/bridge')
+    const { registerCommunities } = await import('../../bridge-scene/src/domains/communities')
+    const { registerNotifications } = await import('../../bridge-scene/src/domains/notifications')
+    const { catalystBase } = await import('../../bridge-scene/src/http')
+    const { BevyApi } = await import('../../bridge-scene/src/bevy-api')
+    let active!: Channel
+    class Channel {
+      nativeHudServices = Promise.resolve({
+        notifications: 'https://gateway.example.org/notifications',
+        events: 'https://example.org/mounted/events',
+        socialApi: 'https://custom.example/social',
+        reels: 'https://example.org/mounted/camera-reel-service',
+        catalyst: 'https://custom.example/peer'
+      })
+      onmessage: ((e: {data: unknown}) => void) | null = null
+      constructor() { active = this }
+      postMessage(): void {}
+    }
+    vi.stubGlobal('BroadcastChannel', Channel)
+    try {
+      startBridge(ctx => { registerNotifications(ctx); registerCommunities(ctx) })
+      active.onmessage!({data:{to:'scene',msg:{kind:'getNotifications'}}})
+      await vi.waitFor(() => expect(BevyApi.kernelFetch).toHaveBeenCalledWith(expect.objectContaining({
+        url:'https://gateway.example.org/notifications/notifications?limit=50&from=0'
+      })))
+      active.onmessage!({data:{to:'scene',msg:{kind:'getCommunityDetail', id:'some/id'}}})
+      for (const url of [
+        'https://example.org/mounted/events/api/events?community_id=some%2Fid&list=upcoming',
+        'https://custom.example/social/v2/communities/some%2Fid/members?limit=100',
+        'https://example.org/mounted/camera-reel-service/api/communities/some%2Fid/images?limit=30'
+      ]) {
+        await vi.waitFor(() => expect(BevyApi.kernelFetch).toHaveBeenCalledWith(expect.objectContaining({url})))
+      }
+      expect(await catalystBase()).toBe('https://custom.example/peer')
+    } finally { vi.unstubAllGlobals() }
   })
 })
 

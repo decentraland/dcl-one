@@ -1,11 +1,11 @@
 // Notifications: the notifications list + persisting "mark as read".
 //   from: notifications service via BevyApi.kernelFetch (signed GET list / PUT read).
-import { isZone, signed } from '../http'
+import { hudBase, signed } from '../http'
 import type { Ctx } from '../bridge'
 import type { AppNotification } from '../../../src/engine/protocol'
 
-const ORG = 'https://notifications.decentraland.org/notifications'
-const ZONE = 'https://notifications.decentraland.zone/notifications'
+const ORG = 'https://notifications.decentraland.org'
+const ZONE = 'https://notifications.decentraland.zone'
 
 type NotificationRaw = {
   id: string
@@ -16,7 +16,7 @@ type NotificationRaw = {
 }
 
 async function base(): Promise<string> {
-  return (await isZone()) ? ZONE : ORG
+  return `${await hudBase('notifications', ORG, ZONE)}/notifications`
 }
 
 export function registerNotifications(ctx: Ctx): void {

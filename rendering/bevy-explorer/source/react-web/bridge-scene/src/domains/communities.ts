@@ -3,7 +3,7 @@
 //       + the engine's profile cache (profile.ts) for the names and faces those reads no
 //         longer carry — the v2 endpoints answer with addresses only.
 import { getPlayer } from '@dcl/sdk/players'
-import { getJson, isZone, signed, signedForm } from '../http'
+import { getJson, hudBase, signed, signedForm } from '../http'
 import { fetchIdentities } from './profile'
 import type { ProfileIdentity } from './profile'
 import type { Ctx } from '../bridge'
@@ -12,11 +12,11 @@ import type { Community, CommunityAction, CommunityEvent, CommunityMember, Commu
 const ORG = 'https://social-api.decentraland.org'
 const ZONE = 'https://social-api.decentraland.zone'
 // Community events live on the (public) events-api, filtered by community_id.
-const EVENTS_ORG = 'https://events.decentraland.org/api/events'
-const EVENTS_ZONE = 'https://events.decentraland.zone/api/events'
+const EVENTS_ORG = 'https://events.decentraland.org'
+const EVENTS_ZONE = 'https://events.decentraland.zone'
 // Community photos live on the camera-reel service (mirrors /api/users/{a}/images).
-const REEL_ORG = 'https://camera-reel-service.decentraland.org/api/communities'
-const REEL_ZONE = 'https://camera-reel-service.decentraland.zone/api/communities'
+const REEL_ORG = 'https://camera-reel-service.decentraland.org'
+const REEL_ZONE = 'https://camera-reel-service.decentraland.zone'
 // Community thumbnails are NOT in the list response — Unity builds them from the id against
 // the assets CDN (DecentralandUrl.CommunityThumbnail). Some 404 (no thumbnail set) → the
 // React <img> falls back to the initial.
@@ -48,11 +48,11 @@ const FRIEND = 3
 // Reads take the v2 endpoints, which answer with addresses instead of embedding a profile the
 // service had to resolve per row. Writes (and /places, which carries no profile) have no v2.
 async function base(version: 'v1' | 'v2'): Promise<string> {
-  return `${(await isZone()) ? ZONE : ORG}/${version}/communities`
+  return `${await hudBase('socialApi', ORG, ZONE)}/${version}/communities`
 }
 
 async function list(): Promise<Community[]> {
-  const cdn = (await isZone()) ? CDN_ZONE : CDN_ORG
+  const cdn = await hudBase('assets-cdn', CDN_ORG, CDN_ZONE)
   const res = await signed<{ results?: CommunityRaw[] }>(`${await base('v2')}?limit=50`)
   const raw = res?.results ?? []
   const identity = await fetchIdentities(raw.map((c) => c.ownerAddress ?? ''))
@@ -85,9 +85,8 @@ function mapMember(m: MemberRaw, identity: (address: string) => ProfileIdentity)
 async function detail(id: string): Promise<{ members: CommunityMember[]; posts: CommunityPost[]; places: CommunityPlace[]; events: CommunityEvent[]; photos: CommunityPhoto[] }> {
   const b = await base('v2')
   const placesBase = await base('v1')
-  const zone = await isZone()
-  const eventsBase = zone ? EVENTS_ZONE : EVENTS_ORG
-  const reelBase = zone ? REEL_ZONE : REEL_ORG
+  const eventsBase = `${await hudBase('events', EVENTS_ORG, EVENTS_ZONE)}/api/events`
+  const reelBase = `${await hudBase('reels', REEL_ORG, REEL_ZONE)}/api/communities`
   // The id reaches us from the service (a uuid), but it lands in a URL — encode it so it
   // can only ever be one path segment / one query value.
   const cid = encodeURIComponent(id)

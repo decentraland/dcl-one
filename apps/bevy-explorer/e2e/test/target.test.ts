@@ -47,6 +47,14 @@ describe('readTarget', () => {
     assert.deepEqual(target.native.args, ['--log-file', 'run.log', '--no_fog'])
   })
 
+  test('passes native gateway and Network inspector flags to the standalone', () => {
+    const target = readTarget({
+      DCL_E2E_TRANSPORT: 'native',
+      DCL_E2E_NATIVE_ARGS: '--gateway https://gateway.example.test --network-devtools 9223'
+    })
+    assert.deepEqual(target.native.args, ['--gateway', 'https://gateway.example.test', '--network-devtools', '9223'])
+  })
+
   test('refuses a bad transport, key or window', () => {
     assert.throws(() => readTarget({ DCL_E2E_TRANSPORT: 'cef' }), /DCL_E2E_TRANSPORT must be web or native/)
     assert.throws(() => readTarget({ DCL_E2E_ACCOUNT_KEYS: 'abc' }), /32-byte hex key/)

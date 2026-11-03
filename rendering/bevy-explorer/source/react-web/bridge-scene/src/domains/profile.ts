@@ -8,7 +8,7 @@
 //       + camera-reel       GET camera-reel-service.decentraland.org/api/users/:id/images
 import { getPlayer } from '@dcl/sdk/players'
 import { getPlayerData } from '~system/Players'
-import { catalystBase, getJson } from '../http'
+import { catalystBase, getJson, hudBase } from '../http'
 import type { UserData } from '~system/Players'
 import { resolveEquippedSet, resolveWearables } from './wearables'
 import { equippedSlots, resolveEquippedEmotes } from './emotes'
@@ -232,7 +232,9 @@ const tierCache = new Map<string, Promise<ApiTier[] | undefined>>()
 async function fetchTiers(badgeId: string): Promise<ApiTier[] | undefined> {
   let tiers = tierCache.get(badgeId)
   if (tiers == null) {
-    tiers = getJson<TiersResponse>(`https://badges.decentraland.org/badges/${badgeId}/tiers`).then((r) => r?.data?.tiers)
+    tiers = hudBase('badges', 'https://badges.decentraland.org')
+      .then((base) => getJson<TiersResponse>(`${base}/badges/${badgeId}/tiers`))
+      .then((r) => r?.data?.tiers)
     tiers.catch(() => tierCache.delete(badgeId))
     tierCache.set(badgeId, tiers)
   }
@@ -290,7 +292,8 @@ type BadgesFetch = {
 // `includeLocked` (your own passport) adds the badges not earned yet; the service only lists them
 // on request, and unity-explorer only asks for its own user.
 async function fetchBadges(address: string, includeLocked: boolean): Promise<BadgesFetch | undefined> {
-  const r = await getJson<BadgesResponse>(`https://badges.decentraland.org/users/${address}/badges?includeNotAchieved=${includeLocked}`).catch(
+  const base = await hudBase('badges', 'https://badges.decentraland.org')
+  const r = await getJson<BadgesResponse>(`${base}/users/${address}/badges?includeNotAchieved=${includeLocked}`).catch(
     () => undefined
   )
   const achieved = r?.data?.achieved
@@ -310,8 +313,9 @@ async function fetchBadges(address: string, includeLocked: boolean): Promise<Bad
 // --- camera-reel photos --------------------------------------------------------
 type ReelResponse = { images?: Array<{ url?: string; thumbnailUrl?: string }> }
 async function fetchPhotos(address: string): Promise<string[] | undefined> {
+  const base = await hudBase('reels', 'https://camera-reel-service.decentraland.org')
   const r = await getJson<ReelResponse>(
-    `https://camera-reel-service.decentraland.org/api/users/${address}/images?limit=12&offset=0&compact=true`
+    `${base}/api/users/${address}/images?limit=12&offset=0&compact=true`
   ).catch(() => undefined)
   const imgs = r?.images
   if (imgs == null) return undefined

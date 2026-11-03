@@ -1,0 +1,188 @@
+use super::{context, create_runtime};
+use std::{
+    io::{BufRead, BufReader, Read, Write},
+    net::TcpListener,
+    sync::mpsc,
+    time::Duration,
+};
+
+// Use the real system module, fetch ops, inbox and scene permission grant.
+// Only the renderer replies are supplied by the fixture.
+fn run_scene(super_user: bool, bootstrap: String, script: String) -> String {
+    let (mut runtime, _) = create_runtime(
+        false,
+        super_user,
+        "hud-gateway-test",
+        false,
+        Default::default(),
+    );
+    let state = runtime.op_state();
+    let (host, mut inbox) = tokio::sync::mpsc::unbounded_channel();
+    {
+        let mut state = state.borrow_mut();
+        state.put(context(false));
+        state.put(dcl_types::SceneResourceCounters::default());
+        state.put(dcl_types::RpcCalls::default());
+        state.put(Vec::<dcl_types::SceneLogMessage>::default());
+        state.put(dcl_types::SceneElapsedTime(0.0));
+        if super_user {
+            state.put(dcl_js::SuperUserScene(host));
+        }
+    }
+    std::thread::spawn(move || {
+        while let Some(event) = inbox.blocking_recv() {
+            match event {
+                system_bridge::SystemApi::GetBridgeStream(stream) => {
+                    stream.send(bootstrap.clone()).unwrap();
+                }
+                system_bridge::SystemApi::SignRequest { response, .. } => response.send(Ok(vec![
+                    ("x-identity-auth-chain-0".into(), "engine-signed".into()),
+                    ("x-identity-timestamp".into(), "123".into()),
+                    ("x-identity-metadata".into(), "{}".into()),
+                ])),
+                _ => {}
+            }
+        }
+    });
+    let (permissions, grants) = mpsc::channel::<common::rpc::RpcResultSender<bool>>();
+    std::thread::spawn(move || {
+        for grant in grants {
+            grant.send(true);
+        }
+    });
+    tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+        runtime.execute_script("<test>", format!("globalThis.result = 'pending'; (async () => {{{script}}})().then(x => result=x, e => result=String(e))")).unwrap();
+        let grant = async {
+            loop {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+                for call in std::mem::take(&mut **state.borrow_mut().borrow_mut::<dcl_types::RpcCalls>()) {
+                    if let common::rpc::RpcCall::RequestGenericPermission {response,..}=call { permissions.send(response).unwrap(); }
+                }
+            }
+        };
+        tokio::select! {
+            r = tokio::time::timeout(Duration::from_secs(8), runtime.run_event_loop(Default::default())) => r.unwrap().unwrap(),
+            _ = grant => unreachable!(),
+        }
+    });
+    let outcome = runtime
+        .execute_script("<test>", "String(globalThis.result)")
+        .unwrap();
+    let scope = &mut runtime.handle_scope();
+    deno_core::v8::Local::new(scope, outcome).to_rust_string_lossy(scope)
+}
+
+#[test]
+fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let base = format!("{origin}/mount/notifications");
+    let bootstrap = serde_json::json!({"to":"nativeHudServices","gateway":true,"bases":{"notifications":base,"reels":format!("{origin}/mount/reels")}}).to_string();
+    let target = format!("{base}/notifications/read?case=Kept");
+    let (seen, requests) = mpsc::channel();
+    listener.set_nonblocking(true).unwrap();
+    let (stop, stopped) = mpsc::channel::<()>();
+    let server = std::thread::spawn(move || {
+        while matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+            let Ok((stream, _)) = listener.accept() else {
+                std::thread::sleep(Duration::from_millis(2));
+                continue;
+            };
+            stream.set_nonblocking(false).unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request = String::new();
+            let mut size = 0;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap() == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(n) = line.to_ascii_lowercase().strip_prefix("content-length: ") {
+                    size = n.trim().parse().unwrap();
+                }
+                request.push_str(&line);
+            }
+            let mut body = vec![0; size];
+            reader.read_exact(&mut body).unwrap();
+            request.push_str(&String::from_utf8(body).unwrap());
+            let redirect = request.starts_with("GET /mount/reels/api/images/redirect/metadata");
+            let stalled = request.starts_with("GET /mount/reels/api/images/stall/metadata");
+            seen.send(request).unwrap();
+            if stalled {
+                reader
+                    .get_mut()
+                    .write_all(
+                        b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\ns",
+                    )
+                    .unwrap();
+                // Hold the body open until the fetch cancels and closes its socket.
+                reader
+                    .get_mut()
+                    .set_read_timeout(Some(Duration::from_secs(4)))
+                    .unwrap();
+                let _ = reader.get_mut().read(&mut [0u8; 1]);
+                continue;
+            }
+            let reply = if redirect {
+                "HTTP/1.1 302 Found\r\nLocation: /untargeted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            } else {
+                "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
+            };
+            reader.get_mut().write_all(reply.as_bytes()).unwrap();
+        }
+    });
+    let script = format!("const origin={origin:?}, target={target:?}, base={base:?};")
+        + r#"
+        await new BroadcastChannel("bevy-ui-bridge").nativeHudServices;
+        const api = require("~system/BevyExplorerApi");
+        const signed = (url, init = {}) => api.kernelFetch({url, init, meta: "{}"});
+        async function denied(label, operation) {
+            try { await operation(); } catch (error) { return error; }
+            throw Error("unexpectedly admitted " + label);
+        }
+        const response = await signed(target, {
+            method: "PUT", body: "Exact Bytes", headers: {"Content-Type": "text/plain"}
+        });
+        const identity = {
+            "x-identity-auth-chain-0": "engine-signed", "x-identity-timestamp": "123", "x-identity-metadata": "{}"
+        };
+        await denied("replay", () => fetch(target, {method: "PUT", headers: identity}));
+        await denied("arbitrary route", () => signed(base + "/admin"));
+        for (const headers of [
+            {"x-forwarded-host": "attacker.invalid"}, {"Host": "attacker.invalid"}, {"X-Identity-Timestamp": "forged"}
+        ]) {
+            await denied("forged header", () => signed(target, {method: "PUT", headers}));
+        }
+        await denied("encoded slash", () => signed(base + "/%2e%2e%2fadmin"));
+        await denied("dot segments", () => signed(base + "/anything/../notifications/read", {method: "PUT"}));
+        await denied("redirect", () => signed(origin + "/mount/reels/api/images/redirect/metadata"));
+        const controller = new AbortController();
+        setTimeout(() => controller.abort(), 200);
+        const error = await denied("aborted request", () =>
+            signed(origin + "/mount/reels/api/images/stall/metadata", {signal: controller.signal}));
+        return [response.status, response.body, error.name].join(":");"#;
+    let privileged = run_scene(true, bootstrap.clone(), script);
+    let ordinary = run_scene(
+        false,
+        bootstrap,
+        format!(
+            r#"try {{await fetch("{target}", {{method:"PUT"}}); return "accepted"}} catch {{return "denied"}}"#
+        ),
+    );
+    stop.send(()).unwrap();
+    server.join().unwrap();
+    assert_eq!(privileged, "200:ok:AbortError");
+    assert_eq!(ordinary, "denied");
+    let requests: Vec<_> = requests.try_iter().collect();
+    assert!((2..=3).contains(&requests.len()), "{requests:?}");
+    assert!(requests[1].starts_with("GET /mount/reels/api/images/redirect/metadata "));
+    if requests.len() == 3 {
+        assert!(requests[2].starts_with("GET /mount/reels/api/images/stall/metadata "));
+    }
+    let raw = &requests[0];
+    assert!(raw.starts_with("PUT /mount/notifications/notifications/read?case=Kept HTTP/1.1\r\n"));
+    assert!(raw.ends_with("Exact Bytes"));
+    let headers = raw.to_ascii_lowercase();
+    assert!(headers.contains("x-identity-auth-chain-0: engine-signed"));
+    assert!(headers.contains("content-type: text/plain") && headers.contains("host: 127.0.0.1:"));
+}

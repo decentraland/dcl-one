@@ -16,7 +16,7 @@ use common::{
 use http::Uri;
 use serde::Deserialize;
 use tokio::sync::{oneshot, watch};
-use wallet::{sign_request, SignedLoginMeta, Wallet};
+use wallet::{sign_service_request, SignedLoginMeta, Wallet};
 
 pub const SUPERSEDED: &str = "superseded by a later realm change";
 
@@ -203,7 +203,7 @@ async fn is_community_member(community: &str, wallet: &Wallet, client: &reqwest:
     );
     let result: Result<Community, anyhow::Error> = async {
         let uri = Uri::try_from(&url)?;
-        let headers = sign_request("get", &uri, wallet, "{}".to_owned()).await?;
+        let headers = sign_service_request("get", &uri, wallet, "{}".to_owned()).await?;
         let mut request = client.get(&url).timeout(Duration::from_secs(10));
         for (key, value) in headers {
             request = request.header(key, value);
@@ -236,7 +236,7 @@ async fn validate_password(
     let meta =
         SignedLoginMeta::new(wallet.is_guest(), origin).with_secret(Some(password.to_owned()));
     let meta = serde_json::to_string(&meta).map_err(|e| e.to_string())?;
-    let headers = sign_request("post", &uri, wallet, meta)
+    let headers = sign_service_request("post", &uri, wallet, meta)
         .await
         .map_err(|e| e.to_string())?;
 

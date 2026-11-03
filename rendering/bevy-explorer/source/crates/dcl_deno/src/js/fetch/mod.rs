@@ -3,6 +3,7 @@ use std::{cell::RefCell, rc::Rc, time::Duration};
 #[cfg(test)]
 mod cancel_tests;
 mod fetch_response_body_resource;
+pub(crate) mod hud_transport;
 mod request_budget;
 
 use bevy::{asset::AsyncReadExt, prelude::debug};
@@ -100,6 +101,8 @@ struct FetchRequestResource {
     /// URL host is the world-storage service (`storage.decentraland.*`).
     is_storage: bool,
     range_request: bool,
+    // Set only when the native super-user consumed its signed method/URL grant.
+    trusted_hud: bool,
 }
 impl deno_core::Resource for FetchRequestResource {}
 
@@ -168,7 +171,15 @@ where
         (ctx.is_server, ctx.preview)
     };
 
-    let client = if let Some(rid) = client_rid {
+    let hud_client = if !is_server && client_rid.is_none() {
+        hud_transport::take_client(state, &method, &url, &headers)?
+    } else {
+        None
+    };
+    let trusted_hud = hud_client.is_some();
+    let client = if let Some(client) = hud_client {
+        client
+    } else if let Some(rid) = client_rid {
         let r = state.resource_table.get::<ClientResource>(rid)?;
         r.0.clone()
     } else {
@@ -192,6 +203,13 @@ where
     let method = Method::from_bytes(method.as_bytes())?;
     let mut request = client.request(method.clone(), &url);
 
+    if trusted_hud
+        && body_bytes
+            .as_ref()
+            .is_some_and(|body| body.len() as u64 > SERVER_MAX_BODY_BYTES)
+    {
+        anyhow::bail!("HUD request body exceeds limit");
+    }
     if let Some(body) = &request_body {
         let (size, upper) = body.0.size_hint();
         if size > 0 && upper == Some(size) {
@@ -226,6 +244,7 @@ where
     let cancel_handle_rid = state.resource_table.add(FetchCancelHandle(cancel.clone()));
     let request_rid = state.resource_table.add(FetchRequestResource {
         cancel,
+        trusted_hud,
         body_bytes,
         request_body,
         request,
@@ -378,6 +397,7 @@ async fn send_request(
         request_body,
         url,
         range_request,
+        trusted_hud,
         ..
     } = resource;
 
@@ -386,11 +406,22 @@ async fn send_request(
     // untrusted code with the user's network position — the web build is already held to
     // this by the browser's Private Network Access rules). `preview` widens the allowance
     // to the local network for local development, but never to link-local / metadata.
-    common::util::assert_public_url(&url, preview).await?;
+    common::util::assert_public_url(&url, preview || trusted_hud).await?;
 
     let request = if let Some(body) = request_body {
         let mut buf = Vec::new();
-        body.into_async_read().read_to_end(&mut buf).await?;
+        let mut reader = body.into_async_read();
+        if trusted_hud {
+            reader
+                .take(SERVER_MAX_BODY_BYTES + 1)
+                .read_to_end(&mut buf)
+                .await?;
+            if buf.len() as u64 > SERVER_MAX_BODY_BYTES {
+                anyhow::bail!("HUD request body exceeds limit");
+            }
+        } else {
+            reader.read_to_end(&mut buf).await?;
+        }
         request.body(buf)
     } else if let Some(body) = body_bytes {
         request.body(body)
@@ -403,6 +434,9 @@ async fn send_request(
         .map_err(|err| type_error(err.to_string()))?;
 
     let status = res.status();
+    if trusted_hud && status.is_redirection() {
+        anyhow::bail!("native HUD service redirects are not followed");
+    }
     let mut headers = Vec::new();
     for (key, val) in res.headers().iter() {
         headers.push((key.as_str().into(), val.as_bytes().into()));
@@ -410,7 +444,7 @@ async fn send_request(
 
     let content_length = res.content_length();
 
-    let body_cap = if is_server {
+    let body_cap = if is_server || trusted_hud {
         Some(if range_request {
             SERVER_MAX_ASSET_BYTES
         } else {

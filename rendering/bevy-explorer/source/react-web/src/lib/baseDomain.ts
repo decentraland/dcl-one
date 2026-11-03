@@ -18,6 +18,7 @@
 // url sync exactly as the HUD does.
 
 import { SERVICES, type ServiceDef } from '../engine/generated'
+import { isNativeHud } from './bootMode'
 
 // Decentraland's own deployments — the hosting origins we derive from, and the only domains a
 // LINK may point the session at without the UntrustedLaunchGate (lib/launchGate.ts).
@@ -46,6 +47,28 @@ export const DEFAULT_BASE_DOMAIN = hostBaseDomain(window.location.hostname) ?? '
 
 export const BASE_DOMAIN =
   normaliseBaseDomain(new URLSearchParams(window.location.search).get('baseDomain')) ?? DEFAULT_BASE_DOMAIN
+
+/** Only the native CEF document receives this image base from its engine. Apply it at
+ * display time, leaving the profile, scene HTTP and all other service URLs untouched. */
+const cef = (window as Window & { cef?: { emit?: unknown; listen?: unknown } }).cef
+const nativeHostParams = isNativeHud() && typeof cef?.emit === 'function' && typeof cef.listen === 'function'
+  ? new URLSearchParams(window.location.search)
+  : null
+const nativeImageBase = nativeHostParams?.get('nativeProfileImageBase')
+export const eventsBase = nativeHostParams?.get('nativeEventsBase') ?? `https://events.${BASE_DOMAIN}`
+export function nativeProfileImage(raw: string | undefined): string | undefined {
+  if (!nativeImageBase || raw == null) return raw
+  const authority = /^https:\/\/([^/?#]+)/i.exec(raw)?.[1]
+  if (authority?.toLowerCase() !== `profile-images.${BASE_DOMAIN}`) return raw
+  try {
+    const image = new URL(raw)
+    // The proxy decodes escaped separators before normalizing the service path.
+    if (decodeURIComponent(image.pathname).split(/[\\/]/).some(part => part === '.' || part === '..')) return raw
+    return nativeImageBase + image.href.slice(image.origin.length)
+  } catch {
+    return raw
+  }
+}
 
 declare global {
   interface Window {

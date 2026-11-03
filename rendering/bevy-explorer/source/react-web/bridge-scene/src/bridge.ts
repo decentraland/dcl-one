@@ -10,6 +10,7 @@
 // from. Messages are typed by the SHARED wire protocol (react-web/src/engine/protocol.ts) —
 // the same file the React page uses — so changing a message on either side breaks the other.
 
+import { configureHudServices, type HudServiceBases } from './http'
 import { engine } from '@dcl/sdk/ecs'
 import type { Envelope, PageToScene, SceneToPage } from '../../src/engine/protocol'
 
@@ -20,6 +21,7 @@ const CHANNEL = 'bevy-ui-bridge'
 // BroadcastChannel is a runtime global injected only into the super-user (--system-scene) scene
 // sandbox; it is not in the SDK type defs.
 declare const BroadcastChannel: new (name: string) => {
+  nativeHudServices?: Promise<HudServiceBases>
   postMessage: (msg: unknown) => void
   onmessage: ((e: { data: unknown }) => void) | null
 }
@@ -41,9 +43,10 @@ export type Ctx = {
 type AnyHandler = (msg: PageToScene) => void | Promise<void>
 
 export function startBridge(register: (ctx: Ctx) => void): void {
-  let channel: { postMessage: (m: unknown) => void; onmessage: ((e: { data: unknown }) => void) | null }
+  let channel: InstanceType<typeof BroadcastChannel>
   try {
     channel = new BroadcastChannel(CHANNEL)
+    configureHudServices(channel.nativeHudServices)
   } catch (e) {
     console.log('[bridge] BroadcastChannel unavailable (not super-user?)', e)
     return

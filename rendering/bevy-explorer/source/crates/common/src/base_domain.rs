@@ -13,6 +13,66 @@ pub const DEFAULT: &str = "decentraland.org";
 
 static BASE_DOMAIN: OnceLock<String> = OnceLock::new();
 static SERVICES: OnceLock<HashMap<Service, String>> = OnceLock::new();
+static GATEWAY: OnceLock<crate::gateway::Gateway> = OnceLock::new();
+
+/// Only the native CLI installs a gateway. Deep links and web options cannot set it.
+pub fn set_gateway(raw: &str) -> Result<(), String> {
+    GATEWAY
+        .set(crate::gateway::Gateway::parse(raw)?)
+        .map_err(|_| "--gateway already configured".to_owned())
+}
+
+fn endpoint_override(service: Service) -> Option<String> {
+    service_override(service)
+        .map(str::to_owned)
+        .or_else(|| GATEWAY.get()?.service(service))
+}
+
+/// Deployment metadata for the native super-user HUD bridge. Credentials never cross the
+/// scene process boundary. An explicit service endpoint still wins over a gateway default.
+pub fn hud_service_bases() -> HashMap<String, String> {
+    let mut bases = HashMap::new();
+    for service in [Service::Catalyst, Service::Reels, Service::SocialApi] {
+        if let Some(base) = hud_endpoint(service) {
+            bases.insert(service.param(), base);
+        }
+    }
+    if let Some(gateway) = GATEWAY.get() {
+        bases.extend(gateway.hud_services());
+    }
+    bases
+}
+
+/// An endpoint safe to publish to the HUD page or its bridge process.
+pub fn hud_endpoint(service: Service) -> Option<String> {
+    let base = endpoint_override(service)?;
+    if service.value() == ServiceValue::Authority {
+        return Some(base);
+    }
+    let mut url = url::Url::parse(&base).ok()?;
+    url.set_password(None).ok()?;
+    url.set_username("").ok()?;
+    Some(url.as_str().trim_end_matches('/').to_owned())
+}
+
+pub fn profile_image_base() -> Option<String> {
+    GATEWAY
+        .get()
+        .map(crate::gateway::Gateway::profile_image_base)
+}
+
+pub fn profile_image(raw: &str) -> std::borrow::Cow<'_, str> {
+    GATEWAY
+        .get()
+        .and_then(|g| g.profile_image(raw, get()))
+        .map_or(raw.into(), std::borrow::Cow::Owned)
+}
+
+pub fn gateway_signed_path(raw: &str) -> Option<String> {
+    GATEWAY
+        .get()?
+        .original_path(raw, |s| service_override(s).is_some())
+}
 
 pub fn set(domain: &str) -> Result<(), String> {
     let d = domain.trim().to_ascii_lowercase();
@@ -108,8 +168,8 @@ pub fn service_override(service: Service) -> Option<&'static str> {
 /// The service's base url (an authority service: its host) — its override, else its
 /// composition from the base domain.
 pub fn service(service: Service) -> String {
-    if let Some(value) = service_override(service) {
-        return value.to_owned();
+    if let Some(value) = endpoint_override(service) {
+        return value;
     }
     let (scheme, sub, path) = service.composition();
     let host = if sub.is_empty() {

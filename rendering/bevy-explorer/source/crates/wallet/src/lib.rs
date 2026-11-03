@@ -284,9 +284,76 @@ impl SignedLoginMeta {
     }
 }
 
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod gateway_signing_tests {
+    use super::*;
+    use common::base_domain::{self, Service};
+
+    #[test]
+    fn engine_and_scene_sign_their_respective_paths() {
+        base_domain::set_gateway("https://gateway.example.test").unwrap();
+        let uri: Uri = base_domain::url(Service::CommsGatekeeper, "/Adapter/Mixed?token=private")
+            .parse()
+            .unwrap();
+        assert_eq!(uri.host(), Some("gateway.example.test"));
+        let mut wallet = Wallet::default();
+        wallet.finalize_as_guest_with_seed([42; 32]);
+        async_std::task::block_on(async {
+            for (headers, path) in [
+                (
+                    sign_service_request("POST", &uri, &wallet, "{}".into())
+                        .await
+                        .unwrap(),
+                    "/adapter/mixed",
+                ),
+                (
+                    sign_request("POST", &uri, &wallet, "{}".into())
+                        .await
+                        .unwrap(),
+                    "/comms-gatekeeper/adapter/mixed",
+                ),
+            ] {
+                let headers: std::collections::HashMap<_, _> = headers.into_iter().collect();
+                let link: ChainLink =
+                    serde_json::from_str(&headers["x-identity-auth-chain-1"]).unwrap();
+                assert_eq!(
+                    link.payload,
+                    format!("post:{path}:{}:{{}}", headers["x-identity-timestamp"])
+                );
+            }
+        })
+    }
+}
+
 pub async fn sign_request(
     method: &str,
     uri: &Uri,
+    wallet: &Wallet,
+    meta: String,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    sign_path(method, uri.path(), wallet, meta).await
+}
+
+/// Trusted engine/HUD request. Scene signing always uses exactly the path it supplied.
+pub async fn sign_service_request(
+    method: &str,
+    uri: &Uri,
+    wallet: &Wallet,
+    meta: String,
+) -> Result<Vec<(String, String)>, anyhow::Error> {
+    let original = common::base_domain::gateway_signed_path(&uri.to_string());
+    sign_path(
+        method,
+        original.as_deref().unwrap_or_else(|| uri.path()),
+        wallet,
+        meta,
+    )
+    .await
+}
+
+async fn sign_path(
+    method: &str,
+    path: &str,
     wallet: &Wallet,
     meta: String,
 ) -> Result<Vec<(String, String)>, anyhow::Error> {
@@ -298,7 +365,7 @@ pub async fn sign_request(
     let payload = format!(
         "{}:{}:{unix_time}:{meta}",
         method.to_lowercase(),
-        uri.path().to_lowercase()
+        path.to_lowercase()
     );
     let auth_chain = wallet.sign_message(payload).await?;
 

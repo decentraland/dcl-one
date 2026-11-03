@@ -155,7 +155,8 @@ impl IpfsIo {
                 .map_err(|e| platform::FetchError::Send(anyhow!(e)))?;
             let result = platform::http::fetch_with_permit(
                 permit,
-                || {
+                request,
+                |request| {
                     add_saturating(&self.request_metrics.attempts, 1);
                     if attempt > 1 {
                         add_saturating(&self.request_metrics.retries, 1);

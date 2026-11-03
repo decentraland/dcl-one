@@ -2,12 +2,26 @@
 //
 // IMPORTANT: a system scene's `getRealm()` reports the scene's OWN realm (the local preview
 // it was served from), NOT the world realm the engine is connected to — so it can't be used
-// to locate the catalyst. We resolve the env from the ENGINE via `BevyApi.getRealmProvider()`
-// and target the matching public catalyst (peer.decentraland.org / .zone).
+// to locate the catalyst. Native can supply service bases on the trusted bridge stream. Otherwise
+// `BevyApi.getRealmProvider()` selects the existing .org / .zone fallbacks.
 import { BevyApi } from './bevy-api'
 
 const PEER_ORG = 'https://peer.decentraland.org'
 const PEER_ZONE = 'https://peer.decentraland.zone'
+
+export type HudServiceBases = Partial<Record<'catalyst' | 'reels' | 'socialApi' | 'events' | 'badges' | 'notifications' | 'assets-cdn', string>>
+let nativeBases: Promise<HudServiceBases> | undefined
+
+/** Only the engine's native super-user stream supplies bases. Browser bridges retain their normal hosts. */
+export function configureHudServices(bases: Promise<HudServiceBases> | undefined): void {
+  nativeBases = bases
+}
+
+export async function hudBase(service: keyof HudServiceBases, org: string, zone = org): Promise<string> {
+  const configured = (await nativeBases)?.[service]
+  if (configured != null) return configured
+  return org !== zone && (await resolveZone()) ? zone : org
+}
 
 let cachedZone: boolean | null = null
 async function resolveZone(): Promise<boolean> {
@@ -23,12 +37,7 @@ async function resolveZone(): Promise<boolean> {
 
 /** Public catalyst base for the engine's realm (lambdas/content live under here). */
 export async function catalystBase(): Promise<string> {
-  return (await resolveZone()) ? PEER_ZONE : PEER_ORG
-}
-
-/** Whether the engine is on a .zone (test) realm — picks .org vs .zone service hosts. */
-export async function isZone(): Promise<boolean> {
-  return await resolveZone()
+  return hudBase('catalyst', PEER_ORG, PEER_ZONE)
 }
 
 const META = JSON.stringify({})

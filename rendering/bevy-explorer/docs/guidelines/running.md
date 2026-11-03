@@ -25,6 +25,42 @@ then `cargo build`. This loop is verified on macOS, the only platform where the 
 to `~/.local/share/cef` at runtime; on Linux the loader needs `LD_LIBRARY_PATH` (see
 `source/readme.md`), and on Windows the desktop workflow's staging shows what CEF needs.
 
+### Gateway routing
+
+For a deployment serving the APIs on one origin, run `just native-debug --gateway https://example.org`.
+The native client and HUD use that origin's service prefixes, including `/comms-gatekeeper` and
+`/camera-reel-service`. The peer's `/content` and `/lambdas` are at the root. To use the gateway
+virtual host, pass `--gateway https://gateway.example.org`. The client uses its service aliases
+(for example `/peer/content`). The gateway forwards the path after the alias as the original signed
+path. Direct-origin requests sign their full public path. A prefix in the supplied URL is retained.
+For a gateway virtual host behind a mounted proxy, the proxy must strip the mount before forwarding.
+
+`--base-domain example.org` selects which deployment's backend-supplied `profile-images` URLs are
+eligible for routing. Only HTTPS image URLs on that exact host qualify. The realm provider, peer,
+worlds, places, gatekeepers, auth API, map API, profile registry, social API and camera reels use the
+gateway when enabled. The native HUD also uses gateway routes for events, badges, notifications
+and community thumbnails. Its super-user bridge receives the resolved service bases from the engine.
+A native signed bridge request can reach a configured private gateway on the HUD's supported API routes.
+The engine-generated headers authorize one method and URL. The transport rejects redirects and
+supports cancellation and bounds the request and response bodies. Explicit service flags take precedence. Other services, external resources
+and scene HTTP use their usual transports. Omitting `--gateway` uses ordinary service resolution.
+On the integrated web client, Sites supplies its origin's service URLs at boot.
+
+### Native Network inspector
+
+Run `just native-debug --network-devtools 9223` or pass the same option to the desktop executable.
+Open `http://127.0.0.1:9223/json/list` and copy the target's `devtoolsFrontendUrl` into Chrome.
+The Network panel shows new engine requests while the inspector is attached. An external CDP client
+can connect to `webSocketDebuggerUrl` and send `Network.enable`. Restart without the flag to turn
+the listener off. The web build uses the browser's own Network panel.
+
+The target reports realm discovery, profile registry and signed comms requests, active entities,
+font metadata and downloads through the content request budget. It displays methods, origins,
+recognized route labels, statuses, timing and transfer lengths when available. Dynamic path
+components, queries, fragments, credentials, headers and bodies are excluded. No history is
+retained for future connections. A slow inspector can disconnect when its event buffer fills.
+The native scene runtime and the HUD's browser traffic are separate transports.
+
 To package, follow the [desktop workflow](../../../../.github/workflows/bevy-explorer-desktop.yml):
 pinned Rust, protoc, CEF and platform libraries, including `CEF_PATH`. With those installed:
 

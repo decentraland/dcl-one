@@ -662,6 +662,9 @@ fn op_error(state: Rc<RefCell<OpState>>, #[string] message: String) {
 
 #[cfg(test)]
 mod tests {
+    mod hud_gateway {
+        include!("hud_gateway_tests.rs");
+    }
     use std::sync::Arc;
 
     use common::structs::SceneJsFile;
