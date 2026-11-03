@@ -457,7 +457,7 @@ pub async fn create_request(
             )
             .await
         );
-        try_resp!(map_db(guard.release_now().await));
+        drop(guard);
         state.fire_analytics(
             "JOIN_COMMUNITY",
             json!({"community_id":id,"user_id":member_address.as_str(),"request_id":opp_id}),
@@ -494,7 +494,7 @@ pub async fn create_request(
     .await;
     match inserted {
         Ok(_) => {
-            try_resp!(map_db(guard.release_now().await));
+            drop(guard);
             notify_request(
                 &state,
                 community_id,
@@ -699,7 +699,7 @@ pub async fn update_request_status(
         }
     }
     try_resp!(transition_request(&mut *guard, uuid, req_uuid, &member_address, status).await);
-    try_resp!(map_db(guard.release_now().await));
+    drop(guard);
     if status == "rejected" || status == "cancelled" {
         let event = if status == "rejected" {
             "REJECT_COMMUNITY_REQUEST"

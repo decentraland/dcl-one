@@ -987,7 +987,7 @@ pub async fn update_community(
              RETURNING r.id"
         ).bind(uuid).fetch_all(&mut *tx).await));
         try_resp!(map_db(tx.commit().await));
-        try_resp!(map_db(guard.release_now().await));
+        drop(guard);
         ids
     } else {
         Vec::new()

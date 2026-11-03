@@ -268,7 +268,7 @@ async fn interrupted_and_failed_bans_release_the_native_session_lock_and_keep_co
         .await
         .expect("request cancellation and SQL errors must release the session lock")
         .unwrap();
-        guard.release_now().await.unwrap();
+        drop(guard);
         assert_eq!(
             rig.role_of(id, &member).await,
             None,
@@ -314,7 +314,7 @@ async fn ownership_transfer_and_ban_share_the_guard_before_owner_authorization()
     let app = rig.app.clone();
     let ban = tokio::spawn(async move { hit(&app, case).await });
     blocked_by(&rig.pool, transfer_pid).await;
-    barrier.release_now().await.unwrap();
+    drop(barrier);
     let (status, body) = tokio::time::timeout(std::time::Duration::from_secs(10), transfer)
         .await
         .unwrap()
@@ -339,4 +339,138 @@ async fn ownership_transfer_and_ban_share_the_guard_before_owner_authorization()
             .unwrap();
     assert_eq!(bans, 0);
     rig.finish();
+}
+
+#[tokio::test]
+async fn cancelling_successful_join_at_unlock_keeps_the_reused_backend_unlocked() {
+    use std::sync::atomic::{AtomicU8, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let Some(rig) = Rig::new(Settings::for_tests()).await else {
+        return;
+    };
+    let (owner, member) = (wallet(), wallet());
+    let id = rig.community(&owner, false).await;
+    let options = (*rig.pool.connect_options()).clone();
+    let endpoint = (options.get_host().to_owned(), options.get_port());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let unlock = Arc::new(AtomicU8::new(0));
+    let resume = Arc::new(tokio::sync::Notify::new());
+    let (seen_tx, seen_rx) = tokio::sync::oneshot::channel();
+    let gate = unlock.clone();
+    let release = resume.clone();
+    // Relay actual PostgreSQL traffic unchanged, withholding only the first
+    // unlock response. A prepared unlock has not executed at this boundary;
+    // the native guard's queued simple query has already executed.
+    let proxy = tokio::spawn(async move {
+        let (client, _) = listener.accept().await?;
+        let server = tokio::net::TcpStream::connect(endpoint).await?;
+        let (mut client_read, mut client_write) = client.into_split();
+        let (mut server_read, mut server_write) = server.into_split();
+        let frontend = async move {
+            let length = client_read.read_u32().await?;
+            let mut startup = vec![0; length as usize - 4];
+            client_read.read_exact(&mut startup).await?;
+            server_write.write_u32(length).await?;
+            server_write.write_all(&startup).await?;
+            while let Ok(kind) = client_read.read_u8().await {
+                let length = client_read.read_u32().await?;
+                let mut body = vec![0; length as usize - 4];
+                client_read.read_exact(&mut body).await?;
+                if body
+                    .windows(b"pg_advisory_unlock".len())
+                    .any(|part| part == b"pg_advisory_unlock")
+                {
+                    gate.compare_exchange(0, kind, Ordering::SeqCst, Ordering::SeqCst)
+                        .ok();
+                }
+                server_write.write_u8(kind).await?;
+                server_write.write_u32(length).await?;
+                server_write.write_all(&body).await?;
+            }
+            Ok::<(), std::io::Error>(())
+        };
+        let backend = async move {
+            let mut buffer = vec![0; 8192];
+            let mut seen = Some(seen_tx);
+            loop {
+                let length = server_read.read(&mut buffer).await?;
+                if length == 0 {
+                    return Ok::<(), std::io::Error>(());
+                }
+                let kind = unlock.load(Ordering::SeqCst);
+                if kind != 0
+                    && let Some(seen) = seen.take()
+                {
+                    seen.send(kind).ok();
+                    release.notified().await;
+                }
+                client_write.write_all(&buffer[..length]).await?;
+            }
+        };
+        tokio::try_join!(frontend, backend)
+    });
+    let writers = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(1)
+        .connect_with(
+            options
+                .host("127.0.0.1")
+                .port(address.port())
+                .ssl_mode(sqlx::postgres::PgSslMode::Disable),
+        )
+        .await
+        .unwrap();
+    let before: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&writers)
+        .await
+        .unwrap();
+    let state = Arc::new(State::new(
+        writers.clone(),
+        rig.state.storage.clone(),
+        Settings::for_tests(),
+        None,
+        &crate::http::Outbound::for_tests(),
+        State::explore_for_tests(&rig.pool),
+    ));
+    let updates = crate::rpc::pubsub::PubSub::new();
+    let _owner_stream = updates.subscribe(owner.address.as_str());
+    state.set_updates(updates);
+    let app = router(state);
+    let case = Case::new("post", format!("/v1/communities/{id}/members"))
+        .signed(&member)
+        .await;
+    let request = tokio::spawn(async move { hit(&app, case).await });
+    let kind = tokio::time::timeout(std::time::Duration::from_secs(10), seen_rx)
+        .await
+        .expect("successful join must reach its native unlock")
+        .unwrap();
+    request.abort();
+    assert!(request.await.unwrap_err().is_cancelled());
+    resume.notify_one();
+    let after: i32 = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        sqlx::query_scalar("SELECT pg_backend_pid()").fetch_one(&writers),
+    )
+    .await
+    .expect("the same native pooled connection must remain reusable")
+    .unwrap();
+    let available = match membership_lock(id)
+        .try_acquire(rig.pool.acquire().await.unwrap())
+        .await
+        .unwrap()
+    {
+        sqlx::Either::Left(guard) => {
+            drop(guard);
+            true
+        }
+        sqlx::Either::Right(_) => false,
+    };
+    assert_eq!(rig.role_of(id, &member).await.as_deref(), Some("member"));
+    writers.close().await;
+    proxy.abort();
+    rig.finish();
+    assert_eq!(before, after, "reconnection must not hide a leaked lock");
+    assert!(available, "cancellation must not leak a live session lock");
+    assert_eq!(kind, b'Q', "native Drop queues a simple unlock query");
 }

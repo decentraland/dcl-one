@@ -658,7 +658,7 @@ pub async fn add_member(
         .into_response();
     }
     try_resp!(map_db(tx.commit().await));
-    try_resp!(map_db(guard.release_now().await));
+    drop(guard);
     if inserted {
         let mut properties = json!({"community_id":id,"user_id":signer.as_str()});
         if let Some(request_id) = request_id {
@@ -965,7 +965,7 @@ async fn transfer_ownership(
         }
     }
     try_resp!(map_db(tx.commit().await));
-    try_resp!(map_db(guard.release_now().await));
+    drop(guard);
     state
         .notify_community_event(
             "community_ownership_transferred",
@@ -1075,7 +1075,7 @@ pub async fn ban_member(
         .await
     ));
 
-    try_resp!(map_db(guard.release_now().await));
+    drop(guard);
     state
         .evict_from_private_community_voice(uuid, &target)
         .await;

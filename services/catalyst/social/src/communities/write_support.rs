@@ -20,7 +20,8 @@ pub type Refusal = Box<Response>;
 
 /// Community membership mutations serialize across source-defined independent
 /// commits, including bulk acceptance. One native SQLx guard owns one existing
-/// pool connection; dropping it releases the lock on cancellation.
+/// pool connection. Drop it before external awaits: SQLx queues the unlock on
+/// that connection, including when the request is cancelled during pool return.
 pub(super) fn membership_lock(community: CommunityId) -> sqlx::postgres::PgAdvisoryLock {
     sqlx::postgres::PgAdvisoryLock::new(format!("social-community-membership:{community}"))
 }
