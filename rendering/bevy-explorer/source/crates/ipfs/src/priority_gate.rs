@@ -7,11 +7,8 @@
 //! request, and a grant pops one queue's head.
 
 use std::{
-    collections::{HashMap, VecDeque},
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, Mutex,
-    },
+    collections::{BTreeSet, HashMap},
+    sync::{Arc, Mutex, Weak},
 };
 
 use common::partition::LoadPriority;
@@ -19,15 +16,27 @@ use tokio::sync::oneshot;
 
 /// A request's place in the queue, taken when a read decides to download and awaited by the
 /// download for its slot. A later reader of the same download queues the same ticket under its
-/// own scene too (`PriorityGate::join`), so the download rises with the nearest of its readers
+/// own scene too, so the download rises with the nearest of its readers
 /// and is granted once.
 pub struct Ticket {
-    seq: u64,
-    granted: AtomicBool,
-    /// how many queues hold it: a ticket nobody else holds will never be awaited
-    queued: AtomicUsize,
-    grant: Mutex<Option<oneshot::Sender<Permit>>>,
+    pub(super) seq: u64,
+    gate: Weak<PriorityGate>,
     slot: Mutex<Option<oneshot::Receiver<Permit>>>,
+}
+
+impl Drop for Ticket {
+    fn drop(&mut self) {
+        if let Some(gate) = self.gate.upgrade() {
+            let abandoned = gate.state.lock().unwrap().remove_ticket(self.seq);
+            // Closing the sender can wake its waiter.
+            drop(abandoned);
+        }
+    }
+}
+
+struct Waiting {
+    owners: Vec<Option<String>>,
+    grant: oneshot::Sender<Permit>,
 }
 
 pub struct PriorityGate {
@@ -37,14 +46,156 @@ pub struct PriorityGate {
 struct GateState {
     available: usize,
     next_seq: u64,
+    next_download: u64,
+    readers: HashMap<u64, ReaderState>,
     /// the registered hashes and their keys
     keys: HashMap<String, KeyEntry>,
     /// counts publishes, so that a frame's first write of a key replaces it and later writes
     /// (a wearable's other avatars) take the best
     generation: u64,
     /// requests that carry no hash: after every registered one
-    no_scene: VecDeque<Arc<Ticket>>,
+    no_scene: BTreeSet<u64>,
+    waiting: HashMap<u64, Waiting>,
     scenes: HashMap<String, SceneQueue>,
+}
+
+/// The live readers of one logical download, including while it is between attempts.
+struct ReaderState {
+    owners: HashMap<Option<String>, usize>,
+    queued: Option<u64>,
+    // Dropping this sender cancels even an active or sleeping shared download.
+    cancel: Option<oneshot::Sender<()>>,
+}
+
+#[derive(Clone)]
+pub(super) struct DownloadReaders {
+    gate: Arc<PriorityGate>,
+    id: u64,
+}
+
+/// The task owns its original place in the queue before its worker is polled.
+pub(super) struct DownloadAttempts {
+    readers: DownloadReaders,
+    first: Option<Arc<Ticket>>,
+}
+
+pub(super) struct Registration {
+    pub(super) readers: DownloadReaders,
+    owner: Option<String>,
+}
+
+impl DownloadReaders {
+    pub(super) fn first(
+        gate: &Arc<PriorityGate>,
+        owner: Option<String>,
+        cancel: Option<oneshot::Sender<()>>,
+    ) -> (Registration, DownloadAttempts) {
+        let mut state = gate.state.lock().unwrap();
+        let id = state.next_download;
+        state.next_download += 1;
+        let ticket = gate.enqueue(&mut state, [owner.clone()]);
+        state.readers.insert(
+            id,
+            ReaderState {
+                owners: [(owner.clone(), 1)].into_iter().collect(),
+                queued: Some(ticket.seq),
+                cancel,
+            },
+        );
+        drop(state);
+        gate.grant();
+        let readers = Self {
+            gate: gate.clone(),
+            id,
+        };
+        (
+            Registration {
+                readers: readers.clone(),
+                owner,
+            },
+            DownloadAttempts {
+                readers,
+                first: Some(ticket),
+            },
+        )
+    }
+
+    pub(super) fn try_register(&self, owner: Option<String>) -> Option<Registration> {
+        let mut state = self.gate.state.lock().unwrap();
+        let readers = state.readers.get_mut(&self.id)?;
+        let count = readers.owners.entry(owner.clone()).or_default();
+        *count += 1;
+        if *count == 1 {
+            if let Some(seq) = readers.queued {
+                state.join(seq, owner.clone());
+            }
+        }
+        Some(Registration {
+            readers: self.clone(),
+            owner,
+        })
+    }
+
+    fn retry_ticket(&self) -> Result<Arc<Ticket>, GateClosed> {
+        let mut state = self.gate.state.lock().unwrap();
+        let seq = state.next_seq;
+        let readers = state.readers.get_mut(&self.id).ok_or(GateClosed)?;
+        readers.queued = Some(seq);
+        let owners: Vec<_> = readers.owners.keys().cloned().collect();
+        let ticket = self.gate.enqueue(&mut state, owners);
+        drop(state);
+        self.gate.grant();
+        Ok(ticket)
+    }
+}
+
+impl DownloadAttempts {
+    pub(super) async fn acquire(&mut self) -> Result<Permit, GateClosed> {
+        let ticket = match self.first.take() {
+            Some(ticket) => ticket,
+            None => self.readers.retry_ticket()?,
+        };
+        let permit = self.readers.gate.acquire(ticket).await?;
+        let mut state = self.readers.gate.state.lock().unwrap();
+        // The last reader could have left between the grant and this task waking.
+        state
+            .readers
+            .get_mut(&self.readers.id)
+            .ok_or(GateClosed)?
+            .queued = None;
+        Ok(permit)
+    }
+}
+
+impl Drop for Registration {
+    fn drop(&mut self) {
+        let mut state = self.readers.gate.state.lock().unwrap();
+        let id = self.readers.id;
+        let readers = state.readers.get_mut(&id).expect("registered download");
+        let count = readers
+            .owners
+            .get_mut(&self.owner)
+            .expect("registered reader");
+        *count -= 1;
+        if *count > 0 {
+            return;
+        }
+        readers.owners.remove(&self.owner);
+        let queued = readers.queued;
+        if readers.owners.is_empty() {
+            let cancelled = state.readers.remove(&id).and_then(|readers| readers.cancel);
+            let abandoned = queued.and_then(|seq| state.remove_ticket(seq));
+            // Both senders can wake tasks which immediately need the gate.
+            drop(state);
+            drop(cancelled);
+            drop(abandoned);
+        } else if let Some(seq) = queued {
+            if let Some(waiting) = state.waiting.get_mut(&seq) {
+                waiting.owners.retain(|owner| owner != &self.owner);
+                state.remove_membership(seq, &self.owner);
+            }
+        }
+    }
 }
 
 struct KeyEntry {
@@ -55,19 +206,23 @@ struct KeyEntry {
 }
 
 struct SceneQueue {
-    tickets: VecDeque<Arc<Ticket>>,
+    tickets: BTreeSet<u64>,
     /// every holder released the hash while these waited: the scene has left, and ranks last
     departed: bool,
 }
 
 /// A held request slot; dropping it frees the slot for the best waiting ticket.
 pub struct Permit {
-    gate: Arc<PriorityGate>,
+    gate: Option<Arc<PriorityGate>>,
 }
+
+impl platform::http::HttpAttemptPermit for Permit {}
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        self.gate.release();
+        if let Some(gate) = self.gate.take() {
+            gate.release();
+        }
     }
 }
 
@@ -88,9 +243,12 @@ impl PriorityGate {
             state: Mutex::new(GateState {
                 available: permits,
                 next_seq: 0,
+                next_download: 0,
+                readers: HashMap::new(),
                 keys: HashMap::new(),
                 generation: 0,
-                no_scene: VecDeque::new(),
+                no_scene: BTreeSet::new(),
+                waiting: HashMap::new(),
                 scenes: HashMap::new(),
             }),
         })
@@ -100,32 +258,45 @@ impl PriorityGate {
     /// one). A free slot with nobody ahead is granted at once; either way the slot arrives
     /// through `acquire`.
     pub fn ticket(self: &Arc<Self>, scene: Option<String>) -> Arc<Ticket> {
-        let (grant, slot) = oneshot::channel();
-        let ticket = {
-            let mut state = self.state.lock().unwrap();
-            let ticket = Arc::new(Ticket {
-                seq: state.next_seq,
-                granted: AtomicBool::new(false),
-                queued: AtomicUsize::new(0),
-                grant: Mutex::new(Some(grant)),
-                slot: Mutex::new(Some(slot)),
-            });
-            state.next_seq += 1;
-            state.enqueue(ticket.clone(), scene);
-            ticket
-        };
+        let ticket = self.enqueue(&mut self.state.lock().unwrap(), [scene]);
         self.grant();
         ticket
     }
 
-    /// Queue the same ticket under another scene too: a reader of that scene joined its
-    /// download.
-    pub fn join(self: &Arc<Self>, ticket: &Arc<Ticket>, scene: Option<String>) {
-        if ticket.granted.load(Ordering::Acquire) {
-            return;
+    /// Publish one FIFO sequence under all current owners. The caller can store that sequence
+    /// with its reader registrations before delivering any grant.
+    fn enqueue(
+        self: &Arc<Self>,
+        state: &mut GateState,
+        owners: impl IntoIterator<Item = Option<String>>,
+    ) -> Arc<Ticket> {
+        let (grant, slot) = oneshot::channel();
+        let seq = state.next_seq;
+        state.next_seq += 1;
+        state.waiting.insert(
+            seq,
+            Waiting {
+                owners: Vec::new(),
+                grant,
+            },
+        );
+        for owner in owners {
+            state.join(seq, owner);
         }
-        self.state.lock().unwrap().enqueue(ticket.clone(), scene);
-        self.grant();
+        Arc::new(Ticket {
+            seq,
+            gate: Arc::downgrade(self),
+            slot: Mutex::new(Some(slot)),
+        })
+    }
+
+    /// Add a reader's scene to this queued ticket without changing its FIFO sequence.
+    pub fn join(self: &Arc<Self>, ticket: &Arc<Ticket>, owner: Option<String>) {
+        // Sequence numbers are local to each gate.
+        if ticket.gate.as_ptr() == Arc::as_ptr(self) {
+            self.state.lock().unwrap().join(ticket.seq, owner);
+            self.grant();
+        }
     }
 
     /// The ticket's slot, once it is its turn. A ticket is awaited once.
@@ -137,9 +308,11 @@ impl PriorityGate {
     #[cfg(test)]
     pub fn try_acquire(self: &Arc<Self>) -> Option<Permit> {
         let mut state = self.state.lock().unwrap();
-        if state.available > 0 && state.waiting() == 0 {
+        if state.available > 0 && state.waiting.is_empty() {
             state.available -= 1;
-            Some(Permit { gate: self.clone() })
+            Some(Permit {
+                gate: Some(self.clone()),
+            })
         } else {
             None
         }
@@ -219,7 +392,7 @@ impl PriorityGate {
     /// publisher skips the frame.
     pub fn has_waiters(&self) -> bool {
         let state = self.state.lock().unwrap();
-        !state.no_scene.is_empty() || state.scenes.values().any(|q| !q.tickets.is_empty())
+        !state.no_scene.is_empty() || !state.scenes.is_empty()
     }
 
     pub fn scene_priority(&self, scene: &str) -> Option<LoadPriority> {
@@ -241,61 +414,76 @@ impl PriorityGate {
         self.grant();
     }
 
-    /// Hand free slots to the heads of the best-ranked queues.
-    fn grant(self: &Arc<Self>) {
-        // dropped after the lock: a ticket may carry a permit in its channel, and a permit's
-        // drop takes the lock again
-        let mut done: Vec<Arc<Ticket>> = Vec::new();
-        let mut unclaimed: Vec<Permit> = Vec::new();
-        {
-            let mut state = self.state.lock().unwrap();
-            while state.available > 0 {
-                let Some(ticket) = state.pop_best() else {
-                    break;
-                };
-                let left = ticket.queued.fetch_sub(1, Ordering::AcqRel) - 1;
-                // granted through another of its queues already, or held by nobody who will
-                // await it: the read went away before it was awaited
-                let abandoned = Arc::strong_count(&ticket) == left + 1;
-                if ticket.granted.swap(true, Ordering::AcqRel) || abandoned {
-                    done.push(ticket);
-                    continue;
+    /// Reserve under the gate lock and deliver outside it. Dropping an unclaimed permit
+    /// re-enters the gate, and waking the receiver may schedule another download.
+    pub(super) fn grant(self: &Arc<Self>) {
+        loop {
+            let grant = {
+                let mut state = self.state.lock().unwrap();
+                if state.available == 0 {
+                    return;
                 }
-                let Some(grant) = ticket.grant.lock().unwrap().take() else {
-                    done.push(ticket);
-                    continue;
+                let Some(seq) = state.best() else {
+                    return;
                 };
+                let waiting = state.remove_ticket(seq).expect("queued ticket");
                 state.available -= 1;
-                if let Err(permit) = grant.send(Permit { gate: self.clone() }) {
-                    // the reader stopped waiting: the slot comes back when `unclaimed` drops
-                    unclaimed.push(permit);
-                }
-                done.push(ticket);
+                waiting.grant
+            };
+            if let Err(mut permit) = grant.send(Permit {
+                gate: Some(self.clone()),
+            }) {
+                // This loop returns and reassigns the unclaimed slot. Disarm its Drop so a
+                // run of cancelled receivers cannot recurse through release -> grant.
+                permit.gate.take();
+                self.state.lock().unwrap().available += 1;
             }
         }
-        drop(done);
-        drop(unclaimed);
     }
 }
 
 impl GateState {
-    fn enqueue(&mut self, ticket: Arc<Ticket>, scene: Option<String>) {
-        ticket.queued.fetch_add(1, Ordering::AcqRel);
-        match scene {
-            None => self.no_scene.push_back(ticket),
-            Some(hash) => {
-                let queue = self.scenes.entry(hash).or_insert_with(|| SceneQueue {
-                    tickets: VecDeque::new(),
-                    departed: false,
-                });
-                // a drained queue not dropped yet: its departed mark was for the requests that
-                // waited when the hash was released, not for this one
-                if queue.tickets.is_empty() {
-                    queue.departed = false;
-                }
-                queue.tickets.push_back(ticket);
-            }
+    fn join(&mut self, seq: u64, owner: Option<String>) {
+        let Some(waiting) = self.waiting.get_mut(&seq) else {
+            return; // already granted or cancelled
+        };
+        if waiting.owners.contains(&owner) {
+            return;
         }
+        waiting.owners.push(owner.clone());
+        match owner {
+            None => self.no_scene.insert(seq),
+            Some(hash) => self
+                .scenes
+                .entry(hash)
+                .or_insert_with(|| SceneQueue {
+                    tickets: BTreeSet::new(),
+                    departed: false,
+                })
+                .tickets
+                .insert(seq),
+        };
+    }
+
+    fn remove_membership(&mut self, seq: u64, owner: &Option<String>) {
+        if let Some(hash) = owner {
+            if let Some(queue) = self.scenes.get_mut(hash) {
+                queue.tickets.remove(&seq);
+                if queue.tickets.is_empty() {
+                    self.scenes.remove(hash);
+                }
+            }
+        } else {
+            self.no_scene.remove(&seq);
+        }
+    }
+
+    fn remove_ticket(&mut self, seq: u64) -> Option<Waiting> {
+        let waiting = self.waiting.remove(&seq)?;
+        for owner in &waiting.owners {
+            self.remove_membership(seq, owner);
+        }
+        Some(waiting)
     }
 
     /// A registered hash ranks by its key; one whose holders all left while these requests
@@ -314,26 +502,16 @@ impl GateState {
     }
 
     /// The oldest ticket of the best-ranked queue: best key first, then the oldest head.
-    fn pop_best(&mut self) -> Option<Arc<Ticket>> {
-        self.scenes.retain(|_, queue| !queue.tickets.is_empty());
-        let mut best: Option<(LoadPriority, u64, Option<&str>)> = self
-            .no_scene
-            .front()
-            .map(|head| (LoadPriority::OTHER, head.seq, None));
-        for (hash, queue) in &self.scenes {
-            let head = queue.tickets.front().expect("empty queues were dropped");
-            let candidate = (self.rank(hash, queue), head.seq, Some(hash.as_str()));
-            if best.is_none_or(|(rank, seq, _)| (candidate.0, candidate.1) < (rank, seq)) {
-                best = Some(candidate);
-            }
-        }
-        match best? {
-            (_, _, None) => self.no_scene.pop_front(),
-            (_, _, Some(hash)) => {
-                let hash = hash.to_owned();
-                self.scenes.get_mut(&hash)?.tickets.pop_front()
-            }
-        }
+    fn best(&self) -> Option<u64> {
+        self.no_scene
+            .first()
+            .map(|seq| (LoadPriority::OTHER, *seq))
+            .into_iter()
+            .chain(self.scenes.iter().filter_map(|(hash, queue)| {
+                Some((self.rank(hash, queue), *queue.tickets.first()?))
+            }))
+            .min()
+            .map(|(_, seq)| seq)
     }
 }
 

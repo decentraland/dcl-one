@@ -138,3 +138,24 @@ The headless server uses the same `ScenePlugin`, so the `SceneSets` chain and th
 are identical. There is no render app and no window, so the frame budget comes from the fps
 target, and the plugin set is narrower: see the security guide on what must not be scheduled
 there.
+
+## Content request scheduling
+
+Each network attempt enters the IPFS priority gate with its current readers.
+A shared download has one waiting ticket across those readers. Changes to the
+published scene or avatar keys affect the grant while the request waits. A
+retry releases the previous permit before backoff and enters the queue again
+with a fresh sequence when the wait ends. Other downloads can use the freed
+slot immediately. See the [HTTP admission decision](../../../../docs/adr/2026-11-03-explorer-http-admission.md).
+
+### Profiling content requests
+
+With `--log-fps`, the diagnostics log includes `IPFS_REQUEST_ATTEMPTS`,
+`IPFS_REQUEST_BYTES`, `IPFS_REQUEST_RETRIES`, `IPFS_REQUEST_STATUS_FAILURES`, and
+`IPFS_REQUEST_CANCELLED`. Bytes count chunks received across attempts, including partial
+transfers. `IPFS_REQUEST_DURATION_MS` sums elapsed milliseconds across concurrent downloads,
+including queue and retry waits. All six counters are cumulative for the session.
+
+Editor imports queue under the edited scene's hash. Compile `scene_inspector` when changing
+the admission interface. The [content request review checks](contributing.md#reviewing-content-request-changes)
+exercise this interface and the retry, cancellation and cache lifecycles.

@@ -9730,6 +9730,7 @@ dependencies = [
  "directories",
  "futures-lite",
  "futures-util",
+ "httpdate",
  "js-sys",
  "rand 0.8.8",
  "reqwest",

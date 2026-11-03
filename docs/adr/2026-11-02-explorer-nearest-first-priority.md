@@ -103,7 +103,7 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   waiting, before it has a context, so nothing has to rank above the registered hashes by
   default: a request whose hash nobody holds (an avatar's emote, a backpack thumbnail)
   ranks with the requests that carry no hash at all (NFT images, URL-form fonts and profile
-  pictures, the imposter archives behind `async_request`), in the `Other` tier after every
+  pictures, the imposter archives behind `IpfsIo::fetch_request`), in the `Other` tier after every
   registered scene and avatar, oldest first. A hash released by its last holder while requests
   under it wait, because its scene despawned or its avatar dropped it, is in the `Departed` tier,
   last, for as long as those requests wait; the mark lives with the queue, so a request for the
