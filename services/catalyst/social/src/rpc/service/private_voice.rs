@@ -1,7 +1,7 @@
 use super::SocialServiceImpl;
 use super::helpers::{
-    Refusal, SocialError, internal_err, invalid_req, normalize, start_voice_conflict,
-    start_voice_forbidden, start_voice_internal, start_voice_invalid,
+    Refusal, SocialError, internal_err, normalize, start_voice_conflict, start_voice_forbidden,
+    start_voice_internal, start_voice_invalid,
 };
 use crate::comms::gatekeeper::voice::db::PendingPrivateCall;
 use crate::comms::gatekeeper::voice::rooms::VoiceUnavailable;
@@ -17,6 +17,25 @@ const VOICE_RUNTIME_UNAVAILABLE: &str = "voice runtime unavailable";
 const VOICE_CHAT_NOT_ALLOWED: &str =
     "The callee or the caller are not accepting voice calls from users that are not friends";
 const BUSY: &str = "One of the users is busy calling someone else";
+
+/// The source passes callId to PostgreSQL before privileged identifier checks.
+/// PostgreSQL accepts more UUID spellings than the media adapter and its syntax
+/// errors are application oneofs, including their original message.
+async fn database_call_id(ctx: &Context, raw: &str) -> Result<Uuid, Refusal> {
+    sqlx::query_scalar("SELECT $1::text::uuid")
+        .bind(raw)
+        .fetch_one(ctx.db().pool())
+        .await
+        .map_err(|error| {
+            Refusal::Internal(error.as_database_error().map_or_else(
+                || error.to_string(),
+                |database| database.message().to_string(),
+            ))
+        })
+}
+fn canonical_call_id(raw: &str, id: Uuid) -> bool {
+    raw.eq_ignore_ascii_case(&id.to_string())
+}
 
 /// Upstream `VoiceChatNotFoundError`.
 pub(crate) fn call_not_found(id: impl std::fmt::Display) -> Refusal {
@@ -123,18 +142,31 @@ pub(crate) async fn accept_private_voice_chat(
     me: &str,
     id: Uuid,
 ) -> Result<String, Refusal> {
+    accept_private_voice_chat_with_id(ctx, me, id, &id.to_string()).await
+}
+async fn accept_private_voice_chat_with_id(
+    ctx: &Context,
+    me: &str,
+    id: Uuid,
+    wire_id: &str,
+) -> Result<String, Refusal> {
     let Some(chat) = ctx.db().get_private_voice_chat(id).await? else {
-        return Err(call_not_found(id));
+        return Err(call_not_found(wire_id));
     };
     if chat.callee_address != me {
         return Err(Refusal::Forbidden(VOICE_CHAT_NOT_ALLOWED.into()));
+    }
+    if !canonical_call_id(wire_id, id) {
+        return Err(Refusal::Internal(
+            "Invalid Gatekeeper private voice room ID".into(),
+        ));
     }
     let urls = ctx
         .voice()
         .private_voice_credentials(id, &chat.callee_address, &chat.caller_address)
         .await
         .map_err(|e| match e {
-            VoiceUnavailable::NotFound => call_not_found(id),
+            VoiceUnavailable::NotFound => call_not_found(wire_id),
             other => Refusal::Internal(format!("private voice credentials: {other}")),
         })?;
     let url_of = |address: &str| {
@@ -147,7 +179,7 @@ pub(crate) async fn accept_private_voice_chat(
             &chat.caller_address,
             SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
                 stream_closed: None,
-                call_id: id.to_string(),
+                call_id: wire_id.to_string(),
                 status: PrivateVoiceChatStatus::VoiceChatAccepted as i32,
                 caller: None,
                 callee: None,
@@ -168,19 +200,27 @@ pub(crate) async fn reject_private_voice_chat(
     me: &str,
     id: Uuid,
 ) -> Result<(), Refusal> {
+    reject_private_voice_chat_with_id(ctx, me, id, &id.to_string()).await
+}
+async fn reject_private_voice_chat_with_id(
+    ctx: &Context,
+    me: &str,
+    id: Uuid,
+    wire_id: &str,
+) -> Result<(), Refusal> {
     let call = PendingPrivateCall::Rejected {
         id,
         callee: me.to_string(),
     };
     let Some(chat) = ctx.voice().finish_pending_private_call(call).await? else {
-        return Err(call_not_found(id));
+        return Err(call_not_found(wire_id));
     };
     ctx.pubsub()
         .publish_mutation(
             &chat.caller_address,
             SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
                 stream_closed: None,
-                call_id: id.to_string(),
+                call_id: wire_id.to_string(),
                 status: PrivateVoiceChatStatus::VoiceChatRejected as i32,
                 caller: None,
                 callee: None,
@@ -200,6 +240,26 @@ pub(crate) async fn end_private_voice_chat(
     me: &str,
     id: Uuid,
 ) -> Result<(), Refusal> {
+    end_private_voice_chat_with_id(ctx, me, id, &id.to_string()).await
+}
+async fn end_private_voice_chat_with_id(
+    ctx: &Context,
+    me: &str,
+    id: Uuid,
+    wire_id: &str,
+) -> Result<(), Refusal> {
+    if !canonical_call_id(wire_id, id) {
+        match ctx.db().get_private_voice_chat(id).await? {
+            Some(chat) if chat.caller_address == me || chat.callee_address == me => {}
+            Some(_) => return Err(call_not_found(wire_id)),
+            None => {
+                return Err(Refusal::Internal(
+                    "Invalid Gatekeeper private voice call ID".into(),
+                ));
+            }
+        }
+    }
+
     let chat = match ctx.voice().end_private_voice_chat(Some(id), me).await? {
         Some(chat) => chat,
         None => {
@@ -210,10 +270,27 @@ pub(crate) async fn end_private_voice_chat(
             ctx.voice()
                 .finish_pending_private_call(pending)
                 .await?
-                .ok_or_else(|| call_not_found(id))?
+                .ok_or_else(|| call_not_found(wire_id))?
         }
     };
-    ctx.publish_private_voice_ended_by(&chat, me).await;
+    let other = if chat.caller_address.eq_ignore_ascii_case(me) {
+        &chat.callee_address
+    } else {
+        &chat.caller_address
+    };
+    ctx.pubsub()
+        .publish_mutation(
+            other,
+            SocialEvent::PrivateVoice(PrivateVoiceChatUpdate {
+                stream_closed: None,
+                call_id: wire_id.to_string(),
+                status: PrivateVoiceChatStatus::VoiceChatEnded as i32,
+                caller: None,
+                callee: None,
+                credentials: None,
+            }),
+        )
+        .await;
     Ok(())
 }
 
@@ -261,16 +338,26 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<AcceptPrivateVoiceChatResponse, SocialError> {
         let me = Self::caller(&context)?;
-        let Ok(id) = Uuid::parse_str(&request.call_id) else {
-            return Ok(AcceptPrivateVoiceChatResponse {
-                response: Some(
-                    accept_private_voice_chat_response::Response::InvalidRequest(invalid_req(
-                        "invalid call_id",
-                    )),
-                ),
-            });
+        let id = match database_call_id(&context.server_context, &request.call_id).await {
+            Ok(id) => id,
+            Err(refusal) => {
+                return Ok(AcceptPrivateVoiceChatResponse {
+                    response: Some(
+                        accept_private_voice_chat_response::Response::InternalServerError(
+                            internal_err(refusal.message()),
+                        ),
+                    ),
+                });
+            }
         };
-        let response = match accept_private_voice_chat(&context.server_context, &me, id).await {
+        let response = match accept_private_voice_chat_with_id(
+            &context.server_context,
+            &me,
+            id,
+            &request.call_id,
+        )
+        .await
+        {
             Ok(connection_url) => accept_private_voice_chat_response::Response::Ok(
                 accept_private_voice_chat_response::Ok {
                     call_id: request.call_id,
@@ -305,16 +392,26 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<RejectPrivateVoiceChatResponse, SocialError> {
         let me = Self::caller(&context)?;
-        let Ok(id) = Uuid::parse_str(&request.call_id) else {
-            return Ok(RejectPrivateVoiceChatResponse {
-                response: Some(
-                    reject_private_voice_chat_response::Response::InvalidRequest(invalid_req(
-                        "invalid call_id",
-                    )),
-                ),
-            });
+        let id = match database_call_id(&context.server_context, &request.call_id).await {
+            Ok(id) => id,
+            Err(refusal) => {
+                return Ok(RejectPrivateVoiceChatResponse {
+                    response: Some(
+                        reject_private_voice_chat_response::Response::InternalServerError(
+                            internal_err(refusal.message()),
+                        ),
+                    ),
+                });
+            }
         };
-        let response = match reject_private_voice_chat(&context.server_context, &me, id).await {
+        let response = match reject_private_voice_chat_with_id(
+            &context.server_context,
+            &me,
+            id,
+            &request.call_id,
+        )
+        .await
+        {
             Ok(()) => reject_private_voice_chat_response::Response::Ok(
                 reject_private_voice_chat_response::Ok {
                     call_id: request.call_id,
@@ -344,16 +441,26 @@ impl SocialServiceImpl {
         context: ProcedureContext<Context>,
     ) -> Result<EndPrivateVoiceChatResponse, SocialError> {
         let me = Self::caller(&context)?;
-        let Ok(id) = Uuid::parse_str(&request.call_id) else {
-            return Ok(EndPrivateVoiceChatResponse {
-                response: Some(end_private_voice_chat_response::Response::NotFound(
-                    NotFoundError {
-                        message: Some("invalid call_id".into()),
-                    },
-                )),
-            });
+        let id = match database_call_id(&context.server_context, &request.call_id).await {
+            Ok(id) => id,
+            Err(refusal) => {
+                return Ok(EndPrivateVoiceChatResponse {
+                    response: Some(
+                        end_private_voice_chat_response::Response::InternalServerError(
+                            internal_err(refusal.message()),
+                        ),
+                    ),
+                });
+            }
         };
-        let response = match end_private_voice_chat(&context.server_context, &me, id).await {
+        let response = match end_private_voice_chat_with_id(
+            &context.server_context,
+            &me,
+            id,
+            &request.call_id,
+        )
+        .await
+        {
             Ok(()) => {
                 end_private_voice_chat_response::Response::Ok(end_private_voice_chat_response::Ok {
                     call_id: request.call_id,

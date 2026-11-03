@@ -162,4 +162,5 @@ async function main() {
     runtime: { node: process.version, protocol_package: req('@dcl/protocol/package.json').version }, scope: 'Executed real upstream RPC handlers, community voice/moderation components, stream parsers and missing-profile subscription lifecycle with deterministic injected dependencies; private RPC domain outcomes are injected. Not deployed PostgreSQL, Redis or LiveKit equivalence.', caller, target, community, call, cases }, null, 2) + '\n')
   process.stdout.write(`Captured ${cases.length} upstream voice/stream cases\n`)
 }
-main().catch(error => { console.error(error); process.exitCode = 1 })
+module.exports = { req, load, logs, caller, target, community, call, revision, upstream, components }
+if (require.main === module) main().catch(error => { console.error(error); process.exitCode = 1 })
