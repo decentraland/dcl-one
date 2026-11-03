@@ -148,7 +148,7 @@ async fn member_requests_page(
     }
     let pagination = get_pagination_params(pairs);
     let type_filter = parse_type(get_first(pairs, "type").as_deref());
-    let (mut rows, total) = queries::list_requests_by_member(
+    let (rows, total) = queries::list_requests_by_member(
         &state.pool,
         &signer,
         type_filter,
@@ -157,29 +157,6 @@ async fn member_requests_page(
     )
     .await
     .map_err(super::http::database_error)?;
-    let ids: Vec<CommunityId> = rows
-        .iter()
-        .filter_map(|row| {
-            row["communityId"]
-                .as_str()
-                .and_then(|id| CommunityId::parse(id).ok())
-        })
-        .collect();
-    let friends = if ids.is_empty() {
-        std::collections::HashMap::new()
-    } else {
-        super::friendship::community_friends(&state.pool, &signer, &ids)
-            .await
-            .map_err(super::http::database_error)?
-    };
-    for row in &mut rows {
-        if let Some(id) = row["communityId"]
-            .as_str()
-            .and_then(|id| CommunityId::parse(id).ok())
-        {
-            row["friends"] = json!(friends.get(&id).cloned().unwrap_or_default());
-        }
-    }
     Ok((rows, total, pagination))
 }
 

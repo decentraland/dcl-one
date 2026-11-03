@@ -651,3 +651,12 @@ read. Ordinary signed community pages use the existing accepted-friend read and
 at most three matching member addresses per community; no index or storage was
 added. The legacy best-effort friendship-status wrapper remains available to
 its existing consumers outside these community reads.
+
+Member-request summaries read the pending request page and its total before any
+community lookup. An empty raw page returns immediately. A nonempty page adds
+one community-summary query bounded to its community IDs, followed by the
+existing relationship read even if every community is inactive or bans the
+caller. Voice and profile enrichment operate on surviving summaries. Results
+follow the saved raw request order, and total/page metadata still describe all
+pending requests; visibility filtering can leave a page empty. These statements
+use the same pool without a transaction or a repeated read of request rows.

@@ -2577,3 +2577,5 @@ fn settings_fold_restricted_names_and_validate_moderators() {
 }
 
 mod friendship_parity;
+
+mod member_request_pages;
