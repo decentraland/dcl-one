@@ -128,6 +128,32 @@ describe("the collectibles grid", () => {
     expect(screen.getByTestId("where")).toHaveTextContent("bodyShape=unisex");
   });
 
+  it("offers the emote attributes only while browsing emotes", async () => {
+    items("/shop/items?category=wearable");
+    await screen.findAllByTestId("card");
+    expect(screen.queryByRole("combobox", { name: "Play mode" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "With sound" })).toBeNull();
+    expect(screen.queryByRole("switch", { name: "With props" })).toBeNull();
+  });
+
+  it("sends the emote attributes on both feeds, restores them from the URL, and a chip removes one", async () => {
+    const client = catalogClient();
+    items("/shop/items?category=emote&emotePlayMode=loop&emoteSound=true", { client });
+    await waitFor(() => expect(lastUrl(client).searchParams.get("emotePlayMode")).toBe("loop"));
+    expect(lastUrl(client).pathname).toBe("/shop-api/v3/catalog/unified");
+    expect(lastUrl(client).searchParams.get("emoteHasSound")).toBe("true");
+    expect(screen.getByRole("combobox", { name: "Play mode" })).toHaveValue("loop");
+    fireEvent.click(screen.getByRole("switch", { name: "With props" }));
+    await waitFor(() => expect(lastUrl(client).searchParams.get("emoteHasGeometry")).toBe("true"));
+    fireEvent.click(screen.getByRole("radio", { name: /^All$/ }));
+    await waitFor(() => expect(lastUrl(client).pathname).toBe("/shop-api/v3/catalog/items"));
+    expect(lastUrl(client).searchParams.get("emotePlayMode")).toBe("loop");
+    expect(lastUrl(client).searchParams.get("emoteHasSound")).toBe("true");
+    fireEvent.click(screen.getByRole("button", { name: "Remove With sound filter" }));
+    await waitFor(() => expect(lastUrl(client).searchParams.has("emoteHasSound")).toBe(false));
+    expect(screen.getByTestId("where").textContent).not.toContain("emoteSound");
+  });
+
   it("filters primary offers before sorting, and hides sale type outside On Sale", async () => {
     const client = catalogClient();
     items("/shop/items", { client });

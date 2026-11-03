@@ -438,7 +438,7 @@ fn body_shapes_for_genders(genders: &[String]) -> Option<Vec<String>> {
     if out.is_empty() { None } else { Some(out) }
 }
 
-fn emote_play_mode_clause(modes: &[String]) -> Option<bool> {
+pub(crate) fn emote_play_mode_clause(modes: &[String]) -> Option<bool> {
     if modes.is_empty() || modes.len() == 2 {
         return None;
     }
