@@ -476,8 +476,14 @@ async fn missing_profile_source_sequence_keeps_json_request_and_later_rpc_cancel
     };
     let _turn = VOICE_TABLE.lock().await;
     let source = fixture();
-    let me = source["caller"].as_str().unwrap();
-    let actor = source["target"].as_str().unwrap();
+    let missing = source["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["group"] == "stream-missing-profile")
+        .unwrap();
+    let me = missing["caller"].as_str().unwrap();
+    let actor = missing["target"].as_str().unwrap();
     let barrier_profile = seed_profile(&pool, me, "Barrier").await;
     let ctx = test_ctx(
         Db::new(pool.clone()),
@@ -488,17 +494,8 @@ async fn missing_profile_source_sequence_keeps_json_request_and_later_rpc_cancel
         .subscribe_to_friendship_updates(procedure_ctx(&ctx, me, 7101), token.clone())
         .await
         .unwrap();
-    let cases = source["cases"].as_array().unwrap();
-    let request = cases
-        .iter()
-        .find(|c| c["group"] == "stream" && c["id"] == "friendship")
-        .unwrap();
-    let missing = cases
-        .iter()
-        .find(|c| c["group"] == "stream-missing-profile")
-        .unwrap();
     let request = FriendshipUpdate::decode(
-        hex::decode(request["expected_hex"].as_str().unwrap())
+        hex::decode(missing["request_hex"].as_str().unwrap())
             .unwrap()
             .as_slice(),
     )

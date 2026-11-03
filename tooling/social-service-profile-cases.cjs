@@ -22,7 +22,7 @@ async function main(){
   ['cache-write-failure',{[owner]:profile(owner),[second]:profile(second)},['getFriendsMixed','getFriendsReverse','getOwnerName']]
  ]){
   const cache=new Map();let fetches=[]
-  const createRegistry=async()=>load('adapters/registry.ts').createRegistryComponent({logs,config:{requireString:async()=> 'https://registry.example.org'},redis:{get:async key=>cache.get(key),mGet:async keys=>keys.map(key=>cache.get(key)),put:async(key,value)=>{if(id==='cache-write-failure')throw Error('fixture cache write failure');cache.set(key,value)}},fetcher:{fetch:async(url,options)=>{const ids=JSON.parse(options.body).ids;fetches.push(ids);return{ok:true,json:async()=>ids.flatMap(id=>documents[id]?[documents[id]]:[])}}}})
+  const createRegistry=async()=>load('adapters/registry.ts').createRegistryComponent({logs,config:{requireString:async()=> 'https://registry.example.org'},redis:{get:async key=>cache.get(key),mGet:async keys=>keys.map(key=>cache.get(key)),put:async(key,value)=>{if(id==='cache-write-failure'&&key.endsWith(owner))throw Error('fixture cache write failure');cache.set(key,value)}},fetcher:{fetch:async(url,options)=>{const ids=JSON.parse(options.body).ids;fetches.push(ids);return{ok:true,json:async()=>ids.flatMap(id=>documents[id]?[documents[id]]:[])}}}})
   const registries=[await createRegistry(),await createRegistry()]
   const steps=[]
   for(const [index,operation] of operations.entries()){

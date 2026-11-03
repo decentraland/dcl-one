@@ -74,3 +74,22 @@ and membership data. Repeated latency percentiles, production distributions,
 concurrent writer throughput, cold-cache performance, hardware characterization,
 receipt growth and replica lag remain unmeasured. These samples establish query
 paths and bounded output sizes, without establishing production capacity.
+
+## Shared social registry profile cache
+
+A disposable PostgreSQL 18.6 run on 2026-11-03 populated a temporary cache relation
+with 100,000 synthetic rows and the canonical primary/expiry indexes. Single
+`EXPLAIN (ANALYZE, BUFFERS)` samples during a concurrent build measured:
+
+| Statement | Fixture result | Execution time |
+| --- | --- | ---: |
+| Fresh profile key set | Primary-key index scan | 5.919 ms |
+| Bulk conflicting profile write | 1,000 keys | 9.200 ms |
+| Expired selection and deletion | capped at 1,000 rows | 2.465 ms |
+
+Expiry selection used the expiry index and deletion used tuple identifiers. The
+reader always excludes expired rows independently of this sweep. These samples
+show the selected access paths and bounded cleanup output; they do not establish
+production latency, a sustained 1,000-key-per-second reclamation rate or storage
+capacity. Production key distributions, concurrent writers, repeated percentiles,
+cold-cache costs and the existing source-cache cutover remain unmeasured.

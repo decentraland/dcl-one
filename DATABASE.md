@@ -468,3 +468,30 @@ The pinned OpenAI SDK clears its 600-second timer at response headers and relies
 on the runtime's body inactivity timeout, so these bounds have a narrower scope
 than unrestricted SDK responses. The POST/PUT source contracts exercise 20 mocked
 provider cases; they do not establish exhaustive provider equivalence.
+
+## Shared social registry profile facts
+
+RPC and community profile readers share `social.registry_profile_cache` through
+one existing pool. The primary key is the source registry cache key. A single
+read writes the requested wallet key; a batch writes the public `avatar.userId`
+key. Public profile identity never replaces the actor used for authorization or
+relationship storage. Batch reads retain cached-first order and newly fetched
+aliases, including duplicates admitted by the pinned source registry.
+
+Each successful write retains the minimal public profile for 600 seconds, measured
+by the database clock. Reads ignore expired rows even if cleanup is delayed.
+Missing or invalid profiles are not cached. Accepted content updates do not
+invalidate these facts; the source retains its previous value until expiry. Cache
+read failures reach each handler's existing error boundary. Writes are best effort:
+a batch first uses one set write and retries individual keys if it fails, so one
+failed key does not prevent successful keys from being retained.
+
+The workload consists of indexed key/`ANY` reads, existing active-pointer/profile
+lookups on misses and bounded page writes. No external await occurs inside an SQL
+transaction. `registry_profile_cache_expiry_idx(expires_at,profile_key)` supports
+the existing one-second leased expiry job, selecting and deleting at most 1,000
+expired rows per pass. Delayed cleanup affects storage growth, not freshness.
+Production new-key rates and sustained reclamation capacity remain unmeasured.
+An authoritative cutover must import cached values with their remaining TTL or
+drain the source cache before switching readers; this runtime procedure is not
+established by the local reader and migration tests.

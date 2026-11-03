@@ -142,20 +142,30 @@ async function main() {
       const emitter = req('mitt').default ? req('mitt').default() : req('mitt')()
       const subscribersContext = { hasActiveSubscription: () => false, getSubscriber: () => emitter,
         setActiveSubscription() {}, clearActiveSubscription() {}, registerGenerator() {}, unregisterGenerator() {} }
+      // This lifecycle owns distinct addresses: the positive stream cases may
+      // legitimately retain their profile facts for the source's ten-minute TTL.
+      const missingCaller = '0x9811111111111111111111111111111111111111'
+      const missingTarget = '0x9922222222222222222222222222222222222222'
+      const missingUpdate = { ...update, from: missingTarget, to: missingCaller }
+      const missingProfile = { avatars: [{ ...profile.avatars[0], userId: missingTarget }] }
+      let missingOptions
+      const captureOptions = { async *handleSubscriptionUpdates(value) { missingOptions = value } }
+      await load(`controllers/handlers/rpc/${file}.ts`)[factory]({ components: { logs, updateHandler: captureOptions } })({}, { address: missingCaller }).next()
       let reads = 0
       const actual = load('logic/updates.ts').createUpdateHandlerComponent({ logs, subscribersContext,
         friendsDb: {}, communitiesDb: {}, communityMembers: {}, peersStats: {}, metrics: { increment() {} },
-        registry: { getProfile: async () => { if (reads++ === 0) throw Error('Profile not found'); return profile } } })
-      const stream = actual.handleSubscriptionUpdates({ ...options, rpcContext: { address: caller, wsConnectionId: 'capture', subscribersContext } })
+        registry: { getProfile: async () => { if (reads++ === 0) throw Error('Profile not found'); return missingProfile } } })
+      const stream = actual.handleSubscriptionUpdates({ ...missingOptions, rpcContext: { address: missingCaller, wsConnectionId: 'capture', subscribersContext } })
       const next = stream.next()
       await new Promise(resolve => setImmediate(resolve))
-      emitter.emit('friendshipUpdate', update)
+      emitter.emit('friendshipUpdate', missingUpdate)
       await new Promise(resolve => setImmediate(resolve))
-      emitter.emit('friendshipUpdate', { ...update, action: 'cancel' })
+      emitter.emit('friendshipUpdate', { ...missingUpdate, action: 'cancel' })
       const delivered = await next
       await stream.return()
       const parsed = proto.FriendshipUpdate.fromPartial(delivered.value)
-      cases.push({ group: 'stream-missing-profile', id, rpc_next_update: parsed, expected_hex: Buffer.from(proto.FriendshipUpdate.encode(parsed).finish()).toString('hex'), json: toJSON(update) })
+      const initial = await missingOptions.parser(missingUpdate, missingProfile)
+      cases.push({ group: 'stream-missing-profile', id, caller: missingCaller, target: missingTarget, request_hex: Buffer.from(proto.FriendshipUpdate.encode(initial).finish()).toString('hex'), rpc_next_update: parsed, expected_hex: Buffer.from(proto.FriendshipUpdate.encode(parsed).finish()).toString('hex'), json: toJSON(missingUpdate) })
     }
   }
   fs.writeFileSync(output, JSON.stringify({ baseline: { repository: 'decentraland/social-service-ea', revision, yarn_lock_sha256: crypto.createHash('sha256').update(fs.readFileSync(path.join(upstream, 'yarn.lock'))).digest('hex') },
