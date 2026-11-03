@@ -517,7 +517,7 @@ mod tests {
     }
 
     #[test]
-    fn an_unrelated_explicit_origin_keeps_the_gatekeepers_original_path() {
+    fn signing_follows_the_resolved_gateway_route_including_explicit_overrides() {
         use common::base_domain::{self, Service};
         let gateway = "https://gateway.example.test";
         base_domain::set_gateway(gateway).unwrap();
@@ -551,7 +551,11 @@ mod tests {
             Some("/get-scene-adapter")
         );
         let preview = base_domain::url(Service::PreviewGatekeeper, "/adapter");
-        assert_eq!(base_domain::gateway_signed_path(&preview), None);
+        assert_eq!(
+            base_domain::gateway_signed_path(&preview).as_deref(),
+            Some("/custom/adapter")
+        );
+        assert_eq!(base_domain::gateway_signed_path(&bases["socialApi"]), None);
         assert_eq!(
             base_domain::url(Service::Places, "/tiles"),
             format!("{gateway}/tiles")

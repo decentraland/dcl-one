@@ -200,16 +200,21 @@ pub async fn op_kernel_fetch_headers(
     #[string] method: Option<String>,
     #[string] meta: Option<String>,
 ) -> Result<Vec<(String, String)>, AnyError> {
-    let signed_method = method.as_deref().unwrap_or("get").to_owned();
+    let signed_method = method.as_deref().unwrap_or("get").to_ascii_uppercase();
+    let target =
+        crate::js::fetch::hud_transport::signing_target(&state.borrow(), &signed_method, &uri);
+    let signing_uri = target.as_ref().map_or(uri, |url| url.as_str().to_owned());
     let headers =
-        dcl_js::system_api::op_kernel_fetch_headers(state.clone(), uri.clone(), method, meta)
+        dcl_js::system_api::op_kernel_fetch_headers(state.clone(), signing_uri, method, meta)
             .await?;
-    crate::js::fetch::hud_transport::signed(
-        &mut state.borrow_mut(),
-        &signed_method,
-        &uri,
-        &headers,
-    );
+    if let Some(target) = target {
+        crate::js::fetch::hud_transport::signed(
+            &mut state.borrow_mut(),
+            &signed_method,
+            target,
+            &headers,
+        );
+    }
     Ok(headers)
 }
 

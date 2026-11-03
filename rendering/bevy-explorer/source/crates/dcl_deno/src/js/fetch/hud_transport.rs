@@ -56,13 +56,28 @@ pub(crate) fn bootstrap(state: &mut OpState, rid: ResourceId, frame: &str) {
 
 // Match the raw target before URL normalization. No escaped delimiters, dot components,
 // credentials, backslashes or arbitrary same-origin routes can reach the private client.
-fn allowed(bases: &HashMap<String, String>, method: &str, url: &str) -> bool {
+fn eligible_url(bases: &HashMap<String, String>, method: &str, url: &str) -> Option<reqwest::Url> {
     if url.len() > 4096 || url.contains(['#', '\\']) {
-        return false;
+        return None;
     }
-    let path = url.split('?').next().unwrap_or(url);
-    bases.iter().any(|(service, base)| {
-        let Some(rest) = path.strip_prefix(base).and_then(|s| s.strip_prefix('/')) else {
+    let (_, host_and_path) = url.split_once("://")?;
+    let (authority, path) = host_and_path.split_at(host_and_path.find('/')?);
+    if authority.is_empty()
+        || authority.contains(['@', '?'])
+        || url.bytes().any(|b| b.is_ascii_control())
+    {
+        return None;
+    }
+    let parsed = reqwest::Url::parse(url).ok()?;
+    let origin = parsed.origin().ascii_serialization();
+    let path = path.split('?').next()?;
+    let allowed = bases.iter().any(|(service, base)| {
+        let Some(rest) = base
+            .strip_prefix(&origin)
+            .filter(|prefix| prefix.is_empty() || prefix.starts_with('/'))
+            .and_then(|prefix| path.strip_prefix(prefix))
+            .and_then(|rest| rest.strip_prefix('/'))
+        else {
             return false;
         };
         let parts: Vec<_> = rest.split('/').collect();
@@ -123,18 +138,28 @@ fn allowed(bases: &HashMap<String, String>, method: &str, url: &str) -> bool {
                     ["v1", "communities", _, "members", _]
                 )
         )
-    })
+    });
+    allowed.then_some(parsed)
 }
 
-pub(crate) fn signed(state: &mut OpState, method: &str, url: &str, identity: &[(String, String)]) {
+pub(crate) fn signing_target(state: &OpState, method: &str, raw: &str) -> Option<reqwest::Url> {
+    eligible_url(&state.try_borrow::<HudTransport>()?.bases, method, raw)
+}
+
+pub(crate) fn signed(
+    state: &mut OpState,
+    method: &str,
+    url: reqwest::Url,
+    identity: &[(String, String)],
+) {
     if !state.has::<SuperUserScene>() {
         return;
     }
     let Some(transport) = state.try_borrow_mut::<HudTransport>() else {
         return;
     };
-    let method = method.to_ascii_uppercase();
-    if !allowed(&transport.bases, &method, url)
+    // A fresh bootstrap may have replaced the service bases while the signer was replying.
+    if eligible_url(&transport.bases, method, url.as_str()).is_none()
         || identity.is_empty()
         || identity
             .iter()
@@ -148,8 +173,8 @@ pub(crate) fn signed(state: &mut OpState, method: &str, url: &str, identity: &[(
         transport.pending.pop_front();
     }
     transport.pending.push_back(Grant {
-        method,
-        url: url.to_owned(),
+        method: method.to_owned(),
+        url: url.into(),
         identity: identity.to_vec(),
         created: Instant::now(),
     });
@@ -222,18 +247,28 @@ mod tests {
     fn only_known_methods_and_literal_paths_are_admitted() {
         let base = "https://example.test/mount/social-api";
         let bases = HashMap::from([("socialApi".to_owned(), base.to_owned())]);
-        assert!(allowed(
+        assert!(eligible_url(
             &bases,
             "POST",
             &format!("{base}/v1/communities/group/members?x=1")
-        ));
-        assert!(!allowed(
+        )
+        .is_some());
+        assert!(eligible_url(
             &bases,
             "DELETE",
             &format!("{base}/v1/communities/group/members")
-        ));
+        )
+        .is_none());
+        let raw = "https://EXAMPLE.test:443/mount/social-api/v1/communities?search=two words";
+        assert_eq!(
+            eligible_url(&bases, "POST", raw).unwrap().as_str(),
+            "https://example.test/mount/social-api/v1/communities?search=two%20words"
+        );
         for url in [
             "http://example.test/mount/social-api/v1/communities",
+            "https://user@example.test/mount/social-api/v1/communities",
+            "https://@example.test/mount/social-api/v1/communities",
+            "https://example.test?x=/mount/social-api/v1/communities",
             "https://example.test:8443/mount/social-api/v1/communities",
             "https://example.test.evil/mount/social-api/v1/communities",
             "https://example.test/mount/social-api-other/v1/communities",
@@ -243,7 +278,7 @@ mod tests {
             "https://example.test/mount/social-api/v1/communities/a%252fadmin/members",
             "https://example.test/mount/social-api/v1/communities/a\\admin/members",
         ] {
-            assert!(!allowed(&bases, "POST", url), "{url}");
+            assert!(eligible_url(&bases, "POST", url).is_none(), "{url}");
         }
     }
 }

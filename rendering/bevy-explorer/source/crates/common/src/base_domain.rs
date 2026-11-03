@@ -69,9 +69,7 @@ pub fn profile_image(raw: &str) -> std::borrow::Cow<'_, str> {
 }
 
 pub fn gateway_signed_path(raw: &str) -> Option<String> {
-    GATEWAY
-        .get()?
-        .original_path(raw, |s| service_override(s).is_some())
+    GATEWAY.get()?.original_path(raw)
 }
 
 pub fn set(domain: &str) -> Result<(), String> {

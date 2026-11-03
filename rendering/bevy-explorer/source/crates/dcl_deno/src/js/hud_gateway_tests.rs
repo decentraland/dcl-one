@@ -35,6 +35,11 @@ fn run_scene(super_user: bool, bootstrap: String, script: String) -> String {
                 system_bridge::SystemApi::GetBridgeStream(stream) => {
                     stream.send(bootstrap.clone()).unwrap();
                 }
+                system_bridge::SystemApi::SignRequest { uri, response, .. }
+                    if uri.parse::<http::Uri>().is_err() =>
+                {
+                    response.send(Err("invalid signing URI".into()))
+                }
                 system_bridge::SystemApi::SignRequest { response, .. } => response.send(Ok(vec![
                     ("x-identity-auth-chain-0".into(), "engine-signed".into()),
                     ("x-identity-timestamp".into(), "123".into()),
@@ -78,7 +83,7 @@ fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
     let origin = format!("http://{}", listener.local_addr().unwrap());
     let base = format!("{origin}/mount/notifications");
     let bootstrap = serde_json::json!({"to":"nativeHudServices","gateway":true,"bases":{"notifications":base,"reels":format!("{origin}/mount/reels")}}).to_string();
-    let target = format!("{base}/notifications/read?case=Kept");
+    let target = format!("{base}/notifications/read?case=Kept&search=two words");
     let (seen, requests) = mpsc::channel();
     listener.set_nonblocking(true).unwrap();
     let (stop, stopped) = mpsc::channel::<()>();
@@ -180,7 +185,9 @@ fn signed_hud_gateway_fetch_is_scoped_to_engine_routes() {
         assert!(requests[2].starts_with("GET /mount/reels/api/images/stall/metadata "));
     }
     let raw = &requests[0];
-    assert!(raw.starts_with("PUT /mount/notifications/notifications/read?case=Kept HTTP/1.1\r\n"));
+    assert!(raw.starts_with(
+        "PUT /mount/notifications/notifications/read?case=Kept&search=two%20words HTTP/1.1\r\n"
+    ));
     assert!(raw.ends_with("Exact Bytes"));
     let headers = raw.to_ascii_lowercase();
     assert!(headers.contains("x-identity-auth-chain-0: engine-signed"));

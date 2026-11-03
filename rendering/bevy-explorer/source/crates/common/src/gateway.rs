@@ -108,19 +108,26 @@ impl Gateway {
 
     // nginx sets x-original-path to the path after the service segment only
     // on the gateway virtual host. An apex request signs its entire public path.
-    pub fn original_path(&self, raw: &str, overridden: impl Fn(Service) -> bool) -> Option<String> {
+    pub fn original_path(&self, raw: &str) -> Option<String> {
         if !self.virtual_host {
             return None;
         }
-        let rest = raw.strip_prefix(&self.prefix)?.strip_prefix('/')?;
-        let (segment, path) = rest.split_once('/')?;
+        let target = Url::parse(raw).ok()?;
+        // nginx strips an alias only when a slash follows it. A bare alias keeps its
+        // public path, even when its query contains a slash.
+        let origin = target.origin().ascii_serialization();
+        let mount = self.prefix.strip_prefix(&origin)?;
+        if !mount.is_empty() && !mount.starts_with('/') {
+            return None;
+        }
+        let rest = target.path().strip_prefix(mount)?.strip_prefix('/')?;
+        let (segment, path) = rest.split_once('/').unwrap_or((rest, rest));
         if !HUD_ALIASES.contains(&segment)
-            && !Service::all()
-                .any(|service| !overridden(service) && self.segment(service) == Some(segment))
+            && !Service::all().any(|service| self.segment(service) == Some(segment))
         {
             return None;
         }
-        Some(format!("/{}", path.split(['?', '#']).next()?))
+        Some(format!("/{path}"))
     }
 }
 
@@ -138,10 +145,7 @@ mod gateway_tests {
         );
         assert_eq!(
             vhost
-                .original_path(
-                    "https://gateway.example.test/mount/comms-gatekeeper/a%2Fb?q=1",
-                    |_| false
-                )
+                .original_path("https://gateway.example.test/mount/comms-gatekeeper/a%2Fb?q=1")
                 .as_deref(),
             Some("/a%2Fb")
         );
@@ -150,14 +154,27 @@ mod gateway_tests {
             "https://gateway.example.test/mount2/comms-gatekeeper/a",
             "https://gateway.example.test/mount/unknown/a",
         ] {
-            assert_eq!(vhost.original_path(raw, |_| false), None);
+            assert_eq!(vhost.original_path(raw), None);
+        }
+        for (target, expected) in [
+            ("social-api", Some("/social-api")),
+            ("social-api?x=a/b", Some("/social-api")),
+            ("social-api/", Some("/")),
+            ("social-api/?x=a/b", Some("/")),
+            ("social-api/v1/search?x=a/b", Some("/v1/search")),
+            (
+                "comms-gatekeeper-local/custom/adapter",
+                Some("/custom/adapter"),
+            ),
+        ] {
+            let raw = format!("https://gateway.example.test/mount/{target}");
+            assert_eq!(vhost.original_path(&raw).as_deref(), expected, "{target}");
         }
         assert_eq!(
-            vhost.original_path(
-                "https://gateway.example.test/mount/comms-gatekeeper/a",
-                |s| s == gate
-            ),
-            None
+            vhost
+                .original_path("https://user@GATEWAY.example.test:443/mount/social-api/v1/search")
+                .as_deref(),
+            Some("/v1/search")
         );
         assert_eq!(vhost.service(Service::PulseServer), None);
         assert_eq!(vhost.service(Service::AuthPage), None);
@@ -175,7 +192,7 @@ mod gateway_tests {
             Some("http://localhost:5222/camera-reel-service")
         );
         assert_eq!(
-            direct.original_path("http://localhost:5222/comms-gatekeeper/a", |_| false),
+            direct.original_path("http://localhost:5222/comms-gatekeeper/a"),
             None
         );
     }

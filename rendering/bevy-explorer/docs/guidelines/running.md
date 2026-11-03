@@ -32,13 +32,15 @@ The native client and HUD use that origin's service prefixes, including `/comms-
 `/camera-reel-service`. The peer's `/content` and `/lambdas` are at the root. To use the gateway
 virtual host, pass `--gateway https://gateway.example.org`. The client uses its service aliases
 (for example `/peer/content`). The gateway forwards the path after the alias as the original signed
-path. Direct-origin requests sign their full public path. A prefix in the supplied URL is retained.
+path, including for explicit overrides on that virtual host. A bare service alias without a
+trailing slash keeps its alias in the signed path. Direct-origin requests sign their full public path. A prefix in the supplied URL is retained.
 For a gateway virtual host behind a mounted proxy, the proxy must strip the mount before forwarding.
 
 `--base-domain example.org` selects which deployment's backend-supplied `profile-images` URLs are
 eligible for routing. Only HTTPS image URLs on that exact host qualify. The realm provider, peer,
 worlds, places, gatekeepers, auth API, map API, profile registry, social API and camera reels use the
-gateway when enabled. The native HUD also uses gateway routes for events, badges, notifications
+gateway when enabled. Explicit catalyst, social API and camera-reel bases also reach the native
+HUD bridge when the gateway flag is omitted. The native HUD uses gateway routes for events, badges, notifications
 and community thumbnails. Its super-user bridge receives the resolved service bases from the engine.
 A native signed bridge request can reach a configured private gateway on the HUD's supported API routes.
 The engine-generated headers authorize one method and URL. The transport rejects redirects and
