@@ -34,6 +34,16 @@ impl Rig {
         me: &str,
         action: upsert_friendship_payload::Action,
     ) -> upsert_friendship_response::Response {
+        let target = match &action {
+            upsert_friendship_payload::Action::Request(p) => p.user.as_ref(),
+            upsert_friendship_payload::Action::Accept(p) => p.user.as_ref(),
+            upsert_friendship_payload::Action::Cancel(p) => p.user.as_ref(),
+            upsert_friendship_payload::Action::Reject(p) => p.user.as_ref(),
+            upsert_friendship_payload::Action::Delete(p) => p.user.as_ref(),
+        }
+        .map(|u| u.address.as_str())
+        .unwrap_or_default();
+        seed_profiles(&self.ctx, &[me, target]).await;
         SocialServiceImpl
             .upsert_friendship(
                 UpsertFriendshipPayload {
@@ -111,6 +121,7 @@ impl Rig {
     }
 
     async fn befriend(&self, a: &str, b: &str) {
+        seed_profiles(&self.ctx, &[a, b]).await;
         self.db
             .apply_friendship_action(a, b, "accept", true, None, None)
             .await
@@ -1153,29 +1164,6 @@ async fn accept_announces_only_current_online_friends_without_topology_change() 
     }
 }
 
-async fn seed_notification_profile(pool: &PgPool, address: &str, name: &str) -> String {
-    let entity = format!("bafkreifriendship{}", Uuid::new_v4().simple());
-    let metadata = serde_json::json!({ "v": { "avatars": [{
-        "name": name,
-        "hasClaimedName": true,
-        "avatar": { "snapshots": { "face256": "bafkreiface" } },
-    }] } });
-    sqlx::query(
-        "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
-         entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
-         VALUES ($1, 'v3', 'profile', $2, $3, now(), ARRAY[$1], now(), '[]'::json)",
-    )
-    .bind(address)
-    .bind(&entity)
-    .bind(metadata)
-    .execute(pool)
-    .await
-    .unwrap();
-    sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'profile')")
-        .bind(address).bind(&entity).execute(pool).await.unwrap();
-    entity
-}
-
 /// Repeated request cycles have distinct committed action IDs. Only requests
 /// and acceptance create inbox/outbox rows, with the processor's metadata.
 #[tokio::test]
@@ -1184,22 +1172,15 @@ async fn friendship_notifications_use_action_ids_and_preserve_profile_metadata()
         return;
     };
     let (a, b) = (addr("fn1"), addr("fn2"));
-    let a_entity = seed_notification_profile(&pool, &a, "Alice").await;
-    let b_entity = seed_notification_profile(&pool, &b, "Bob").await;
+    let a_entity = seed_profile(&pool, &a, "Alice").await;
+    let b_entity = seed_profile(&pool, &b, "Bob").await;
     let db = Db::new(pool.clone());
     let rig = Rig {
         db: db.clone(),
         ctx: Context::new(
             VoiceSettings::default(),
             db,
-            Profiles::new(
-                Some(pool.clone()),
-                crate::communities::profiles::FaceUrls::new(
-                    None,
-                    "https://example.test/profile-images",
-                    false,
-                ),
-            ),
+            Profiles::new(Some(pool.clone())),
             Arc::new(FakeVoiceRooms::new(pool.clone())),
         ),
     };
@@ -1253,7 +1234,7 @@ async fn friendship_notifications_use_action_ids_and_preserve_profile_metadata()
         assert_eq!(metadata["sender"]["hasClaimedName"], true);
         assert_eq!(
             metadata["sender"]["profileImageUrl"],
-            format!("https://example.test/profile-images/entities/{image}/face.png")
+            format!("https://example.test/{image}.png")
         );
         if let Some(message) = metadata.get("message") {
             messages.push(message.clone());
@@ -1295,15 +1276,25 @@ async fn friendship_notifications_use_action_ids_and_preserve_profile_metadata()
 }
 
 #[tokio::test]
-async fn missing_profiles_skip_friendship_notifications_without_failing_the_action() {
+async fn missing_profiles_commit_friendship_but_fail_rpc_enrichment_and_skip_notifications() {
     let Some(rig) = Rig::new().await else {
         return;
     };
     let (a, b) = (addr("np1"), addr("np2"));
     for (actor, action) in [(&a, request(&b)), (&b, accept(&a))] {
         assert!(matches!(
-            rig.upsert(actor, action).await,
-            upsert_friendship_response::Response::Accepted(_)
+            SocialServiceImpl
+                .upsert_friendship(
+                    UpsertFriendshipPayload {
+                        action: Some(action)
+                    },
+                    rig.as_(actor)
+                )
+                .await
+                .unwrap()
+                .response
+                .unwrap(),
+            upsert_friendship_response::Response::InternalServerError(_)
         ));
     }
     let count: i64 =
@@ -1314,5 +1305,118 @@ async fn missing_profiles_skip_friendship_notifications_without_failing_the_acti
             .await
             .unwrap();
     assert_eq!(count, 0);
+    cleanup_pair(&rig.db, &a, &b).await;
+}
+
+#[tokio::test]
+async fn blocking_without_friendship_only_emits_a_block_update() {
+    let Some(rig) = Rig::new().await else { return };
+    let (a, b) = (addr("solo1"), addr("solo2"));
+    let mut events = rig.events(&b);
+    assert!(matches!(
+        rig.block(&a, &b).await,
+        block_user_response::Response::Ok(_)
+    ));
+    let updates = drained(&mut events);
+    assert!(friendship_updates(&updates).is_empty());
+    assert_eq!(block_updates(&updates).len(), 1);
+    assert_eq!(
+        status_of(&rig.status(&a, Some(&b)).await),
+        FriendshipStatus::Blocked
+    );
+    cleanup_pair(&rig.db, &a, &b).await;
+}
+
+#[tokio::test]
+async fn friendship_responses_keep_the_original_creation_time_after_later_actions() {
+    let Some(rig) = Rig::new().await else { return };
+    let (a, b) = (addr("time1"), addr("time2"));
+    let upsert_friendship_response::Response::Accepted(first) = rig.upsert(&a, request(&b)).await
+    else {
+        panic!("request failed")
+    };
+    let original = chrono::Utc::now() - chrono::Duration::hours(1);
+    sqlx::query("UPDATE social.friendships SET created_at=$1 WHERE id=$2")
+        .bind(original.naive_utc())
+        .bind(Uuid::parse_str(&first.id).unwrap())
+        .execute(rig.db.pool())
+        .await
+        .unwrap();
+    let upsert_friendship_response::Response::Accepted(cancelled) =
+        rig.upsert(&a, cancel(&b)).await
+    else {
+        panic!("cancel failed")
+    };
+    assert_eq!(cancelled.created_at, original.timestamp_millis());
+    assert_eq!(cancelled.message.as_deref(), Some(""));
+    cleanup_pair(&rig.db, &a, &b).await;
+}
+
+#[tokio::test]
+async fn block_and_unblock_roll_back_when_the_friendship_action_cannot_be_recorded() {
+    let Some(rig) = Rig::new().await else { return };
+    let (a, b) = (addr("atomic1"), addr("atomic2"));
+    rig.befriend(&a, &b).await;
+    let friendship = rig
+        .db
+        .last_friendship_action(&a, &b)
+        .await
+        .unwrap()
+        .unwrap()
+        .friendship_id;
+    let name = format!("refuse_action_{}", Uuid::new_v4().simple());
+    let function = format!(
+        "CREATE FUNCTION social.{name}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.friendship_id = '{friendship}'::uuid AND NEW.action IN ('block','delete') THEN RAISE EXCEPTION 'test action failure'; END IF; RETURN NEW; END $$"
+    );
+    sqlx::query(sqlx::AssertSqlSafe(function))
+        .execute(rig.db.pool())
+        .await
+        .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!("CREATE TRIGGER {name} BEFORE INSERT ON social.friendship_actions FOR EACH ROW EXECUTE FUNCTION social.{name}()")))
+        .execute(rig.db.pool()).await.unwrap();
+    let mut events = rig.events(&b);
+    assert!(matches!(
+        rig.block(&a, &b).await,
+        block_user_response::Response::InternalServerError(_)
+    ));
+    assert!(!rig.db.is_blocked(&a, &b).await.unwrap());
+    assert_eq!(
+        rig.db
+            .last_friendship_action(&a, &b)
+            .await
+            .unwrap()
+            .unwrap()
+            .action,
+        "accept"
+    );
+    assert!(drained(&mut events).is_empty());
+    rig.db.block_user(&a, &b).await.unwrap();
+    assert!(matches!(
+        rig.unblock(&a, &b).await,
+        unblock_user_response::Response::InternalServerError(_)
+    ));
+    assert!(rig.db.is_blocked(&a, &b).await.unwrap());
+    assert_eq!(
+        rig.db
+            .last_friendship_action(&a, &b)
+            .await
+            .unwrap()
+            .unwrap()
+            .action,
+        "accept"
+    );
+    assert!(drained(&mut events).is_empty());
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP TRIGGER {name} ON social.friendship_actions"
+    )))
+    .execute(rig.db.pool())
+    .await
+    .unwrap();
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "DROP FUNCTION social.{name}()"
+    )))
+    .execute(rig.db.pool())
+    .await
+    .unwrap();
     cleanup_pair(&rig.db, &a, &b).await;
 }

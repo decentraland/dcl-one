@@ -1,13 +1,8 @@
-//! The name, claimed-name flag, face picture and name colour that decorate
-//! every friend on the wire, read from the active profile entity in
-//! `content.deployments` (the same database now, so the old side pool to the
-//! content server is gone) and cached for five minutes. The picture is the
-//! face the lambdas' snapshots name (`communities::profiles::FaceUrls`). A
-//! wallet with no profile, or one whose profile has no name, or no face that
-//! can be served, is the placeholder the old service sent (empty name and
-//! picture, no colour) when no profile source is attached; with one, such a
-//! wallet is left out where upstream's registry drops it
-//! ([`Profiles::requires_profiles`]).
+//! Profile fields exposed by the social RPC, resolved from the active profile
+//! entity in the shared content database. The first avatar must have a userId,
+//! name (or unclaimedName) and face256; the stored face256 is returned verbatim.
+//! List procedures omit unavailable profiles, while block/unblock responses and
+//! connectivity may represent an unavailable profile with empty display fields.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -15,7 +10,6 @@ use std::time::Duration;
 
 use sqlx::PgPool;
 
-use crate::communities::profiles::FaceUrls;
 use crate::rpc::proto::common::Color3;
 use crate::rpc::proto::v2::{BlockedUserProfile, FriendProfile};
 use crate::shared::cache::TtlMap;
@@ -45,7 +39,7 @@ pub struct ProfileInfo {
     pub name_color: Option<NameColor>,
 }
 
-const CACHE_TTL: Duration = Duration::from_secs(300);
+const CACHE_TTL: Duration = Duration::from_secs(600);
 const CACHE_MAX_ENTRIES: usize = 100_000;
 
 /// Preserves first-seen order without a quadratic scan, so a 10^3-friend
@@ -59,43 +53,22 @@ fn dedup_lowercased(addresses: &[String]) -> Vec<String> {
 /// `deployments_entity_id_key` probe of those ids. The column wraps the
 /// deployed metadata as `{"v": ...}` (content::queries).
 const PROFILE_SQL: &str = "\
-    SELECT ap.pointer AS addr, ap.entity_id, \
-           COALESCE(NULLIF(d.entity_metadata::jsonb #>> '{v,avatars,0,name}', ''), \
-                    d.entity_metadata::jsonb #>> '{v,avatars,0,unclaimedName}') AS name, \
-           d.entity_metadata::jsonb #>> '{v,avatars,0,avatar,snapshots,face256}' AS face256, \
-           (d.entity_metadata::jsonb #>> '{v,avatars,0,hasClaimedName}')::bool AS has_claimed, \
-           (d.entity_metadata::jsonb #>> '{v,avatars,0,nameColor,r}')::float8 AS color_r, \
-           (d.entity_metadata::jsonb #>> '{v,avatars,0,nameColor,g}')::float8 AS color_g, \
-           (d.entity_metadata::jsonb #>> '{v,avatars,0,nameColor,b}')::float8 AS color_b \
+    SELECT ap.pointer, d.entity_metadata::jsonb #> '{v,avatars,0}' AS avatar \
     FROM content.active_pointers ap \
     JOIN content.deployments d ON d.entity_id = ap.entity_id \
     WHERE ap.pointer = ANY($1::text[]) AND d.entity_type = 'profile'";
 
-type ProfileRow = (
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<bool>,
-    Option<f64>,
-    Option<f64>,
-    Option<f64>,
-);
-
 #[derive(Clone)]
 pub struct Profiles {
     pool: Option<PgPool>,
-    faces: FaceUrls,
     cache: Arc<TtlMap<String, Option<ProfileInfo>>>,
 }
 
 impl Profiles {
-    /// A `None` pool serves placeholders only (the old service without
-    /// `CONTENT_PG_CONNECTION_STRING`).
-    pub fn new(pool: Option<PgPool>, faces: FaceUrls) -> Self {
+    /// A `None` pool resolves no profiles.
+    pub fn new(pool: Option<PgPool>) -> Self {
         Self {
             pool,
-            faces,
             cache: Arc::new(TtlMap::bounded(CACHE_TTL, CACHE_MAX_ENTRIES)),
         }
     }
@@ -117,7 +90,7 @@ impl Profiles {
             })
     }
 
-    async fn get_profiles_result(
+    pub(crate) async fn get_profiles_result(
         &self,
         addresses: &[String],
     ) -> Result<HashMap<String, ProfileInfo>, sqlx::Error> {
@@ -140,41 +113,58 @@ impl Profiles {
             return Ok(out);
         }
         let Some(pool) = &self.pool else {
-            for addr in misses {
-                self.cache.insert(addr, None);
-            }
             return Ok(out);
         };
 
         let mut resolved: HashMap<String, ProfileInfo> = HashMap::new();
-        match sqlx::query_as::<_, ProfileRow>(PROFILE_SQL)
+        match sqlx::query_as::<_, (String, Option<serde_json::Value>)>(PROFILE_SQL)
             .bind(&misses)
             .fetch_all(pool)
             .await
         {
             Ok(rows) => {
-                for (addr, entity_id, name, face256, has_claimed, cr, cg, cb) in rows {
-                    let name = match name {
-                        Some(n) if !n.is_empty() => n,
-                        _ => continue,
+                for (addr, avatar) in rows {
+                    let Some(avatar) = avatar else { continue };
+                    let nonempty = |key| {
+                        avatar
+                            .get(key)
+                            .and_then(serde_json::Value::as_str)
+                            .filter(|v| !v.is_empty())
                     };
-                    let Some(picture) = self.faces.picture(&entity_id, face256.as_deref()) else {
+                    let Some(user_id) = nonempty("userId") else {
                         continue;
                     };
-                    let name_color = match (cr, cg, cb) {
-                        (Some(r), Some(g), Some(b)) => Some(NameColor {
-                            r: r as f32,
-                            g: g as f32,
-                            b: b as f32,
-                        }),
-                        _ => None,
+                    // Upstream keys the profile map by avatar.userId, not by
+                    // the requested pointer; a mismatched profile cannot enrich it.
+                    if user_id.to_lowercase() != addr {
+                        continue;
+                    }
+                    let Some(name) = nonempty("name").or_else(|| nonempty("unclaimedName")) else {
+                        continue;
                     };
+                    let Some(picture) = avatar
+                        .pointer("/avatar/snapshots/face256")
+                        .and_then(serde_json::Value::as_str)
+                        .filter(|v| !v.is_empty())
+                    else {
+                        continue;
+                    };
+                    let name_color = avatar.get("nameColor").and_then(|color| {
+                        Some(NameColor {
+                            r: color.get("r")?.as_f64()? as f32,
+                            g: color.get("g")?.as_f64()? as f32,
+                            b: color.get("b")?.as_f64()? as f32,
+                        })
+                    });
                     resolved.insert(
                         addr.to_lowercase(),
                         ProfileInfo {
-                            name,
-                            profile_picture_url: picture,
-                            has_claimed_name: has_claimed.unwrap_or(false),
+                            name: name.to_string(),
+                            profile_picture_url: picture.to_string(),
+                            has_claimed_name: avatar
+                                .get("hasClaimedName")
+                                .and_then(serde_json::Value::as_bool)
+                                .unwrap_or(false),
                             name_color,
                         },
                     );
@@ -189,7 +179,11 @@ impl Profiles {
             if let Some(info) = &info {
                 out.insert(addr.clone(), info.clone());
             }
-            self.cache.insert(addr, info);
+            // Upstream only caches resolved profiles. A missing profile may be
+            // deployed immediately after this read and must be retried.
+            if info.is_some() {
+                self.cache.insert(addr, info);
+            }
         }
         Ok(out)
     }
@@ -259,13 +253,20 @@ impl Profiles {
             .collect()
     }
 
-    /// One profile per input address, in input order.
-    pub async fn friend_profiles(&self, addresses: &[String]) -> Vec<FriendProfile> {
-        let map = self.get_profiles(addresses).await;
-        addresses
+    /// Resolved profiles in input order. Upstream's profile-returning list
+    /// methods omit addresses whose profiles cannot be reduced.
+    pub async fn friend_profiles(
+        &self,
+        addresses: &[String],
+    ) -> Result<Vec<FriendProfile>, sqlx::Error> {
+        let map = self.get_profiles_result(addresses).await?;
+        Ok(addresses
             .iter()
-            .map(|a| friend_profile(a, map.get(&a.to_lowercase())))
-            .collect()
+            .filter_map(|a| {
+                map.get(&a.to_lowercase())
+                    .map(|p| friend_profile(a, Some(p)))
+            })
+            .collect())
     }
 
     /// A strict bounded initial replay batch; read failure retires this stream rather
@@ -311,14 +312,14 @@ pub(crate) fn connectivity_profile(profile: FriendProfile) -> FriendProfile {
 pub fn friend_profile(address: &str, info: Option<&ProfileInfo>) -> FriendProfile {
     match info {
         Some(info) => FriendProfile {
-            address: address.to_string(),
+            address: address.to_lowercase(),
             name: info.name.clone(),
             has_claimed_name: info.has_claimed_name,
             profile_picture_url: info.profile_picture_url.clone(),
             name_color: info.name_color.map(Into::into),
         },
         None => FriendProfile {
-            address: address.to_string(),
+            address: address.to_lowercase(),
             name: String::new(),
             has_claimed_name: false,
             profile_picture_url: String::new(),
@@ -334,7 +335,7 @@ pub fn blocked_profile(
 ) -> BlockedUserProfile {
     match info {
         Some(info) => BlockedUserProfile {
-            address: address.to_string(),
+            address: address.to_lowercase(),
             name: info.name.clone(),
             has_claimed_name: info.has_claimed_name,
             profile_picture_url: info.profile_picture_url.clone(),
@@ -342,7 +343,7 @@ pub fn blocked_profile(
             name_color: info.name_color.map(Into::into),
         },
         None => BlockedUserProfile {
-            address: address.to_string(),
+            address: address.to_lowercase(),
             name: String::new(),
             has_claimed_name: false,
             profile_picture_url: String::new(),
@@ -406,208 +407,83 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn without_a_pool_every_address_is_a_placeholder_in_input_order() {
-        let profiles = Profiles::new(None, FaceUrls::default());
-        let list = profiles
-            .friend_profiles(&["0xB".to_string(), "0xa".to_string(), "0xb".to_string()])
-            .await;
-        let addrs: Vec<&str> = list.iter().map(|p| p.address.as_str()).collect();
-        assert_eq!(addrs, ["0xB", "0xa", "0xb"]);
-        assert!(list.iter().all(|p| p.name.is_empty()
-            && p.profile_picture_url.is_empty()
-            && p.name_color.is_none()));
-        let blocked = profiles.blocked_profile("0xa", Some(7)).await;
+    async fn absent_profiles_are_omitted_from_lists_and_block_responses_keep_the_address() {
+        let profiles = Profiles::new(None);
+        assert!(
+            profiles
+                .friend_profiles(&["0xB".into(), "0xa".into()])
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let blocked = profiles.blocked_profile("0xA", Some(7)).await;
         assert_eq!(
             (blocked.address.as_str(), blocked.blocked_at),
             ("0xa", Some(7))
         );
     }
 
-    async fn deploy_profile(
-        pool: &PgPool,
-        addr: &str,
-        entity_id: &str,
-        metadata: serde_json::Value,
-    ) {
-        sqlx::query(
-            "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
-             entity_timestamp, entity_pointers, local_timestamp, auth_chain) \
-             VALUES ($1, 'v3', 'profile', $2, $3, now(), ARRAY[$1], now(), '[]'::json)",
-        )
-        .bind(addr)
-        .bind(entity_id)
-        .bind(&metadata)
-        .execute(pool)
-        .await
-        .unwrap();
-        sqlx::query("INSERT INTO content.active_pointers (pointer, entity_id, entity_type) VALUES ($1, $2, 'profile')")
-            .bind(addr)
-            .bind(entity_id)
-            .execute(pool)
-            .await
-            .unwrap();
-    }
-
-    /// The active profile entity of a wallet decorates it, its picture the
-    /// `/profile-images` face; a wallet without one is a placeholder; the
-    /// second read of both comes from the cache.
     #[tokio::test]
-    async fn profiles_come_from_the_active_profile_entity() {
+    async fn first_avatar_requires_identity_name_and_face_and_preserves_snapshot_url() {
         let Some(pool) = crate::db::scratch::pool(2).await else {
             return;
         };
         let tag = uuid::Uuid::new_v4().simple().to_string();
-        let addr = format!("0x{}", &format!("{tag}{tag}")[..40]);
-        let entity_id = format!("bafkreiprofile{tag}");
-        let metadata = serde_json::json!({"v": {"avatars": [{"name": "Alice", "hasClaimedName": true,
+        let address = format!("0x{}", &format!("{tag}{tag}")[..40]);
+        let valid = serde_json::json!({"userId": address.to_uppercase(), "name": "Alice", "hasClaimedName": true,
             "nameColor": {"r": 0.5, "g": 0.25, "b": 1.0},
-            "avatar": {"snapshots": {"face256": "bafkreiface"}}}]}});
-        deploy_profile(&pool, &addr, &entity_id, metadata).await;
-        let faceless = format!("0x{}", &format!("{tag}{tag}")[2..42]);
-        let faceless_entity = format!("bafkreifaceless{tag}");
-        let metadata = serde_json::json!({"v": {"avatars": [{"name": "Bob", "avatar": {}}]}});
-        deploy_profile(&pool, &faceless, &faceless_entity, metadata).await;
-
-        let profiles = Profiles::new(
-            Some(pool.clone()),
-            FaceUrls::new(None, "https://peer.test/profile-images/", false),
-        );
-        let other = format!("0x{}", &format!("{tag}{tag}")[1..41]);
-        let list = profiles
-            .friend_profiles(&[addr.to_uppercase(), other.clone(), faceless.clone()])
-            .await;
-        assert_eq!(list[0].address, addr.to_uppercase());
-        assert_eq!(list[0].name, "Alice");
-        assert!(list[0].has_claimed_name);
-        assert_eq!(
-            list[0].profile_picture_url,
-            format!("https://peer.test/profile-images/entities/{entity_id}/face.png")
-        );
-        assert_eq!(
-            list[0].name_color,
-            Some(Color3 {
-                r: 0.5,
-                g: 0.25,
-                b: 1.0
-            })
-        );
-        assert_eq!(list[1].address, other);
-        assert!(list[1].name.is_empty());
-        assert!(
-            list[2].name.is_empty() && list[2].profile_picture_url.is_empty(),
-            "no face uploaded and none derived: a placeholder"
-        );
-
-        let deriving = Profiles::new(
-            Some(pool.clone()),
-            FaceUrls::new(None, "https://peer.test/profile-images", true),
-        );
-        let bob = deriving.friend_profile(&faceless).await;
-        assert_eq!(bob.name, "Bob");
-        assert!(
-            !bob.has_claimed_name,
-            "an absent hasClaimedName reads as false"
-        );
-        assert_eq!(
-            bob.profile_picture_url,
-            format!("https://peer.test/profile-images/entities/{faceless_entity}/face.png"),
-            "the route renders or fetches a face the profile never uploaded"
-        );
-        let cdn = Profiles::new(
-            Some(pool.clone()),
-            FaceUrls::new(
-                Some("https://cdn.test"),
-                "https://peer.test/profile-images/",
-                false,
-            ),
-        );
-        assert_eq!(
-            cdn.friend_profile(&faceless).await.profile_picture_url,
-            format!("https://cdn.test/entities/{faceless_entity}/face.png")
-        );
-
-        sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
-            .bind(&faceless)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM content.deployments WHERE entity_id = $1")
-            .bind(&faceless_entity)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
-            .bind(&addr)
-            .execute(&pool)
-            .await
-            .unwrap();
-        sqlx::query("DELETE FROM content.deployments WHERE entity_id = $1")
-            .bind(&entity_id)
-            .execute(&pool)
-            .await
-            .unwrap();
-        let cached = profiles.friend_profile(&addr).await;
-        assert_eq!(
-            cached.name, "Alice",
-            "served from the cache after the row is gone"
-        );
-    }
-
-    /// Upstream's `profiles.spec.ts` (`decentraland/social-service-ea` at
-    /// `fb3dcb8`, `src/logic/profiles.ts:9`, `:19-21`): the first avatar is the
-    /// profile, and a name falls back to `unclaimedName`, an empty `name`
-    /// included (`name || unclaimedName`).
-    #[tokio::test]
-    async fn the_first_avatar_names_the_profile_and_falls_back_to_unclaimed_name() {
-        let Some(pool) = crate::db::scratch::pool(2).await else {
-            return;
-        };
-        let tag = uuid::Uuid::new_v4().simple().to_string();
-        let wallet = |i: usize| format!("0x{}", &format!("{tag}{tag}")[i..i + 40]);
-        let face = serde_json::json!({"snapshots": {"face256": "bafkreiface"}});
-        let cases = [
-            (
-                wallet(3),
-                serde_json::json!({"v": {"avatars": [
-                    {"name": "First", "avatar": face},
-                    {"name": "Second", "avatar": face}]}}),
-            ),
-            (
-                wallet(4),
-                serde_json::json!({"v": {"avatars": [{"unclaimedName": "Unclaimed", "avatar": face}]}}),
-            ),
-            (
-                wallet(5),
-                serde_json::json!({"v": {"avatars": [{"name": "", "unclaimedName": "Unclaimed", "avatar": face}]}}),
-            ),
+            "avatar": {"snapshots": {"face256": "https://example.test/stored-face.png"}}});
+        let mut fallback = valid.clone();
+        fallback["name"] = serde_json::json!("");
+        fallback["unclaimedName"] = serde_json::json!("Unclaimed");
+        let mut cases = vec![
+            (valid.clone(), Some("Alice")),
+            (fallback, Some("Unclaimed")),
         ];
-        let mut entities = Vec::new();
-        for (i, (addr, metadata)) in cases.iter().enumerate() {
-            let entity_id = format!("bafkreiavatars{i}{tag}");
-            deploy_profile(&pool, addr, &entity_id, metadata.clone()).await;
-            entities.push(entity_id);
+        for key in ["userId", "name", "avatar"] {
+            let mut avatar = valid.clone();
+            avatar.as_object_mut().unwrap().remove(key);
+            cases.push((avatar, None));
         }
-        let profiles = Profiles::new(
-            Some(pool.clone()),
-            FaceUrls::new(None, "https://peer.test/profile-images/", false),
-        );
-        let addrs: Vec<String> = cases.iter().map(|(a, _)| a.clone()).collect();
-        let list = profiles.friend_profiles(&addrs).await;
-        assert_eq!(list[0].name, "First");
-        assert_eq!(list[1].name, "Unclaimed");
-        assert!(!list[1].has_claimed_name);
-        assert_eq!(list[2].name, "Unclaimed", "an empty name falls back");
-        for (addr, entity_id) in addrs.iter().zip(&entities) {
-            sqlx::query("DELETE FROM content.active_pointers WHERE pointer = $1")
-                .bind(addr)
-                .execute(&pool)
+        let mut empty_face = valid.clone();
+        empty_face["avatar"]["snapshots"]["face256"] = serde_json::json!("");
+        cases.push((empty_face, None));
+        let mut wrong_identity = valid.clone();
+        wrong_identity["userId"] = serde_json::json!("different-user");
+        cases.push((wrong_identity, None));
+        cases.push((serde_json::json!([]), None));
+        for (index, (avatar, expected_name)) in cases.into_iter().enumerate() {
+            let entity = format!("bafkreiprofile{tag}{index}");
+            let metadata = serde_json::json!({"v":{"avatars":[avatar, valid.clone()]}});
+            sqlx::query("INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, entity_timestamp, entity_pointers, local_timestamp, auth_chain) VALUES ($1,'v3','profile',$2,$3,now(),ARRAY[$1],now(),'[]'::json)")
+                .bind(&address).bind(&entity).bind(metadata).execute(&pool).await.unwrap();
+            sqlx::query("INSERT INTO content.active_pointers(pointer,entity_id,entity_type) VALUES($1,$2,'profile') ON CONFLICT(pointer) DO UPDATE SET entity_id=EXCLUDED.entity_id")
+                .bind(&address).bind(&entity).execute(&pool).await.unwrap();
+            let profiles = Profiles::new(Some(pool.clone()));
+            let result = profiles
+                .friend_profiles(&[address.to_uppercase()])
                 .await
                 .unwrap();
-            sqlx::query("DELETE FROM content.deployments WHERE entity_id = $1")
-                .bind(entity_id)
-                .execute(&pool)
-                .await
-                .unwrap();
+            if let Some(name) = expected_name {
+                assert_eq!(result.len(), 1);
+                assert_eq!(result[0].address, address);
+                assert_eq!(result[0].name, name);
+                assert_eq!(
+                    result[0].profile_picture_url,
+                    "https://example.test/stored-face.png"
+                );
+                assert!(result[0].has_claimed_name);
+                assert_eq!(
+                    result[0].name_color,
+                    Some(Color3 {
+                        r: 0.5,
+                        g: 0.25,
+                        b: 1.0
+                    })
+                );
+            } else {
+                assert!(result.is_empty(), "case {index}: {result:?}");
+            }
         }
     }
 }

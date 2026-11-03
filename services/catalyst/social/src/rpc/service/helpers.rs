@@ -120,7 +120,7 @@ impl From<crate::comms::gatekeeper::voice::rooms::VoiceUnavailable> for SocialEr
 }
 
 pub(crate) fn normalize(addr: &str) -> String {
-    addr.trim().to_lowercase()
+    addr.to_lowercase()
 }
 
 /// Mirrors upstream `normalizePagination(bounds)`. A missing, zero or negative
@@ -200,12 +200,12 @@ pub(super) fn upsert_internal_error(msg: impl Into<String>) -> UpsertFriendshipR
     }
 }
 
-/// The detail is logged, never sent: the wire says "internal error".
+/// Upstream's application error oneofs preserve the caught error's message.
 pub(super) fn internal_err(msg: impl Into<String>) -> InternalServerError {
     let detail = msg.into();
     tracing::error!(detail = %detail, "social-rpc internal error");
     InternalServerError {
-        message: Some("internal error".to_string()),
+        message: Some(detail),
     }
 }
 

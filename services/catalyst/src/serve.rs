@@ -2009,7 +2009,6 @@ fn social_states(
                 message_burst: config.social.stream_ws_message_burst as usize,
             },
             admin_token: non_empty(&config.social.catalyrst_social_rpc_admin_token),
-            faces,
             writes_enabled: config.writes.social_writes_enabled,
             commit_hash: config.commit_hash(),
         },

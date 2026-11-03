@@ -135,6 +135,7 @@ async fn a_subscription_receives_the_update_its_rpc_stream_would() {
     let address = format!("{:#x}", me.address());
     let other = addr("str1");
     let ctx = server.state.ctx.clone();
+    seed_profiles(&ctx, &[&address, &other]).await;
 
     let mut socket = ready(&server, &me).await;
     send_json(&mut socket, json!({ "type": "ping" })).await;

@@ -29,17 +29,19 @@ pub(crate) async fn block(
     let (blocked_at, ended_friendship) = ctx.db().block_user_recording_action(me, other).await?;
     let pubsub = ctx.pubsub();
     if ended_friendship {
-        ctx.publish_friendship(me, other, |_| FriendshipUpdate {
-            stream_closed: None,
-            update: Some(friendship_update::Update::Block(
-                friendship_update::BlockResponse {
-                    user: Some(User {
-                        address: me.to_string(),
-                    }),
-                },
-            )),
-        })
-        .await;
+        ctx.pubsub().publish(
+            other,
+            SocialEvent::Friendship(FriendshipUpdate {
+                stream_closed: None,
+                update: Some(friendship_update::Update::Block(
+                    friendship_update::BlockResponse {
+                        user: Some(User {
+                            address: me.to_string(),
+                        }),
+                    },
+                )),
+            }),
+        );
     }
     pubsub.publish(
         other,
@@ -69,17 +71,19 @@ pub(crate) async fn unblock(ctx: &Context, me: &str, other: &str) -> Result<(), 
         return Ok(());
     };
     if deleted_friendship {
-        ctx.publish_friendship(me, other, |_| FriendshipUpdate {
-            stream_closed: None,
-            update: Some(friendship_update::Update::Delete(
-                friendship_update::DeleteResponse {
-                    user: Some(User {
-                        address: me.to_string(),
-                    }),
-                },
-            )),
-        })
-        .await;
+        ctx.pubsub().publish(
+            other,
+            SocialEvent::Friendship(FriendshipUpdate {
+                stream_closed: None,
+                update: Some(friendship_update::Update::Delete(
+                    friendship_update::DeleteResponse {
+                        user: Some(User {
+                            address: me.to_string(),
+                        }),
+                    },
+                )),
+            }),
+        );
     }
     ctx.pubsub().publish(
         other,
@@ -179,6 +183,13 @@ impl SocialServiceImpl {
                 });
             }
         };
+        if other == me {
+            return Ok(UnblockUserResponse {
+                response: Some(unblock_user_response::Response::InvalidRequest(
+                    invalid_req("Cannot unblock yourself"),
+                )),
+            });
+        }
         match unblock(&context.server_context, &me, &other).await {
             Ok(()) => {}
             Err(Refusal::Internal(m) | Refusal::Failed(m)) => {
@@ -229,15 +240,30 @@ impl SocialServiceImpl {
             }
         };
         let addrs: Vec<String> = rows.iter().map(|r| r.address.clone()).collect();
-        let map = context.server_context.profiles().get_profiles(&addrs).await;
+        let map = match context
+            .server_context
+            .profiles()
+            .get_profiles_result(&addrs)
+            .await
+        {
+            Ok(profiles) => profiles,
+            Err(error) => {
+                tracing::error!(%error, "blocked profiles unavailable");
+                return Ok(GetBlockedUsersResponse {
+                    profiles: Vec::new(),
+                    pagination_data: Some(PaginatedResponse { total: 0, page: 1 }),
+                });
+            }
+        };
         let profiles = rows
             .iter()
-            .map(|r| {
-                profiles::blocked_profile(
+            .filter_map(|r| {
+                let profile = map.get(&r.address.to_lowercase())?;
+                Some(profiles::blocked_profile(
                     &r.address,
-                    map.get(&r.address.to_lowercase()),
+                    Some(profile),
                     Some(r.blocked_at.timestamp_millis()),
-                )
+                ))
             })
             .collect();
         Ok(GetBlockedUsersResponse {

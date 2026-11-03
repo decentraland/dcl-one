@@ -43,6 +43,7 @@ mod private_voice;
 mod settings;
 mod social_api;
 mod socket;
+mod source_cases;
 mod stream;
 mod subscription_lifecycle;
 mod upstream_reads;
@@ -84,13 +85,14 @@ async fn cleanup_pair(db: &Db, a: &str, b: &str) {
 }
 
 fn test_ctx(db: Db, voice: Arc<dyn crate::comms::gatekeeper::voice::rooms::VoiceRooms>) -> Context {
+    let profiles = Profiles::new(Some(db.pool().clone()));
     Context::new(
         VoiceSettings {
             private_voice_chat_expiration_ms: EXPIRATION_MS,
             private_voice_chat_expiration_batch_size: 20,
         },
         db,
-        Profiles::new(None, Default::default()),
+        profiles,
         voice,
     )
 }
@@ -105,14 +107,7 @@ fn profiled_ctx(
     Context::new(
         VoiceSettings::default(),
         db.clone(),
-        Profiles::new(
-            Some(db.pool().clone()),
-            crate::communities::profiles::FaceUrls::new(
-                None,
-                "https://peer.test/profile-images/",
-                false,
-            ),
-        ),
+        Profiles::new(Some(db.pool().clone())),
         voice,
     )
 }
@@ -120,7 +115,7 @@ fn profiled_ctx(
 /// Deploys `address`'s profile named `name` with a face; returns its entity id.
 async fn deploy_profile(pool: &PgPool, address: &str, name: &str) -> String {
     let entity_id = format!("bafkreiprofile{}", Uuid::new_v4().simple());
-    let metadata = serde_json::json!({"v": {"avatars": [{"name": name, "hasClaimedName": true,
+    let metadata = serde_json::json!({"v": {"avatars": [{"userId": address, "name": name, "hasClaimedName": true,
         "avatar": {"snapshots": {"face256": "bafkreiface"}}}]}});
     sqlx::query(
         "INSERT INTO content.deployments (deployer_address, version, entity_type, entity_id, entity_metadata, \
@@ -153,6 +148,37 @@ async fn drop_profile(pool: &PgPool, address: &str, entity_id: &str) {
         .bind(entity_id)
         .execute(pool)
         .await;
+}
+
+/// A valid upstream-style profile for contract tests that exercise enriched RPCs.
+async fn seed_profile(pool: &PgPool, address: &str, name: &str) -> String {
+    let existing: Option<String> =
+        sqlx::query_scalar("SELECT entity_id FROM content.active_pointers WHERE pointer=$1")
+            .bind(address)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+    if let Some(entity) = existing {
+        return entity;
+    }
+    let entity = format!("bafkreifriendship{}", Uuid::new_v4().simple());
+    let metadata = serde_json::json!({"v":{"avatars":[{
+        "userId": address, "name": name, "hasClaimedName":true,
+        "avatar":{"snapshots":{"face256":format!("https://example.test/{entity}.png")}}
+    }]}});
+    sqlx::query("INSERT INTO content.deployments (deployer_address,version,entity_type,entity_id,entity_metadata,entity_timestamp,entity_pointers,local_timestamp,auth_chain) VALUES($1,'v3','profile',$2,$3,now(),ARRAY[$1],now(),'[]'::json)")
+        .bind(address).bind(&entity).bind(metadata).execute(pool).await.unwrap();
+    sqlx::query("INSERT INTO content.active_pointers(pointer,entity_id,entity_type) VALUES($1,$2,'profile')")
+        .bind(address).bind(&entity).execute(pool).await.unwrap();
+    entity
+}
+
+async fn seed_profiles(ctx: &Context, addresses: &[&str]) {
+    for address in addresses {
+        if crate::auth::is_eth_address(address) {
+            seed_profile(ctx.db().pool(), &address.to_lowercase(), "Contract profile").await;
+        }
+    }
 }
 
 fn procedure_ctx(ctx: &Context, me: &str, transport_id: u32) -> ProcedureContext<Context> {
@@ -401,7 +427,7 @@ async fn pending_requests_list_the_latest_request_with_its_message() {
     };
     let db = Db::new(pool);
     let (a, b, c) = (addr("fb0f"), addr("fb10"), addr("fb11"));
-    let (id_ab, _, _) = db
+    let (_, _, action_ab) = db
         .apply_friendship_action(&a, &b, "request", false, None, Some("hello b"))
         .await
         .unwrap();
@@ -417,7 +443,7 @@ async fn pending_requests_list_the_latest_request_with_its_message() {
         .expect("a's request");
     assert_eq!(
         (from_a.id, from_a.message.as_deref()),
-        (id_ab, Some("hello b"))
+        (action_ab, Some("hello b"))
     );
     let (sent, total) = db.get_friendship_requests(&a, false, 10, 0).await.unwrap();
     assert_eq!((sent.len(), total), (1, 1));
@@ -1716,6 +1742,7 @@ async fn explorer_as(
     server: &Server,
     root: &PrivateKeySigner,
 ) -> (String, RpcClient<TungsteniteTransport>, SocialClient) {
+    seed_profiles(&server.state.ctx, &[&format!("{:#x}", root.address())]).await;
     let ts = chrono::Utc::now().timestamp_millis();
     let payload =
         crate::shared::signed_fetch::build_payload_v6("get", "/social-rpc", &ts.to_string(), "{}");
@@ -1852,7 +1879,10 @@ async fn two_explorers_exchange_a_friend_request_over_the_socket() {
     };
     assert_eq!(request.friend.as_ref().unwrap().address, alice);
     assert_eq!(request.message.as_deref(), Some("hi bob"));
-    assert_eq!(request.id, accepted.id);
+    assert_ne!(
+        request.id, accepted.id,
+        "stream events identify the action; the mutation response identifies the friendship"
+    );
 
     // Both sides read the pending state; Bob accepts; Alice's stream carries the acceptance.
     let status = bob_social.get_friendship_status(&alice).await;

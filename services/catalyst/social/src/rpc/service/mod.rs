@@ -496,7 +496,7 @@ mod tests {
                     .connect_lazy("postgres://localhost/unused")
                     .unwrap(),
             ),
-            crate::rpc::profiles::Profiles::new(None, Default::default()),
+            crate::rpc::profiles::Profiles::new(None),
             Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
         );
         let pctx = ProcedureContext {

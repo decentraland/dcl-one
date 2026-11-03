@@ -102,8 +102,6 @@ pub struct Settings {
     pub stream: stream::StreamLimits,
     /// `CATALYRST_SOCIAL_RPC_ADMIN_TOKEN`: the `/admin/social` bearer; unset refuses.
     pub admin_token: Option<String>,
-    /// Where profile pictures are served.
-    pub faces: crate::communities::profiles::FaceUrls,
     /// `SOCIAL_WRITES_ENABLED`: false answers every mutating procedure with a
     /// 503 `WritesDisabled` remote error (`social::writes`).
     pub writes_enabled: bool,
@@ -124,7 +122,6 @@ impl Default for Settings {
             admission: Default::default(),
             stream: Default::default(),
             admin_token: None,
-            faces: Default::default(),
             writes_enabled: true,
             commit_hash: None,
         }
@@ -147,7 +144,7 @@ impl State {
         eip1654: Option<Arc<dyn Eip1654Validator>>,
         voice: Arc<dyn VoiceRooms>,
     ) -> Self {
-        let profiles = Profiles::new(Some(pool.clone()), settings.faces.clone());
+        let profiles = Profiles::new(Some(pool.clone()));
         let ctx = Context::new(
             VoiceSettings {
                 private_voice_chat_expiration_ms: settings.private_voice_chat_expiration_ms,

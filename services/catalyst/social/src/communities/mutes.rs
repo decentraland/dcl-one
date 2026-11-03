@@ -69,14 +69,16 @@ pub async fn get_mutes(
         .require_signer(&headers, "get", &signed_path(&original, "/v1/mutes"))
         .await?;
     let pagination = get_pagination_params(&pairs);
-    let mut filter: Vec<String> = get_all(&pairs, "addresses")
-        .into_iter()
-        .filter(|a| !a.is_empty())
-        .map(|a| a.to_lowercase())
-        .collect();
-    if let Some(a) = get_first(&pairs, "address").filter(|a| !a.is_empty()) {
-        filter.push(a.to_lowercase());
-    }
+    let filter: Vec<String> =
+        if let Some(a) = get_first(&pairs, "address").filter(|a| !a.is_empty()) {
+            vec![a.to_lowercase()]
+        } else {
+            get_all(&pairs, "addresses")
+                .into_iter()
+                .filter(|a| !a.is_empty())
+                .map(|a| a.to_lowercase())
+                .collect()
+        };
     let filter: Option<Vec<String>> = if filter.is_empty() {
         None
     } else {

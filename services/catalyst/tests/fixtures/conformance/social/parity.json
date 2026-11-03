@@ -1,0 +1,3581 @@
+{
+  "schema_version": 1,
+  "operations": [
+    {
+      "id": "api_auxiliary:ANY:/*",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_auxiliary:GET:/health/live",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_auxiliary:GET:/health/ready",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_auxiliary:GET:/health/startup",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_auxiliary:OPTIONS:/*",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/blocks/:address",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Validated idempotent unblock; no fake friendship rewrite or event on a retry.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "blocks_run_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:DELETE:/v1/communities/:id",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress/bans",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/communities/:id/places/:placeId",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/communities/:id/posts/:postId",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/communities/:id/posts/:postId/like",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/community-voice-chats/:communityId",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/participants/:address",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/speak-requests/:address",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/speakers/:address",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:DELETE:/v1/friends/:address",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Validated signed delete applies the friendship state machine; refusal status mapped by domain errors.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "a_friendship_runs_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:DELETE:/v1/mutes",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Signed-fetch body ordering, self-mute, idempotent mutations, timestamp shape and address-over-addresses filter precedence compared through upstream handler/component/adapter.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/mutes.rs",
+          "scope": "Compared with upstream HTTP mute handlers, user-mutes component and user-mutes-db appendFilters."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/mute_body.rs",
+          "test": "the_mute_body_is_read_after_the_signature_and_as_upstream_reads_it",
+          "scope": "Local body/error/write/filter regression."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live upstream HTTP response/header differential and PostgreSQL-backed filter/pagination edge cases; no equality claim from local route coverage."
+    },
+    {
+      "id": "api_http:DELETE:/v1/private-voice-chats/:callId",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/blocking-status",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Complete unpaginated blockedUsers and blockedByUsers.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "blocks_run_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:GET:/v1/communities",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/communities/:address/managed",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/communities/:id",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/communities/:id/bans",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/communities/:id/members",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/communities/:id/places",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/communities/:id/posts",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/communities/:id/requests",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/community-voice-chats/active",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/members/:address/communities",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/members/:address/invites",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/members/:address/requests",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/moderation/communities",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/mutes",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Signed-fetch body ordering, self-mute, idempotent mutations, timestamp shape and address-over-addresses filter precedence compared through upstream handler/component/adapter.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/mutes.rs",
+          "scope": "Compared with upstream HTTP mute handlers, user-mutes component and user-mutes-db appendFilters."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/mute_body.rs",
+          "test": "the_mute_body_is_read_after_the_signature_and_as_upstream_reads_it",
+          "scope": "Local body/error/write/filter regression."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live upstream HTTP response/header differential and PostgreSQL-backed filter/pagination edge cases; no equality claim from local route coverage."
+    },
+    {
+      "id": "api_http:GET:/v1/private-messages-settings",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "At most 50 addresses, every address validated before lookup; deduplicated settings and friendship values.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "settings_run_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:GET:/v1/private-voice-chats/incoming",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/referral-progress",
+      "owner": "referrals",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v1/social-settings",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Stored setting strings, absent defaults without creating a row.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "settings_run_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:GET:/v1/users/:address/friendship-status",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Latest action status with lone-block fallback; address validation.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "a_friendship_runs_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:GET:/v2/blocks",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Address-only block page with full total and original blockedAt.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "blocks_run_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:GET:/v2/communities",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v2/communities/:id",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v2/communities/:id/bans",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v2/communities/:id/members",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v2/communities/:id/posts",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v2/communities/:id/requests",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v2/friends",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Address-only active unblocked friends and full count, same DB rows as RPC.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "a_friendship_runs_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:GET:/v2/friendship-requests",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Received/sent direction required; request rows expose action UUID, timestamps and optional message.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "a_friendship_runs_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:GET:/v2/members/:address/requests",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:GET:/v2/users/:address/mutual-friends",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Address-only mutual friend list; target validation and bounded pages.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "a_friendship_runs_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:PATCH:/v1/communities/:id",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:PATCH:/v1/communities/:id/members/:address",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:PATCH:/v1/communities/:id/requests/:requestId",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:PATCH:/v1/community-voice-chats/:communityId/speakers/:address",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:PATCH:/v1/friendship-requests/:address",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Accepted/rejected/cancelled intentions invoke same state machine and mapped refusals.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "a_friendship_runs_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:PATCH:/v1/private-voice-chats/:callId",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:PATCH:/v1/referral-progress",
+      "owner": "referrals",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:PATCH:/v1/social-settings",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "At least one known setting, schema validation, partial-write semantics and shared privacy authority.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "settings_run_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:POST:/v1/blocks",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Schema and signed-fetch validation; atomically blocks/deactivates existing friendship, emits friendship event only when one exists.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "blocks_run_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:POST:/v1/communities",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/communities/:id/members",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/communities/:id/places",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/communities/:id/posts",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/communities/:id/posts/:postId/like",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/communities/:id/requests",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/community-voice-chats",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/community-voice-chats/:communityId/participants",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/community-voice-chats/:communityId/speak-requests",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/friendship-requests",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Schema/signed-fetch gates, request/state/rate/block checks; response identifies friendship, event identifies action.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/http.rs",
+          "scope": "Handler, schema order, refusal mapping and shared domain code compared with pinned source."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "a_friendship_runs_through_the_http_routes",
+          "scope": "Local HTTP contract regression, signed requests and persisted rows."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/social_api.rs",
+          "test": "every_route_requires_a_signed_fetch_over_its_own_path",
+          "scope": "Local signed-fetch path binding and middleware order; no deployed upstream comparison."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Execute real upstream HTTP handlers with controlled data and compare envelopes, headers, schema failures and all pagination edge cases; local tests alone do not establish full equality."
+    },
+    {
+      "id": "api_http:POST:/v1/members/:address/communities",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/mutes",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Signed-fetch body ordering, self-mute, idempotent mutations, timestamp shape and address-over-addresses filter precedence compared through upstream handler/component/adapter.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/communities/mutes.rs",
+          "scope": "Compared with upstream HTTP mute handlers, user-mutes component and user-mutes-db appendFilters."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/mute_body.rs",
+          "test": "the_mute_body_is_read_after_the_signature_and_as_upstream_reads_it",
+          "scope": "Local body/error/write/filter regression."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live upstream HTTP response/header differential and PostgreSQL-backed filter/pagination edge cases; no equality claim from local route coverage."
+    },
+    {
+      "id": "api_http:POST:/v1/private-voice-chats",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/referral-email",
+      "owner": "referrals",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:POST:/v1/referral-progress",
+      "owner": "referrals",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:PUT:/v1/communities/:id",
+      "owner": "communities",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "json_stream:SUBSCRIBE:block_updates",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "json_stream:SUBSCRIBE:community_member_connectivity_updates",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "json_stream:SUBSCRIBE:community_voice_chat_updates",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "json_stream:SUBSCRIBE:friend_connectivity_updates",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "json_stream:SUBSCRIBE:friendship_updates",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "json_stream:SUBSCRIBE:private_voice_chat_updates",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_stream:RPC:subscribeToBlockUpdates",
+      "owner": "realtime",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_stream:RPC:subscribeToCommunityMemberConnectivityUpdates",
+      "owner": "realtime",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
+      "owner": "realtime",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_stream:RPC:subscribeToFriendConnectivityUpdates",
+      "owner": "realtime",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_stream:RPC:subscribeToFriendshipUpdates",
+      "owner": "realtime",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_stream:RPC:subscribeToPrivateVoiceChatUpdates",
+      "owner": "realtime",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:acceptPrivateVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:blockUser",
+      "owner": "friends-settings-blocks",
+      "status": "known_gap",
+      "result": "Validates raw target/self, records block and existing friendship action atomically; only existing friendships emit friendship updates; write response retains profile fallback.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/blocks.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/friends.rs",
+          "test": "block_and_unblock_roll_back_when_the_friendship_action_cannot_be_recorded",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/content/src/validator/checker.rs",
+          "test": "profile_identity_mismatch_is_rejected_per_field",
+          "scope": "Identity metadata is constrained only at/after PROFILE_IDENTITY; does not prove historical data has no mismatches."
+        }
+      ],
+      "gaps": [
+        "Historical profile identity mismatch: the local resolver rejects an avatar.userId different from the active pointer; upstream registry parsing can return that userId. New deployments are constrained by content identity validation, historical pre-cutoff records need explicit conformance coverage."
+      ],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:demoteSpeakerInCommunityVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:endCommunityVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:endPrivateVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:getBlockedUsers",
+      "owner": "friends-settings-blocks",
+      "status": "known_gap",
+      "result": "Returns only resolved profiles, retains full blocked total and original block time, bounds pages, and returns empty page on read failure.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/blocks.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/friends.rs",
+          "test": "blocking_status_reads_each_direction_alone",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/content/src/validator/checker.rs",
+          "test": "profile_identity_mismatch_is_rejected_per_field",
+          "scope": "Identity metadata is constrained only at/after PROFILE_IDENTITY; does not prove historical data has no mismatches."
+        }
+      ],
+      "gaps": [
+        "Historical profile identity mismatch: the local resolver rejects an avatar.userId different from the active pointer; upstream registry parsing can return that userId. New deployments are constrained by content identity validation, historical pre-cutoff records need explicit conformance coverage."
+      ],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:getBlockingStatus",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Both directions are unpaginated; read failure returns both empty lists.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/blocks.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/friends.rs",
+          "test": "blocking_status_reads_each_direction_alone",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:getFriends",
+      "owner": "friends-settings-blocks",
+      "status": "known_gap",
+      "result": "Filters unresolved profiles; reads active unblocked friends newest first; normalization bounds and source missing-profile response compared.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/friends.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/friends.rs",
+          "test": "mutual_friends_answer_the_shared_friends_and_an_empty_page_for_a_bad_user",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/content/src/validator/checker.rs",
+          "test": "profile_identity_mismatch_is_rejected_per_field",
+          "scope": "Identity metadata is constrained only at/after PROFILE_IDENTITY; does not prove historical data has no mismatches."
+        }
+      ],
+      "gaps": [
+        "Historical profile identity mismatch: the local resolver rejects an avatar.userId different from the active pointer; upstream registry parsing can return that userId. New deployments are constrained by content identity validation, historical pre-cutoff records need explicit conformance coverage."
+      ],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:getFriendshipStatus",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Validates raw target and resolves latest friendship action; absent action falls back to synthesized block status, as upstream friends-db does.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/friends.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/friends.rs",
+          "test": "friendship_status_names_a_missing_or_invalid_user_and_reads_a_lone_block",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:getIncomingPrivateVoiceChatRequest",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:getMutualFriends",
+      "owner": "friends-settings-blocks",
+      "status": "known_gap",
+      "result": "Validates normalized target, reads shared active unblocked friends in address order, and filters unresolved profiles; errors answer an empty page.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/friends.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/friends.rs",
+          "test": "mutual_friends_answer_the_shared_friends_and_an_empty_page_for_a_bad_user",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/content/src/validator/checker.rs",
+          "test": "profile_identity_mismatch_is_rejected_per_field",
+          "scope": "Identity metadata is constrained only at/after PROFILE_IDENTITY; does not prove historical data has no mismatches."
+        }
+      ],
+      "gaps": [
+        "Historical profile identity mismatch: the local resolver rejects an avatar.userId different from the active pointer; upstream registry parsing can return that userId. New deployments are constrained by content identity validation, historical pre-cutoff records need explicit conformance coverage."
+      ],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:getPendingFriendshipRequests",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Received request rows identify the request action UUID and counterparty; missing profiles omitted while full total is retained.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/domain.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/friends.rs",
+          "test": "cancel_reject_and_delete_reach_the_other_party",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:getPrivateMessagesSettings",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "At most 50 input addresses before deduplication; lowercase first-occurrence output; defaults and active/unblocked isFriend derive from shared SQL.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/settings.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/settings.rs",
+          "test": "private_message_settings_read_per_address_with_friendship",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:getSentFriendshipRequests",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Sent request rows identify the request action UUID and counterparty; missing profiles omitted while full total is retained.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/domain.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/friends.rs",
+          "test": "cancel_reject_and_delete_reach_the_other_party",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:getSocialSettings",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Absent user reads ALL/SHOW_MESSAGES/SHOW without insertion; stored values use RPC enum vocabulary.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/settings.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/settings.rs",
+          "test": "settings_read_their_defaults_and_round_trip_every_value",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:joinCommunityVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:kickPlayerFromCommunityVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:muteSpeakerFromCommunityVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:promoteSpeakerInCommunityVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:rejectPrivateVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:rejectSpeakRequestInCommunityVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:requestToSpeakInCommunityVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:startCommunityVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:startPrivateVoiceChat",
+      "owner": "voice",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "rpc_unary:RPC:unblockUser",
+      "owner": "friends-settings-blocks",
+      "status": "known_gap",
+      "result": "Validates raw target/self; actual block removal and friendship delete action commit atomically; retry without block has no action/event; write response retains profile fallback.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/blocks.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/friends.rs",
+          "test": "unblocking_an_unblocked_friend_changes_nothing",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/content/src/validator/checker.rs",
+          "test": "profile_identity_mismatch_is_rejected_per_field",
+          "scope": "Identity metadata is constrained only at/after PROFILE_IDENTITY; does not prove historical data has no mismatches."
+        }
+      ],
+      "gaps": [
+        "Historical profile identity mismatch: the local resolver rejects an avatar.userId different from the active pointer; upstream registry parsing can return that userId. New deployments are constrained by content identity validation, historical pre-cutoff records need explicit conformance coverage."
+      ],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:upsertFriendship",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Validates action/address/self/message/rate/state; atomically writes action, keeps friendship creation time, uses action UUID for updates, and can return a profile error after commit. Request stream omits unresolved sender profiles.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/friends.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/friends.rs",
+          "test": "friendship_responses_keep_the_original_creation_time_after_later_actions",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "rpc_unary:RPC:upsertSocialSettings",
+      "owner": "friends-settings-blocks",
+      "status": "reviewed",
+      "result": "Rejects empty/unknown enum values; partial writes preserve existing fields and new-row database defaults; direct shared SQL is the local privacy authority.",
+      "evidence": [
+        {
+          "path": "services/catalyst/social/src/rpc/service/settings.rs",
+          "scope": "Source comparison includes upstream handler and underlying friends/settings/database/profile code, not registration alone."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/settings.rs",
+          "test": "settings_read_their_defaults_and_round_trip_every_value",
+          "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
+          "test": "rpc_wire_answers_match_executed_upstream_source_cases",
+          "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        }
+      ],
+      "gaps": [],
+      "remaining_verification": "Live HTTP/WebSocket caller and deployed infrastructure differential; golden handler cases use injected components and do not establish complete method equivalence."
+    },
+    {
+      "id": "uws_http:ANY:/*",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "uws_http:ANY:/health/live",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "uws_http:GET:/metrics",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "uws_http:GET:/status",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "uws_http:GET:/v1/users/:address/privacy-settings",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "websocket:UPGRADE:/",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    },
+    {
+      "id": "websocket:UPGRADE:/v1/stream",
+      "owner": "realtime-transport",
+      "status": "not_reviewed",
+      "result": "Registered upstream; behaviour has not been audited in this backlog.",
+      "evidence": [],
+      "gaps": [],
+      "remaining_verification": "Compare handler, domain branches and caller-visible responses; execute differential cases. Route presence does not establish parity."
+    }
+  ],
+  "baseline": {
+    "repository": "decentraland/social-service-ea",
+    "revision": "b6b2cefefdf727b2ed47ddb887e77d226a41eea6",
+    "counts": {
+      "api_auxiliary": 5,
+      "api_http": 72,
+      "json_stream": 6,
+      "rpc_stream": 6,
+      "rpc_unary": 27,
+      "uws_http": 5,
+      "websocket": 2
+    },
+    "sources": [
+      {
+        "path": "node_modules/@dcl/http-server/dist/cors.js",
+        "sha256": "75765a041461b700c6a4409d39a61af10d3e8ffb9258f40d92fcc94a3d42a67f"
+      },
+      {
+        "path": "node_modules/@dcl/http-server/dist/server.js",
+        "sha256": "0455b6867f5e3bc82f059415ebb975670a2f299265e18f9c3c283b2c78718418"
+      },
+      {
+        "path": "node_modules/@dcl/http-server/dist/status-checks.js",
+        "sha256": "f9c565a1ff90b02cf2f287f5615a004d3e10c6f927d33d54c4e8296e808c5d2e"
+      },
+      {
+        "path": "node_modules/@dcl/uws-http-server/dist/src/metrics.js",
+        "sha256": "832458a0f898b114b6d8de0fb5a0377aa52f3870010c134dd5b72de17e8ebbda"
+      },
+      {
+        "path": "src/adapters/rpc-server/rpc-server.ts",
+        "sha256": "4462bfbae114a87432e6b1c36a9dd5af7f3f5737145a1762b67d41eb26d12c6a"
+      },
+      {
+        "path": "src/adapters/stream-sessions/component.ts",
+        "sha256": "019518996990aca1b8eb6c1b1b28c8e4fb83270bbf79fdae5affd6982a42e80d"
+      },
+      {
+        "path": "src/adapters/stream-sessions/messages.ts",
+        "sha256": "2588388fe13caddc65f488f0d370dec0a6bdb6826d7e57e0597acebe4610c771"
+      },
+      {
+        "path": "src/components.ts",
+        "sha256": "9878788adb18eeff8b80ac24f392b945239533fe5e88550d1334123002c60e68"
+      },
+      {
+        "path": "src/controllers/handlers/http/add-community-places-handler.ts",
+        "sha256": "5beaf566e90761bab548560cfb31eea3b40c656959889759fc93bf3d43f7cf21"
+      },
+      {
+        "path": "src/controllers/handlers/http/add-member-to-community-handler.ts",
+        "sha256": "3e9d26de58e0182c782b23ef3de69ae582b82e49276178082a4f0ed6ffedb8d6"
+      },
+      {
+        "path": "src/controllers/handlers/http/add-referral-email-handler.ts",
+        "sha256": "ebc7cffa90ac46b8417bae576854d5208f2f9cc38bf6be706fea9a690bef3877"
+      },
+      {
+        "path": "src/controllers/handlers/http/add-user-mute-handler.ts",
+        "sha256": "d671ba8a3483884086e787798275744ce84c8c8db1fe42e6cf5e5d1dac58764b"
+      },
+      {
+        "path": "src/controllers/handlers/http/ban-member-handler.ts",
+        "sha256": "215504c3e95ac88c72c56e034863f6f70ff3febfdc34f58b0a57927ff8fdaf48"
+      },
+      {
+        "path": "src/controllers/handlers/http/block-user-handler.ts",
+        "sha256": "6256a7b3c2e5e61b59c0fe06fc069c8ac3e1a6401f7cb2d660446e19bd30ef43"
+      },
+      {
+        "path": "src/controllers/handlers/http/create-community-handler.ts",
+        "sha256": "b0a4ceb983098e0cd10b20a09628099c849f3cab6828ac1102cabec09177a85b"
+      },
+      {
+        "path": "src/controllers/handlers/http/create-community-post-handler.ts",
+        "sha256": "01c65fc750ece454681062478205278ef5e088dca60bafe861c86c30c0817bb0"
+      },
+      {
+        "path": "src/controllers/handlers/http/create-community-request-handler.ts",
+        "sha256": "2cb5cd9cfaf4189d1890f6d2db0806cdd7c7e98f1d1fbd4d3920c8d46f706afa"
+      },
+      {
+        "path": "src/controllers/handlers/http/create-community-voice-chat-speak-request-handler.ts",
+        "sha256": "afe64b7e636013249f4bcc75205859ced2d413d8eb1a5646424bcd9fe2866af9"
+      },
+      {
+        "path": "src/controllers/handlers/http/create-friendship-request-handler.ts",
+        "sha256": "7598c7deb7356240a21fd12a88ee083778e2004ecb86d7f7873e7f359e4126ba"
+      },
+      {
+        "path": "src/controllers/handlers/http/create-referral-handler.ts",
+        "sha256": "0cf0f1aef613cf942b9fee0e2702db2e868911b2990d066e3de669f1a31ab866"
+      },
+      {
+        "path": "src/controllers/handlers/http/delete-community-handler.ts",
+        "sha256": "4ae5c8c68f9f72a5ed541147b9d1a7fd38e986b0d4f31b1cc16271019fad4eaa"
+      },
+      {
+        "path": "src/controllers/handlers/http/delete-community-post-handler.ts",
+        "sha256": "42b6a9bf38123f6f353be3ba24fb65f39b3b3f9b3fe82a1cb343e4152af91af2"
+      },
+      {
+        "path": "src/controllers/handlers/http/demote-community-voice-chat-speaker-handler.ts",
+        "sha256": "ca5487c8c399eab2c0f200f40e6dcd1747b083ff47207d9249ac8a2dbfd06d23"
+      },
+      {
+        "path": "src/controllers/handlers/http/end-community-voice-chat-handler.ts",
+        "sha256": "eabf8f7ec6e082850f12740f81aa26ac767cae56d9d413ae119a2b2963d9cf74"
+      },
+      {
+        "path": "src/controllers/handlers/http/end-private-voice-chat-handler.ts",
+        "sha256": "d2529d0dc59d88c49142da8c46ddbdacb4e780025ce64bb0a1c9ad053cb0d2c6"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-active-community-voice-chats-handler.ts",
+        "sha256": "38ddce4c4be55a9cfd1cc8b45841b3f2faa0684490e894dbab899d6ae5d682fe"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-all-communities-for-moderation-handler.ts",
+        "sha256": "0d4378b1bf3a5718c2ca06f07a2b39e532f1ccaf0a9b7b6095049dc94f5addab"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-banned-members-handler.ts",
+        "sha256": "0dbe05a18a075310854e5e1223e7534c4335da38eae223600113ed79fa6f6d55"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-banned-members-v2-handler.ts",
+        "sha256": "486ef6067fbbf4f2889e0e1fb8bd5e2d451333e0e53c7df3815c6924d579241d"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-blocked-users-v2-handler.ts",
+        "sha256": "1692b26230f6100b6dec1de26734eda1d975b911b5067b16dd8809b5107ce1ae"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-blocking-status-handler.ts",
+        "sha256": "5da2e6a2171a4468bd8d4913cb7cb37b33b821ea01fc5a74ae50df44397a974a"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-communities-handler.ts",
+        "sha256": "67cf8ada1ca4edd5cc896bdaa68148cd44d57fdd268afc5c6cb10cb0df867503"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-communities-v2-handler.ts",
+        "sha256": "f3b8403592f6d069d40568bb8f186be96b7e5124f0e303a7dbaf22536d78c0b2"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-community-handler.ts",
+        "sha256": "3436d6aa82c966b66344880362c8cd0f38d30fbc6a9e585aef920342aca16b59"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-community-invites-handler.ts",
+        "sha256": "eff593dfdaf03d55bba8ac76eccc815c19653562b53b34de56042d216496de32"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-community-members-handlers.ts",
+        "sha256": "d268d59023df85b25d2d0d4d5faef984c1ea97ec51c4222040c0993ca69c1936"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-community-members-v2-handler.ts",
+        "sha256": "087af4fad0cf831ba7ec3cbd8af9f2aab5c45c49b466840b8ea118eaf04cf2db"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-community-places-handler.ts",
+        "sha256": "6a9226ce48535c28a19e51303577bf55bf4d8b74d8a4524df4992baf416ef9f5"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-community-posts-handler.ts",
+        "sha256": "c0ec65507b28491fed53742648252da536040f7f02a767ab2032288669db4789"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-community-posts-v2-handler.ts",
+        "sha256": "f0cc0ca943e4c56e948e4d1316b9a1fbad88cd279d90fe36a4bb58281f696cae"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-community-requests-handler.ts",
+        "sha256": "af3d973123ac646338856ead741cd8c78fabcc5324fd7a12db0aeff6ad3930ae"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-community-requests-v2-handler.ts",
+        "sha256": "27c951504b312ed2128e443485536054be78633c69f45449f45bd4e4ac009572"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-community-v2-handler.ts",
+        "sha256": "e885501f29cde165c1f6d37e41dc62570a8e9ff6825e19de81e1f5dbae9683d8"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-friends-v2-handler.ts",
+        "sha256": "40690f22f3989def9657e54b1c24e29b45120d388d379fa86efd7b94b20090c6"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-friendship-requests-v2-handler.ts",
+        "sha256": "839130125ace5e5711ae69739ec72f3dfde96f50539bb603f5ab6f977a90de7d"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-friendship-status-handler.ts",
+        "sha256": "c9c92b2c6defce16f22a165f137b7a777e01574f2ba1fc0b7e27b0fa2cdb04ba"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-incoming-private-voice-chat-handler.ts",
+        "sha256": "2f6005abbee67e6a4dc30bdeb91c3ed5f68f34cbafa81c52e8ee37a06cd0d5c0"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-invited-users-accepted-handler.ts",
+        "sha256": "8b121becce0d9a3d5c6232a6415c7d386676f94efdaba1e623a8678287f825c1"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-managed-communities-handler.ts",
+        "sha256": "9673a7aa50b08baa71f80060e1850ecfc84c5201ddb6856c812f45ec8ea0ec7a"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-member-communities-by-ids-handler.ts",
+        "sha256": "44ce7b4a87be561cb963aa4305376b402dcc505e21136be8129d283a03ac3fda"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-member-communities-handlers.ts",
+        "sha256": "dee1227bb89211ef1c8af8f500f841b351ba7e5c67e1fc26f129dbb4cc01deca"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-member-requests-handler.ts",
+        "sha256": "0b1902fdba36774ccac98b85662e9df7c422e1bd53a20dadf6a092e3f379d24e"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-member-requests-v2-handler.ts",
+        "sha256": "5f9f66050c31007a9143e4c9a147a9ccb6938f3c84f2a4a8f4e7c6822b75e79d"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-mutual-friends-v2-handler.ts",
+        "sha256": "5dac987bb48d3efa154938923c8512ee92e386d8d8a258a7c7f31c9653266423"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-private-messages-settings-handler.ts",
+        "sha256": "6dba7fb8cbe8ad85ad9d7986f2a95bf4c26101eb2d5353cb94ad35ec3e4715eb"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-social-settings-handler.ts",
+        "sha256": "a9449cf5770e9c40df275c4da8961734c7ae46ef441cbfbe3b51a14846e6a293"
+      },
+      {
+        "path": "src/controllers/handlers/http/get-user-mutes-handler.ts",
+        "sha256": "d5c01d59fd842ec993e6c4a8db6295a34b7d08da83deba4e126a59118b35225f"
+      },
+      {
+        "path": "src/controllers/handlers/http/join-community-voice-chat-handler.ts",
+        "sha256": "ccce1d54a0693d8b87af83d0814365358d8c4f7385cecb8c035de39e9764c61b"
+      },
+      {
+        "path": "src/controllers/handlers/http/kick-community-voice-chat-participant-handler.ts",
+        "sha256": "f6db4834d33ba6800860c83fce2616e3419a777f3bfb0a0a2013dd8288c647fe"
+      },
+      {
+        "path": "src/controllers/handlers/http/like-community-post-handler.ts",
+        "sha256": "0a05d2d299edcd25e27269cc0e7535d5444e541b3d4d07cd7ab0de9bff902027"
+      },
+      {
+        "path": "src/controllers/handlers/http/mute-community-voice-chat-speaker-handler.ts",
+        "sha256": "a35f19e6315687f303aa976a78b1310d036655f89127ad34b4d3523f6a91fd36"
+      },
+      {
+        "path": "src/controllers/handlers/http/promote-community-voice-chat-speaker-handler.ts",
+        "sha256": "4187ebaff842602319dc3b62fe1087375020d41272897e631f2fbb6d9ba58343"
+      },
+      {
+        "path": "src/controllers/handlers/http/remove-community-place-handler.ts",
+        "sha256": "c93a9aaed50a7f69741cd96d20db1ecf0940b20974576bb67fbc6ec731851537"
+      },
+      {
+        "path": "src/controllers/handlers/http/remove-community-voice-chat-speak-request-handler.ts",
+        "sha256": "ee7524aee8486144ca5abd2edabd4225c9d5127e9c80a4352eb748cd38716c4b"
+      },
+      {
+        "path": "src/controllers/handlers/http/remove-friend-handler.ts",
+        "sha256": "d75ee66aa608b78ba61a4a9c859fa5c6a424e5f95b5629eff4f395ed9804b399"
+      },
+      {
+        "path": "src/controllers/handlers/http/remove-member-from-community-handler.ts",
+        "sha256": "025962b3b20849735773a6944e888968089dda11c4fb789c91ecb46e17f348b6"
+      },
+      {
+        "path": "src/controllers/handlers/http/remove-user-mute-handler.ts",
+        "sha256": "f10731284b21f7643142efa0239ac7cd06bb6cd95635b11c8f96ec2fe7bbea6a"
+      },
+      {
+        "path": "src/controllers/handlers/http/start-community-voice-chat-handler.ts",
+        "sha256": "2d5ae6cc9697e5e9546c1423f124b257e72ce4f96f39ab5a24f93ef3797294a0"
+      },
+      {
+        "path": "src/controllers/handlers/http/start-private-voice-chat-handler.ts",
+        "sha256": "2eaa4e6f2734279b196600ac130627024bb8f27ee567b85fa7d3de1e82d609e8"
+      },
+      {
+        "path": "src/controllers/handlers/http/unban-member-handler.ts",
+        "sha256": "da7b1bb4feb3a2e5315f7abdce496fafccb9a2ab432179d9cf62441b69a8053d"
+      },
+      {
+        "path": "src/controllers/handlers/http/unblock-user-handler.ts",
+        "sha256": "a10bf4853fab7183c3d418e829adbeb068523782021b2e3f34c1f9b750b55805"
+      },
+      {
+        "path": "src/controllers/handlers/http/unlike-community-post-handler.ts",
+        "sha256": "90dba742e788e480ec530236542edbedda94e7649dbba0ea299f3450583792c6"
+      },
+      {
+        "path": "src/controllers/handlers/http/update-community-handler.ts",
+        "sha256": "95b8c2634726e9d3c215bc65283a7766172fa5eff05b7a8896b6cc6fb0384b83"
+      },
+      {
+        "path": "src/controllers/handlers/http/update-community-partially-handler.ts",
+        "sha256": "6bded407379605ea402555fe32df83d9735230de18c0492a59b7363d52e7eb44"
+      },
+      {
+        "path": "src/controllers/handlers/http/update-community-request-status-handler.ts",
+        "sha256": "b8b78aa2d5b33b29cbdd7b0ad8b2bfae1469a3b772ea9dfeb44c5c2528d73002"
+      },
+      {
+        "path": "src/controllers/handlers/http/update-friendship-request-handler.ts",
+        "sha256": "0ee94dce81274db3dcf05af0e991462dc41e9e7af74dbff8b2d3b0f62fdfec27"
+      },
+      {
+        "path": "src/controllers/handlers/http/update-member-role-handler.ts",
+        "sha256": "992edcdd4e6562ea421ef7b95306fc1fa37e644225d00e5da39fab99835d5f4c"
+      },
+      {
+        "path": "src/controllers/handlers/http/update-private-voice-chat-handler.ts",
+        "sha256": "191bda86aa3ab79e083bf0ec6a0e2b2508bf37edc2ef739dcdba2199098add38"
+      },
+      {
+        "path": "src/controllers/handlers/http/update-referral-signed-up-handler.ts",
+        "sha256": "d1d398dd66b7f017df5b637c1266627f8fe910f1a5f5f012e84bfc004bbeea65"
+      },
+      {
+        "path": "src/controllers/handlers/http/update-social-settings-handler.ts",
+        "sha256": "b5d9b6777e75cb291ae9576f2a4b7695c302fbe1cef72cf6c5d42b2cc867b718"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/accept-private-voice-chat.ts",
+        "sha256": "06ffce8939719b306dca0f266f00fccc5226b96fe27417a352c64ed5771e43e9"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/block-user.ts",
+        "sha256": "895011beeeefb7b4e78c7a78612a3f7b0a362807ea049f514a9f9990d7075672"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/demote-speaker-in-community-voice-chat.ts",
+        "sha256": "b2ebbd92a755a1b2a0ea7144145b51a90789d8f5fd26775bc9febcd37c254238"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/end-community-voice-chat.ts",
+        "sha256": "374c33f9e4c420798b0c319b1aa2e7e406e4d25b0195f03fd194e2d3d060d77f"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/end-private-voice-chat.ts",
+        "sha256": "74ac10ddedf849109d843afdf698ec104e8dbe63c883840518b97b0e618978e4"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-blocked-users.ts",
+        "sha256": "9b3a9c38619407e35518ba9ee24d650ce39cec579d2b00d49cc8b2f5c6555a3a"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-blocking-status.ts",
+        "sha256": "7f9aa490465a2789f89f0eed7a4ba01af65cb614718bf7a1af9733a80ff77cd1"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-friends.ts",
+        "sha256": "83a5b62c091b7b5c4d4cc5dc4e81a87c8f54445575e5b289d4fffd37c90d6d5e"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-friendship-status.ts",
+        "sha256": "6f555fd9b26f24168fe26fc0606bb2969261566f6422823a876acaf32d0d79ad"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-incoming-private-voice-chat-requests.ts",
+        "sha256": "27540d7fee37807af09a8b925a1bb660ea832e3c83673b3722e5a8213dcecb52"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-mutual-friends.ts",
+        "sha256": "5ab9e4a955d193c53553da61e6464ac930af554340bdcc16c2bde7a9deb34c9c"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-pending-friendship-requests.ts",
+        "sha256": "6d269f62429605cbcf0fddee8999a6016ce5b61e3803461792544fc012d013bc"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-private-messages-settings.ts",
+        "sha256": "59f481e37e1e30c3f2b6f1e2647f5e7027fffab040a7a804e047f9302555f803"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-sent-friendship-requests.ts",
+        "sha256": "571dbcff43e82722fa0e3a08ed0b112bbabc47b5fcfa9199401bdb22791be2a2"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/get-social-settings.ts",
+        "sha256": "c03c109827284e9523e1b98b1806108c85f66214b67e858ff00cad6e7fc5da20"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/join-community-voice-chat.ts",
+        "sha256": "1d349c4648eb412157314837cae7be41f882cb34013abc56c691c5740ccf1d70"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/kick-player-from-community-voice-chat.ts",
+        "sha256": "e882ce1bbe4eb19a222406d6af300ffec88967cceaf8144cffc91811fb060804"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/mute-speaker-from-community-voice-chat.ts",
+        "sha256": "542beb99075e966317e7d85fa0e370a6da8877c35bb43783e8b2e101f81f2d01"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/promote-speaker-in-community-voice-chat.ts",
+        "sha256": "f72eac681a591a273bbc24533e2a72488f83a6fd364df7203a6bda62616770cf"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/reject-private-voice-chat.ts",
+        "sha256": "3246930a6608c9dde9caebe8b45a96d7f031376554c5ce3dba8d4152724b0024"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/reject-speak-request-in-community-voice-chat.ts",
+        "sha256": "18f96e8f55ec1107332a196f223103894db17ec749f5abf851c02c5e342ee95d"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/request-to-speak-in-community-voice-chat.ts",
+        "sha256": "3e063970e3c1608ffc6963585ed99707ede331dd7626fd240e04220255f2d5fd"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/start-community-voice-chat.ts",
+        "sha256": "192ca5f3c4aab0d098f6df4da42bff9b6e23d475860ba566ccdf170ed29710bc"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/start-private-voice-chat.ts",
+        "sha256": "15354debcf92fcda70dd513c2691733738a3a998648e0bb0108dff3b17f95fc9"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/subscribe-to-block-updates.ts",
+        "sha256": "1531c1c9a8c741db0b0062cb9c3453540b5030f4df52dcdff4cb43207f086e50"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/subscribe-to-community-member-connectivity-updates.ts",
+        "sha256": "7ecf1ee7135c330048f4753cdb68a1240715e58103d8995b5a208c40e15b42d8"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/subscribe-to-community-voice-chat-updates.ts",
+        "sha256": "dbb387700070c9224a33ce01133208afdc95d5fea15a3d9121c7e4d6a00ab293"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/subscribe-to-friend-connectivity-updates.ts",
+        "sha256": "3bc985dd3ff4529180fde8add1d1064e0db6a625e7dd347e1e1501473304df54"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/subscribe-to-friendship-updates.ts",
+        "sha256": "c3c96fca2d8819589d3ff543067c5d5d37673c14e10b54805f56c78f4075c2f2"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/subscribe-to-private-voice-chat-updates.ts",
+        "sha256": "2ad6625559661ca3d5ae70df76f337e5659ff0974b0eb3bb0143a150a9a7de81"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/unblock-user.ts",
+        "sha256": "7010b7bf5a19088bfed066e9d005c7ee4b7fc9981233d85e5f64c6b8531f1d96"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/upsert-friendship.ts",
+        "sha256": "bac810a3d9b697a5e3991a1e2b3fdee8cb9809b702eb89d2fc2ca487b4977173"
+      },
+      {
+        "path": "src/controllers/handlers/rpc/upsert-social-settings.ts",
+        "sha256": "5a75f3bcae9caeb39f8b068ea4bf28bdfce51ab1cfb0c49f866c78e77a26628a"
+      },
+      {
+        "path": "src/controllers/handlers/uws/privacy-handler.ts",
+        "sha256": "599a49d4d540e86bd7e9ae299385b7fab357071d7356ad2610baef62bd6c6217"
+      },
+      {
+        "path": "src/controllers/handlers/uws/status-handler.ts",
+        "sha256": "54d5e788302b5ae325d35432af0de7d073795a47dca703ebd610ace2597b2c3c"
+      },
+      {
+        "path": "src/controllers/handlers/uws/stream-ws-handler.ts",
+        "sha256": "7e73d54d393e760e17d47ea2fe13c92aef17b6fee255e60d61d7caeed60c27a2"
+      },
+      {
+        "path": "src/controllers/handlers/uws/ws-handler.ts",
+        "sha256": "22cd987ff12ce1f45d289808db5d68f5fea00262fe334c729abd6aaa85aebef6"
+      },
+      {
+        "path": "src/controllers/routes/http.routes.ts",
+        "sha256": "8cc00231469eb83019a985068b76342280f267c89e7a625c079261249f98393a"
+      },
+      {
+        "path": "src/controllers/routes/rpc.routes.ts",
+        "sha256": "9f5c6dd262fdb067615e1835e1b5513c259213aeee8012ea7e464e01333e845c"
+      },
+      {
+        "path": "src/controllers/routes/uws.routes.ts",
+        "sha256": "846477aa2e59ca7dbe2adef0848535181a2a8efce984cdc08f51fc237ce9b62f"
+      },
+      {
+        "path": "src/types/subscriptions.ts",
+        "sha256": "df6e220a6f1dc1a33e0f561e353c06e0c7057a013a6f98e130885327d0eebecd"
+      },
+      {
+        "path": "yarn.lock",
+        "sha256": "5e5f4a1ee4bd960bede74f5877921117ebbfa88a67cf5c75ffd86ea9416c7088"
+      }
+    ],
+    "registrations": [
+      {
+        "id": "api_auxiliary:ANY:/*",
+        "kind": "api_auxiliary",
+        "method": "ANY",
+        "name": "/*",
+        "source": {
+          "path": "node_modules/@dcl/http-server/dist/server.js",
+          "line": 259
+        },
+        "handler": "node_modules/@dcl/http-server/dist/server.js",
+        "condition": "always"
+      },
+      {
+        "id": "api_auxiliary:GET:/health/live",
+        "kind": "api_auxiliary",
+        "method": "GET",
+        "name": "/health/live",
+        "source": {
+          "path": "node_modules/@dcl/http-server/dist/status-checks.js",
+          "line": 143
+        },
+        "handler": "node_modules/@dcl/http-server/dist/status-checks.js",
+        "condition": "always"
+      },
+      {
+        "id": "api_auxiliary:GET:/health/ready",
+        "kind": "api_auxiliary",
+        "method": "GET",
+        "name": "/health/ready",
+        "source": {
+          "path": "node_modules/@dcl/http-server/dist/status-checks.js",
+          "line": 59
+        },
+        "handler": "node_modules/@dcl/http-server/dist/status-checks.js",
+        "condition": "always"
+      },
+      {
+        "id": "api_auxiliary:GET:/health/startup",
+        "kind": "api_auxiliary",
+        "method": "GET",
+        "name": "/health/startup",
+        "source": {
+          "path": "node_modules/@dcl/http-server/dist/status-checks.js",
+          "line": 106
+        },
+        "handler": "node_modules/@dcl/http-server/dist/status-checks.js",
+        "condition": "always"
+      },
+      {
+        "id": "api_auxiliary:OPTIONS:/*",
+        "kind": "api_auxiliary",
+        "method": "OPTIONS",
+        "name": "/*",
+        "source": {
+          "path": "src/components.ts",
+          "line": 106
+        },
+        "handler": "node_modules/@dcl/http-server/dist/cors.js",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/blocks/:address",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/blocks/:address",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 279
+        },
+        "handler": "src/controllers/handlers/http/unblock-user-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/communities/:id",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/communities/:id",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 190
+        },
+        "handler": "src/controllers/handlers/http/delete-community-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/communities/:id/members/:memberAddress",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 145
+        },
+        "handler": "src/controllers/handlers/http/remove-member-from-community-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/communities/:id/members/:memberAddress/bans",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/communities/:id/members/:memberAddress/bans",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 155
+        },
+        "handler": "src/controllers/handlers/http/unban-member-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/communities/:id/places/:placeId",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/communities/:id/places/:placeId",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 199
+        },
+        "handler": "src/controllers/handlers/http/remove-community-place-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/communities/:id/posts/:postId",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/communities/:id/posts/:postId",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 209
+        },
+        "handler": "src/controllers/handlers/http/delete-community-post-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/communities/:id/posts/:postId/like",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/communities/:id/posts/:postId/like",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 211
+        },
+        "handler": "src/controllers/handlers/http/unlike-community-post-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/community-voice-chats/:communityId",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/community-voice-chats/:communityId",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 308
+        },
+        "handler": "src/controllers/handlers/http/end-community-voice-chat-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/participants/:address",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/community-voice-chats/:communityId/participants/:address",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 314
+        },
+        "handler": "src/controllers/handlers/http/kick-community-voice-chat-participant-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/speak-requests/:address",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/community-voice-chats/:communityId/speak-requests/:address",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 340
+        },
+        "handler": "src/controllers/handlers/http/remove-community-voice-chat-speak-request-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/community-voice-chats/:communityId/speakers/:address",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/community-voice-chats/:communityId/speakers/:address",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 330
+        },
+        "handler": "src/controllers/handlers/http/demote-community-voice-chat-speaker-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/friends/:address",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/friends/:address",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 257
+        },
+        "handler": "src/controllers/handlers/http/remove-friend-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/mutes",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/mutes",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 254
+        },
+        "handler": "src/controllers/handlers/http/remove-user-mute-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:DELETE:/v1/private-voice-chats/:callId",
+        "kind": "api_http",
+        "method": "DELETE",
+        "name": "/v1/private-voice-chats/:callId",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 299
+        },
+        "handler": "src/controllers/handlers/http/end-private-voice-chat-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/blocking-status",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/blocking-status",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 280
+        },
+        "handler": "src/controllers/handlers/http/get-blocking-status-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/communities",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/communities",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 141
+        },
+        "handler": "src/controllers/handlers/http/get-communities-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/communities/:address/managed",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/communities/:address/managed",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 137
+        },
+        "handler": "src/controllers/handlers/http/get-managed-communities-handler.ts",
+        "condition": "API_ADMIN_TOKEN configured"
+      },
+      {
+        "id": "api_http:GET:/v1/communities/:id",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/communities/:id",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 140
+        },
+        "handler": "src/controllers/handlers/http/get-community-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/communities/:id/bans",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/communities/:id/bans",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 153
+        },
+        "handler": "src/controllers/handlers/http/get-banned-members-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/communities/:id/members",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/communities/:id/members",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 142
+        },
+        "handler": "src/controllers/handlers/http/get-community-members-handlers.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/communities/:id/places",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/communities/:id/places",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 192
+        },
+        "handler": "src/controllers/handlers/http/get-community-places-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/communities/:id/posts",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/communities/:id/posts",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 202
+        },
+        "handler": "src/controllers/handlers/http/get-community-posts-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/communities/:id/requests",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/communities/:id/requests",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 168
+        },
+        "handler": "src/controllers/handlers/http/get-community-requests-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/community-voice-chats/active",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/community-voice-chats/active",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 283
+        },
+        "handler": "src/controllers/handlers/http/get-active-community-voice-chats-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/members/:address/communities",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/members/:address/communities",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 157
+        },
+        "handler": "src/controllers/handlers/http/get-member-communities-handlers.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/members/:address/invites",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/members/:address/invites",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 170
+        },
+        "handler": "src/controllers/handlers/http/get-community-invites-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/members/:address/requests",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/members/:address/requests",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 167
+        },
+        "handler": "src/controllers/handlers/http/get-member-requests-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/moderation/communities",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/moderation/communities",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 347
+        },
+        "handler": "src/controllers/handlers/http/get-all-communities-for-moderation-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/mutes",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/mutes",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 252
+        },
+        "handler": "src/controllers/handlers/http/get-user-mutes-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/private-messages-settings",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/private-messages-settings",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 249
+        },
+        "handler": "src/controllers/handlers/http/get-private-messages-settings-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/private-voice-chats/incoming",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/private-voice-chats/incoming",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 292
+        },
+        "handler": "src/controllers/handlers/http/get-incoming-private-voice-chat-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/referral-progress",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/referral-progress",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 220
+        },
+        "handler": "src/controllers/handlers/http/get-invited-users-accepted-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/social-settings",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/social-settings",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 242
+        },
+        "handler": "src/controllers/handlers/http/get-social-settings-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v1/users/:address/friendship-status",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v1/users/:address/friendship-status",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 258
+        },
+        "handler": "src/controllers/handlers/http/get-friendship-status-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/blocks",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/blocks",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 362
+        },
+        "handler": "src/controllers/handlers/http/get-blocked-users-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/communities",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/communities",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 353
+        },
+        "handler": "src/controllers/handlers/http/get-communities-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/communities/:id",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/communities/:id",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 352
+        },
+        "handler": "src/controllers/handlers/http/get-community-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/communities/:id/bans",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/communities/:id/bans",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 355
+        },
+        "handler": "src/controllers/handlers/http/get-banned-members-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/communities/:id/members",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/communities/:id/members",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 354
+        },
+        "handler": "src/controllers/handlers/http/get-community-members-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/communities/:id/posts",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/communities/:id/posts",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 358
+        },
+        "handler": "src/controllers/handlers/http/get-community-posts-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/communities/:id/requests",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/communities/:id/requests",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 357
+        },
+        "handler": "src/controllers/handlers/http/get-community-requests-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/friends",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/friends",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 359
+        },
+        "handler": "src/controllers/handlers/http/get-friends-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/friendship-requests",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/friendship-requests",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 361
+        },
+        "handler": "src/controllers/handlers/http/get-friendship-requests-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/members/:address/requests",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/members/:address/requests",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 356
+        },
+        "handler": "src/controllers/handlers/http/get-member-requests-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:GET:/v2/users/:address/mutual-friends",
+        "kind": "api_http",
+        "method": "GET",
+        "name": "/v2/users/:address/mutual-friends",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 360
+        },
+        "handler": "src/controllers/handlers/http/get-mutual-friends-v2-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:PATCH:/v1/communities/:id",
+        "kind": "api_http",
+        "method": "PATCH",
+        "name": "/v1/communities/:id",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 184
+        },
+        "handler": "src/controllers/handlers/http/update-community-partially-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:PATCH:/v1/communities/:id/members/:address",
+        "kind": "api_http",
+        "method": "PATCH",
+        "name": "/v1/communities/:id/members/:address",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 146
+        },
+        "handler": "src/controllers/handlers/http/update-member-role-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:PATCH:/v1/communities/:id/requests/:requestId",
+        "kind": "api_http",
+        "method": "PATCH",
+        "name": "/v1/communities/:id/requests/:requestId",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 234
+        },
+        "handler": "src/controllers/handlers/http/update-community-request-status-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:PATCH:/v1/community-voice-chats/:communityId/speakers/:address",
+        "kind": "api_http",
+        "method": "PATCH",
+        "name": "/v1/community-voice-chats/:communityId/speakers/:address",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 324
+        },
+        "handler": "src/controllers/handlers/http/mute-community-voice-chat-speaker-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:PATCH:/v1/friendship-requests/:address",
+        "kind": "api_http",
+        "method": "PATCH",
+        "name": "/v1/friendship-requests/:address",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 265
+        },
+        "handler": "src/controllers/handlers/http/update-friendship-request-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:PATCH:/v1/private-voice-chats/:callId",
+        "kind": "api_http",
+        "method": "PATCH",
+        "name": "/v1/private-voice-chats/:callId",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 293
+        },
+        "handler": "src/controllers/handlers/http/update-private-voice-chat-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:PATCH:/v1/referral-progress",
+        "kind": "api_http",
+        "method": "PATCH",
+        "name": "/v1/referral-progress",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 219
+        },
+        "handler": "src/controllers/handlers/http/update-referral-signed-up-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:PATCH:/v1/social-settings",
+        "kind": "api_http",
+        "method": "PATCH",
+        "name": "/v1/social-settings",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 243
+        },
+        "handler": "src/controllers/handlers/http/update-social-settings-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/blocks",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/blocks",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 273
+        },
+        "handler": "src/controllers/handlers/http/block-user-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/communities",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/communities",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 174
+        },
+        "handler": "src/controllers/handlers/http/create-community-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/communities/:id/members",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/communities/:id/members",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 144
+        },
+        "handler": "src/controllers/handlers/http/add-member-to-community-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/communities/:id/members/:memberAddress/bans",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/communities/:id/members/:memberAddress/bans",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 154
+        },
+        "handler": "src/controllers/handlers/http/ban-member-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/communities/:id/places",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/communities/:id/places",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 193
+        },
+        "handler": "src/controllers/handlers/http/add-community-places-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/communities/:id/posts",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/communities/:id/posts",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 203
+        },
+        "handler": "src/controllers/handlers/http/create-community-post-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/communities/:id/posts/:postId/like",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/communities/:id/posts/:postId/like",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 210
+        },
+        "handler": "src/controllers/handlers/http/like-community-post-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/communities/:id/requests",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/communities/:id/requests",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 228
+        },
+        "handler": "src/controllers/handlers/http/create-community-request-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/community-voice-chats",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/community-voice-chats",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 302
+        },
+        "handler": "src/controllers/handlers/http/start-community-voice-chat-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/community-voice-chats/:communityId/participants",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/community-voice-chats/:communityId/participants",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 309
+        },
+        "handler": "src/controllers/handlers/http/join-community-voice-chat-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/community-voice-chats/:communityId/speak-requests",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/community-voice-chats/:communityId/speak-requests",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 335
+        },
+        "handler": "src/controllers/handlers/http/create-community-voice-chat-speak-request-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/friendship-requests",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/friendship-requests",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 259
+        },
+        "handler": "src/controllers/handlers/http/create-friendship-request-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/members/:address/communities",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/members/:address/communities",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 160
+        },
+        "handler": "src/controllers/handlers/http/get-member-communities-by-ids-handler.ts",
+        "condition": "API_ADMIN_TOKEN configured"
+      },
+      {
+        "id": "api_http:POST:/v1/mutes",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/mutes",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 253
+        },
+        "handler": "src/controllers/handlers/http/add-user-mute-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/private-voice-chats",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/private-voice-chats",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 286
+        },
+        "handler": "src/controllers/handlers/http/start-private-voice-chat-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/referral-email",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/referral-email",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 221
+        },
+        "handler": "src/controllers/handlers/http/add-referral-email-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:POST:/v1/referral-progress",
+        "kind": "api_http",
+        "method": "POST",
+        "name": "/v1/referral-progress",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 213
+        },
+        "handler": "src/controllers/handlers/http/create-referral-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:PUT:/v1/communities/:id",
+        "kind": "api_http",
+        "method": "PUT",
+        "name": "/v1/communities/:id",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 179
+        },
+        "handler": "src/controllers/handlers/http/update-community-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "api_http:PUT:/v1/community-voice-chats/:communityId/speakers/:address",
+        "kind": "api_http",
+        "method": "PUT",
+        "name": "/v1/community-voice-chats/:communityId/speakers/:address",
+        "source": {
+          "path": "src/controllers/routes/http.routes.ts",
+          "line": 319
+        },
+        "handler": "src/controllers/handlers/http/promote-community-voice-chat-speaker-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "json_stream:SUBSCRIBE:block_updates",
+        "kind": "json_stream",
+        "method": "SUBSCRIBE",
+        "name": "block_updates",
+        "source": {
+          "path": "src/types/subscriptions.ts",
+          "line": 90
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-block-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "json_stream:SUBSCRIBE:community_member_connectivity_updates",
+        "kind": "json_stream",
+        "method": "SUBSCRIBE",
+        "name": "community_member_connectivity_updates",
+        "source": {
+          "path": "src/types/subscriptions.ts",
+          "line": 92
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-community-member-connectivity-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "json_stream:SUBSCRIBE:community_voice_chat_updates",
+        "kind": "json_stream",
+        "method": "SUBSCRIBE",
+        "name": "community_voice_chat_updates",
+        "source": {
+          "path": "src/types/subscriptions.ts",
+          "line": 93
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-community-voice-chat-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "json_stream:SUBSCRIBE:friend_connectivity_updates",
+        "kind": "json_stream",
+        "method": "SUBSCRIBE",
+        "name": "friend_connectivity_updates",
+        "source": {
+          "path": "src/types/subscriptions.ts",
+          "line": 89
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-friend-connectivity-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "json_stream:SUBSCRIBE:friendship_updates",
+        "kind": "json_stream",
+        "method": "SUBSCRIBE",
+        "name": "friendship_updates",
+        "source": {
+          "path": "src/types/subscriptions.ts",
+          "line": 88
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-friendship-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "json_stream:SUBSCRIBE:private_voice_chat_updates",
+        "kind": "json_stream",
+        "method": "SUBSCRIBE",
+        "name": "private_voice_chat_updates",
+        "source": {
+          "path": "src/types/subscriptions.ts",
+          "line": 91
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-private-voice-chat-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_stream:RPC:subscribeToBlockUpdates",
+        "kind": "rpc_stream",
+        "method": "RPC",
+        "name": "subscribeToBlockUpdates",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 84
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-block-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_stream:RPC:subscribeToCommunityMemberConnectivityUpdates",
+        "kind": "rpc_stream",
+        "method": "RPC",
+        "name": "subscribeToCommunityMemberConnectivityUpdates",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 142
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-community-member-connectivity-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
+        "kind": "rpc_stream",
+        "method": "RPC",
+        "name": "subscribeToCommunityVoiceChatUpdates",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 183
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-community-voice-chat-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_stream:RPC:subscribeToFriendConnectivityUpdates",
+        "kind": "rpc_stream",
+        "method": "RPC",
+        "name": "subscribeToFriendConnectivityUpdates",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 79
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-friend-connectivity-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_stream:RPC:subscribeToFriendshipUpdates",
+        "kind": "rpc_stream",
+        "method": "RPC",
+        "name": "subscribeToFriendshipUpdates",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 74
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-friendship-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_stream:RPC:subscribeToPrivateVoiceChatUpdates",
+        "kind": "rpc_stream",
+        "method": "RPC",
+        "name": "subscribeToPrivateVoiceChatUpdates",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 89
+        },
+        "handler": "src/controllers/handlers/rpc/subscribe-to-private-voice-chat-updates.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:acceptPrivateVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "acceptPrivateVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 126
+        },
+        "handler": "src/controllers/handlers/rpc/accept-private-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:blockUser",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "blockUser",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 94
+        },
+        "handler": "src/controllers/handlers/rpc/block-user.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:demoteSpeakerInCommunityVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "demoteSpeakerInCommunityVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 171
+        },
+        "handler": "src/controllers/handlers/rpc/demote-speaker-in-community-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:endCommunityVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "endCommunityVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 151
+        },
+        "handler": "src/controllers/handlers/rpc/end-community-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:endPrivateVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "endPrivateVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 134
+        },
+        "handler": "src/controllers/handlers/rpc/end-private-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:getBlockedUsers",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "getBlockedUsers",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 102
+        },
+        "handler": "src/controllers/handlers/rpc/get-blocked-users.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:getBlockingStatus",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "getBlockingStatus",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 106
+        },
+        "handler": "src/controllers/handlers/rpc/get-blocking-status.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:getFriends",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "getFriends",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 50
+        },
+        "handler": "src/controllers/handlers/rpc/get-friends.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:getFriendshipStatus",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "getFriendshipStatus",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 70
+        },
+        "handler": "src/controllers/handlers/rpc/get-friendship-status.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:getIncomingPrivateVoiceChatRequest",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "getIncomingPrivateVoiceChatRequest",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 138
+        },
+        "handler": "src/controllers/handlers/rpc/get-incoming-private-voice-chat-requests.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:getMutualFriends",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "getMutualFriends",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 54
+        },
+        "handler": "src/controllers/handlers/rpc/get-mutual-friends.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:getPendingFriendshipRequests",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "getPendingFriendshipRequests",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 58
+        },
+        "handler": "src/controllers/handlers/rpc/get-pending-friendship-requests.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:getPrivateMessagesSettings",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "getPrivateMessagesSettings",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 110
+        },
+        "handler": "src/controllers/handlers/rpc/get-private-messages-settings.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:getSentFriendshipRequests",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "getSentFriendshipRequests",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 62
+        },
+        "handler": "src/controllers/handlers/rpc/get-sent-friendship-requests.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:getSocialSettings",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "getSocialSettings",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 118
+        },
+        "handler": "src/controllers/handlers/rpc/get-social-settings.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:joinCommunityVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "joinCommunityVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 155
+        },
+        "handler": "src/controllers/handlers/rpc/join-community-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:kickPlayerFromCommunityVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "kickPlayerFromCommunityVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 175
+        },
+        "handler": "src/controllers/handlers/rpc/kick-player-from-community-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:muteSpeakerFromCommunityVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "muteSpeakerFromCommunityVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 179
+        },
+        "handler": "src/controllers/handlers/rpc/mute-speaker-from-community-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:promoteSpeakerInCommunityVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "promoteSpeakerInCommunityVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 167
+        },
+        "handler": "src/controllers/handlers/rpc/promote-speaker-in-community-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:rejectPrivateVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "rejectPrivateVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 130
+        },
+        "handler": "src/controllers/handlers/rpc/reject-private-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:rejectSpeakRequestInCommunityVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "rejectSpeakRequestInCommunityVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 163
+        },
+        "handler": "src/controllers/handlers/rpc/reject-speak-request-in-community-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:requestToSpeakInCommunityVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "requestToSpeakInCommunityVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 159
+        },
+        "handler": "src/controllers/handlers/rpc/request-to-speak-in-community-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:startCommunityVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "startCommunityVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 147
+        },
+        "handler": "src/controllers/handlers/rpc/start-community-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:startPrivateVoiceChat",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "startPrivateVoiceChat",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 122
+        },
+        "handler": "src/controllers/handlers/rpc/start-private-voice-chat.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:unblockUser",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "unblockUser",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 98
+        },
+        "handler": "src/controllers/handlers/rpc/unblock-user.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:upsertFriendship",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "upsertFriendship",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 66
+        },
+        "handler": "src/controllers/handlers/rpc/upsert-friendship.ts",
+        "condition": "always"
+      },
+      {
+        "id": "rpc_unary:RPC:upsertSocialSettings",
+        "kind": "rpc_unary",
+        "method": "RPC",
+        "name": "upsertSocialSettings",
+        "source": {
+          "path": "src/controllers/routes/rpc.routes.ts",
+          "line": 114
+        },
+        "handler": "src/controllers/handlers/rpc/upsert-social-settings.ts",
+        "condition": "always"
+      },
+      {
+        "id": "uws_http:ANY:/*",
+        "kind": "uws_http",
+        "method": "ANY",
+        "name": "/*",
+        "source": {
+          "path": "src/controllers/routes/uws.routes.ts",
+          "line": 84
+        },
+        "handler": "",
+        "condition": "always"
+      },
+      {
+        "id": "uws_http:ANY:/health/live",
+        "kind": "uws_http",
+        "method": "ANY",
+        "name": "/health/live",
+        "source": {
+          "path": "src/controllers/routes/uws.routes.ts",
+          "line": 74
+        },
+        "handler": "",
+        "condition": "always"
+      },
+      {
+        "id": "uws_http:GET:/metrics",
+        "kind": "uws_http",
+        "method": "GET",
+        "name": "/metrics",
+        "source": {
+          "path": "src/controllers/routes/uws.routes.ts",
+          "line": 67
+        },
+        "handler": "node_modules/@dcl/uws-http-server/dist/src/metrics.js",
+        "condition": "WKC_METRICS_PUBLIC_PATH overrides path; WKC_METRICS_BEARER_TOKEN may gate access"
+      },
+      {
+        "id": "uws_http:GET:/status",
+        "kind": "uws_http",
+        "method": "GET",
+        "name": "/status",
+        "source": {
+          "path": "src/controllers/routes/uws.routes.ts",
+          "line": 62
+        },
+        "handler": "src/controllers/handlers/uws/status-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "uws_http:GET:/v1/users/:address/privacy-settings",
+        "kind": "uws_http",
+        "method": "GET",
+        "name": "/v1/users/:address/privacy-settings",
+        "source": {
+          "path": "src/controllers/routes/uws.routes.ts",
+          "line": 71
+        },
+        "handler": "src/controllers/handlers/uws/privacy-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "websocket:UPGRADE:/",
+        "kind": "websocket",
+        "method": "UPGRADE",
+        "name": "/",
+        "source": {
+          "path": "src/controllers/handlers/uws/ws-handler.ts",
+          "line": 267
+        },
+        "handler": "src/controllers/handlers/uws/ws-handler.ts",
+        "condition": "always"
+      },
+      {
+        "id": "websocket:UPGRADE:/v1/stream",
+        "kind": "websocket",
+        "method": "UPGRADE",
+        "name": "/v1/stream",
+        "source": {
+          "path": "src/controllers/handlers/uws/stream-ws-handler.ts",
+          "line": 31
+        },
+        "handler": "src/controllers/handlers/uws/stream-ws-handler.ts",
+        "condition": "always"
+      }
+    ]
+  },
+  "review_policy": "reviewed means the stated source/behaviour scope was compared; it never means exhaustive equivalence. known_gap names a remaining observed difference. not_reviewed requires an explicit comparison, even if a matching route or local test exists.",
+  "cross_cutting_gaps": [
+    {
+      "id": "historical-profile-identity",
+      "operations": [
+        "rpc_unary:RPC:getFriends",
+        "rpc_unary:RPC:getMutualFriends",
+        "rpc_unary:RPC:getBlockedUsers",
+        "rpc_unary:RPC:blockUser",
+        "rpc_unary:RPC:unblockUser"
+      ],
+      "status": "known_gap",
+      "description": "Historical pre-identity-validation profiles with avatar.userId different from the active pointer are omitted locally; upstream registry reduction can preserve their profile identity. Preserve this as an observed resolver difference until source golden coverage and an explicit implementation decision resolve it."
+    },
+    {
+      "id": "external-notification-consumers",
+      "operations": [
+        "rpc_unary:RPC:upsertFriendship"
+      ],
+      "status": "unverified",
+      "description": "Local friendship notification persistence reaches the existing local inbox/outbox. Existing external SNS consumers and migration/cutover delivery have not been inventoried or demonstrated by these tests."
+    }
+  ]
+}

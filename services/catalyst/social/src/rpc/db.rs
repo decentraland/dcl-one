@@ -389,14 +389,14 @@ impl Db {
                 ORDER BY f.last_action_at DESC, f.id DESC
                 LIMIT $2 OFFSET $3
             )
-            SELECT f.id AS id,
+            SELECT fa.id AS id,
                    {address_select},
                    f.last_action_at AS ts,
                    fa.metadata AS metadata,
                    f.total
             FROM page f
             LEFT JOIN LATERAL (
-                SELECT metadata FROM social.friendship_actions
+                SELECT id, metadata FROM social.friendship_actions
                 WHERE friendship_id = f.id ORDER BY "timestamp" DESC, id DESC LIMIT 1
             ) fa ON TRUE
             ORDER BY f.last_action_at DESC, f.id DESC
@@ -521,9 +521,8 @@ impl Db {
         })
     }
 
-    /// Records the block and returns when it was first recorded (a repeat
-    /// keeps the original time) and the pair's latest friendship action, in
-    /// one statement.
+    /// Records the block and reads the previous action; the transactional
+    /// block_user_recording_action also appends the matching friendship action.
     pub async fn block_user_and_last(
         &self,
         blocker: &str,
@@ -532,8 +531,8 @@ impl Db {
         block_and_last(&self.pool, blocker, blocked).await
     }
 
-    /// Removes the block and returns the pair's latest friendship action in one
-    /// statement; `None` when there was no block to remove.
+    /// Removes a block and reads the previous action; use
+    /// unblock_user_recording_action to append its delete action atomically.
     pub async fn unblock_user_and_last(
         &self,
         blocker: &str,
@@ -603,7 +602,7 @@ impl Db {
 
     /// Upserts the friendship row and appends the action in one statement
     /// ([`record_friendship_action`] with a fresh action id); answers the
-    /// friendship id, the action's time and its id.
+    /// friendship id, its original creation time and the action id.
     pub async fn apply_friendship_action(
         &self,
         acting_user: &str,
@@ -1353,11 +1352,12 @@ where
                      UPDATE social.friendships
                      SET is_active = $1, last_action = $4, last_actor = $5,
                          last_action_at = timezone('UTC', now()), updated_at = timezone('UTC', now())
-                     WHERE id = $2 RETURNING id
-                   )
+                     WHERE id = $2 RETURNING id, created_at
+                   ), recorded AS (
                    INSERT INTO social.friendship_actions (id, friendship_id, action, acting_user, metadata, "timestamp")
                    SELECT $3::uuid, f.id, $4::text, $5::text, $6::json, timezone('UTC', now()) FROM f
-                   RETURNING friendship_id, "timestamp""#,
+                   RETURNING friendship_id
+                   ) SELECT recorded.friendship_id, f.created_at FROM recorded JOIN f ON f.id=recorded.friendship_id"#,
             )
             .bind(is_active)
             .bind(id)
@@ -1379,11 +1379,12 @@ where
                      DO UPDATE SET is_active = EXCLUDED.is_active, last_action = EXCLUDED.last_action,
                                    last_actor = EXCLUDED.last_actor, last_action_at = EXCLUDED.last_action_at,
                                    updated_at = timezone('UTC', now())
-                     RETURNING id
-                   )
+                     RETURNING id, created_at
+                   ), recorded AS (
                    INSERT INTO social.friendship_actions (id, friendship_id, action, acting_user, metadata, "timestamp")
                    SELECT $5::uuid, f.id, $6::text, $7::text, $8::json, timezone('UTC', now()) FROM f
-                   RETURNING friendship_id, "timestamp""#,
+                   RETURNING friendship_id
+                   ) SELECT recorded.friendship_id, f.created_at FROM recorded JOIN f ON f.id=recorded.friendship_id"#,
             )
             .bind(Uuid::new_v4())
             .bind(&acting_user)
@@ -1399,6 +1400,6 @@ where
     };
     Ok((
         row.get::<Uuid, _>("friendship_id"),
-        row.get::<NaiveDateTime, _>("timestamp").and_utc(),
+        row.get::<NaiveDateTime, _>("created_at").and_utc(),
     ))
 }

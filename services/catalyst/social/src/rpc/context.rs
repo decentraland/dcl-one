@@ -745,7 +745,7 @@ mod tests {
                     .connect_lazy("postgres://localhost/unused")
                     .unwrap(),
             ),
-            Profiles::new(None, Default::default()),
+            Profiles::new(None),
             Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
         );
         assert!(ctx.mark_online("0xAbC"));
