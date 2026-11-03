@@ -23,8 +23,9 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
   nearest parcel (not its corner); a scene behind the rendering camera counts four times
   farther in the tick queue (no once-a-second cap, no frozen far scenes). Request slots go to
   the head of the best-ranked queue (one per scene or wearable hash): the player's scenes, then
-  avatars' wearables, then the other scenes, then requests that name no scene, each by parcel
-  ring, in front before behind, then raw distance. See the [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
+  avatars' wearables, then the other scenes, then requests whose hash no scene or avatar holds,
+  each by parcel ring, in front before behind, then raw distance. Scene roots and avatars
+  register their hashes through component hooks; the publisher writes the values in place. See the [ADR](../../../../docs/adr/2026-11-02-explorer-nearest-first-priority.md).
 
 ## Deliberate choices that look like mistakes
 

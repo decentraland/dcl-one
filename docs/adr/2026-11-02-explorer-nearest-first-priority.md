@@ -47,9 +47,9 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   `PartitionedDownloads`, the content hashes its downloads are filed under, gets a `Partition`
   from its position (`point_partition`: distance from the player, the ring of its parcel, behind
   the camera or not). The avatar crate (`update_render_avatar`) puts the entity hashes of the
-  body, the wearables and the default wearables there as their pointers resolve, so a
-  wearable's definition, model and textures queue in the avatar tier at the avatar's partition,
-  and a wearable several avatars share at the best of theirs. Every avatar comes after the
+  body, the wearables and the default wearables there as their pointers resolve, and only when
+  the list changes, so a wearable's definition, model and textures queue in the avatar tier at
+  the avatar's partition, and a wearable several avatars share at the best of theirs. Every avatar comes after the
   player's scenes and before any other scene; among avatars the key decides, nearer ring first,
   in front before behind within a ring, then distance. Scene content stays per scene (the
   download-slot entry below); avatars are the exception, and unity-explorer partitions them
@@ -57,7 +57,7 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
 - **A tier, then raw distance and parcel distance, no buckets.** The admission key is
   `LoadPriority (tier, parcel_distance, is_behind, sqr_distance)`, lower first. The tier is the
   band a download belongs to: the player's scenes, then avatars, then the other scenes, then
-  requests that are no scene's and no avatar's, then scenes that have left. Within a band the
+  requests whose hash no scene root or avatar holds, then scenes that have left. Within a band the
   partition decides; parcel distance comes before facing only so that "in front before behind"
   can still decide between scenes at the same parcel ring, since raw squared distance alone never
   ties. The tick key uses raw squared distance. unity-explorer's bucket thresholds and its
@@ -89,24 +89,35 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   the nearest of its readers. Admission is per scene (or avatar), and one gate covers every
   asset kind that downloads through `IpfsIo`; disk-cache hits, `file://` realm reads and static
   files take no slot.
-- **Unknown hash is top; no hash is after the live scenes; departed is last.** A request whose
-  path carries a hash nobody has published yet (a scene or an avatar in its first frame, an
-  emote) keeps today's place, the top. A request with no hash at all (NFT images, URL-form fonts
-  and profile pictures, the imposter archives behind `async_request`) is in the `Other` tier,
-  after every live scene and avatar: an NFT frame or an imposter must not beat the active scene's
-  files. A hash that was published and no longer is, because its scene despawned or its avatar
-  dropped it, is in the `Departed` tier, last, for as long as the requests already queued under
-  it wait. The mark lives with the queue: a request that finds no queue waiting for a departed
-  hash is unknown again, and on top.
-- **Keys cross the crate boundary as data.** `publish_download_priorities` writes `hash →
-  LoadPriority` into `IpfsIo` (`set_scene_priorities`) on every frame in which a download waits
-  for a slot, because `ipfs` cannot depend on `scene_runner`: the player's scenes at
-  `LoadPriority::TOP`, the other scenes at their partition in the `Scene` tier, and each avatar's
-  wearable hashes at the avatar's partition in the `Avatar` tier, the best of them for a shared
-  one. The gate keeps the map and ranks its queues by it at each grant; publishing touches no
-  request, and an idle frame publishes nothing, since the keys are only read at a grant. That
-  map is the one per-scene (and per-avatar) fact this change keeps outside the entity, and it is
-  a cache the gate reads, not state systems branch on.
+- **The entity that owns a hash registers it; unregistered and no-hash requests come after
+  the live scenes; departed is last.** `SceneHash` and `PartitionedDownloads` carry component
+  hooks: inserting them registers their hashes with the request slots
+  (`IpfsIo::register_download_priority`), and replacing or removing them, on a despawn, an
+  outfit change or a hash replaced, releases them (`release_download_priority`). The gate counts
+  a hash's holders, so a wearable two avatars share stays while one of them leaves, and a key
+  goes only with its last holder. A scene's hash is registered at spawn, at the bottom of the
+  scene tier, and the player's scene is raised to the top by the first publish with a download
+  waiting, before it has a context, so nothing has to rank above the registered hashes by
+  default: a request whose hash nobody holds (another avatar's emote, a backpack thumbnail)
+  ranks with the requests that carry no hash at all (NFT images, URL-form fonts and profile
+  pictures, the imposter archives behind `async_request`), in the `Other` tier after every
+  registered scene and avatar, oldest first. A hash released while requests of its wait, because
+  its scene despawned or its avatar dropped it, is in the `Departed` tier, last, for as long as
+  those requests wait; the mark lives with the queue, so a later request for the hash is
+  unregistered again, in `Other`.
+- **Keys cross the crate boundary as data, written in place.** Which hashes have a key is the
+  hooks' business (above); their values are `publish_download_priorities`'s, which on every
+  frame in which a download waits for a slot writes this frame's key of every registered hash
+  into `IpfsIo` (`update_download_priorities`), because `ipfs` cannot depend on `scene_runner`:
+  the player's scenes at `LoadPriority::TOP`, the other scenes at their partition in the `Scene`
+  tier (`SCENE_PENDING`, the tier's bottom, until a scene has one), and each avatar's wearable
+  hashes at the avatar's partition in the `Avatar` tier, the best of them for a shared one (the
+  first write of a hash in a publish replaces its key, later writes take the best). The gate
+  owns the keys and ranks its queues by them at each grant; publishing allocates nothing and
+  touches no request, and an idle frame publishes nothing, since the keys are only read at a
+  grant: while idle only values can go stale, never which hashes are held. The keys are the one
+  per-scene (and per-avatar) fact this change keeps outside the entity, an index that follows
+  the components' lifecycle, not state systems branch on.
 - **Constants, not settings, and no sampling tolerance.** `BEHIND_SCENE_TICK_PENALTY` and the
   key's shape are code constants, as unity-explorer's are asset values; partitions are recomputed
   every frame from the camera as it is.
@@ -144,6 +155,16 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   requests, which reach thousands during an initial load in a dense area; the per-hash queues
   make a grant and a key change linear in the queues (scenes and wearables with a request
   waiting) instead.
+- **Rebuilding the key map every frame and handing it over** (this change's first shape). A
+  fresh `HashMap<String, LoadPriority>` on every frame with a download waiting, a string clone
+  per scene and per wearable, the old map freed, and departure inferred from a hash going
+  missing between two publishes, with a `published` flag per queue. The hooks keep which hashes
+  are held exact at every moment, on frames the publish skips too, cleanup comes with the
+  components' lifecycle, and the publish writes values in place without allocating.
+- **An unregistered hash at the top.** It was needed only while the player's scene had no key
+  until it had a context, and it let every new scene's entity definition and `main.crdt`, other
+  avatars' emotes and backpack thumbnails tie with the player's scene. Registering `SceneHash`
+  at spawn and keying the player's scene before its context removes the need.
 - **Per-entity partition of scene content within 48 m, and an admission stage in front of each
   loader.** unity-explorer re-partitions each loadable entity within `fastPathDistance` of the
   camera (48 m as shipped, `PartitionAssetEntitiesSystem`); the Explorer's loaders have no
@@ -157,11 +178,11 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   wanted before the non-active scenes, so avatars are a tier of their own, distance deciding
   within it.
 - **A flat avatar tier, first come first served.** Distance order among avatars is wanted: the
-  nearest avatar's wearables first. It costs a partition per avatar and a map entry per wearable
-  hash on every frame with a download waiting: for 20 live scenes and 50 avatars with 10
-  wearables each (353 distinct), partitioning, building and publishing the map took about 300 µs
-  a frame in the dev profile, and about 30 µs on a frame with nothing waiting, when only the
-  partitions are refreshed (`overhead_of_publishing_at_a_busy_plaza`).
+  nearest avatar's wearables first. It costs a partition per avatar and a key written per
+  wearable hash on every frame with a download waiting: for 20 live scenes and 50 avatars with
+  10 wearables each (353 distinct), partitioning and writing the keys took about 115 µs a frame
+  in the dev profile, and about 25 µs on a frame with nothing waiting, when only the partitions
+  are refreshed (`overhead_of_publishing_at_a_busy_plaza`).
 - **Keeping the first-come semaphore for download slots.** The first scene to ask fills the queue
   whatever its distance; the gate decides at every grant instead, as unity-explorer re-sorts its
   pending loads every frame.
@@ -173,8 +194,9 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   never turns, nor the player's own forward stands for a viewer: a behind flag from either would
   count a server's scenes on one side (south, for the stand-in) four times farther in the tick
   queue while nobody looks.
-- **Treating a departed scene's queued downloads as unknown.** Unknown is top, so a scene just
-  despawned would be served ahead of the scenes in front; its queue keeps the bottom key instead.
+- **Treating a departed scene's queued downloads as unregistered.** They would rank in `Other`,
+  level with NFT frames and imposters, instead of last; the queue is marked departed when the
+  hash's last holder releases it.
 - **User-facing settings for the penalty and the key.** unity-explorer keeps its equivalents as
   asset values with no runtime setter; here they are code constants.
 - **Changing the GPU transfer priority with this.** `RenderAssetTransferPriority` stays as it is
@@ -182,8 +204,8 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
   uploads only under the per-frame byte budget, which is on by default only on the web
   (`gpu_bytes_per_frame`).
 - **Per-scene priority in a resource map.** A fact about a scene is a component on its root; the
-  gate's map inside `IpfsIo` is the one exception, because `ipfs` cannot depend on
-  `scene_runner`.
+  gate's keys inside `IpfsIo` are the one exception, because `ipfs` cannot depend on
+  `scene_runner`, and the hooks keep them in step with the components.
 - **Loading waves, budgets, LOD and the unload margin in this change.** Loading waves (six scenes
   a wave, `ScenesRequestBatchSize`) and the unload margin belong to card W1; frame-time,
   loading-slot and memory budgets to card E2, which builds on the memory status provider
@@ -211,7 +233,8 @@ Scene ticks and download slots order by one fact about a scene, or an avatar, it
 - Carry the scene on URL-form asset paths (NFT images, Fontsource fonts) so they take their
   scene's key instead of the flat rank after the live scenes.
 - Emotes load under their own entity hashes like wearables; filing them under the avatar's
-  partition is the same mechanism, not done here.
+  partition is the same mechanism (list them in the avatar's `PartitionedDownloads`), not done
+  here; until then another avatar's emote ranks in `Other`.
 - Loading waves (W1) sort the newly required scenes by their partition and take the first N;
   until then spawn order is hash-map order.
 - `scene_timing` (`scene_runner::load_timing`) logs, per scene, the time from spawn to its fifth
