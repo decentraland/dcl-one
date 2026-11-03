@@ -108,7 +108,7 @@ jobs:
       test: ${{ steps.plan.outputs.test }}
       headless: ${{ steps.plan.outputs.headless }}
       web: ${{ steps.plan.outputs.web }}
-      native-matrix: ${{ steps.plan.outputs.native-matrix }}
+      native-matrix: ${{ steps.plan.outputs.native-matrix == 'true' || contains(github.event.pull_request.labels.*.name, 'ci:macos') }}
       images: ${{ steps.consumers.outputs.images }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

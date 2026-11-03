@@ -9,6 +9,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = '.github/workflows/bevy-explorer-ci.yml'
+SOURCE = 'rendering/bevy-explorer/source/'
 SCENES_WORKFLOW = '.github/workflows/bevy-explorer-scenes.yml'
 PRODUCERS = {'web': 'Web engine, HUD and bridge scene', 'headless': 'Headless Smoke'}
 LANES = ('clippy', 'test', 'headless', 'web')
@@ -157,6 +158,23 @@ def full_selection(reason):
     return {**dict.fromkeys((*LANES, 'native-matrix', 'scenes'), True), 'reason': reason}
 
 
+def platform_input(path):
+    """A source path whose change can behave differently on Windows or macOS."""
+    path = path.removeprefix(SOURCE)
+    return (path == 'Cargo.toml' or re.fullmatch(r'build\w*\.rs', path.rsplit('/', 1)[-1]) is not None
+            or path.startswith(('.cargo/', 'rust-toolchain', 'local-harness/benchmark/', 'local-harness/web-driver/')))
+
+
+def locked_packages(rev):
+    """The engine's locked (name, version, source) set at rev, or None when it cannot be read."""
+    try:
+        import tomllib
+        lock = tomllib.loads(git('show', f'{rev}:{SOURCE}Cargo.lock'))
+        return {(package['name'], package['version'], package.get('source')) for package in lock['package']}
+    except (ImportError, ValueError, KeyError, TypeError, subprocess.CalledProcessError):
+        return None
+
+
 def select(base, head):
     ensure_commit(base)
     ensure_commit(head)
@@ -200,6 +218,12 @@ def select(base, head):
             affected = ()
         elif path.startswith('apps/bevy-explorer/') and path.removeprefix('apps/bevy-explorer/') in APP_INPUTS:
             affected = APP_INPUTS[path.removeprefix('apps/bevy-explorer/')]
+        elif path == SOURCE + 'Cargo.lock':
+            old, new = locked_packages(base), locked_packages(head)
+            affected = (*LANES, 'scenes') if old is not None and old == new else (*LANES, 'native-matrix', 'scenes')
+        elif path.startswith('library/protocol/proto/') or (path.startswith(SOURCE) and not platform_input(path)):
+            # Linux validates platform-neutral source on PRs; main pushes and ci:macos add Windows and macOS.
+            affected = (*LANES, 'scenes')
         else:
             # Source, selector and unknown input changes validate all jobs.
             affected = (*LANES, 'native-matrix', 'scenes')
@@ -223,7 +247,7 @@ def plan(event, base, head, repo):
                 if previous not in selections:
                     selections[previous] = select(previous, head) if previous else full_selection('Missing lane baseline')
                 result[lane] = selections[previous][lane]
-            result['native-matrix'] = selections[baselines.get('test')]['native-matrix']
+            result['native-matrix'] = result['test']
             result['reason'] = 'Compared each job with its latest successful main execution'
             return result
         if event not in ('pull_request', 'local'):
