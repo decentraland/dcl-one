@@ -105,7 +105,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
       (error: unknown) => { if (!controller.signal.aborted) setLoaded({ account, id, error: error instanceof Error ? error.message : "Could not load this hangout." }); },
     );
     return () => controller.abort();
-  }, [d.mode, d.eventId, auth.identity]);
+  }, [d.mode, d.eventId, auth.identity, optionsAttempt]);
   const current = loaded?.account === auth.address && loaded?.id === d.eventId ? loaded : null;
   const original = current?.event;
   const owner = Boolean(original && original.user?.toLowerCase() === auth.address?.toLowerCase());
@@ -137,7 +137,7 @@ export default function SubmitHangoutRoute({ loaderData }: Route.ComponentProps)
   return (
     <SitesChromeMaybe active="whatson">
     <LdSubmitHangoutView>
-      {waiting ? <p role="status">Loading your hangout…</p> : error ? <div><p role="alert">{error}</p><Link to="/whats-on?tab=my">Back to My Hangouts</Link><button type="button" onClick={() => setOptionsAttempt((previous) => previous + 1)}>Check access again</button></div> : <SubmitHangout
+      {waiting ? <p role="status">Loading your hangout…</p> : error ? <div><p role="alert">{error}</p><Link to="/whats-on?tab=my">Back to My Hangouts</Link><button type="button" onClick={() => { setLoaded(null); setOptionsRead(null); setOptionsAttempt((previous) => previous + 1); }}>Check access again</button></div> : <SubmitHangout
         key={`${auth.address ?? "signed-out"}:${d.eventId ?? "new"}`}
         trackCtx={{
           sid: d.sid,

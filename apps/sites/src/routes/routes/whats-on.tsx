@@ -7,6 +7,7 @@ import { olderCopy, type CopyStamp } from "@ui/data/copyAsOf";
 
 import {
   fetchEvents,
+  fetchEventPage,
   groupEventsByDay,
   toLiveNowCard,
   toUpcomingCard,
@@ -29,6 +30,7 @@ export const handle = { agentMarkdown: "whatsOn" } satisfies AgentMarkdownHandle
 const STORY: StoryId = "admin/whats-on";
 const LIVE_LIMIT = 8;
 const UPCOMING_LIMIT = 24;
+const CALENDAR_LIMIT = 500;
 
 
 const FILTERS = [
@@ -46,7 +48,7 @@ const FALLBACK: PageDefaults = {
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
   if (url.searchParams.get("tab") === "my") {
-    return { tab: "my" as const, sid: "", offset: 0, hasMore: false, unavailable: false, filter: "" as FilterId, search: "", live: [], upcoming: [], allDays: [], dayLabels: [], copy: { stamp: null, now: Date.now() } };
+    return { tab: "my" as const, sid: "", offset: 0, hasMore: false, unavailable: false, liveUnavailable: false, calendarUnavailable: false, calendarLimited: false, invalidCount: 0, filter: "" as FilterId, search: "", live: [], upcoming: [], allDays: [], dayLabels: [], copy: { stamp: null, now: Date.now() } };
   }
   const rawFilter = url.searchParams.get("filter")?.trim() ?? "";
   const filter: FilterId = (FILTERS.some((f) => f.id === rawFilter) ? rawFilter : "") as FilterId;
@@ -63,28 +65,39 @@ export async function loader({ request }: Route.LoaderArgs) {
     to: dateFiltered ? new Date(dayStart + (filter === "today" ? 1 : 7) * 86_400_000).toISOString() : undefined,
     recurrent: filter === "recurring" ? true : undefined,
   };
-  const [{ sid, wrap }, liveRes, activeRes] = await Promise.all([
+  const [{ sid, wrap }, liveRes, activeRes, calendarRes] = await Promise.all([
     pageLoader(request, FALLBACK),
-    fetchEvents({ ...filters, list: "live", limit: LIVE_LIMIT, with_connected_users: true }, { signal: request.signal })
+    fetchEvents({ search: filters.search, recurrent: filters.recurrent, list: "live", limit: LIVE_LIMIT, with_connected_users: true }, { signal: request.signal })
       .then((result) => ({ ...result, unavailable: false }))
       .catch(() => ({ data: [] as Event[], copy: null, unavailable: true })),
-    fetchEvents({ ...filters, list: "active", limit: UPCOMING_LIMIT + 1, offset }, { signal: request.signal })
+    fetchEventPage({ ...filters, list: "active", limit: UPCOMING_LIMIT, offset }, { signal: request.signal })
+      .then((result) => ({ ...result, unavailable: false }))
+      .catch(() => ({ data: [] as Event[], hasMore: false, copy: null, unavailable: true })),
+    fetchEvents({ ...filters, list: "active", from: filters.from ?? new Date(dayStart).toISOString(), to: filters.to ?? new Date(dayStart + 28 * 86_400_000).toISOString(), limit: CALENDAR_LIMIT }, { signal: request.signal })
       .then((result) => ({ ...result, unavailable: false }))
       .catch(() => ({ data: [] as Event[], copy: null, unavailable: true })),
   ]);
   const live = liveRes.data;
-  const hasMore = activeRes.data.length > UPCOMING_LIMIT;
-  const upcoming = activeRes.data.slice(0, UPCOMING_LIMIT);
-  const copy = { stamp: olderCopy(liveRes.copy, activeRes.copy), now: now.getTime() };
+  const hasMore = activeRes.hasMore;
+  const upcoming = activeRes.data;
+  const copy = { stamp: olderCopy(olderCopy(liveRes.copy, activeRes.copy), calendarRes.copy), now: now.getTime() };
   const liveIds = new Set(live.map((event) => event.id));
   const liveById = new Map(live.map((event) => [event.id, event]));
-  const { allDays, dayLabels } = groupEventsByDay(upcoming.map((event) => liveById.get(event.id) ?? event), liveIds, 28, now);
-  const unavailable = activeRes.unavailable || liveRes.unavailable;
+  const { allDays, dayLabels } = groupEventsByDay(calendarRes.data.map((event) => liveById.get(event.id) ?? event), liveIds, 28, now);
+  const unavailable = activeRes.unavailable;
+  const liveUnavailable = liveRes.unavailable;
+  const calendarUnavailable = calendarRes.unavailable;
+  const calendarLimited = ("received" in calendarRes ? calendarRes.received : calendarRes.data.length) === CALENDAR_LIMIT;
+  const invalidCount = [activeRes, liveRes, calendarRes].reduce((count, result) => count + ("invalidCount" in result ? result.invalidCount ?? 0 : 0), 0);
   const payload = {
     sid,
     offset,
     hasMore,
     unavailable,
+    liveUnavailable,
+    calendarUnavailable,
+    calendarLimited,
+    invalidCount,
     filter,
     search,
     live,
@@ -108,6 +121,10 @@ export default function WhatsOn({ loaderData }: Route.ComponentProps) {
       offset={d.offset}
       hasMore={d.hasMore}
       unavailable={d.unavailable}
+      liveUnavailable={d.liveUnavailable}
+      calendarUnavailable={d.calendarUnavailable}
+      calendarLimited={d.calendarLimited}
+      invalidCount={d.invalidCount}
       filter={d.filter}
       search={d.search}
       live={d.live}
@@ -124,6 +141,10 @@ type FeedProps = {
   offset: number;
   hasMore: boolean;
   unavailable: boolean;
+  liveUnavailable: boolean;
+  calendarUnavailable: boolean;
+  calendarLimited: boolean;
+  invalidCount: number;
   filter: FilterId;
   search: string;
   live: Event[];
@@ -139,6 +160,10 @@ function WhatsOnFeed({
   offset,
   hasMore,
   unavailable,
+  liveUnavailable,
+  calendarUnavailable,
+  calendarLimited,
+  invalidCount,
   filter,
   search,
   live,
@@ -196,7 +221,14 @@ function WhatsOnFeed({
           {search && <Link to={filter ? `/whats-on?filter=${filter}` : "/whats-on"}>Clear search</Link>}
         </Form>
       </>}
-      statusSlot={unavailable ? <div role="alert" className={styles.unavailable}><p>Hangouts are temporarily unavailable.</p><button onClick={() => { void revalidator.revalidate(); }}>Retry</button></div> : undefined}
+      statusSlot={unavailable || liveUnavailable || calendarUnavailable || calendarLimited || invalidCount > 0 ? <div role="alert" className={styles.unavailable}>
+        {unavailable && <p>Hangouts are temporarily unavailable.</p>}
+        {liveUnavailable && <p>Live hangouts are temporarily unavailable.</p>}
+        {calendarUnavailable && <p>The hangout calendar is temporarily unavailable.</p>}
+        {calendarLimited && <p>The calendar shows the first 500 matching hangouts. Narrow your search to see more.</p>}
+        {invalidCount > 0 && <p>Some hangouts could not be displayed.</p>}
+        {(unavailable || liveUnavailable || calendarUnavailable || invalidCount > 0) && <button onClick={() => { void revalidator.revalidate(); }}>Retry</button>}
+      </div> : undefined}
       liveNow={liveCards}
       upcoming={upcomingCards}
       allDays={allDays}

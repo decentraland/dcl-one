@@ -1199,6 +1199,43 @@ mod tests {
         assert!(calls.contains(&(true, "myworld.dcl.eth".into())));
     }
 
+    #[tokio::test]
+    async fn event_connected_users_preserves_unknown_and_successfully_empty_rooms() {
+        struct Fixed(Option<Vec<String>>);
+        impl crate::places::live::Participants for Fixed {
+            fn participants<'a>(
+                &'a self,
+                _world: bool,
+                _key: &'a str,
+            ) -> futures::future::BoxFuture<'a, Option<Vec<String>>> {
+                Box::pin(async move { self.0.clone() })
+            }
+        }
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/unused")
+            .unwrap();
+        let mut events = vec![event_row_to_record(
+            row_with(json!({"x":10,"y":20}), None, None),
+            None,
+            None,
+            "https://events.decentraland.org",
+        )];
+        let unknown = std::sync::Arc::new(crate::places::live::Live::new(pool.clone()));
+        unknown.set_participants(std::sync::Arc::new(Fixed(None)));
+        super::handlers::fill_connected(&mut events, &unknown).await;
+        assert_eq!(events[0].connected_addresses, None);
+        assert!(
+            serde_json::to_value(&events[0])
+                .unwrap()
+                .get("connected_addresses")
+                .is_none()
+        );
+        let empty = std::sync::Arc::new(crate::places::live::Live::new(pool));
+        empty.set_participants(std::sync::Arc::new(Fixed(Some(vec![]))));
+        super::handlers::fill_connected(&mut events, &empty).await;
+        assert_eq!(events[0].connected_addresses, Some(vec![]));
+    }
+
     const DELETED_USER_CLAUSE: &str = "(raw->>'deleted_by_user') IS DISTINCT FROM 'true'";
     const DELETED_ADMIN_CLAUSE: &str = "(raw->>'deleted_by_admin') IS DISTINCT FROM 'true'";
 
