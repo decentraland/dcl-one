@@ -8,6 +8,45 @@ mod wasm;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::*;
 
+use bevy::{
+    core_pipeline::bloom::{Bloom, BloomCompositeMode, BloomPrefilter},
+    render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection},
+};
+use std::ops::Range;
+
+/// unity: Quality Settings.asset "Custom Volume Profile 0", ShadowsMidtonesHighlights
+pub const GRADING_SHADOWS_LIFT: f32 = 0.098987624;
+pub const GRADING_MIDTONES_RANGE: Range<f32> = 0.3..0.55;
+
+pub fn unity_color_grading() -> ColorGrading {
+    ColorGrading {
+        global: ColorGradingGlobal {
+            midtones_range: GRADING_MIDTONES_RANGE,
+            ..Default::default()
+        },
+        shadows: ColorGradingSection {
+            lift: GRADING_SHADOWS_LIFT,
+            ..Default::default()
+        },
+        midtones: ColorGradingSection::default(),
+        highlights: ColorGradingSection::default(),
+    }
+}
+
+/// unity: same profile, Bloom
+pub fn unity_bloom() -> Bloom {
+    Bloom {
+        intensity: 1.0,
+        low_frequency_boost: 0.3,
+        prefilter: BloomPrefilter {
+            threshold: 1.0,
+            threshold_softness: 0.0,
+        },
+        composite_mode: BloomCompositeMode::Additive,
+        ..Bloom::NATURAL
+    }
+}
+
 /// One stored DM, or a reaction to one. `from` is the sender's wallet (the account or the
 /// partner).
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]

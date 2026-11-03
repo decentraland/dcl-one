@@ -23,6 +23,9 @@ use dcl_component::proto_components::{
     },
     social_service::v2::PrivateMessagePrivacySetting,
 };
+pub use platform::{
+    unity_bloom, unity_color_grading, GRADING_MIDTONES_RANGE, GRADING_SHADOWS_LIFT,
+};
 use serde::{Deserialize, Serialize};
 use system_api_types::SatelliteView;
 pub use system_api_types::{PermissionLevel, PermissionType, PermissionValue, PointerTargetType};
@@ -1950,6 +1953,27 @@ pub struct PointAtMarkerVisibilityChanged;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn grading_lifts_shadows_and_keeps_gamma_neutral() {
+        let g = unity_color_grading();
+        assert_eq!(g.shadows.lift, GRADING_SHADOWS_LIFT);
+        assert_eq!(
+            (g.shadows.gamma, g.midtones.gamma, g.highlights.gamma),
+            (1.0, 1.0, 1.0)
+        );
+        assert_eq!(g.global.midtones_range, GRADING_MIDTONES_RANGE);
+        let b = unity_bloom();
+        assert_eq!(
+            (
+                b.intensity,
+                b.prefilter.threshold,
+                b.prefilter.threshold_softness,
+                b.low_frequency_boost
+            ),
+            (1.0, 1.0, 0.0, 0.3)
+        );
+    }
 
     #[test]
     fn sun_cascades_follow_unity_splits() {

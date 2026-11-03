@@ -1,6 +1,6 @@
 use super::SettingCategory;
 use bevy::{core_pipeline::bloom::Bloom, ecs::system::SystemParamItem, prelude::*};
-use common::structs::{AppConfig, BloomSetting};
+use common::structs::{unity_bloom, AppConfig, BloomSetting};
 
 use super::{AppSetting, EnumAppSetting};
 
@@ -63,10 +63,7 @@ impl AppSetting for BloomSetting {
                 intensity: 0.10,
                 ..Bloom::NATURAL
             }),
-            BloomSetting::High => cmds.try_insert(Bloom {
-                intensity: 0.10,
-                ..Bloom::OLD_SCHOOL
-            }),
+            BloomSetting::High => cmds.try_insert(unity_bloom()),
         };
     }
 }

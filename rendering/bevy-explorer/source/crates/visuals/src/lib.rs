@@ -751,7 +751,7 @@ fn gamma_console_command(
     }
 }
 
-/// set saturation per tonal range (scene default 1.3); 0 = grayscale.
+/// set saturation per tonal range (default 1.0); 0 = grayscale.
 /// `/saturation <shadows> [midtones] [highlights]`
 #[derive(clap::Parser, ConsoleCommand)]
 #[command(name = "/saturation")]
