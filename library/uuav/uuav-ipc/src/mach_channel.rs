@@ -2,7 +2,7 @@
 //! control channel cannot carry
 //! mach port rights).
 //!
-//! The client (Unity side) owns the receive right and registers it in the
+//! The client (the host side) owns the receive right and registers it in the
 //! shared bootstrap namespace under a per-session name before spawning the
 //! helper; the helper looks the name up and sends one complex mach message
 //! per surface: a `MOVE_SEND` port descriptor (from `IOSurfaceCreateMachPort`)
@@ -25,7 +25,9 @@
 
 use anyhow::{Result, bail, ensure};
 use mach2::kern_return::KERN_SUCCESS;
-use mach2::mach_port::{mach_port_allocate, mach_port_deallocate, mach_port_insert_right, mach_port_mod_refs};
+use mach2::mach_port::{
+    mach_port_allocate, mach_port_deallocate, mach_port_insert_right, mach_port_mod_refs,
+};
 use mach2::message::{
     MACH_MSG_SUCCESS, MACH_MSG_TIMEOUT_NONE, MACH_MSG_TYPE_COPY_SEND, MACH_MSG_TYPE_MAKE_SEND,
     MACH_MSG_TYPE_MOVE_SEND, MACH_MSGH_BITS_COMPLEX, MACH_RCV_MSG, MACH_RCV_TIMED_OUT,
@@ -41,11 +43,7 @@ use std::os::raw::{c_char, c_int};
 // bootstrap.h: not exposed by libc/mach2; provided by libSystem
 unsafe extern "C" {
     static bootstrap_port: mach_port_t;
-    fn bootstrap_register(
-        bp: mach_port_t,
-        service_name: *const c_char,
-        sp: mach_port_t,
-    ) -> c_int;
+    fn bootstrap_register(bp: mach_port_t, service_name: *const c_char, sp: mach_port_t) -> c_int;
     fn bootstrap_look_up(
         bp: mach_port_t,
         service_name: *const c_char,
@@ -286,7 +284,10 @@ impl Sender {
                 MACH_PORT_NULL,
             )
         };
-        ensure!(result == MACH_MSG_SUCCESS, "mach_msg send failed: {result:#x}");
+        ensure!(
+            result == MACH_MSG_SUCCESS,
+            "mach_msg send failed: {result:#x}"
+        );
         Ok(())
     }
 }

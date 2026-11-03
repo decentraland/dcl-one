@@ -21,5 +21,11 @@
 pub mod channel;
 pub mod protocol;
 
+#[cfg(target_os = "linux")]
+pub(crate) use channel::imp as channel_unix;
+
 #[cfg(target_os = "macos")]
 pub mod mach_channel;
+
+#[cfg(target_os = "linux")]
+pub mod fd_channel;

@@ -20,7 +20,7 @@ mod video_playback;
 
 pub(crate) use control::ControlPush;
 pub(crate) use telemetry::{AudioTelemetry, SharedAudioTelemetry};
-pub(crate) use unit::{DEFAULT_PLAYBACK_RATE, PlaybackUnit, UnitControls};
+pub(crate) use unit::{DEFAULT_PLAYBACK_RATE, PlaybackUnit, UnitControls, UnitSinks};
 pub(crate) use util::{AtomicSeekSlot, CancelToken, ReadOnlyCancelToken};
 
 use std::num::NonZeroUsize;
