@@ -167,7 +167,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 70] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 71] {
         [
             (
                 "CATALYRST_CONTENT_ADMIN_TOKEN",
