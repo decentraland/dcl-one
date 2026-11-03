@@ -52,9 +52,7 @@ use crate::rpc::proto::v2::{
 };
 use crate::rpc::pubsub::SocialEvent;
 use crate::rpc::ws::{AUTH_TIMEOUT, POOL_FULL, UNAUTHORIZED};
-use crate::shared::rpc::handshake::{
-    HandshakeError, handshake_path, validator_ref, verify_handshake_number_ms,
-};
+use crate::shared::rpc::handshake::{HandshakeError, validator_ref, verify_handshake_number_ms};
 use crate::shared::rpc::ws::{IdleAction, IdleTimer, SocketClose, close_message};
 
 /// The route upstream signs and serves (`src/adapters/stream-sessions/constants.ts`).
@@ -161,16 +159,10 @@ impl Stream {
     }
 }
 
-/// The candidate paths of the handshake signature: the route, the path this
-/// node serves it at and a proxy's `x-original-path` ending with the route.
-fn stream_paths(headers: &HeaderMap, served: &str) -> Vec<String> {
-    let mut paths = vec![handshake_path(headers, STREAM_PATH)];
-    for p in [STREAM_PATH, served] {
-        if !paths.iter().any(|q| q == p) {
-            paths.push(p.to_string());
-        }
-    }
-    paths
+/// Upstream binds both stream handshakes to this protocol path, independently
+/// of the mounted connection URL and proxy headers.
+fn stream_paths() -> Vec<String> {
+    vec![STREAM_PATH.to_owned()]
 }
 
 /// The upgrade request's `x-identity-*` headers as the first frame's JSON
@@ -217,7 +209,7 @@ async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, 
 pub async fn ws_upgrade(
     AxumState(state): AxumState<Arc<State>>,
     headers: HeaderMap,
-    uri: Uri,
+    _uri: Uri,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
     let ws = match ws {
@@ -227,7 +219,7 @@ pub async fn ws_upgrade(
         }
         Err(rejection) => return rejection.into_response(),
     };
-    let paths = stream_paths(&headers, uri.path());
+    let paths = stream_paths();
     let verified = match header_frame(&headers) {
         None => None,
         Some(frame) => match verify(&state, &paths, &frame).await {
@@ -1140,25 +1132,6 @@ mod tests {
         assert!(parse(&format!(r#"{{"type":"unsubscribe","id":"{astral}"}}"#)).is_ok());
         let astral = "\u{1F600}".repeat(33);
         assert!(parse(&format!(r#"{{"type":"unsubscribe","id":"{astral}"}}"#)).is_err());
-    }
-
-    #[test]
-    fn the_signature_is_over_the_stream_route_never_the_rpc_root() {
-        let mut headers = HeaderMap::new();
-        assert_eq!(
-            stream_paths(&headers, "/social-rpc/v1/stream"),
-            vec!["/v1/stream", "/social-rpc/v1/stream"]
-        );
-        headers.insert(
-            "x-original-path",
-            axum::http::HeaderValue::from_static("/edge/v1/stream?x=1"),
-        );
-        assert_eq!(
-            stream_paths(&headers, "/social-rpc/v1/stream"),
-            vec!["/edge/v1/stream", "/v1/stream", "/social-rpc/v1/stream"]
-        );
-        headers.insert("x-original-path", axum::http::HeaderValue::from_static("/"));
-        assert!(!stream_paths(&headers, "/social-rpc/v1/stream").contains(&"/".to_string()));
     }
 }
 

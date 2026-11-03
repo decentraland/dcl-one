@@ -203,12 +203,9 @@ fn map_auth_error(err: AuthError) -> HandshakeError {
     }
 }
 
-/// The paths the frame may be signed over, in the order they are tried: the
-/// first path that verifies settles it, and only an invalid-signature verdict
-/// tries the next one. Upstream verifies `/` (the explorer connects to the
-/// service's root); the old gateway forwarded the stripped public path as
-/// `x-original-path`, and this node serves the socket under `/social-rpc`,
-/// so a signature over any of the three is the same authority.
+/// Candidates for callers that choose proxy/mount alias compatibility. The first
+/// verifying path settles it; only an invalid signature tries the next one.
+/// Social uses its fixed source protocol paths instead of this opt-in helper.
 pub fn candidate_paths(headers: &HeaderMap, route: &str) -> Vec<String> {
     let mut paths = vec![handshake_path(headers, "/")];
     if !paths.contains(&route.to_string()) {

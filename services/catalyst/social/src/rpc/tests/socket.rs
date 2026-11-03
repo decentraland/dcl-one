@@ -806,3 +806,88 @@ async fn authenticated_text_and_binary_frames_match_source_drpc_exchange() {
     socket.close(None).await.unwrap();
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }
+
+#[tokio::test]
+async fn mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers() {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let source: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/conformance/social/ws-paths-source-cases.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        source["baseline"]["revision"],
+        "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+    );
+    let server = spawn_server(None, 5).await;
+    for case in source["cases"].as_array().unwrap() {
+        let rpc = case["protocol"] == "rpc";
+        let mounted = if rpc {
+            "/social-rpc"
+        } else {
+            "/social-rpc/v1/stream"
+        };
+        let (_, signed) = frame(
+            case["signed_path"].as_str().unwrap(),
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await;
+        let mut signed: serde_json::Value = serde_json::from_str(&signed).unwrap();
+        let mut request = format!("ws://{}{mounted}", server.addr)
+            .into_client_request()
+            .unwrap();
+        if let Some(original) = case["original_path"].as_str() {
+            request
+                .headers_mut()
+                .insert("x-original-path", original.parse().unwrap());
+            signed["x-original-path"] = serde_json::json!(original);
+        }
+        let headers = case["mode"] == "headers";
+        if headers {
+            for (name, value) in signed.as_object().unwrap() {
+                request.headers_mut().insert(
+                    name.parse::<tokio_tungstenite::tungstenite::http::HeaderName>()
+                        .unwrap(),
+                    value.as_str().unwrap().parse().unwrap(),
+                );
+            }
+        }
+        let connected = tokio_tungstenite::connect_async(request).await;
+        if headers && case["accepted"] == false {
+            match connected {
+                Err(tokio_tungstenite::tungstenite::Error::Http(response)) => {
+                    assert_eq!(response.status(), 401, "{case}")
+                }
+                other => panic!(
+                    "expected unauthorized upgrade for {case}: {:?}",
+                    other.map(|_| ())
+                ),
+            }
+            continue;
+        }
+        let (mut socket, _) = connected.unwrap();
+        if !headers {
+            socket
+                .send(WsMessage::Text(signed.to_string().into()))
+                .await
+                .unwrap();
+        }
+        let response = next_message(&mut socket).await;
+        if case["accepted"] == true {
+            if rpc {
+                assert!(is_server_ready(&response), "{case}: {response:?}");
+            } else {
+                let WsMessage::Text(text) = response else {
+                    panic!("expected ready for {case}");
+                };
+                assert_eq!(
+                    serde_json::from_str::<serde_json::Value>(&text).unwrap(),
+                    serde_json::json!({"type":"ready"})
+                );
+            }
+            socket.close(None).await.unwrap();
+        } else {
+            assert_eq!(close_code(&response), Some(3003), "{case}: {response:?}");
+        }
+    }
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}

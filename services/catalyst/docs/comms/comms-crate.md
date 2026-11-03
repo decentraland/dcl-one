@@ -194,6 +194,15 @@ uses the pinned native binding's unsigned-short conversion, accepting zero or
 these conversions and native option admission; they do not measure native idle
 timer scheduling or kernel buffering.
 
+Social signatures bind the source protocol paths: `/` for RPC, and `/v1/stream`
+for both JSON handshakes. Connecting through `/social-rpc` or
+`/social-rpc/v1/stream` keeps those signed paths; `x-original-path` does not
+expand them. Actual source verifier captures and real socket replays cover
+81 combinations. The Bevy Social client normalizes only its signed URI to `/`
+while keeping its configured connection URL. Clients signing a mounted alias
+must sign the source path; deployed web artifacts need the corresponding client
+build at cutover. Other shared handshake callers keep their chosen alias policy.
+
 Oversized community voice metadata is stored as one immutable binary protobuf
 snapshot in `social.event_payloads`, with a UUID and a 24-hour expiry, before a
 small reference is published. A subscriber reads that exact snapshot through its

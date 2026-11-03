@@ -1786,8 +1786,7 @@ async fn explorer_as(
 ) -> (String, RpcClient<TungsteniteTransport>, SocialClient) {
     seed_profiles(&server.state.ctx, &[&format!("{:#x}", root.address())]).await;
     let ts = chrono::Utc::now().timestamp_millis();
-    let payload =
-        crate::shared::signed_fetch::build_payload_v6("get", "/social-rpc", &ts.to_string(), "{}");
+    let payload = crate::shared::signed_fetch::build_payload_v6("get", "/", &ts.to_string(), "{}");
     let (signer, frame) = frame_signed(
         root,
         &PrivateKeySigner::random(),

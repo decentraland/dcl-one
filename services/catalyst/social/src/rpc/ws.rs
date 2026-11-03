@@ -21,9 +21,7 @@ use axum::response::{IntoResponse, Response};
 use crate::rpc::State;
 use crate::rpc::limits::Protocol;
 use crate::shared::identity::Address;
-use crate::shared::rpc::handshake::{
-    HandshakeError, candidate_paths, validator_ref, verify_handshake_number_ms,
-};
+use crate::shared::rpc::handshake::{HandshakeError, validator_ref, verify_handshake_number_ms};
 use crate::shared::rpc::ws::{
     AxumWsTransport, IdleAction, IdleTimer, RPC_TRANSPORT_CLOSED, SocketClose, close_message,
 };
@@ -38,7 +36,7 @@ const AUTH_IN_PROGRESS: &str =
 pub async fn ws_upgrade(
     AxumState(state): AxumState<Arc<State>>,
     headers: HeaderMap,
-    uri: Uri,
+    _uri: Uri,
     ws: Result<WebSocketUpgrade, WebSocketUpgradeRejection>,
 ) -> Response {
     // upstream's `app.ws('/')` takes upgrades only; a request that is not one
@@ -52,7 +50,7 @@ pub async fn ws_upgrade(
         }
         Err(rejection) => return rejection.into_response(),
     };
-    let paths = candidate_paths(&headers, uri.path());
+    let paths = vec!["/".to_owned()];
     ws.max_message_size(state.settings.ws_max_payload_bytes)
         .on_upgrade(move |socket| async move {
             if let Err(err) = handle_connection(state, paths, socket).await {

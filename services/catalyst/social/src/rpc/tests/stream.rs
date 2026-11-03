@@ -281,8 +281,8 @@ async fn both_handshakes_are_over_the_stream_route_only() {
         .unwrap();
     assert_eq!(close_code(&next_message(&mut socket).await), Some(3003));
 
-    // The first-frame fallback, over the route or the served path.
-    for path in ["/v1/stream", STREAM] {
+    // The first-frame fallback signs the source protocol path.
+    for path in ["/v1/stream"] {
         let mut socket = connect(&server, STREAM).await;
         socket
             .send(WsMessage::Text(signed_frame(&me, path).await.into()))
@@ -294,8 +294,8 @@ async fn both_handshakes_are_over_the_stream_route_only() {
             "{path}"
         );
     }
-    // And the upgrade headers over the served path.
-    let mut socket = with_headers(&server, &signed_frame(&me, STREAM).await)
+    // Upgrade headers use that same source protocol path.
+    let mut socket = with_headers(&server, &signed_frame(&me, "/v1/stream").await)
         .await
         .unwrap();
     assert_eq!(next_json(&mut socket).await, json!({ "type": "ready" }));
