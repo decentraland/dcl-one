@@ -72,6 +72,7 @@ nix develop --command bash tooling/dev-test.sh [rust|e2e]   # rust: PostgreSQL o
 Run both in a fresh checkout. `python3 tooling/ci-local.py install` adds hooks
 that run the matching workflows' checks (images need Linux or
 `CI_LOCAL_IMAGES=1`); `ci-local.py run [REV]` runs them without pushing.
-PRs run macOS Rust tests only; macOS smoke runs on `main`, or on a PR labelled
-`ci:macos` (label, then push or reopen; re-running a job does not pick up a new
-label).
+On PRs, macOS runs the Rust tests only for changes that reach them
+(`tooling/dev-ci.py`: web apps, the Explorer pin and other Python tooling stay on
+Linux); macOS smoke runs on `main`. A PR labelled `ci:macos` runs both (label,
+then push or reopen; re-running a job does not pick up a new label).
