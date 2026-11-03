@@ -19,6 +19,10 @@ REQUIRED = {
         "failed_cache_publish_removes_its_staging_file",
         "engine_request_keeps_its_slot_until_the_body_finishes",
         "readiness_poll_respects_retry_after_and_remaining_deadline",
+        "keys_are_read_while_a_slot_is_in_use",
+        "a_departed_hash_ranks_last_for_a_retry_after_its_queue_drained",
+        "a_poisoned_gate_keeps_granting_and_releasing",
+        "a_queue_entry_without_its_ticket_is_skipped_inside_a_release",
     },
     "platform": {
         "grant_is_held_through_body_read_and_released_on_cancellation",
