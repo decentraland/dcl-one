@@ -2066,206 +2066,436 @@
     {
       "id": "json_stream:SUBSCRIBE:block_updates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "status": "reviewed",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "json_stream:SUBSCRIBE:community_member_connectivity_updates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "status": "reviewed",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "json_stream:SUBSCRIBE:community_voice_chat_updates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "status": "reviewed",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "json_stream:SUBSCRIBE:friend_connectivity_updates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "status": "reviewed",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "json_stream:SUBSCRIBE:friendship_updates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "status": "reviewed",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "json_stream:SUBSCRIBE:private_voice_chat_updates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained.",
+      "status": "reviewed",
+      "result": "Actual pinned registry JSON conversion matches production mapper after stream channel selection. Found and fixed CommunityMemberStatus omitted from carries predicate. Existing real websocket tests exercise handshake/subscription/duplicate/unsubscribe/rate/backpressure. Address-only profile failure semantics retained. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_stream:RPC:subscribeToBlockUpdates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "status": "reviewed",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_stream:RPC:subscribeToCommunityMemberConnectivityUpdates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "status": "reviewed",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_stream:RPC:subscribeToCommunityVoiceChatUpdates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "status": "reviewed",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
       "id": "rpc_stream:RPC:subscribeToFriendConnectivityUpdates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "status": "reviewed",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates. Initial and live profiles above 16 KiB now retain content under a guarded byte budget, with authorization keyed by the authenticated actor separately from historical public profile identity.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/connectivity.rs",
+          "test": "rpc_friend_connectivity_preserves_a_profile_larger_than_sixteen_kib",
+          "scope": "Actual RPC socket retains a 70 KiB profile in snapshot and live update."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/connectivity.rs",
+          "test": "a_large_guarded_profile_retires_a_real_socket_that_stops_reading",
+          "scope": "An 8 MiB guarded payload retires a socket that stops reading without unbounded producer admission."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/connectivity.rs",
+          "test": "rpc_connectivity_enriches_historical_aliases_but_guards_the_requested_actor",
+          "scope": "Historical public profile identity does not replace the actor used for friendship/online authorization."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior.",
-        "A legitimate profile above the existing guarded16KiB frame cap is rejected locally; the source checks socket buffered bytes before send instead."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Resolve historical profile single-lookup/cache identity behavior with the shared registry reader."
     },
     {
       "id": "rpc_stream:RPC:subscribeToFriendshipUpdates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "status": "reviewed",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence. Resolve historical profile single-lookup/cache identity behavior with the shared registry reader."
     },
     {
       "id": "rpc_stream:RPC:subscribeToPrivateVoiceChatUpdates",
       "owner": "realtime-voice-and-streams",
-      "status": "known_gap",
-      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay.",
+      "status": "reviewed",
+      "result": "Real upstream parser and closure-builder captures exercised through production RPC generators; exact encoded output matched for normal and duplicate closure cases. Friendship profile lookup occurs per event, JSON raw events survive missing profiles. Friend initial online only; community no initial replay. Typed per-subscription queues now retain exactly 1,000 pending updates: RPC drops oldest, JSON closes on overflow. Mutation publishers await bounded enqueue; actual two-connection NATS bursts deliver 1,000 targeted and 1,000 SQL-routed community updates.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "all_six_rpc_generators_and_json_mappers_match_executed_source_parsers",
           "scope": "All six normal and duplicate-closure RPC/JSON envelopes replay from executed source parsers; not queue saturation or deployed end-to-end proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "rpc_retains_exact_latest_thousand_and_drops_its_registration",
+          "scope": "RPC overflow retains the exact latest 1,000 and releases subscription registration."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/pubsub/queue.rs",
+          "test": "json_overflows_only_its_own_event_type_at_the_exact_source_bound",
+          "scope": "Unrelated event types do not consume queue space; JSON closes at its source overflow boundary."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "healthy_real_broker_bursts_reach_the_exact_subscription_queue_bound",
+          "scope": "Two actual NATS connections deliver 1,000 targeted updates to the typed queue."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
+          "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
+          "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
         }
       ],
-      "gaps": [
-        "Source queues1000 updates independently per typed subscription; current shared broadcast256 can lose unrelated-type events earlier and does not yet reproduce protocol-specific overflow behavior."
-      ],
+      "gaps": [],
       "remaining_verification": "Verify admitted client versions, deployment configuration and nonempty-state cutover. Focused source cases do not establish exhaustive or deployed equivalence."
     },
     {
@@ -5048,7 +5278,7 @@
     {
       "id": "cross-replica-social-events",
       "status": "unverified",
-      "description": "Mutation fanout now uses the existing core NATS link; two real broker connections, scoped delivery and large public snapshots pass locally. Deployed replica/consumer behavior and burst/outage equivalence remain unverified; the256-entry outbound queue can drop before source per-subscription limits.",
+      "description": "Mutation fanout uses the existing core NATS link. Awaited publisher enqueue, synchronous targeted delivery and a 1,000-entry community work queue with at most min(4,pool size) SQL tasks deliver actual 1,000-update targeted/community bursts locally. Control traffic remains live; large public snapshots, process-local context restart and cache expiry are covered. Delivery remains transient and at most once. Deployed replica/consumer behavior, traffic beyond these measured bounds and outage/reconnect equivalence remain unverified.",
       "operations": [
         "json_stream:SUBSCRIBE:block_updates",
         "json_stream:SUBSCRIBE:community_member_connectivity_updates",
