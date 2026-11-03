@@ -1,4 +1,4 @@
-//! The metadata of each entity type against the `@dcl/schemas` 27 schema
+//! The metadata of each entity type against the `@dcl/schemas` 27.2 schema
 //! the reference validator applies after ADR-45: required fields, JSON
 //! types, enums, numeric ranges, patterns, array bounds and the
 //! standard/base/third-party item variants and the linked-wearable
@@ -269,7 +269,7 @@ fn colored(v: &Value, p: &str) -> Check {
     required(obj(v, p)?, "color", p, color)
 }
 
-// The shared enums.
+// The shared enums, pinned in `dcl-schemas/enums.json`.
 
 const WEARABLE_CATEGORIES: &[&str] = &[
     "eyebrows",
@@ -305,6 +305,7 @@ const RARITIES: &[&str] = &[
     "uncommon",
     "common",
 ];
+const HIDEABLE_BODY_PARTS: &[&str] = &["head", "hands"];
 const LOCALES: &[&str] = &["en", "es"];
 const EMOTE_CATEGORIES: &[&str] = &[
     "dance",
@@ -325,10 +326,14 @@ const SCENE_PERMISSIONS: &[&str] = &[
     "USE_WEBSOCKET",
     "OPEN_EXTERNAL_LINK",
 ];
+const VOICE_CHAT_TOGGLES: &[&str] = &["enabled", "disabled"];
+const PORTABLE_EXPERIENCES_TOGGLES: &[&str] = &["enabled", "disabled", "hideUi"];
+const NEARBY_VOICE_CHAT_TOGGLES: &[&str] = &["enabled", "disabled"];
+const SOURCE_ROTATIONS: &[&str] = &["north", "east", "south", "west"];
 
 fn hideable(v: &Value, p: &str) -> Check {
     let s = string(v, p)?;
-    if WEARABLE_CATEGORIES.contains(&s) || s == "head" || s == "hands" {
+    if WEARABLE_CATEGORIES.contains(&s) || HIDEABLE_BODY_PARTS.contains(&s) {
         return Ok(());
     }
     Err(format!("{p} must match exactly one schema in oneOf"))
@@ -522,14 +527,12 @@ fn scene(v: &Value) -> Check {
     })?;
     nullable(m, "featureToggles", ROOT, |v, p| {
         let m = obj(v, p)?;
-        nullable(m, "voiceChat", p, |v, p| {
-            one_of(v, &["enabled", "disabled"], p)
-        })?;
+        nullable(m, "voiceChat", p, |v, p| one_of(v, VOICE_CHAT_TOGGLES, p))?;
         nullable(m, "portableExperiences", p, |v, p| {
-            one_of(v, &["enabled", "disabled", "hideUi"], p)
+            one_of(v, PORTABLE_EXPERIENCES_TOGGLES, p)
         })?;
         nullable(m, "nearbyVoiceChat", p, |v, p| {
-            one_of(v, &["enabled", "disabled"], p)
+            one_of(v, NEARBY_VOICE_CHAT_TOGGLES, p)
         })
     })?;
     nullable(m, "worldConfiguration", ROOT, world_configuration)?;
@@ -548,9 +551,7 @@ fn scene_source(v: &Value, p: &str) -> Check {
         required(m, "x", p, integer)?;
         required(m, "y", p, integer)
     })?;
-    nullable(m, "rotation", p, |v, p| {
-        one_of(v, &["north", "east", "south", "west"], p)
-    })?;
+    nullable(m, "rotation", p, |v, p| one_of(v, SOURCE_ROTATIONS, p))?;
     nullable(m, "layout", p, |v, p| {
         let m = obj(v, p)?;
         required(m, "rows", p, integer)?;
@@ -908,7 +909,7 @@ fn mappings_overlap(list: &[&Obj]) -> bool {
     })
 }
 
-/// `@dcl/schemas` 27.4 also counts the scene emotes as base emotes.
+/// `@dcl/schemas` 27.2 also counts the scene emotes as base emotes.
 const BASE_EMOTE_REGISTRIES: &[&str] = &["base-emotes", "base-scene-emotes"];
 
 const BASE_ITEM_PROPS: [&str; 6] = ["id", "name", "description", "i18n", "thumbnail", "image"];
@@ -1243,6 +1244,51 @@ mod tests {
                 "eyes": color(), "hair": color(), "skin": color(), "wearables": []
             }}], "namesForExtraSlots": []}),
         );
+    }
+
+    /// The copied enums equal the ones extracted from the pinned package, so
+    /// re-extracting a release that adds a value fails here.
+    #[test]
+    fn copied_enums_match_the_pinned_dcl_schemas() {
+        use sha2::{Digest, Sha256};
+
+        const ENUMS: &[u8] = include_bytes!("dcl-schemas/enums.json");
+        let lock: Value =
+            serde_json::from_str(include_str!("dcl-schemas/upstream.lock.json")).unwrap();
+        assert_eq!(
+            lock["files"]["enums.json"],
+            hex::encode(Sha256::digest(ENUMS)),
+            "upstream.lock.json records the vendored enums"
+        );
+        let upstream: Map<String, Value> = serde_json::from_slice(ENUMS).unwrap();
+        let copied: [(&str, &[&str]); 13] = [
+            ("wearableCategories", WEARABLE_CATEGORIES),
+            ("hideableBodyParts", HIDEABLE_BODY_PARTS),
+            ("bodyShapes", BODY_SHAPES),
+            ("rarities", RARITIES),
+            ("locales", LOCALES),
+            ("emoteCategories", EMOTE_CATEGORIES),
+            ("scenePermissions", SCENE_PERMISSIONS),
+            ("voiceChatToggles", VOICE_CHAT_TOGGLES),
+            ("portableExperiencesToggles", PORTABLE_EXPERIENCES_TOGGLES),
+            ("nearbyVoiceChatToggles", NEARBY_VOICE_CHAT_TOGGLES),
+            ("sceneSourceRotations", SOURCE_ROTATIONS),
+            ("mappingNetworks", CONTRACT_NETWORKS),
+            ("mappingTypes", MAPPING_TYPES),
+        ];
+        assert_eq!(
+            upstream.keys().collect::<HashSet<_>>(),
+            copied
+                .iter()
+                .map(|(k, _)| k.to_string())
+                .collect::<Vec<_>>()
+                .iter()
+                .collect(),
+            "every extracted enum is compared"
+        );
+        for (name, values) in copied {
+            assert_eq!(upstream[name], json!(values), "{name}");
+        }
     }
 
     #[test]

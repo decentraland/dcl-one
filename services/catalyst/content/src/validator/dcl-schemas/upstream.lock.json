@@ -1,0 +1,22 @@
+{
+  "repository": "https://github.com/decentraland/schemas",
+  "revision": "2f30650098f18c2e989301f1d6894b85bf6d2459",
+  "package": "@dcl/schemas",
+  "version": "27.2.0",
+  "tarball": "https://registry.npmjs.org/@dcl/schemas/-/schemas-27.2.0.tgz",
+  "integrity": "sha512-VoiwWqskTa9bXAp4X64yyYhZCfVcE77NyHP/1C746DA5IhA1OkCDn6JSrDzgRfkxmFcWOU7j3VVNtGBllYCYlw==",
+  "license": {
+    "spdx": "Apache-2.0"
+  },
+  "normalization": "enums.json is the stdout of extract-enums.js run on the published package: the enum values the metadata schema port copies, read from the compiled schemas, as two-space indented JSON with a trailing LF. No upstream file is imported.",
+  "files": {
+    "enums.json": "8b3b9c020a82b069f72f250e1e5683fe882d8c93c9ce5f472c4082b8bb229291",
+    "extract-enums.js": "3c7db39ba47b6ea0e2174db8b467dcd23a8c2f83989fbc8c6103b771340d96d7"
+  },
+  "update_instructions": [
+    "In an empty directory outside the tree: npm install --no-save --ignore-scripts @dcl/schemas@<version>, and check the installed version and integrity against the production lockfile.",
+    "Run node services/catalyst/content/src/validator/dcl-schemas/extract-enums.js <dir>/node_modules/@dcl/schemas > services/catalyst/content/src/validator/dcl-schemas/enums.json.",
+    "Update version, revision (npm view @dcl/schemas@<version> gitHead), tarball, integrity and the file hashes here.",
+    "Run cargo test -p catalyst-content metadata_schema; a changed enum fails the copied-enum test until the constants in metadata_schema.rs match."
+  ]
+}
