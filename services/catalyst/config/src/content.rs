@@ -155,8 +155,10 @@ pub struct ContentConfig {
     )]
     pub max_in_memory_deployment_bytes: u64,
 
-    /// `POST /entities` requests one client address may make per 24 hours
-    /// (counted once the form is read); 0 turns the quota off.
+    /// `POST /entities` requests one client address (IPv6 by /64) may make per
+    /// 24 hours, counted on admission and given back when the node answers 503;
+    /// 0 turns the quota off. Kept per process: N upstreams admit N times it,
+    /// and a restart resets it.
     #[arg(long, env = "POST_ENTITIES_DAILY_QUOTA_MAX", default_value_t = 300)]
     pub post_entities_daily_quota_max: u32,
 }
@@ -328,6 +330,15 @@ mod tests {
         assert_eq!(c.content.bloom_filter_expected_elements, 10_000_000);
         assert_eq!(c.content.sync_profile_max_age_days, 365);
         assert!(!c.content.read_through_enabled);
+        assert_eq!(
+            (
+                c.content.max_upload_field_count,
+                c.content.max_upload_field_size,
+                c.content.max_in_memory_deployment_bytes,
+                c.content.post_entities_daily_quota_max
+            ),
+            (32, 32 * 1024, 2 * 1024 * 1024 * 1024, 300)
+        );
         assert!(c.content.retry_failed_enabled);
         assert_eq!(c.content.max_failed_deployment_retries, 10);
         assert_eq!(c.content.sync_retry_concurrency, 10);

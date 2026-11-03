@@ -1218,3 +1218,131 @@ async fn a_body_past_the_upload_budget_is_shed_with_retry_after() {
         "a finished request returns its reservation"
     );
 }
+
+#[tokio::test]
+async fn forms_refused_for_their_field_limits_count_toward_the_quota() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 2,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-parse-failures", settings).await;
+    let router = node.router();
+    let mut large = entity_form();
+    large.push(("big".to_string(), "x".repeat(32 * 1024 + 1)));
+    for _ in 0..2 {
+        let (status, _, _) = call(&router, form_request("203.0.113.10", &large)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+    let (status, _, _) = call(&router, form_request("203.0.113.10", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn deploys_the_node_answers_503_are_given_back() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-refund", settings).await;
+    // An unsynced copy taking only scenes: a form without a scene file is 503.
+    node.state.sync.set_unsynced_copy(true);
+    node.state
+        .sync
+        .set_copy_deploy_types(vec!["scene".to_string()]);
+    let router = node.router();
+    for _ in 0..3 {
+        let (status, _, _) = call(&router, form_request("203.0.113.11", &entity_form())).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+    node.state.sync.set_unsynced_copy(false);
+    let (status, _, _) = call(&router, form_request("203.0.113.11", &entity_form())).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "the quota is untouched");
+    let (status, _, _) = call(&router, form_request("203.0.113.11", &entity_form())).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
+async fn a_request_without_a_client_address_skips_the_quota() {
+    let settings = Settings {
+        post_entities_daily_quota_max: 1,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("quota-no-address", settings).await;
+    let router = node.router();
+    for _ in 0..3 {
+        let mut req = form_request("", &entity_form());
+        req.headers_mut().remove("x-real-ip");
+        let (status, _, _) = call(&router, req).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn a_chunked_body_reserves_the_whole_body_cap() {
+    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: 2 * cap,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-budget-chunked", settings).await;
+    let router = node.router();
+    let _held = node.state.upload_budget.try_reserve(cap + 1).unwrap();
+
+    let mut chunked = form_request("203.0.113.12", &entity_form());
+    chunked.headers_mut().remove(header::CONTENT_LENGTH);
+    let (status, _, _) = call(&router, chunked).await;
+    assert_eq!(
+        status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "the cap does not fit"
+    );
+
+    let (status, _, _) = call(&router, form_request("203.0.113.12", &entity_form())).await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a declared small body fits"
+    );
+}
+
+#[tokio::test]
+async fn a_cancelled_request_returns_its_reservation() {
+    let cap = super::create_entity::MAX_DEPLOYMENT_BYTES as u64;
+    let settings = Settings {
+        max_in_memory_deployment_bytes: cap,
+        ..Settings::for_tests()
+    };
+    let node = deploying_node("upload-budget-cancel", settings).await;
+    let router = node.router();
+
+    let (mut tx, rx) = futures::channel::mpsc::channel::<Result<Bytes, std::io::Error>>(1);
+    let boundary = "catalyst-admission-boundary";
+    tx.try_send(Ok(Bytes::from(format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"entityId\"\r\n\r\nba"
+    ))))
+    .unwrap();
+    let req = Request::post("/content/entities")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .header("x-real-ip", "203.0.113.13")
+        .body(Body::from_stream(rx))
+        .unwrap();
+    let pending = tokio::spawn(router.clone().oneshot(req));
+
+    let budget = &node.state.upload_budget;
+    let mut waited = 0;
+    while budget.try_reserve(1).is_some() {
+        assert!(waited < 500, "the request never reserved");
+        waited += 1;
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    pending.abort();
+    let _ = pending.await;
+    drop(tx);
+    assert!(
+        budget.try_reserve(cap).is_some(),
+        "the aborted request gave its reservation back"
+    );
+}

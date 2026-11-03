@@ -15,12 +15,13 @@
 //! `Retry-After` when this node could not decide (a source unset or down,
 //! the store unreadable); the gates of [`super::writes`] before any of it
 //! (503 disabled, 403 read-only) and the old 503 while the node is
-//! bootstrapping. Before the body is read, a client address past its daily
-//! quota answers 429 and a body that does not fit the in-memory upload
-//! budget 503, both with `Retry-After` ([`super::upload_admission`]); a form
-//! over its field limits answers 400. The per-second request rate is the
-//! gateway's (`limit_req zone=deploy`, `infra/gateway/gateway.py`); the
-//! per-pointer TTLs are the deployer's.
+//! bootstrapping. Before the body is read, a body that does not fit the
+//! in-memory upload budget answers 503 and a client address past its daily
+//! quota 429, both with `Retry-After` ([`super::upload_admission`], per
+//! process). The quota counts every admitted request, a form refused for
+//! its field limits (400) included, and gives back the ones answered 503.
+//! The per-second request rate is the gateway's (`limit_req zone=deploy`,
+//! `infra/gateway/gateway.py`); the per-pointer TTLs are the deployer's.
 
 use std::collections::BTreeMap;
 
@@ -232,28 +233,28 @@ pub fn deployment_failure_response(failure: DeployFailure) -> Response {
         DeployFailure::Rejected(errors) => (StatusCode::BAD_REQUEST, errors),
         DeployFailure::Unavailable(errors) => (StatusCode::SERVICE_UNAVAILABLE, errors),
     };
-    let mut response = (status, Json(json!({ "errors": errors }))).into_response();
+    let response = (status, Json(json!({ "errors": errors }))).into_response();
     if unavailable {
-        response.headers_mut().insert(
-            header::RETRY_AFTER,
+        return with_retry_after(
+            response,
             header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
         );
     }
     response
 }
 
+/// `response` with a `Retry-After` of `value`.
+fn with_retry_after(mut response: Response, value: header::HeaderValue) -> Response {
+    response.headers_mut().insert(header::RETRY_AFTER, value);
+    response
+}
+
 /// 429 with `Retry-After` for a client past its daily quota.
 fn quota_exceeded_response(retry_after_secs: u64) -> Response {
-    let mut response = (
-        StatusCode::TOO_MANY_REQUESTS,
-        Json(json!({ "error": "Too many requests" })),
-    )
-        .into_response();
-    response.headers_mut().insert(
-        header::RETRY_AFTER,
+    with_retry_after(
+        super::errors::json_error(StatusCode::TOO_MANY_REQUESTS, "Too many requests"),
         header::HeaderValue::from(retry_after_secs),
-    );
-    response
+    )
 }
 
 /// The bytes a body can occupy: its declared length, else the body cap.
@@ -269,7 +270,7 @@ fn declared_body_bytes(headers: &HeaderMap) -> u64 {
 pub async fn create_entity(
     State(state): State<SharedState>,
     headers: HeaderMap,
-    mut multipart: Multipart,
+    multipart: Multipart,
 ) -> AppResult<Response> {
     let request_started = std::time::Instant::now();
     if let Some(refused) = writes::refuse(&state) {
@@ -287,25 +288,44 @@ pub async fn create_entity(
         return bootstrapping();
     }
 
-    let source = crate::shared::client_ip::client_ip(&headers);
-    if let Some(retry_after) = state.deploy_quota.exhausted(&source) {
-        return Ok(quota_exceeded_response(retry_after));
-    }
     let Some(_reservation) = state
         .upload_budget
         .try_reserve(declared_body_bytes(&headers))
     else {
-        let mut response = super::errors::json_error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            super::upload_admission::BUDGET_EXHAUSTED_MESSAGE,
-        );
-        response.headers_mut().insert(
-            header::RETRY_AFTER,
+        return Ok(with_retry_after(
+            super::errors::json_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                super::upload_admission::BUDGET_EXHAUSTED_MESSAGE,
+            ),
             header::HeaderValue::from_static(writes::UNAVAILABLE_RETRY_AFTER_SECS),
-        );
-        return Ok(response);
+        ));
+    };
+    let client_ip = crate::shared::client_ip::client_ip(&headers);
+    let charge = match state.deploy_quota.try_consume(&client_ip) {
+        Ok(charge) => charge,
+        Err(retry_after) => return Ok(quota_exceeded_response(retry_after)),
     };
 
+    let response = deploy_form(&state, deployer, &headers, multipart, request_started)
+        .await
+        .unwrap_or_else(IntoResponse::into_response);
+    // The node could not take it: not the client's deploy to spend.
+    if response.status() == StatusCode::SERVICE_UNAVAILABLE
+        && let Some(charge) = charge
+    {
+        charge.refund();
+    }
+    Ok(response)
+}
+
+/// Reads an admitted form and deploys it.
+async fn deploy_form(
+    state: &SharedState,
+    deployer: std::sync::Arc<super::write_deployer::WriteDeployer>,
+    headers: &HeaderMap,
+    mut multipart: Multipart,
+    request_started: std::time::Instant,
+) -> AppResult<Response> {
     let settings = &state.settings;
     let (fields, files) = read_form(
         &mut multipart,
@@ -313,9 +333,6 @@ pub async fn create_entity(
         settings.max_upload_field_bytes,
     )
     .await?;
-    if let Err(retry_after) = state.deploy_quota.consume(&source) {
-        return Ok(quota_exceeded_response(retry_after));
-    }
     let entity_id = fields
         .get("entityId")
         .ok_or_else(|| invalid("Missing entityId field"))?
@@ -323,7 +340,9 @@ pub async fn create_entity(
     if !state.sync.takes_deploys()
         && !entity_type_of(&files, &entity_id).is_some_and(|t| state.sync.takes_deploys_of(&t))
     {
-        return bootstrapping();
+        return Err(AppError::ServiceUnavailable(
+            writes::BOOTSTRAPPING_MESSAGE.to_string(),
+        ));
     }
     let auth_chain = auth_chain_of(&fields, &entity_id)?;
 
