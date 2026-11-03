@@ -369,7 +369,8 @@ async fn the_ninth_socket_of_an_address_ends_its_oldest() {
 async fn a_send_past_the_backpressure_limit_closes_slow_consumer() {
     let settings = Settings {
         auth_window_secs: 5,
-        ws_max_backpressure_bytes: 1024,
+        // The handler retains this raw number; the native writer wraps to 1024.
+        ws_max_backpressure_bytes: 4294968320.5,
         stream: crate::rpc::stream::StreamLimits {
             messages_per_second: 1e9,
             message_burst: 1_000_000_000,

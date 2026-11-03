@@ -416,7 +416,10 @@ impl Session {
         let idle = IdleTimer::new(state.settings.ws_idle_timeout_secs);
         let outbox = Outbox::spawn(
             sink,
-            state.settings.ws_max_backpressure_bytes,
+            crate::shared::rpc::ws::native_backpressure_limit(
+                state.settings.ws_max_backpressure_bytes,
+            )
+            .expect("validated native backpressure"),
             idle.clone(),
             close.clone(),
         );

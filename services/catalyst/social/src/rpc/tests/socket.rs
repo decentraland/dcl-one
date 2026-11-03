@@ -642,7 +642,8 @@ async fn ordinary_large_reader_case(idle_only: bool) {
     };
     let _turn = VOICE_TABLE.lock().await;
     let settings = Settings {
-        ws_max_backpressure_bytes: 1024,
+        // Queue capacity uses the raw number; the physical writer wraps to 1024.
+        ws_max_backpressure_bytes: 4294968320.5,
         ws_idle_timeout_secs: if idle_only { 8 } else { 300 },
         ordinary_transport: crate::shared::rpc::ws::OrdinaryQueueConfig {
             retry_delay_ms: 10.0,

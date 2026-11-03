@@ -33,13 +33,9 @@ impl Default for OrdinaryQueueConfig {
     }
 }
 impl OrdinaryQueueConfig {
-    pub fn capacity(self, max_backpressure: usize) -> Result<f64, &'static str> {
-        if max_backpressure == 0 {
-            return Err(
-                "WS_MAX_BACKPRESSURE must be positive for the bounded ordinary RPC writer; zero disables the source native buffer limit and is unsupported",
-            );
-        }
-        let estimate = (max_backpressure as f64 / self.estimated_message_size).ceil();
+    pub fn capacity(self, max_backpressure: f64) -> Result<f64, &'static str> {
+        native_backpressure_limit(max_backpressure)?;
+        let estimate = (max_backpressure / self.estimated_message_size).ceil();
         let adaptive = js_max(
             self.min_queue_size,
             js_min(self.max_queue_size_limit, estimate),
@@ -51,6 +47,20 @@ impl OrdinaryQueueConfig {
             Err("WS_TRANSPORT settings must produce a finite ordinary message queue capacity")
         }
     }
+}
+/// uWS assigns Int32Value to its unsigned-32-bit maxBackpressure field. The
+/// ordinary queue separately consumes the original number before conversion.
+pub fn native_backpressure_limit(number: f64) -> Result<usize, &'static str> {
+    if !number.is_finite() {
+        return Err("WS_MAX_BACKPRESSURE must be finite for the bounded RPC writer");
+    }
+    let bytes = number.trunc().rem_euclid(4294967296.0) as u32;
+    if bytes == 0 {
+        return Err(
+            "WS_MAX_BACKPRESSURE resolves to zero; zero disables the source native buffer limit and is unsupported",
+        );
+    }
+    Ok(bytes as usize)
 }
 fn js_min(a: f64, b: f64) -> f64 {
     if a.is_nan() || b.is_nan() {
@@ -94,7 +104,7 @@ struct Queue {
     metrics: Vec<serde_json::Value>,
 }
 impl Queue {
-    fn new(config: OrdinaryQueueConfig, max_backpressure: usize) -> Self {
+    fn new(config: OrdinaryQueueConfig, max_backpressure: f64) -> Self {
         Self {
             config,
             capacity: config
@@ -244,7 +254,7 @@ impl OrdinaryLane {
         output: UnboundedSender<OrdinaryOutbound>,
         budget: Arc<ByteBudget>,
         close: Arc<SocketClose>,
-        max_backpressure: usize,
+        max_backpressure: f64,
     ) -> Arc<Self> {
         let lane = Arc::new(Self {
             queue: Mutex::new(Queue::new(config, max_backpressure)),

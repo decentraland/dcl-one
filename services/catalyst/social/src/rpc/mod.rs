@@ -103,10 +103,9 @@ pub struct Settings {
     pub ws_max_concurrent_connections: Option<usize>,
     /// `WS_MAX_PAYLOAD_LENGTH`: the largest inbound frame.
     pub ws_max_payload_bytes: usize,
-    /// `WS_MAX_BACKPRESSURE`: bytes a `/v1/stream` socket may have waiting to
-    /// be written when another is sent; past it the send closes the socket
-    /// 1008 `Slow consumer`.
-    pub ws_max_backpressure_bytes: usize,
+    /// Raw `WS_MAX_BACKPRESSURE` number: the ordinary queue uses it directly;
+    /// both socket writers use its native uWS unsigned-32-bit byte threshold.
+    pub ws_max_backpressure_bytes: f64,
     pub ordinary_transport: OrdinaryQueueConfig,
     /// The per-address limits both sockets share (`WS_MAX_CONNECTIONS_PER_ADDRESS`,
     /// `WS_SUBSCRIPTIONS_PER_SECOND`, `WS_SUBSCRIPTION_BURST`, `WS_ADDRESS_BUDGET_CAPACITY`).
@@ -143,7 +142,7 @@ impl Default for Settings {
             community_voice_chat_polling_job_interval_ms: 45_000,
             ws_max_concurrent_connections: None,
             ws_max_payload_bytes: 1024 * 1024,
-            ws_max_backpressure_bytes: 128 * 1024,
+            ws_max_backpressure_bytes: 131072.0,
             ordinary_transport: OrdinaryQueueConfig::default(),
             admission: Default::default(),
             friendship_limits: Default::default(),

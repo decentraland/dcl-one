@@ -371,10 +371,10 @@ pub struct SocialConfig {
     #[arg(long, env = "WS_MAX_PAYLOAD_LENGTH", default_value_t = 1_048_576)]
     pub ws_max_payload_length: usize,
 
-    /// Bytes a /social-rpc/v1/stream socket may have waiting to be written
-    /// when another frame is sent; past it the socket closes 1008 `Slow consumer`.
-    #[arg(long, env = "WS_MAX_BACKPRESSURE", default_value_t = 131_072)]
-    pub ws_max_backpressure: usize,
+    /// Source number used by the ordinary RPC queue. Socket writers truncate
+    /// and wrap it to an unsigned-32-bit byte threshold before enforcing it.
+    #[arg(long, env = "WS_MAX_BACKPRESSURE", default_value_t = 131072.0, value_parser = source_number, allow_hyphen_values = true)]
+    pub ws_max_backpressure: f64,
 
     /// Source ordinary RPC queue and retry settings.
     #[arg(long, env = "WS_TRANSPORT_MAX_QUEUE_SIZE", default_value_t = 1000.0, value_parser = source_number, allow_hyphen_values = true)]
@@ -1081,6 +1081,30 @@ mod tests {
     }
 
     #[test]
+    fn backpressure_numbers_preserve_source_raw_value_before_native_conversion() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/social/ws-backpressure-source-cases.json"
+        )))
+        .unwrap();
+        for case in fixture["cases"].as_array().unwrap() {
+            let raw = case["raw"].as_str();
+            let configured = social(
+                &raw.map(|raw| vec![("WS_MAX_BACKPRESSURE", raw)])
+                    .unwrap_or_default(),
+            );
+            if case.get("error").is_some() {
+                assert!(configured.is_err(), "{raw:?}");
+                continue;
+            }
+            let expected = case["number"]
+                .as_f64()
+                .unwrap_or_else(|| case["number"].as_str().unwrap().parse().unwrap());
+            assert_eq!(configured.unwrap().ws_max_backpressure, expected, "{raw:?}");
+        }
+    }
+
+    #[test]
     fn socket_numeric_settings_match_executed_source_and_native_idle_admission() {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -1150,7 +1174,7 @@ mod tests {
     #[test]
     fn socket_limits_read_upstreams_variables() {
         let defaults = social(&[]).unwrap();
-        assert_eq!(defaults.ws_max_backpressure, 128 * 1024);
+        assert_eq!(defaults.ws_max_backpressure, 131072.0);
         assert_eq!(defaults.ws_max_connections_per_address, 8);
         assert_eq!(defaults.ws_subscriptions_per_second, 2.0);
         assert_eq!(defaults.ws_subscription_burst, 24);
@@ -1181,7 +1205,7 @@ mod tests {
                 set.stream_ws_messages_per_second,
                 set.stream_ws_message_burst,
             ),
-            (1024, 2, 0.5, 3, 4, 5, 6.5, 7)
+            (1024.0, 2, 0.5, 3, 4, 5, 6.5, 7)
         );
         for refused in [
             ("WS_MAX_CONNECTIONS_PER_ADDRESS", "0"),

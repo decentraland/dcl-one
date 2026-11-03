@@ -49,8 +49,8 @@ fn source_transport_timer_drain_errors_and_capacity_traces() {
         let max = case["config"]["WS_MAX_BACKPRESSURE"]
             .as_str()
             .map(|v| v.parse().unwrap())
-            .unwrap_or(131072);
-        if case["capacity"].is_string() || max == 0 {
+            .unwrap_or(131072.0);
+        if case["capacity"].is_string() || max == 0.0 {
             assert!(
                 config(&case["configuration"]).capacity(max).is_err(),
                 "explicit bounded-mode startup difference: {id}"
@@ -98,7 +98,7 @@ fn source_transport_timer_drain_errors_and_capacity_traces() {
                 if connected {
                     queue.process(now, |bytes| {
                         let result = if threshold {
-                            let result = if buffered > max { 2 } else { 0 };
+                            let result = if buffered as f64 > max { 2 } else { 0 };
                             if result != 2 { buffered += bytes.len(); }
                             json!(result)
                         } else {
@@ -152,10 +152,10 @@ fn nonfinite_computed_capacity_is_rejected_and_finite_fraction_is_preserved() {
         min_queue_size: f64::INFINITY,
         ..Default::default()
     };
-    assert!(config.capacity(131072).is_err());
+    assert!(config.capacity(131072.0).is_err());
     assert!(
         OrdinaryQueueConfig::default()
-            .capacity(0)
+            .capacity(0.0)
             .unwrap_err()
             .contains("zero disables")
     );
@@ -164,14 +164,71 @@ fn nonfinite_computed_capacity_is_rejected_and_finite_fraction_is_preserved() {
             max_queue_size: 1.5,
             ..Default::default()
         }
-        .capacity(131072)
+        .capacity(131072.0)
         .unwrap(),
         1.5
     );
     assert_eq!(
-        OrdinaryQueueConfig::default().capacity(131072).unwrap(),
+        OrdinaryQueueConfig::default().capacity(131072.0).unwrap(),
         128.0
     );
+}
+
+#[test]
+fn backpressure_uses_source_raw_queue_capacity_and_native_wrapped_writer_limit() {
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/ws-backpressure-source-cases.json"
+    )))
+    .unwrap();
+    for case in fixture["cases"].as_array().unwrap() {
+        if case.get("error").is_some() {
+            continue;
+        }
+        let raw = &case["raw"];
+        let number = case["number"]
+            .as_f64()
+            .unwrap_or_else(|| case["number"].as_str().unwrap().parse().unwrap());
+        let config = OrdinaryQueueConfig::default();
+        if case["bounded_target_supported"] == false {
+            assert!(native_backpressure_limit(number).is_err(), "{raw}");
+            assert!(config.capacity(number).is_err(), "{raw}");
+            continue;
+        }
+        let native = native_backpressure_limit(number).unwrap();
+        assert_eq!(native as u64, case["native_u32"].as_u64().unwrap(), "{raw}");
+        let mut queue = Queue::new(config, number);
+        assert_eq!(queue.capacity, case["capacity"].as_f64().unwrap(), "{raw}");
+        // Retain the raw capacity through the production queue, then compare
+        // actual admission/overflow and send count with the source execution.
+        let mut completions = Vec::new();
+        let mut sends = 0;
+        let mut overflow_at = None;
+        let now = Instant::now();
+        for index in 1..=1001 {
+            completions.push(queue.enqueue(vec![1], true));
+            queue.process(
+                now,
+                |_| {
+                    sends += 1;
+                    SendOutcome::Code(2)
+                },
+                || 0,
+            );
+            if !queue.active {
+                overflow_at = Some(index);
+                break;
+            }
+        }
+        assert_eq!(json!(overflow_at), case["overflow_at"], "{raw}");
+        assert_eq!(json!(sends), case["send_calls"], "{raw}");
+        assert_eq!(json!(queue.errors), case["errors"], "{raw}");
+        let budget = ByteBudget::new(native);
+        let crossing = budget.try_reserve_buffered(native + 1).unwrap();
+        assert!(crossing.1, "{raw}");
+        assert!(budget.try_reserve_buffered(1).is_none(), "{raw}");
+        drop(crossing);
+    }
 }
 
 #[tokio::test(start_paused = true)]
@@ -184,7 +241,7 @@ async fn writer_budget_admits_crossing_frame_drains_promptly_and_does_not_duplic
         output,
         budget.clone(),
         close.clone(),
-        1024,
+        1024.0,
     );
     // Bytes exactly at the threshold still admit the next frame.
     let at_limit = budget.reserve(1024).await;
@@ -225,7 +282,7 @@ async fn stopped_writer_bounds_pending_queue_and_retires_socket() {
         max_queue_size_limit: 2.0,
         ..Default::default()
     };
-    let lane = OrdinaryLane::new(config, output, budget, close.clone(), 1024);
+    let lane = OrdinaryLane::new(config, output, budget, close.clone(), 1024.0);
     lane.send(vec![1; 2048]).await.unwrap().unwrap();
     let one = lane.send(vec![2]);
     let two = lane.send(vec![3]);
@@ -291,7 +348,7 @@ fn source_declared_metric_kinds_match_actual_queue_registration() {
     .unwrap();
     let recorder = Kinds::default();
     metrics::with_local_recorder(&recorder, || {
-        let mut queue = Queue::new(OrdinaryQueueConfig::default(), 131072);
+        let mut queue = Queue::new(OrdinaryQueueConfig::default(), 131072.0);
         let _completion = queue.enqueue(vec![1], true);
         queue.process(Instant::now(), |_| SendOutcome::Code(1), || 4096);
     });

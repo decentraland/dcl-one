@@ -6,7 +6,7 @@ mod idle;
 mod ordinary;
 use byte_budget::ByteBudget;
 pub use idle::{IdleAction, IdleTimer};
-pub use ordinary::OrdinaryQueueConfig;
+pub use ordinary::{OrdinaryQueueConfig, native_backpressure_limit};
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -144,7 +144,7 @@ impl AxumWsTransport {
         address: String,
         close: Arc<SocketClose>,
         idle: IdleTimer,
-        max_backpressure: usize,
+        max_backpressure: f64,
         ordinary: OrdinaryQueueConfig,
     ) -> (Self, JoinHandle<()>) {
         ordinary
@@ -155,8 +155,8 @@ impl AxumWsTransport {
             address,
             close,
             idle,
-            max_backpressure,
-            Some(ordinary),
+            native_backpressure_limit(max_backpressure).expect("validated native backpressure"),
+            Some((ordinary, max_backpressure)),
         )
     }
 
@@ -166,19 +166,19 @@ impl AxumWsTransport {
         close: Arc<SocketClose>,
         idle: IdleTimer,
         max_backpressure: usize,
-        ordinary_config: Option<OrdinaryQueueConfig>,
+        ordinary_config: Option<(OrdinaryQueueConfig, f64)>,
     ) -> (Self, JoinHandle<()>) {
         let (mut sink, mut stream) = socket.split();
         let (inbound_tx, inbound_rx) = unbounded_channel::<TransportMessage>();
         let (outbound_tx, outbound_rx) = unbounded_channel::<OrdinaryOutbound>();
         let budget = ByteBudget::new(max_backpressure);
-        let ordinary = ordinary_config.map(|config| {
+        let ordinary = ordinary_config.map(|(config, raw_max_backpressure)| {
             ordinary::OrdinaryLane::new(
                 config,
                 outbound_tx.clone(),
                 budget.clone(),
                 close.clone(),
-                max_backpressure,
+                raw_max_backpressure,
             )
         });
         let (guarded_tx, guarded_rx) = channel(GUARDED_CAPACITY);
