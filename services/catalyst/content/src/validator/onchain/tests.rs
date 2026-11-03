@@ -324,6 +324,39 @@ async fn items_are_owned_by_token_and_third_party_nfts_by_their_standard() {
 }
 
 #[tokio::test]
+async fn case_variants_are_asked_and_malformed_collection_urns_are_never_owned() {
+    let v2 = "0x0002000000000000000000000000000000000001";
+    let chain = fake_chain::serve(move |q, _| match q {
+        Query::OwnerOf { contract, token } if *contract == addr(v2) => {
+            Reply::Owner(if *token == U256::from(42) {
+                addr(OWNER)
+            } else {
+                addr(STRANGER)
+            })
+        }
+        other => panic!("{other:?}"),
+    })
+    .await;
+    let a = access(None, Some(&chain.url));
+    let mixed = vec![format!(
+        "urn:decentraland:MATIC:Collections-V2:0X{}:0:42",
+        &v2[2..]
+    )];
+    assert_eq!(a.items(OWNER, &mixed, TS).await.unwrap(), vec![true]);
+    assert_eq!(a.items(STRANGER, &mixed, TS).await.unwrap(), vec![false]);
+    chain.clear();
+    let malformed = vec![
+        format!("urn:decentraland:matic:collections-v2:{v2}:0:42:extra"),
+        format!("urn:decentraland:foo:collections-v2:{v2}:0:42"),
+    ];
+    assert_eq!(
+        a.items(OWNER, &malformed, TS).await.unwrap(),
+        vec![false, false]
+    );
+    assert!(chain.calls().is_empty(), "{:?}", chain.calls());
+}
+
+#[tokio::test]
 async fn a_check_the_rpc_cannot_answer_is_an_error_never_a_grant() {
     let at = at_deployment(TS);
     let chain = fake_chain::serve(move |q, block| match q {

@@ -1,9 +1,9 @@
 //! Which item URNs an ownership check asks the chain about, as
 //! `@dcl/urn-resolver` resolves them and the reference client splits them:
-//! a collections-v1 item on L1 and a collections-v2 item on L2 by their
-//! token, a third-party item by its linked NFT on the chain it names.
-//! Anything else (assets without a token, off-chain and unparsable URNs) is
-//! not asked about.
+//! a collections-v1 or v2 item by its token on the chain its network names,
+//! a third-party item by its linked NFT on the chain it names. Assets
+//! without a token and URNs that are not collection items are not asked
+//! about; a collection URN that names no item it can ask about is never owned.
 
 use std::sync::LazyLock;
 
@@ -46,6 +46,8 @@ pub fn v1_collection_contract(name: &str) -> Option<Address> {
 pub enum ItemRef {
     /// Not an item with a token: counts as owned.
     NotAsked,
+    /// A collection URN naming no item that can be asked about: never owned.
+    Malformed,
     /// A collection item: `ownerOf(token)` on `contract` (`None`: a v1
     /// collection name with no known contract, never owned).
     Token {
@@ -65,7 +67,7 @@ impl ItemRef {
     /// The layer the check reads, `None` when nothing is read.
     pub fn on_l1(&self) -> Option<bool> {
         match self {
-            ItemRef::NotAsked => None,
+            ItemRef::NotAsked | ItemRef::Malformed => None,
             ItemRef::Token { l1, .. } | ItemRef::ThirdParty { l1, .. } => Some(*l1),
         }
     }
@@ -90,99 +92,100 @@ fn is_digits(s: &str) -> bool {
     !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
 }
 
-/// A URN network the resolver knows (`mainnet` is spelled `ethereum`):
-/// `Some(true)` on L1, `Some(false)` on L2.
+/// A lowercase URN network the resolver knows (`mainnet` is spelled
+/// `ethereum`): `Some(true)` on L1, `Some(false)` on L2.
 fn layer(network: &str) -> Option<bool> {
-    let network = network.to_lowercase();
-    if network == "ethereum" || (network != "mainnet" && L1_NETWORKS.contains(&network.as_str())) {
+    if network == "ethereum" || (network != "mainnet" && L1_NETWORKS.contains(&network)) {
         Some(true)
-    } else if L2_NETWORKS.contains(&network.as_str()) {
+    } else if L2_NETWORKS.contains(&network) {
         Some(false)
     } else {
         None
     }
 }
 
-/// An address the call can be sent to; an unparsable one is never owned.
-fn contract(s: &str) -> Option<Address> {
-    s.parse().ok()
+/// The chain a third-party item's NFT lives on.
+fn nft_layer(chain: &str) -> Option<bool> {
+    if chain == "ethereum" || L1_NETWORKS.contains(&chain) {
+        Some(true)
+    } else if L2_NETWORKS.contains(&chain) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+/// `ownerOf(id)` on `contract`; a token or address that does not parse is never owned.
+fn token_ref(l1: bool, contract: Option<Address>, id: &str) -> ItemRef {
+    match U256::from_str_radix(id, 10).ok() {
+        Some(token) => ItemRef::Token {
+            l1,
+            contract,
+            token,
+        },
+        None => ItemRef::Malformed,
+    }
 }
 
 pub fn item_ref(urn: &str) -> ItemRef {
+    let urn = urn.to_lowercase();
     let parts: Vec<&str> = urn.split(':').collect();
     let ["urn", "decentraland", network, kind, rest @ ..] = &parts[..] else {
         return ItemRef::NotAsked;
     };
     let (network, kind) = (*network, *kind);
-    let Some(l1) = layer(network) else {
+    if !matches!(
+        kind,
+        "collections-v1" | "collections-v2" | "collections-thirdparty"
+    ) {
         return ItemRef::NotAsked;
+    }
+    let Some(l1) = layer(network) else {
+        return ItemRef::Malformed;
     };
-    let token = |s: &str| U256::from_str_radix(s, 10).ok();
     match (kind, rest) {
-        ("collections-v1", [collection, _name, id]) if l1 && is_digits(id) => {
-            let address = if is_hex_address(collection) {
-                contract(collection)
+        // A collection or an asset without a token: the reference counts it as owned.
+        ("collections-v1", [_] | [_, _]) => ItemRef::NotAsked,
+        ("collections-v1", [collection, _name, id]) if is_digits(id) => {
+            if is_hex_address(collection) {
+                token_ref(l1, collection.parse().ok(), id)
             } else if network == "ethereum" {
-                v1_collection_contract(collection)
+                token_ref(l1, v1_collection_contract(collection), id)
             } else {
-                return ItemRef::NotAsked;
-            };
-            match token(id) {
-                Some(token) => ItemRef::Token {
-                    l1,
-                    contract: address,
-                    token,
-                },
-                None => ItemRef::Token {
-                    l1,
-                    contract: None,
-                    token: U256::ZERO,
-                },
+                ItemRef::Malformed
             }
         }
+        ("collections-v2", [collection]) if is_hex_address(collection) => ItemRef::NotAsked,
+        ("collections-v2", [collection, item])
+            if is_hex_address(collection) && (is_hex_address(item) || is_digits(item)) =>
+        {
+            ItemRef::NotAsked
+        }
         ("collections-v2", [collection, item, id])
-            if !l1
-                && is_hex_address(collection)
+            if is_hex_address(collection)
                 && (is_hex_address(item) || is_digits(item))
                 && is_digits(id) =>
         {
-            match token(id) {
-                Some(token) => ItemRef::Token {
-                    l1,
-                    contract: contract(collection),
-                    token,
-                },
-                None => ItemRef::Token {
-                    l1,
-                    contract: None,
-                    token: U256::ZERO,
-                },
-            }
+            token_ref(l1, collection.parse().ok(), id)
         }
+        ("collections-thirdparty", [_] | [_, _] | [_, _, _]) if !l1 => ItemRef::NotAsked,
         ("collections-thirdparty", [_tp, _collection, _item, nft_chain, nft_contract, id])
             if !l1 && is_hex_address(nft_contract) && is_digits(id) =>
         {
-            let nft_l1 = if L1_NETWORKS.contains(nft_chain) {
-                true
-            } else if L2_NETWORKS.contains(nft_chain) {
-                false
-            } else {
-                return ItemRef::NotAsked;
-            };
-            match (contract(nft_contract), token(id)) {
-                (Some(contract), Some(token)) => ItemRef::ThirdParty {
-                    l1: nft_l1,
+            match (
+                nft_layer(nft_chain),
+                nft_contract.parse::<Address>().ok(),
+                U256::from_str_radix(id, 10).ok(),
+            ) {
+                (Some(l1), Some(contract), Some(token)) => ItemRef::ThirdParty {
+                    l1,
                     contract,
                     token,
                 },
-                _ => ItemRef::Token {
-                    l1: nft_l1,
-                    contract: None,
-                    token: U256::ZERO,
-                },
+                _ => ItemRef::Malformed,
             }
         }
-        _ => ItemRef::NotAsked,
+        _ => ItemRef::Malformed,
     }
 }
 
@@ -195,41 +198,36 @@ mod tests {
     #[test]
     fn items_with_a_token_are_asked_and_assets_are_not() {
         let addr: Address = A.parse().unwrap();
+        let token = |l1, contract, n: u64| ItemRef::Token {
+            l1,
+            contract,
+            token: U256::from(n),
+        };
         assert_eq!(
             item_ref(&format!("urn:decentraland:matic:collections-v2:{A}:1:42")),
-            ItemRef::Token {
-                l1: false,
-                contract: Some(addr),
-                token: U256::from(42)
-            }
+            token(false, Some(addr), 42)
         );
         assert_eq!(
             item_ref(&format!("urn:decentraland:AMOY:collections-v2:{A}:0x1:7")),
-            ItemRef::Token {
-                l1: false,
-                contract: Some(addr),
-                token: U256::from(7)
-            }
+            token(false, Some(addr), 7)
         );
         assert_eq!(
+            item_ref(&format!("urn:decentraland:sepolia:collections-v2:{A}:0:5")),
+            token(true, Some(addr), 5),
+            "a v2 item on an L1 network is asked on L1, as the reference splits it"
+        );
+        assert_eq!(
+            item_ref(&format!("urn:decentraland:matic:collections-v1:{A}:hat:3")),
+            token(false, Some(addr), 3)
+        );
+        let halloween = "0xc1f4b0eea2bd6690930e6c66efd3e197d620b9c2".parse().ok();
+        assert_eq!(
             item_ref("urn:decentraland:ethereum:collections-v1:halloween_2019:hat:12"),
-            ItemRef::Token {
-                l1: true,
-                contract: Some(
-                    "0xc1f4b0eea2bd6690930e6c66efd3e197d620b9c2"
-                        .parse()
-                        .unwrap()
-                ),
-                token: U256::from(12)
-            }
+            token(true, halloween, 12)
         );
         assert_eq!(
             item_ref("urn:decentraland:ethereum:collections-v1:not_listed:hat:12"),
-            ItemRef::Token {
-                l1: true,
-                contract: None,
-                token: U256::from(12)
-            },
+            token(true, None, 12),
             "an unknown v1 name is never owned"
         );
         assert_eq!(
@@ -244,18 +242,89 @@ mod tests {
         );
         for not_asked in [
             format!("urn:decentraland:matic:collections-v2:{A}:1"),
+            format!("urn:decentraland:matic:collections-v2:{A}"),
             "urn:decentraland:ethereum:collections-v1:halloween_2019:hat".to_string(),
+            "urn:decentraland:ethereum:collections-v1:halloween_2019".to_string(),
             "urn:decentraland:off-chain:base-avatars:eyes_00".to_string(),
             "urn:decentraland:matic:collections-thirdparty:tp:c:i".to_string(),
-            format!("urn:decentraland:mainnet:collections-v2:{A}:1:3"),
-            format!("urn:decentraland:ethereum:collections-v2:{A}:1:3"),
-            format!("urn:decentraland:matic:collections-v1:{A}:hat:3"),
-            "urn:decentraland:sepolia:collections-v1:halloween_2019:hat:12".to_string(),
+            "urn:decentraland:matic:collections-thirdparty:tp".to_string(),
             "dcl://halloween_2019/hat".to_string(),
             "invalid-urn".to_string(),
         ] {
             assert_eq!(item_ref(&not_asked), ItemRef::NotAsked, "{not_asked}");
         }
+    }
+
+    #[test]
+    fn case_and_spelling_variants_are_asked_like_the_canonical_urn() {
+        let addr: Address = A.parse().unwrap();
+        let expected = ItemRef::Token {
+            l1: false,
+            contract: Some(addr),
+            token: U256::from(42),
+        };
+        let hex = &A[2..];
+        for variant in [
+            format!("urn:decentraland:matic:Collections-V2:{A}:0:42"),
+            format!("URN:DECENTRALAND:MATIC:COLLECTIONS-V2:{A}:0:42"),
+            format!("urn:decentraland:matic:collections-v2:0X{hex}:0:42"),
+            format!(
+                "urn:decentraland:matic:collections-v2:0x{}:0:42",
+                hex.to_uppercase()
+            ),
+        ] {
+            assert_eq!(item_ref(&variant), expected, "{variant}");
+        }
+        for chain in ["ethereum", "Mainnet", "SEPOLIA"] {
+            assert_eq!(
+                item_ref(&format!(
+                    "urn:decentraland:matic:collections-thirdparty:tp:c:i:{chain}:0X{hex}:5"
+                )),
+                ItemRef::ThirdParty {
+                    l1: true,
+                    contract: addr,
+                    token: U256::from(5)
+                },
+                "{chain}"
+            );
+        }
+        assert_eq!(
+            item_ref("urn:decentraland:ethereum:Collections-V1:Halloween_2019:hat:12"),
+            item_ref("urn:decentraland:ethereum:collections-v1:halloween_2019:hat:12")
+        );
+    }
+
+    #[test]
+    fn collection_urns_that_name_no_askable_item_are_malformed() {
+        for malformed in [
+            format!("urn:decentraland:matic:collections-v2:{A}:0:42:extra"),
+            format!("urn:decentraland:matic:collections-v2:{A}:0:0x2a"),
+            format!("urn:decentraland:matic:collections-v2:{A}:abc:5"),
+            format!("urn:decentraland:matic:collections-v2:{A}:0:5abc"),
+            "urn:decentraland:matic:collections-v2:not-an-address:0:5".to_string(),
+            format!("urn:decentraland:foo:collections-v2:{A}:0:42"),
+            format!("urn:decentraland:mainnet:collections-v2:{A}:1:3"),
+            format!("urn:decentraland:mainnet:collections-v1:{A}:hat:3"),
+            "urn:decentraland:sepolia:collections-v1:halloween_2019:hat:12".to_string(),
+            "urn:decentraland:ethereum:collections-v1:halloween_2019:hat:12:x".to_string(),
+            "urn:decentraland:ethereum:collections-v1:halloween_2019:hat:0x1f".to_string(),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:foo:{A}:5"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:mainnet:{A}:5:x"),
+            format!("urn:decentraland:matic:collections-thirdparty:tp:c:i:mainnet:{A}:abc"),
+            "urn:decentraland:matic:collections-thirdparty:tp:c:i:mainnet".to_string(),
+            format!("urn:decentraland:ethereum:collections-thirdparty:tp:c:i:mainnet:{A}:5"),
+        ] {
+            assert_eq!(item_ref(&malformed), ItemRef::Malformed, "{malformed}");
+        }
+        assert_eq!(
+            item_ref("urn:decentraland:matic:collections-v2:0x123:0:5"),
+            ItemRef::Token {
+                l1: false,
+                contract: None,
+                token: U256::from(5)
+            },
+            "a contract that is not an address is never owned"
+        );
     }
 
     #[test]
