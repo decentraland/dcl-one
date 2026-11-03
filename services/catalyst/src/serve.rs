@@ -947,6 +947,7 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
         .communities
         .spawn_flags_job(&jobs, explorer_api.clone());
     communities::ranking::spawn_jobs(&social.communities, &jobs);
+    communities::compliance::spawn_job(&social.communities, &jobs);
     // A permission, access-setting or block edit reaches the running rooms
     // at once: the host's sockets and comms' LiveKit participants.
     if let Some(host) = &stage5.scene_host {
@@ -1890,6 +1891,14 @@ fn social_states(
         pool.clone(),
         storage.clone(),
         communities::Settings {
+            compliance: communities::compliance::Settings {
+                environment: config.social.social_environment.clone(),
+                model: config.social.community_compliance_model.clone(),
+                api_key: config.social.community_compliance_api_key.clone(),
+                base_url: config.social.community_compliance_base_url.clone(),
+                organization: config.social.community_compliance_organization.clone(),
+                project: config.social.community_compliance_project.clone(),
+            },
             admin_token: non_empty(&config.social.communities_admin_token),
             global_moderators: communities::Settings::global_moderators_from(
                 &config.social.communities_global_moderators,

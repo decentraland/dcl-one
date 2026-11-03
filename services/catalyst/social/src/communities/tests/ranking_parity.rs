@@ -271,7 +271,7 @@ async fn ranking_upgrade_retains_nonempty_rows_and_starts_tracking_without_repla
         ranking_streams_count integer NOT NULL DEFAULT 0,ranking_events_total_attendees integer NOT NULL DEFAULT 0,
         ranking_streams_total_participants integer NOT NULL DEFAULT 0,ranking_tracking_since timestamp NOT NULL DEFAULT timezone('UTC',now()));
         CREATE TABLE camera_reel.images(id uuid PRIMARY KEY,retained jsonb NOT NULL,ranking_published boolean NOT NULL DEFAULT true);
-        {}; {}; {};",object("CREATE TABLE meta.schema_steps"),object("CREATE TABLE social.community_ranking_events"),object("CREATE INDEX images_ranking_pending_idx"));
+        {}; {}; {}; {}; {};",object("CREATE TABLE meta.schema_steps"),object("CREATE TABLE social.community_ranking_events"),object("CREATE INDEX images_ranking_pending_idx"),object("CREATE TABLE social.community_compliance_cache"),object("CREATE INDEX community_compliance_cache_expiry_idx"));
     let migrations = concat!(
         "-- ════ step 0022_social_community_ranking ════\n",
         include_str!(concat!(
@@ -285,6 +285,14 @@ async fn ranking_upgrade_retains_nonempty_rows_and_starts_tracking_without_repla
         .unwrap();
     let after = chrono::Utc::now().naive_utc();
     assert_eq!(done.steps, vec!["0022_social_community_ranking"]);
+    let cached: i64 = sqlx::query_scalar("SELECT count(*) FROM social.community_compliance_cache")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        cached, 0,
+        "new cache objects are created by the canonical object pass on a nonempty database"
+    );
     assert!(
         crate::db::schema_migrate::migrate(&pool, &target, migrations)
             .await

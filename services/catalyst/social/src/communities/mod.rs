@@ -45,6 +45,7 @@ pub mod admin;
     reason = "named after v1 rest/handlers/communities.rs, the file its `from:` header maps"
 )]
 mod communities;
+pub mod compliance;
 mod friends;
 mod members;
 mod mutes;
@@ -89,6 +90,7 @@ pub struct Settings {
     /// `GET /v1/moderation/communities`.
     pub global_moderators: Vec<Address>,
     pub features: features::Settings,
+    pub compliance: compliance::Settings,
     /// `RESTRICTED_NAMES`: comma-separated community names refused on
     /// create/rename, compared through `validate::fold_name_for_comparison`
     /// (stored here already folded).
@@ -144,6 +146,7 @@ impl Settings {
             admin_token: None,
             global_moderators: Vec::new(),
             features: features::Settings::default(),
+            compliance: compliance::Settings::default(),
             restricted_names: Vec::new(),
             cdn_url: "http://cdn.test".to_string(),
             faces: profiles::FaceUrls::new(None, "http://127.0.0.1:9/profile-images/", false),
@@ -167,6 +170,8 @@ pub struct State {
     pub presence: Presence,
     /// One DAPPS document shared by moderator, compliance and referral decisions.
     pub flags: Arc<crate::explore::api::feature_flags::Snapshot>,
+    compliance: std::sync::OnceLock<Result<compliance::Adapter, String>>,
+    compliance_allow_private: bool,
     /// `POST /v1/friends/{peer}/messages`: 60 sends per signer per minute,
     /// the old service's `RateLimiter::new(60, 60s)`; past it the route
     /// answers 429 before touching the database.
@@ -263,6 +268,8 @@ impl State {
             referral,
             presence,
             flags: Arc::new(crate::explore::api::feature_flags::Snapshot::empty()),
+            compliance: std::sync::OnceLock::new(),
+            compliance_allow_private: http.allows_private_hosts(),
             dm_limiter,
             voice: std::sync::OnceLock::new(),
             worlds: std::sync::OnceLock::new(),

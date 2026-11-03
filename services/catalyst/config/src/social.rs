@@ -98,6 +98,30 @@ pub struct SocialConfig {
     #[arg(long, env = "FF_DAPPS_REFERRAL_REGISTRATION_DISABLED")]
     pub social_referral_registration_disabled_override: Option<String>,
 
+    /// Source environment: AI compliance runs for `prd` or its DAPPS dev flag.
+    #[arg(long, env = "ENV", default_value = "")]
+    pub social_environment: String,
+
+    #[arg(long, env = "OPEN_AI_MODEL", default_value = "gpt-5-nano")]
+    pub community_compliance_model: String,
+
+    /// Provider credential, also readable from OPEN_AI_API_KEY_FILE.
+    #[arg(long, env = "OPEN_AI_API_KEY", hide_env_values = true)]
+    pub community_compliance_api_key: Option<String>,
+
+    #[arg(
+        long,
+        env = "OPENAI_BASE_URL",
+        default_value = "https://api.openai.com/v1"
+    )]
+    pub community_compliance_base_url: String,
+
+    #[arg(long, env = "OPENAI_ORG_ID")]
+    pub community_compliance_organization: Option<String>,
+
+    #[arg(long, env = "OPENAI_PROJECT_ID")]
+    pub community_compliance_project: Option<String>,
+
     /// Comma-separated community names refused on create/rename (folded comparison).
     #[arg(long, env = "RESTRICTED_NAMES", default_value = "")]
     pub restricted_names: String,

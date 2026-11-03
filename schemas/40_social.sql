@@ -258,6 +258,17 @@ CREATE TABLE social.community_ranking_events (
     CHECK (kind IN ('photo', 'event', 'stream'))
 );
 
+-- Two-hour provider results, keyed exactly as the source Redis cache. Cached
+-- rejections carry their full issue lists; expiry uses a bounded indexed job.
+CREATE TABLE social.community_compliance_cache (
+    model text NOT NULL,
+    input_hash bytea NOT NULL CHECK (octet_length(input_hash) = 32),
+    result jsonb NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    PRIMARY KEY (model, input_hash)
+);
+CREATE INDEX community_compliance_cache_expiry_idx ON social.community_compliance_cache (expires_at);
+
 -- The public listing's ORDER BY; the listing carries exactly this predicate.
 CREATE INDEX communities_ranking_idx
     ON social.communities (editors_choice DESC, ranking_score DESC, name ASC)

@@ -253,6 +253,11 @@ const ROWS: &[Row] = &[
         "https://feature-flags.decentraland.org",
     ),
     upstream(
+        "community compliance",
+        "OPENAI_BASE_URL",
+        "https://api.openai.com/v1",
+    ),
+    upstream(
         "mirrors",
         "EXPLORER_MAP_SOURCE_URL",
         "https://api.decentraland.org",
@@ -948,6 +953,11 @@ pub fn refuse_remote_secrets(config: &mut Config) -> anyhow::Result<()> {
 /// The secrets that switch on a client of a fixed third-party API, with the
 /// key that can point it elsewhere (then held to loopback above) and the API.
 const THIRD_PARTY_SECRETS: &[(&str, Option<&str>, &str)] = &[
+    (
+        "OPEN_AI_API_KEY",
+        Some("OPENAI_BASE_URL"),
+        "community compliance Responses API",
+    ),
     ("SENDGRID_API_KEY", None, "SendGrid's mail API"),
     ("AWS_SNS_ARN", Some("AWS_SNS_ENDPOINT"), "Amazon SNS"),
     (

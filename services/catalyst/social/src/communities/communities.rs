@@ -604,10 +604,6 @@ pub async fn create_community(
             format!("The user {signer} doesn't have any names"),
         );
     }
-    if let Err(e) = state.validate_places_ownership(&place_ids, &signer).await {
-        return e.into_response();
-    }
-
     let owner_name = match state
         .profiles
         .get_owner_names(&[signer.as_str().to_string()])
@@ -620,6 +616,19 @@ pub async fn create_community(
                 .into_response();
         }
     };
+    if let Err(e) = state.validate_places_ownership(&place_ids, &signer).await {
+        return e.into_response();
+    }
+    if let Err(error) = state
+        .validate_content(super::compliance::Content {
+            name: Some(&name),
+            description: Some(&description),
+            thumbnail: thumbnail.as_deref(),
+        })
+        .await
+    {
+        return error.into_response();
+    }
     let private = privacy == "private";
     let unlisted = visibility == "unlisted";
     let id = CommunityId::new();
@@ -780,11 +789,13 @@ pub async fn update_community(
     // EditName and EditSettings are owner-only in the capability matrix: a
     // name, privacy or visibility that differs from the stored one needs the
     // matching cell (upstream `updateCommunity`, `communities.ts` at `fb3dcb8`).
-    let current: Option<(String, bool, bool)> = try_resp!(map_db(
-        sqlx::query_as("SELECT name, private, unlisted FROM social.communities WHERE id = $1")
-            .bind(uuid)
-            .fetch_optional(&state.pool)
-            .await
+    let current: Option<(String, bool, bool, String)> = try_resp!(map_db(
+        sqlx::query_as(
+            "SELECT name, private, unlisted, description FROM social.communities WHERE id = $1"
+        )
+        .bind(uuid)
+        .fetch_optional(&state.pool)
+        .await
     ));
     let current = current.as_ref();
     if name
@@ -848,6 +859,24 @@ pub async fn update_community(
             )
             .await
         );
+    }
+    let content_changed =
+        name.as_deref().is_some_and(|name| {
+            current.is_some_and(|old| super::compliance::changed(name, &old.0))
+        }) || description.as_deref().is_some_and(|description| {
+            current.is_some_and(|old| super::compliance::changed(description, &old.3))
+        }) || thumbnail.is_some();
+    if content_changed {
+        if let Err(error) = state
+            .validate_content(super::compliance::Content {
+                name: name.as_deref(),
+                description: description.as_deref(),
+                thumbnail: thumbnail.as_deref(),
+            })
+            .await
+        {
+            return error.into_response();
+        }
     }
     let becomes_public = privacy == Some(false) && current.is_some_and(|c| c.1);
     let mut tx = try_resp!(map_db(state.pool.begin().await));
@@ -933,7 +962,7 @@ pub async fn update_community(
         Ok(None) => return err_json(StatusCode::NOT_FOUND, "Community not found"),
         Err(e) => return *map_db::<()>(Err(e)).unwrap_err(),
     };
-    if let (Some(new_name), Some((old_name, _, _))) = (name.as_deref(), current)
+    if let (Some(new_name), Some((old_name, _, _, _))) = (name.as_deref(), current)
         && new_name.trim() != old_name.trim()
     {
         let slug = |n: &str| n.trim().to_lowercase().replace(' ', "-");
