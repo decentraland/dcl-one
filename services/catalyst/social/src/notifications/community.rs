@@ -109,7 +109,11 @@ pub(crate) fn legacy_event(
             raw["addressesToNotify"] = serde_json::json!([]);
             raw
         }
-        "community_voice_chat_started" => community(),
+        "community_voice_chat_started" => serde_json::json!({
+            "communityId": metadata["communityId"],
+            "communityName": metadata["communityName"],
+            "thumbnailUrl": metadata["thumbnailUrl"],
+        }),
         _ => metadata.clone(),
     };
     // A source event may omit an undefined optional field; it never serializes

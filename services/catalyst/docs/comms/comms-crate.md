@@ -256,16 +256,20 @@ subscriptions. There is no per-event retry, forced client closure, sequence ledg
 or promise to replay missed updates. A new friend-connectivity subscription starts
 with online friends only; community connectivity starts with live events.
 
-Community START notification scope is Social-owned state on the existing community:
-scope, generation UUID and expiry are all present or all absent. The polling job
-runs every `COMMUNITY_VOICE_CHAT_POLLING_JOB_INTERVAL` milliseconds (45,000 by
-default), reads indexed PK pages of 64 and asks the existing configured Comms room
-liveness query. Active entries refresh their 24-hour expiry; inactive fresh entries
-are claimed by generation and announce END once. Expired entries are cleared without
-an event. Explicit END claims the same generation before media teardown and restores
-it on media failure only while no newer generation exists. Generation checks fence
-notification metadata; they do not make an external media END atomic with START.
-The same job removes at most 64 expired spill rows per pass.
+Community START facts are Social-owned rows in
+`social.community_voice_notifications`: the exact case-sensitive raw key, canonical
+community UUID, scope, generation and expiry. Raw UUID spellings retain independent
+audiences and TTLs; only membership and media use the canonical UUID. The polling
+job runs every `COMMUNITY_VOICE_CHAT_POLLING_JOB_INTERVAL` milliseconds (45,000 by
+default), reads raw PK pages of 64 and asks the existing Comms liveness query. Active
+entries refresh their 24-hour expiry without changing scope or generation; inactive
+fresh entries are claimed by raw key plus generation and announce END once. Expired
+entries are cleared without an event. Explicit END claims only its supplied raw key
+before media teardown and restores it on failure only if that key remains absent.
+Other aliases await the poll; a canonical media closure does not clear their facts.
+Generation checks fence notification metadata without making external media END
+atomic with START. The same job removes at most 64 expired spill rows per pass.
+
 
 ## Room recovery
 

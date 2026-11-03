@@ -190,6 +190,7 @@ async fn announce_started(
         .db()
         .record_voice_notification(
             cid,
+            raw,
             if everyone {
                 crate::rpc::fanout::Scope::All
             } else {
@@ -204,7 +205,7 @@ async fn announce_started(
     };
     let update = CommunityVoiceChatUpdate {
         stream_closed: None,
-        community_id: cid.to_string(),
+        community_id: raw.to_string(),
         created_at,
         status: CommunityVoiceChatStatus::CommunityVoiceChatStarted as i32,
         ended_at: None,
@@ -214,16 +215,16 @@ async fn announce_started(
         community_image: image.clone(),
         worlds,
     };
-    let current_generation = ctx.db().voice_generation_is(cid, Some(generation)).await?;
+    let current_generation = ctx.db().voice_generation_is(raw, Some(generation)).await?;
     // upstream `broadcastVoiceChatStarted` (`logic/community/broadcaster.ts`):
     // the online members but the opener
     let online = ctx.topology().snapshot().wallets;
     let event = CommunityEvent {
         kind: "community_voice_chat_started",
-        key: format!("{cid}-{created_at}"),
+        key: format!("{raw}-{created_at}"),
         community_id: id,
         metadata: serde_json::json!({
-            "communityId": cid,
+            "communityId": raw,
             "communityName": community.name,
             "thumbnailUrl": image.unwrap_or_default(),
         }),
@@ -474,9 +475,9 @@ pub(crate) async fn end_community_voice_chat(
     if !live {
         return Err(room_not_found(raw));
     }
-    // Claim only this notification generation before media teardown. The directory's
-    // closure hook then finds no record and cannot duplicate this explicit ENDED.
-    let audience = ctx.db().voice_notification(cid).await?;
+    // Claim only this raw key's generation before media teardown. Other spellings
+    // retain their own facts until the poll observes the shared room has ended.
+    let audience = ctx.db().voice_notification(raw).await?;
     let claimed = match &audience {
         Some(entry) => ctx.db().clear_voice_notification(entry).await?,
         None => true,
@@ -489,7 +490,7 @@ pub(crate) async fn end_community_voice_chat(
         }
         return runtime("end community voice chat", raw, Err(error));
     }
-    if claimed && ctx.db().voice_generation_is(cid, None).await? {
+    if claimed && ctx.db().voice_generation_is(raw, None).await? {
         let everyone = audience
             .as_ref()
             .is_some_and(|entry| entry.fresh && entry.scope == crate::rpc::fanout::Scope::All);
@@ -497,7 +498,7 @@ pub(crate) async fn end_community_voice_chat(
             .community_voice(
                 ctx.db().pool(),
                 cid,
-                crate::rpc::pubsub::community_voice_ended(cid),
+                crate::rpc::pubsub::community_voice_ended(raw),
                 everyone,
                 None,
             )

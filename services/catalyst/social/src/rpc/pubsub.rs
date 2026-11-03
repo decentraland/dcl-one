@@ -11,7 +11,7 @@ use crate::rpc::proto::v2::{
 use crate::rpc::proto::v2::{CommunityVoiceChatStatus, ConnectivityStatus, User};
 
 /// The ENDED update (upstream's end and polling): no places, name or image.
-pub fn community_voice_ended(community: Uuid) -> CommunityVoiceChatUpdate {
+pub fn community_voice_ended(community: &str) -> CommunityVoiceChatUpdate {
     let now = chrono::Utc::now().timestamp_millis();
     CommunityVoiceChatUpdate {
         stream_closed: None,
@@ -399,34 +399,6 @@ impl PubSub {
                     }),
                 );
             }
-        }
-    }
-
-    /// Runtime closure uses the shared generation, so a different serve or a restart can
-    /// notify the recorded audience. Compare-and-clear prevents duplicate cleanup hints.
-    pub async fn community_voice_closed(&self, pool: &PgPool, community: Uuid) {
-        let db = crate::rpc::db::Db::new(pool.clone());
-        match db.voice_notification(community).await {
-            Ok(Some(entry)) => {
-                if db.clear_voice_notification(&entry).await.unwrap_or(false)
-                    && entry.fresh
-                    && db
-                        .voice_generation_is(community, None)
-                        .await
-                        .unwrap_or(false)
-                {
-                    self.community_voice(
-                        pool,
-                        community,
-                        community_voice_ended(community),
-                        entry.scope == super::fanout::Scope::All,
-                        None,
-                    )
-                    .await;
-                }
-            }
-            Ok(None) => {}
-            Err(error) => tracing::warn!(%error, "community voice close scope read failed"),
         }
     }
 

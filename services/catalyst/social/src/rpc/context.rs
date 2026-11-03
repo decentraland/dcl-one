@@ -433,9 +433,9 @@ impl Context {
         if let Err(error) = self.db().expire_social_event_payloads().await {
             tracing::warn!(%error, "social event payload expiry failed");
         }
-        let mut after = uuid::Uuid::nil();
+        let mut after = String::new();
         loop {
-            let page = match self.db().voice_notifications_page(after).await {
+            let page = match self.db().voice_notifications_page(&after).await {
                 Ok(page) => page,
                 Err(error) => {
                     tracing::warn!(%error, "voice notification poll failed");
@@ -443,7 +443,7 @@ impl Context {
                 }
             };
             for entry in &page {
-                after = entry.community;
+                after.clone_from(&entry.raw_community);
                 if !entry.fresh {
                     let _ = self.db().clear_voice_notification(entry).await;
                     continue;
@@ -464,7 +464,7 @@ impl Context {
                             .unwrap_or(false)
                             && self
                                 .db()
-                                .voice_generation_is(entry.community, None)
+                                .voice_generation_is(&entry.raw_community, None)
                                 .await
                                 .unwrap_or(false)
                         {
@@ -472,7 +472,7 @@ impl Context {
                                 .community_voice(
                                     self.db().pool(),
                                     entry.community,
-                                    crate::rpc::pubsub::community_voice_ended(entry.community),
+                                    crate::rpc::pubsub::community_voice_ended(&entry.raw_community),
                                     entry.scope == super::fanout::Scope::All,
                                     None,
                                 )

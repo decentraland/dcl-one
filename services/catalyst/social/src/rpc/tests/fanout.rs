@@ -6,15 +6,17 @@ use tokio::sync::broadcast;
 
 #[path = "fanout_membership.rs"]
 mod membership;
+#[path = "community_raw_source_cases.rs"]
+mod raw_voice;
 
 /// Separate fixtures keep a fake media view from polling another test's rooms.
-struct OwnedDatabase {
-    pool: PgPool,
+pub(super) struct OwnedDatabase {
+    pub(super) pool: PgPool,
     admin: PgPool,
     name: String,
 }
 impl OwnedDatabase {
-    async fn new() -> Option<Self> {
+    pub(super) async fn new() -> Option<Self> {
         let shared = scratch_pool().await?;
         let options = shared.connect_options();
         let admin = sqlx::postgres::PgPoolOptions::new()
@@ -39,7 +41,7 @@ impl OwnedDatabase {
         crate::db::apply_schema(&pool).await.unwrap();
         Some(Self { pool, admin, name })
     }
-    async fn close(self) {
+    pub(super) async fn close(self) {
         self.pool.close().await;
         sqlx::query(sqlx::AssertSqlSafe(format!(
             "DROP DATABASE \"{}\" WITH (FORCE)",
@@ -237,13 +239,13 @@ async fn two_replicas_route_mutations_and_preserve_large_community_snapshots() {
         .unwrap();
     left.ctx
         .db()
-        .record_voice_notification(community, Scope::All)
+        .record_voice_notification(community, &community.to_string(), Scope::All)
         .await
         .unwrap();
     let entry = left
         .ctx
         .db()
-        .voice_notification(community)
+        .voice_notification(&community.to_string())
         .await
         .unwrap()
         .unwrap();
@@ -254,7 +256,7 @@ async fn two_replicas_route_mutations_and_preserve_large_community_snapshots() {
         .unwrap();
     left.ctx
         .db()
-        .record_voice_notification(community, Scope::Members)
+        .record_voice_notification(community, &community.to_string(), Scope::Members)
         .await
         .unwrap();
     let id_two = left
@@ -304,20 +306,28 @@ async fn notification_generation_survives_context_restart_and_expires_like_sourc
     let community = seed_community(&pool, true, &a, "owner").await;
     let db = Db::new(pool.clone());
     let old = db
-        .record_voice_notification(community, Scope::All)
+        .record_voice_notification(community, &community.to_string(), Scope::All)
         .await
         .unwrap();
-    let old_entry = db.voice_notification(community).await.unwrap().unwrap();
+    let old_entry = db
+        .voice_notification(&community.to_string())
+        .await
+        .unwrap()
+        .unwrap();
     let current = db
-        .record_voice_notification(community, Scope::Members)
+        .record_voice_notification(community, &community.to_string(), Scope::Members)
         .await
         .unwrap();
     assert_ne!(old, current);
     assert!(!db.clear_voice_notification(&old_entry).await.unwrap());
     assert!(!db.refresh_voice_notification(&old_entry).await.unwrap());
-    let current_entry = db.voice_notification(community).await.unwrap().unwrap();
+    let current_entry = db
+        .voice_notification(&community.to_string())
+        .await
+        .unwrap()
+        .unwrap();
     assert!(db.clear_voice_notification(&current_entry).await.unwrap());
-    db.record_voice_notification(community, Scope::All)
+    db.record_voice_notification(community, &community.to_string(), Scope::All)
         .await
         .unwrap();
     // A new process sees the persisted public scope and emits ENDED once.
@@ -329,14 +339,19 @@ async fn notification_generation_survives_context_restart_and_expires_like_sourc
     );
     restarted.ctx.poll_community_voice_notifications().await;
     silent(&mut rx).await;
-    db.record_voice_notification(community, Scope::All)
+    db.record_voice_notification(community, &community.to_string(), Scope::All)
         .await
         .unwrap();
-    sqlx::query("UPDATE social.communities SET voice_notification_expires_at=now()-interval '1 second' WHERE id=$1")
+    sqlx::query("UPDATE social.community_voice_notifications SET expires_at=now()-interval '1 second' WHERE community_id=$1")
         .bind(community).execute(&pool).await.unwrap();
     restarted.ctx.poll_community_voice_notifications().await;
     silent(&mut rx).await;
-    assert!(db.voice_notification(community).await.unwrap().is_none());
+    assert!(
+        db.voice_notification(&community.to_string())
+            .await
+            .unwrap()
+            .is_none()
+    );
     drop_community(&pool, community).await;
     database.close().await;
 }
@@ -402,13 +417,13 @@ async fn notification_and_spill_queries_use_bounded_index_paths() {
     let pool = database.pool.clone();
     let mut tx = pool.begin().await.unwrap();
     let owner = addr("plans");
-    sqlx::query("INSERT INTO social.communities(id,name,owner_address) SELECT gen_random_uuid(),'plan fixture',$1 FROM generate_series(1,5000)")
+    sqlx::query("INSERT INTO social.communities(id,name,owner_address) SELECT ('a0000000-0000-4000-8000-'||lpad(to_hex(n),12,'0'))::uuid,'plan fixture',$1 FROM generate_series(1,5000) AS n")
         .bind(&owner).execute(&mut *tx).await.unwrap();
-    sqlx::query("UPDATE social.communities SET voice_notification_scope='all',voice_notification_generation=gen_random_uuid(),voice_notification_expires_at=now()+interval '24 hours' WHERE id IN(SELECT id FROM social.communities WHERE owner_address=$1 ORDER BY id LIMIT 10)")
+    sqlx::query("INSERT INTO social.community_voice_notifications(raw_community_id,community_id,notification_scope,generation,expires_at) SELECT raw,id,'all',gen_random_uuid(),now()+interval '24 hours' FROM (SELECT id FROM social.communities WHERE owner_address=$1 ORDER BY id LIMIT 1250) AS rooms CROSS JOIN LATERAL unnest(ARRAY[id::text,upper(id::text)]) AS raw")
         .bind(&owner).execute(&mut *tx).await.unwrap();
     sqlx::query("INSERT INTO social.event_payloads(id,payload,expires_at) SELECT gen_random_uuid(),decode('01','hex'),now()+CASE WHEN n<=10 THEN interval '-1 hour' ELSE interval '1 hour' END FROM generate_series(1,5000) AS n")
         .execute(&mut *tx).await.unwrap();
-    sqlx::query("ANALYZE social.communities")
+    sqlx::query("ANALYZE social.community_voice_notifications")
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -416,12 +431,12 @@ async fn notification_and_spill_queries_use_bounded_index_paths() {
         .execute(&mut *tx)
         .await
         .unwrap();
-    let rooms:Vec<String>=sqlx::query_scalar("EXPLAIN(ANALYZE,BUFFERS) SELECT id,voice_notification_generation FROM social.communities WHERE id>'00000000-0000-0000-0000-000000000000'::uuid AND voice_notification_generation IS NOT NULL ORDER BY id LIMIT 64")
+    let rooms:Vec<String>=sqlx::query_scalar("EXPLAIN(ANALYZE,BUFFERS) SELECT raw_community_id,generation FROM social.community_voice_notifications WHERE raw_community_id>'' ORDER BY raw_community_id LIMIT 64")
         .fetch_all(&mut *tx).await.unwrap();
     let cache:Vec<String>=sqlx::query_scalar("EXPLAIN(ANALYZE,BUFFERS) SELECT id FROM social.event_payloads WHERE expires_at<=timezone('UTC',now()) ORDER BY expires_at,id LIMIT 64 FOR UPDATE SKIP LOCKED")
         .fetch_all(&mut *tx).await.unwrap();
     println!(
-        "notification pages (5000 communities,10 tracked):\n{}",
+        "notification pages (5000 communities,1250 tracked,2500 raw aliases):\n{}",
         rooms.join("\n")
     );
     println!(
@@ -431,7 +446,7 @@ async fn notification_and_spill_queries_use_bounded_index_paths() {
     assert!(
         rooms
             .join("\n")
-            .contains("communities_voice_notifications_idx")
+            .contains("community_voice_notifications_pkey")
     );
     assert!(cache.join("\n").contains("event_payloads_expiry_idx"));
     tx.rollback().await.unwrap();

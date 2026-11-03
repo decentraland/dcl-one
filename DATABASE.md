@@ -399,9 +399,15 @@ database holding local authority changes only through a data-safe release
 `schemas/migrations/` applied once by `catalyst schema migrate`; anything that
 drops, renames or retypes is its own reviewed release under `schemas/releases/`.
 
-The binary requires schema version 3. A database stamped version 1 first takes
-`schemas/releases/v2-shop-schema.sql` with all writers stopped and a backup
-restore verified. A version-2 database then takes the private-voice release:
+The binary requires schema version 3. Stop all writers, pollers and administrative
+write paths, and verify a backup restore before a release. A version-1 database
+first takes `schemas/releases/v2-shop-schema.sql`, then a compatible version-2
+binary runs `catalyst schema migrate` and `catalyst schema status`. The pinned
+`c1fab3991` binary includes the historical notification step 0020 required by the
+version-3 preflight. Do not use the version-3 binary to prepare version2 or edit
+`meta.schema_steps` to bypass preparation.
+
+A prepared version-2 database takes the Social voice release:
 
 ```sh
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f schemas/releases/v3-private-voice-pending.sql
@@ -409,36 +415,51 @@ catalyst schema migrate
 catalyst schema status
 ```
 
-Keep every writer stopped through that sequence. The release audits pending
-wallets across caller and callee roles after normalization and refuses overlapping
-or non-normalized pending state without changing data. It drops only the two
-caller/callee uniqueness constraints and stamps version 3 in one transaction.
-The canonical object pass of `schema migrate` creates the nonunique
-`private_voice_chats_caller_idx` and `private_voice_chats_callee_idx`; verify
-both valid indexes before traffic resumes. The release does not delete, merge
-or rewrite calls or participants. A failed transaction preserves the version-2
-stamp and constraints. Both older and newer binaries refuse a mismatched stamp.
+Keep every writer stopped through that sequence. The release requires the
+unchanged historical 0020 ledger record and its old notification layout. It audits
+pending wallets across both roles, refuses overlapping or non-normalized pending
+state, and refuses an existing destination relation. In one transaction it includes
+the canonical `41_social_voice_notifications.sql` table definition, copies the
+legacy audience/generation/expiry facts, verifies equality in both directions,
+retires the three old columns and their constraint/index, drops the two private
+caller/callee uniqueness constraints, and stamps version 3 last. It neither renews
+expired facts nor rewrites a call or participant. Legacy UUID columns have already
+lost raw identifier spelling: their backfill uses `id::text` and cannot reconstruct
+historical aliases.
 
-Retained media can coexist with new pending calls in version 3. Once such data
-exists, reinstating the former uniqueness constraints is not a general rollback.
+The canonical object pass of `schema migrate` creates the nonunique
+`private_voice_chats_caller_idx` and `private_voice_chats_callee_idx`; verify both
+valid indexes and a clean schema status before traffic resumes. A failed release
+transaction preserves the version-2 stamp, facts and constraints. Both older and
+newer binaries refuse a mismatched stamp.
+
+Retained media and independent raw notification aliases can coexist in version 3.
+Reinstalling the former uniqueness or single-row layout is not a general rollback.
 Quiesce and use a reviewed forward fix or restore; never delete or deduplicate
-media calls to force those constraints back. The owned populated upgrade tests
-exercise release, migration, ledger and replay. Deployment backup, restore and
-rollback evidence remains a separate gate.
+media calls or notification facts to force old constraints back. Owned upgrade
+tests exercise the composed release and real migrator against captured, genuinely
+prepared version-2 state; deployment backup, restore, historical raw-alias loss and
+cutover validation remain separate operating gates.
 
 Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in the task report before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
 
 
 ## Social realtime notification workload
 
-Social keeps the notification scope, generation UUID and 24-hour expiry on
-`social.communities`; the all-null/all-present check couples their lifecycle.
-These facts preserve the START audience across process restart and visibility edits.
-Comms still owns media and participant presence. A 45-second default poll reads
-tracked generations in ordered PK pages of 64, using the partial
-`communities_voice_notifications_idx`, and updates or clears a row by PK plus
-its generation. Generation CAS prevents stale metadata cleanup from erasing a new
-START. No SQL lock spans a media or NATS await.
+Social keeps each notification scope, generation UUID and 24-hour expiry in
+`social.community_voice_notifications`. Its case-sensitive `raw_community_id`
+text primary key preserves the source cache key, while `community_id` is the
+canonical foreign key used for membership and media. Several spellings of the
+same UUID may retain independent facts. Non-null fields and identity/scope checks
+couple their lifecycle. START upserts one exact key with a new generation; a
+45-second default poll reads raw keys in ordered PK pages of 64. It refreshes an
+active key's expiry, or clears an inactive/expired key, by exact key plus generation.
+A media closure does not identify a raw key; explicit END handles only its supplied
+spelling, and other aliases await polling. No SQL lock spans a media or NATS await.
+Generation CAS protects metadata from stale cleanup, without making external
+media teardown atomic with a competing START. The raw primary key supports all
+runtime reads/writes; expiry is checked in the bounded pages, so it needs no
+separate expiry index.
 
 `social.event_payloads` is an optional immutable transport cache for community
 voice metadata whose event exceeds the existing 64 KiB NATS admission limit.
@@ -450,7 +471,7 @@ overwrite each other. Private-call credentials never use this relation. The
 expired rows with `FOR UPDATE SKIP LOCKED` per polling pass. This relation does not
 record delivery, retry, or replay work.
 
-The expected hot set is tracked active voice communities plus oversized events
+The expected hot set is tracked active raw voice keys plus oversized events
 published during the preceding day, rather than all communities or subscribers.
 Membership fanout uses set probes of at most 256 subscriber addresses per SQL
 statement. A community voice update snapshots eligible subscribers and completes

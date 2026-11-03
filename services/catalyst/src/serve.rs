@@ -916,10 +916,6 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social
         .rpc
         .start_fanout(&jobs, comms_stage.gatekeeper.bus.clone());
-    // A room the gatekeeper closes reaches the open voice streams as ENDED.
-    comms_stage
-        .social_directory
-        .set_updates(social.rpc.ctx.pubsub().clone());
     market.attach_profile_images(social.profile_images.clone());
     let subscriptions = Arc::new(shop::subscriptions::State::new(
         pool.clone(),
@@ -1728,9 +1724,6 @@ async fn worlds_states(
 struct CommsStage {
     archipelago: crate::comms::archipelago::AppState,
     gatekeeper: crate::comms::gatekeeper::SharedState,
-    /// The gatekeeper's social seam, kept to attach the social RPC's
-    /// fan-out once it exists.
-    social_directory: Arc<social::comms_directory::Directory>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1774,7 +1767,7 @@ async fn comms_states(
         policy.clone() as Arc<dyn AccessPolicy>,
         Arc::new(worlds::rooms::SceneResolver::new(pool.clone())),
         presence,
-        social_directory.clone(),
+        social_directory,
     )
     .with_ban_status(ban_status.clone())
     .with_name_owner_reader(market.clone())
@@ -1806,7 +1799,6 @@ async fn comms_states(
     Ok(CommsStage {
         archipelago,
         gatekeeper,
-        social_directory,
     })
 }
 
