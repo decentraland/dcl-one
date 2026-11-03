@@ -1,9 +1,9 @@
 //! Client-side presentation (D3D11): opens the shared keyed-mutex NV12
-//! slots announced by the helper, and on Unity's render event copies the
+//! slots announced by the helper, and on the host's render event copies the
 //! latest published slot into a client-owned NV12 presentation texture on
-//! Unity's device — the same stable-pointer contract (one NV12 texture the
+//! The host's device — the same stable-pointer contract (one NV12 texture the
 //! engine casts its R8/RG8 views over, retire-grace on resolution change)
-//! the in-process plugin had, so the C# poll-and-rewrap flow is untouched.
+//! the in-process plugin had, so the the host poll-and-rewrap flow is untouched.
 
 use crate::platform::UnityDevice;
 use anyhow::{Context as _, Result, anyhow, ensure};
@@ -34,13 +34,13 @@ impl Drop for PendingSet {
     }
 }
 
-/// One shared slot opened on Unity's device.
+/// One shared slot opened on the host's device.
 struct Slot {
     texture: ID3D11Texture2D,
     mutex: IDXGIKeyedMutex,
 }
 
-/// An opened generation: every slot texture + keyed mutex on Unity's device.
+/// An opened generation: every slot texture + keyed mutex on the host's device.
 struct ActiveGen {
     generation: u32,
     width: u32,
@@ -48,7 +48,7 @@ struct ActiveGen {
     slots: Vec<Slot>,
 }
 
-/// The presentation texture C# wraps, plus the size it was created for.
+/// The presentation texture the host wraps, plus the size it was created for.
 struct SizedTexture {
     texture: ID3D11Texture2D,
     width: u32,
@@ -56,14 +56,14 @@ struct SizedTexture {
 }
 
 /// Per-player video state behind the mirror's mutex. Written by the IO
-/// thread (announcements, publishes), consumed on Unity's render thread.
+/// thread (announcements, publishes), consumed on the host's render thread.
 #[derive(Default)]
 pub struct PlayerVideo {
     pending: Option<PendingSet>,
     active: Option<ActiveGen>,
     presentation: Option<SizedTexture>,
     /// Previous presentation texture, kept alive for one resolution change
-    /// so the pointer C# still wraps stays valid until its next poll.
+    /// so the pointer the host still wraps stays valid until its next poll.
     retired: Option<SizedTexture>,
     /// Newest (generation, slot) the helper finished writing.
     published: Option<(u32, u8)>,
@@ -102,7 +102,7 @@ impl PlayerVideo {
 
     /// Drops all helper-side shared state after the helper died (a pending
     /// set's Drop closes its unopened handles). The presentation texture
-    /// and its retire grace survive so the pointers C# wraps stay valid —
+    /// and its retire grace survive so the pointers the host wraps stay valid —
     /// the last frame freezes until the resurrected helper publishes again.
     pub fn reset_for_recovery(&mut self) {
         self.pending = None;
@@ -112,7 +112,7 @@ impl PlayerVideo {
         self.ack_due = None;
     }
 
-    /// The stable presentation-texture pointer C# wraps, once the first
+    /// The stable presentation-texture pointer the host wraps, once the first
     /// frame was presented. One NV12 texture covers both planes; `plane` is
     /// part of the fixed C ABI but only Metal consumes it (same contract as
     /// the in-process plugin).
@@ -186,7 +186,7 @@ impl PlayerVideo {
             return Ok(());
         }
         let texture = new_presentation(unity, width, height)?;
-        // the generation before last dies here; C# has had a full poll
+        // the generation before last dies here; the host has had a full poll
         // cycle to stop wrapping it
         let _previous = self.retired.take();
         self.retired = self.presentation.take();
@@ -213,7 +213,7 @@ const fn as_handle(value: u64) -> HANDLE {
     HANDLE(value as usize as *mut c_void)
 }
 
-/// Opens every slot of an announced generation on Unity's device. All
+/// Opens every slot of an announced generation on the host's device. All
 /// handles are closed on the way out, opened or not (the resources stay
 /// alive through their own COM refs).
 fn open_generation(unity: &UnityDevice, mut pending: PendingSet) -> Result<ActiveGen> {
@@ -257,7 +257,7 @@ fn open_slot(unity: &UnityDevice, handle: HANDLE) -> Result<Slot> {
     Ok(Slot { texture, mutex })
 }
 
-/// The client-owned NV12 texture C# samples from, same shape as the core's
+/// The client-owned NV12 texture the host samples from, same shape as the core's
 /// in-process presentation texture.
 fn new_presentation(unity: &UnityDevice, width: u32, height: u32) -> Result<ID3D11Texture2D> {
     let desc = D3D11_TEXTURE2D_DESC {
@@ -276,8 +276,12 @@ fn new_presentation(unity: &UnityDevice, width: u32, height: u32) -> Result<ID3D
         MiscFlags: 0,
     };
     let mut created: Option<ID3D11Texture2D> = None;
-    unsafe { unity.device.CreateTexture2D(&desc, None, Some(&mut created)) }
-        .with_context(|| format!("CreateTexture2D(NV12 {width}x{height}) failed"))?;
+    unsafe {
+        unity
+            .device
+            .CreateTexture2D(&desc, None, Some(&mut created))
+    }
+    .with_context(|| format!("CreateTexture2D(NV12 {width}x{height}) failed"))?;
     created.context("CreateTexture2D returned no texture")
 }
 
@@ -289,7 +293,7 @@ fn copy_slot(unity: &UnityDevice, slot: &Slot, presentation: &ID3D11Texture2D) -
         return Ok(false);
     }
     // same size; a full-subresource copy covers both NV12 planes, recorded
-    // on Unity's immediate context (this runs on Unity's render thread)
+    // on the host's immediate context (this runs on the host's render thread)
     unsafe {
         unity
             .context

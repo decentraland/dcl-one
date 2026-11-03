@@ -1,4 +1,4 @@
-//! Orphan prevention: exit as soon as the parent (Unity) process is gone.
+//! Orphan prevention: exit as soon as the parent (the host) process is gone.
 
 use anyhow::{Context as _, ensure};
 use std::process;
@@ -19,17 +19,12 @@ pub fn exit_when_parent_dies(parent_pid: u32) -> anyhow::Result<()> {
         data: 0,
         udata: std::ptr::null_mut(),
     };
-    let registered = unsafe {
-        libc::kevent(
-            kq,
-            &change,
-            1,
-            std::ptr::null_mut(),
-            0,
-            std::ptr::null(),
-        )
-    };
-    ensure!(registered >= 0, "parent process is not observable (already exited?)");
+    let registered =
+        unsafe { libc::kevent(kq, &change, 1, std::ptr::null_mut(), 0, std::ptr::null()) };
+    ensure!(
+        registered >= 0,
+        "parent process is not observable (already exited?)"
+    );
 
     thread::Builder::new()
         .name("uuav-parent-watch".into())

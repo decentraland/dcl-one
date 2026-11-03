@@ -4,8 +4,7 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 use uuav_core as core;
 use uuav_ipc::protocol::{
-    AudioPipelineStatsWire, ControlsWire, MediaInfoWire, PlayerId, PlayerStateWire,
-    StateUpdateWire,
+    AudioPipelineStatsWire, ControlsWire, MediaInfoWire, PlayerId, PlayerStateWire, StateUpdateWire,
 };
 
 /// Converts a core `ResultFFI` into a plain `Result`, freeing the native
@@ -106,6 +105,7 @@ pub fn media_info(id: PlayerId) -> Option<MediaInfoWire> {
         pixel_format: name_field(&info.pixel_format),
         audio_codec: name_field(&info.audio_codec),
         sample_format: name_field(&info.sample_format),
+        decoder: name_field(&info.decoder),
         has_video: info.has_video != 0,
         has_audio: info.has_audio != 0,
     })

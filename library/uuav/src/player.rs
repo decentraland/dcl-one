@@ -9,13 +9,10 @@ use crate::ffutil::StreamingProtocol;
 use crate::hw_device::HwDevice;
 use crate::playback::{
     AtomicSeekSlot, AudioTelemetry, CancelToken, ControlPush, DEFAULT_PLAYBACK_RATE, PlaybackUnit,
-    ReadOnlyCancelToken, SharedAudioTelemetry, UnitControls, fill_silence,
+    ReadOnlyCancelToken, SharedAudioTelemetry, UnitControls, UnitSinks, fill_silence,
 };
 use crate::video_output::VideoTextureView;
-use crate::{
-    AudioOptionsView, AudioPipelineStats, ControlsState, ErrorCallback, MediaInfo, UUAVState,
-    VideoSize,
-};
+use crate::{AudioOptionsView, AudioPipelineStats, ControlsState, MediaInfo, UUAVState, VideoSize};
 
 /// Lifecycle of the player's playback, shared with the playback thread.
 enum Playback {
@@ -63,7 +60,7 @@ impl UUAVPlayer {
         id: crate::PlayerId,
         device: HwDevice,
         audio_out: AudioOptionsView,
-        error_callback: ErrorCallback,
+        sinks: UnitSinks,
         protocol_whitelist: Arc<StreamingProtocol>,
     ) -> Result<Self> {
         let (sender_open_intent, receiver_open_intent) = bounded::<OpenIntent>(1);
@@ -95,7 +92,7 @@ impl UUAVPlayer {
                             device.clone(),
                             audio_out.clone(),
                             cancel_token.clone(),
-                            error_callback.clone(),
+                            sinks.clone(),
                             &protocol_whitelist,
                             UnitControls {
                                 play_or_pause: play_or_pause.clone(),
@@ -109,7 +106,7 @@ impl UUAVPlayer {
                                 let unit = Arc::new(unit);
                                 playback.store(Arc::new(Playback::Active(Arc::clone(&unit))));
                                 if let Err(e) = unit.run_blocking(pipeline) {
-                                    error_callback.report(e.to_string());
+                                    sinks.error.report(e.to_string());
                                     playback.store(Arc::new(Playback::Failed));
                                 } else {
                                     playback.store(Arc::new(Playback::Closed));
@@ -119,7 +116,7 @@ impl UUAVPlayer {
                                 if cancel_token.is_cancelled() {
                                     playback.store(Arc::new(Playback::Closed));
                                 } else {
-                                    error_callback.report(e.to_string());
+                                    sinks.error.report(e.to_string());
                                     playback.store(Arc::new(Playback::Failed));
                                 }
                             }
@@ -182,7 +179,6 @@ impl UUAVPlayer {
             }
         }
 
-        // TODO: later, encapsulate the valid transitions into the Playback type
         // nothing will open; do not leave the player reading Opening
         self.playback.rcu(|cur| match cur.as_ref() {
             Playback::Opening => Arc::new(Playback::Closed),
@@ -221,14 +217,12 @@ impl UUAVPlayer {
             .ok_or_else(|| anyhow!("no media open: {:?}", self.state()))
     }
 
-    pub(crate) fn play(&self) -> Result<()> {
+    pub(crate) fn play(&self) {
         self.play_control.push(true);
-        Ok(())
     }
 
-    pub(crate) fn pause(&self) -> Result<()> {
+    pub(crate) fn pause(&self) {
         self.play_control.push(false);
-        Ok(())
     }
 
     pub(crate) fn set_looping(&self, looping: bool) {
@@ -316,10 +310,10 @@ impl UUAVPlayer {
 
     pub(crate) fn video_texture(
         &self,
-        #[cfg(target_os = "macos")] plane: i32,
+        #[cfg(not(target_os = "windows"))] plane: i32,
     ) -> Option<VideoTextureView> {
         self.unit()?.video_texture(
-            #[cfg(target_os = "macos")]
+            #[cfg(not(target_os = "windows"))]
             plane,
         )
     }

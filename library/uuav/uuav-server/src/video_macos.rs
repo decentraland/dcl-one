@@ -28,9 +28,9 @@ use objc2_metal::{
 use std::collections::HashMap;
 use std::os::raw::c_void;
 use uuav_core as core;
-use uuav_ipc::protocol::{PlayerId, ToClient};
 use uuav_ipc::channel::Channel;
 use uuav_ipc::mach_channel;
+use uuav_ipc::protocol::{PlayerId, ToClient};
 
 type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
 
@@ -103,17 +103,16 @@ impl VideoPump {
     }
 
     pub fn ack(&mut self, id: PlayerId, generation: u32) {
-        if let Some(player) = self.players.get_mut(&id) {
-            if player
+        if let Some(player) = self.players.get_mut(&id)
+            && player
                 .pending
                 .as_ref()
                 .is_some_and(|pending| pending.generation == generation)
-            {
-                // the client wrapped the new set; switch over (the old
-                // surfaces stay alive through the client's own retains
-                // until it drops them)
-                player.active = player.pending.take();
-            }
+        {
+            // the client wrapped the new set; switch over (the old
+            // surfaces stay alive through the client's own retains
+            // until it drops them)
+            player.active = player.pending.take();
         }
     }
 
@@ -123,7 +122,7 @@ impl VideoPump {
 
     fn tick_player(&mut self, id: PlayerId, channel: &mut Channel) -> Result<()> {
         // the core presents the due frame into its presentation planes,
-        // exactly as it would for Unity's render thread
+        // exactly as it would for the host's render thread
         (self.render_event)(id as i32);
 
         let Some((core_y, core_uv, width, height)) = query_core_planes(id) else {
@@ -133,8 +132,14 @@ impl VideoPump {
 
         let player = self.players.entry(id).or_default();
 
-        if !player.active.as_ref().is_some_and(|g| g.matches(width, height))
-            && !player.pending.as_ref().is_some_and(|g| g.matches(width, height))
+        if !player
+            .active
+            .as_ref()
+            .is_some_and(|g| g.matches(width, height))
+            && !player
+                .pending
+                .as_ref()
+                .is_some_and(|g| g.matches(width, height))
         {
             player.next_generation += 1;
             let generation = player.next_generation;
@@ -173,14 +178,7 @@ impl VideoPump {
             .get(slot_index)
             .ok_or_else(|| anyhow!("slot index {slot_index} out of range"))?;
 
-        blit_planes(
-            &self.queue,
-            core_y,
-            core_uv,
-            slot,
-            width,
-            height,
-        )?;
+        blit_planes(&self.queue, core_y, core_uv, slot, width, height)?;
 
         channel.send(&ToClient::FramePublished {
             id,
@@ -191,7 +189,7 @@ impl VideoPump {
 }
 
 /// The core's presentation plane pointers + visible size, or `None` while
-/// unavailable (mirrors what Unity's poll sees).
+/// unavailable (mirrors what the host's poll sees).
 fn query_core_planes(id: PlayerId) -> Option<(*const c_void, *const c_void, u32, u32)> {
     let mut y: *const c_void = std::ptr::null();
     state::consume_result(unsafe { core::uuav_player_get_video_texture(id, 0, &mut y) }).ok()?;

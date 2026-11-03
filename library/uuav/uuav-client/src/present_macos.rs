@@ -1,8 +1,8 @@
 //! Client-side presentation: assembles shared-surface generations announced
-//! by the helper, and on Unity's render event copies the latest published
-//! slot into client-owned presentation planes on Unity's device — the same
+//! by the helper, and on the host's render event copies the latest published
+//! slot into client-owned presentation planes on the host's device — the same
 //! stable-pointer contract (Y `R8Unorm`, UV `RG8Unorm`, retire-grace on
-//! resolution change) the in-process plugin had, so the C# poll-and-rewrap
+//! resolution change) the in-process plugin had, so the the host poll-and-rewrap
 //! flow is untouched.
 
 use crate::platform::UnityDevice;
@@ -50,7 +50,7 @@ impl PendingGen {
     }
 }
 
-/// An assembled generation: every slot surface wrapped on Unity's device.
+/// An assembled generation: every slot surface wrapped on the host's device.
 struct ActiveGen {
     generation: u32,
     width: u32,
@@ -58,7 +58,7 @@ struct ActiveGen {
     slots: [[Texture; PLANES]; SLOTS],
 }
 
-/// The presentation planes C# wraps, plus the size they were created for.
+/// The presentation planes the host wraps, plus the size they were created for.
 struct SizedPlanes {
     y: Texture,
     uv: Texture,
@@ -67,14 +67,14 @@ struct SizedPlanes {
 }
 
 /// Per-player video state behind the mirror's mutex. Written by the IO and
-/// mach threads (assembly, publishes), consumed on Unity's render thread.
+/// mach threads (assembly, publishes), consumed on the host's render thread.
 #[derive(Default)]
 pub struct PlayerVideo {
     pending: Option<PendingGen>,
     active: Option<ActiveGen>,
     presentation: Option<SizedPlanes>,
     /// Previous presentation generation, kept alive for one resolution
-    /// change so the pointers C# still wraps stay valid until its next poll.
+    /// change so the pointers the host still wraps stay valid until its next poll.
     retired: Option<SizedPlanes>,
     /// Newest (generation, slot) the helper finished writing.
     published: Option<(u32, u8)>,
@@ -112,7 +112,7 @@ impl PlayerVideo {
 
     /// Drops all helper-side shared state after the helper died (surface
     /// retains release with it). The presentation planes and their retire
-    /// grace survive so the pointers C# wraps stay valid — the last frame
+    /// grace survive so the pointers the host wraps stay valid — the last frame
     /// freezes until the resurrected helper publishes again.
     pub fn reset_for_recovery(&mut self) {
         self.pending = None;
@@ -135,7 +135,7 @@ impl PlayerVideo {
         self.pending.as_mut().unwrap_or_else(|| unreachable!())
     }
 
-    /// The stable presentation-plane pointer C# wraps, once the first frame
+    /// The stable presentation-plane pointer the host wraps, once the first frame
     /// was presented.
     pub fn texture_ptr(&self, plane: i32) -> Result<*const c_void, String> {
         let planes = self
@@ -212,7 +212,7 @@ impl PlayerVideo {
         }
         let y = new_plane(unity, MTLPixelFormat::R8Unorm, width, height)?;
         let uv = new_plane(unity, MTLPixelFormat::RG8Unorm, width / 2, height / 2)?;
-        // the generation before last dies here; C# has had a full poll
+        // the generation before last dies here; the host has had a full poll
         // cycle to stop wrapping it
         let _previous = self.retired.take();
         self.retired = self.presentation.take();
@@ -226,18 +226,25 @@ impl PlayerVideo {
     }
 }
 
-/// Wraps every surface of a completed pending generation on Unity's device.
+/// Wraps every surface of a completed pending generation on the host's device.
 fn wrap_generation(unity: &UnityDevice, pending: &PendingGen) -> Result<ActiveGen> {
-    let (width, height) = pending.dims.ok_or_else(|| anyhow!("generation has no dims"))?;
+    let (width, height) = pending
+        .dims
+        .ok_or_else(|| anyhow!("generation has no dims"))?;
 
-    let wrap_slot = |slot: &[Option<CFRetained<IOSurfaceRef>>; PLANES]| -> Result<[Texture; PLANES]> {
-        let y = slot[0].as_ref().ok_or_else(|| anyhow!("missing Y surface"))?;
-        let uv = slot[1].as_ref().ok_or_else(|| anyhow!("missing UV surface"))?;
-        Ok([
-            wrap_surface(unity, y, MTLPixelFormat::R8Unorm)?,
-            wrap_surface(unity, uv, MTLPixelFormat::RG8Unorm)?,
-        ])
-    };
+    let wrap_slot =
+        |slot: &[Option<CFRetained<IOSurfaceRef>>; PLANES]| -> Result<[Texture; PLANES]> {
+            let y = slot[0]
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing Y surface"))?;
+            let uv = slot[1]
+                .as_ref()
+                .ok_or_else(|| anyhow!("missing UV surface"))?;
+            Ok([
+                wrap_surface(unity, y, MTLPixelFormat::R8Unorm)?,
+                wrap_surface(unity, uv, MTLPixelFormat::RG8Unorm)?,
+            ])
+        };
 
     Ok(ActiveGen {
         generation: pending.generation,
@@ -274,7 +281,7 @@ fn wrap_surface(
         .ok_or_else(|| anyhow!("wrapping shared surface as {format:?} failed"))
 }
 
-/// One owned presentation plane C# samples from.
+/// One owned presentation plane the host samples from.
 fn new_plane(
     unity: &UnityDevice,
     format: MTLPixelFormat,
@@ -298,13 +305,9 @@ fn new_plane(
 }
 
 /// Copies one shared slot into the presentation planes, synchronously —
-/// orders the copy against Unity's own queue exactly as the in-process
-/// plugin did (`waitUntilCompleted` before C#'s blit samples the planes).
-fn blit_slot(
-    unity: &UnityDevice,
-    sources: &[Texture; PLANES],
-    planes: &SizedPlanes,
-) -> Result<()> {
+/// orders the copy against the host's own queue exactly as the in-process
+/// plugin did (`waitUntilCompleted` before the host's blit samples the planes).
+fn blit_slot(unity: &UnityDevice, sources: &[Texture; PLANES], planes: &SizedPlanes) -> Result<()> {
     let buffer = unity
         .queue
         .commandBuffer()

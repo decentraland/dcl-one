@@ -1,12 +1,13 @@
-//! The `uuav` plugin Unity loads. Same C ABI as the old in-process plugin
-//! (`DllImport("uuav")` in C# is untouched); the decode pipeline now lives
-//! in the spawned `uuav-helper` process and this dylib is the middleware:
-//! it spawns/monitors the helper, forwards commands over the OS channel
-//! (named pipe / socketpair), and serves
-//! every per-frame getter from locally cached state snapshots.
+//! The `uuav` library the host links. The decode pipeline lives in the
+//! spawned `uuav-helper` process and this crate is the middleware: it
+//! spawns/monitors the helper, forwards commands over the OS channel
+//! (named pipe / socketpair), and serves every per-frame getter from
+//! locally cached state snapshots. The surface is a C ABI (`uuav_*`
+//! entry points) so it stays host-agnostic; a Rust host calls them as
+//! plain functions.
 //!
-//! Helper crashes self-heal here, with no involvement from C# or the ECS
-//! layer: every command keeps a per-player *desired state* current, and the
+//! Helper crashes self-heal here, with no involvement from the host: every
+//! command keeps a per-player *desired state* current, and the
 //! recovery worker respawns the helper (with backoff) and rebuilds every
 //! player from its mirror — reopening the URL, seeking back to where the
 //! clock was, resuming playback. While the helper is down, players read as
@@ -51,6 +52,9 @@ mod platform;
 #[cfg(target_os = "windows")]
 #[path = "platform_windows.rs"]
 mod platform;
+#[cfg(target_os = "linux")]
+#[path = "platform_linux.rs"]
+mod platform;
 
 #[cfg(target_os = "macos")]
 #[path = "present_macos.rs"]
@@ -58,9 +62,12 @@ mod present;
 #[cfg(target_os = "windows")]
 #[path = "present_windows.rs"]
 mod present;
+#[cfg(target_os = "linux")]
+#[path = "present_linux.rs"]
+mod present;
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-compile_error!("uuav supports Windows (D3D11) and macOS (Metal) only");
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+compile_error!("uuav supports Windows (D3D11), macOS (Metal) and Linux (shared memory) only");
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use connection::{Connection, EventSinks, Lifecycle, LifecycleCell};
@@ -163,6 +170,10 @@ pub struct MediaInfo {
     pub pixel_format: [c_char; MEDIA_INFO_NAME_LEN],
     pub audio_codec: [c_char; MEDIA_INFO_NAME_LEN],
     pub sample_format: [c_char; MEDIA_INFO_NAME_LEN],
+    /// The video decoder in use: the platform hardware decoder
+    /// (`videotoolbox`, `d3d11va`, `vaapi`) or `software`; empty without
+    /// video. Moves to `software` on a mid-stream hardware fallback.
+    pub decoder: [c_char; MEDIA_INFO_NAME_LEN],
     pub has_video: u8,
     pub has_audio: u8,
 }
@@ -209,9 +220,9 @@ fn string_to_c_bytes(s: impl AsRef<str>) -> *const c_char {
 
 // ---- client state ------------------------------------------------------
 
-/// The C# delegates registered at init. The shared lifecycle gates every
-/// invocation: after `uuav_deinit` (`ShutDown`) nothing calls into Unity;
-/// helper deaths and recovery progress still reach Unity before that.
+/// The the host delegates registered at init. The shared lifecycle gates every
+/// invocation: after `uuav_deinit` (`ShutDown`) nothing calls into the host;
+/// helper deaths and recovery progress still reach the host before that.
 struct CallbackSinks {
     error: RawCallback,
     warning: RawCallback,
@@ -262,7 +273,7 @@ struct Client {
     adapter: u64,
     /// Wakes the parked recovery worker after attempts capped out.
     rearm: crossbeam_channel::Sender<()>,
-    /// Unity's GPU device + what presentation copies run on (Metal: a blit
+    /// The host's GPU device + what presentation copies run on (Metal: a blit
     /// queue; D3D11: the immediate context, render thread only).
     unity: Arc<platform::UnityDevice>,
 }
@@ -285,7 +296,10 @@ fn validate_audio(options: AudioOptionsRaw) -> Result<AudioOptionsWire, String> 
         ));
     }
     if options.channels <= 0 {
-        return Err(format!("channels must be positive, got {}", options.channels));
+        return Err(format!(
+            "channels must be positive, got {}",
+            options.channels
+        ));
     }
     Ok(AudioOptionsWire {
         sample_rate: options.sample_rate,
@@ -331,6 +345,7 @@ fn media_info_to_c(info: &MediaInfoWire) -> MediaInfo {
         pixel_format: name_to_field(&info.pixel_format),
         audio_codec: name_to_field(&info.audio_codec),
         sample_format: name_to_field(&info.sample_format),
+        decoder: name_to_field(&info.decoder),
         has_video: u8::from(info.has_video),
         has_audio: u8::from(info.has_audio),
     }
@@ -359,7 +374,12 @@ fn start_session(
             .map_err(|e| format!("mach channel: {e}"))?
     };
 
-    #[cfg(target_os = "macos")]
+    // the slot-descriptor channel must exist before the helper inherits it
+    #[cfg(target_os = "linux")]
+    let (mut surface_receiver, surface_handoff) =
+        uuav_ipc::fd_channel::Receiver::pair().map_err(|e| format!("surface channel: {e}"))?;
+
+    #[cfg(not(target_os = "windows"))]
     let allow_file_read = protocol_whitelist
         .split(',')
         .any(|p| p.trim().eq_ignore_ascii_case("file"));
@@ -371,7 +391,9 @@ fn start_session(
             let spawned = spawn::spawn_helper(
                 handoff,
                 &token,
-                #[cfg(target_os = "macos")]
+                #[cfg(target_os = "linux")]
+                surface_handoff,
+                #[cfg(not(target_os = "windows"))]
                 allow_file_read,
             )?;
             // the registry pulls announced texture handles out of the
@@ -429,8 +451,49 @@ fn start_session(
             conn.alive_flag(),
         );
     }
+    #[cfg(target_os = "linux")]
+    {
+        surface_receiver.expect_sender(child.id());
+        spawn_surface_receiver(
+            surface_receiver,
+            Arc::clone(registry),
+            Arc::clone(lifecycle),
+            conn.alive_flag(),
+        );
+    }
 
     Ok((conn, child))
+}
+
+/// Owns the descriptor-channel receiving end on a dedicated thread: every
+/// transferred slot plane is mapped and lands in the matching player
+/// mirror. Exits when its connection generation retires or the runtime
+/// shuts down.
+#[cfg(target_os = "linux")]
+fn spawn_surface_receiver(
+    receiver: uuav_ipc::fd_channel::Receiver,
+    registry: Arc<Registry>,
+    lifecycle: Arc<LifecycleCell>,
+    alive: Arc<std::sync::atomic::AtomicBool>,
+) {
+    _ = std::thread::Builder::new()
+        .name("uuav-surfaces".into())
+        .spawn(move || {
+            while alive.load(Ordering::Acquire) && lifecycle.get() != Lifecycle::ShutDown {
+                match receiver.recv(200) {
+                    // an unmappable plane leaves its generation incomplete;
+                    // the helper re-announces on the next resolution change
+                    // or respawn
+                    Ok(Some((tag, fd, len))) => {
+                        if let Ok(mapping) = present::Mapping::map(fd, len) {
+                            registry::apply_surface(&registry, &tag, mapping);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(_) => return,
+                }
+            }
+        });
 }
 
 /// Owns the mach receive right on a dedicated thread: every transferred
@@ -449,8 +512,7 @@ fn spawn_mach_receiver(
             while alive.load(Ordering::Acquire) && lifecycle.get() != Lifecycle::ShutDown {
                 match receiver.recv(200) {
                     Ok(Some((tag, port))) => {
-                        let surface =
-                            objc2_io_surface::IOSurfaceRef::lookup_from_mach_port(port);
+                        let surface = objc2_io_surface::IOSurfaceRef::lookup_from_mach_port(port);
                         // the lookup retained the surface; the transferred
                         // send right itself is no longer needed
                         unsafe {
@@ -534,7 +596,11 @@ fn spawn_recovery_worker(client: &Arc<Client>, rearm: crossbeam_channel::Receive
 fn freeze_mirrors(client: &Client) {
     let audio = **client.audio_options.load();
     for (_, mirror) in client.registry.snapshot() {
-        let now = mirror.state.load().as_ref().and_then(|c| c.media_time_now());
+        let now = mirror
+            .state
+            .load()
+            .as_ref()
+            .and_then(|c| c.media_time_now());
         if let Some(time) = now
             && let Ok(mut desired) = mirror.desired.lock()
         {
@@ -592,7 +658,10 @@ fn recover(client: &Arc<Client>) {
             }
             Err(e) => client.sinks.on_log(
                 LogSink::Warning,
-                &format!("uuav helper restart attempt {} failed: {e}", attempt.saturating_add(1)),
+                &format!(
+                    "uuav helper restart attempt {} failed: {e}",
+                    attempt.saturating_add(1)
+                ),
             ),
         }
     }
@@ -746,6 +815,7 @@ pub unsafe extern "C" fn uuav_init(
     let Some(log_callback) = log_callback else {
         return ResultFFI::error("Log callback is null");
     };
+    #[cfg(not(target_os = "linux"))]
     if texture.is_null() {
         return ResultFFI::error("Texture to capture the HwDevice from is not provided");
     }
@@ -758,6 +828,9 @@ pub unsafe extern "C" fn uuav_init(
     let adapter = unity.registry_id;
     #[cfg(target_os = "windows")]
     let adapter = unity.adapter_luid;
+    // no GPU object crosses the boundary on Linux
+    #[cfg(target_os = "linux")]
+    let adapter = 0u64;
 
     let audio = match validate_audio(audio_options) {
         Ok(audio) => audio,
@@ -782,13 +855,7 @@ pub unsafe extern "C" fn uuav_init(
     let registry: Arc<Registry> = Arc::new(Registry::new());
 
     let (conn, child) = match start_session(
-        &lifecycle,
-        &registry,
-        &sinks,
-        audio,
-        &whitelist,
-        log_level,
-        adapter,
+        &lifecycle, &registry, &sinks, audio, &whitelist, log_level, adapter,
     ) {
         Ok(session) => session,
         Err(e) => return ResultFFI::error(e),
@@ -821,7 +888,7 @@ pub extern "C" fn uuav_deinit() {
     };
 
     // planned shutdown: the escalated lifecycle silences the sinks (no late
-    // callbacks into Unity, no "terminated" report from the worker) and
+    // callbacks into the host, no "terminated" report from the worker) and
     // tells the IO thread to flush the Shutdown frame and exit
     client.lifecycle.transition(Lifecycle::ShutDown);
     client.conn().shutdown();
@@ -907,14 +974,17 @@ pub extern "C" fn uuav_update_audio_out(options: AudioOptionsRaw) -> ResultFFI {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn uuav_status() -> Status {
-    CLIENT.load().as_ref().map_or_else(Status::default, |client| Status {
-        players_count: client.registry.len() as u64,
-        initialized: true,
-        audio_options: **client.audio_options.load(),
-        // the helper's device health surfaces through player errors; Unity's
-        // own device is not the decode device anymore
-        device_remove_reason: ptr::null(),
-    })
+    CLIENT
+        .load()
+        .as_ref()
+        .map_or_else(Status::default, |client| Status {
+            players_count: client.registry.len() as u64,
+            initialized: true,
+            audio_options: **client.audio_options.load(),
+            // the helper's device health surfaces through player errors; the host's
+            // own device is not the decode device anymore
+            device_remove_reason: ptr::null(),
+        })
 }
 
 /// Diagnostics-only lifecycle probe: -1 when the runtime is not
@@ -1171,7 +1241,9 @@ pub extern "C" fn uuav_player_state(player_id: PlayerId) -> UUAVState {
                     .state
                     .load()
                     .as_ref()
-                    .map_or(UUAVState::UUAV_CLOSED, |cached| map_state(cached.update.state))
+                    .map_or(UUAVState::UUAV_CLOSED, |cached| {
+                        map_state(cached.update.state)
+                    })
             }
         }
     }
@@ -1435,7 +1507,7 @@ pub extern "C" fn uuav_player_get_rate(player_id: PlayerId) -> f64 {
 
 // ---- video -------------------------------------------------------------
 
-// Unity's UnityRenderingEvent signature
+// The render-event signature: host-agnostic, one `i32` player id
 pub type UUAVRenderEvent = extern "C" fn(event_id: i32);
 
 // [render] entry point issued via GL.IssuePluginEvent; copies the helper's
@@ -1483,9 +1555,11 @@ pub const extern "C" fn uuav_get_render_callback() -> UUAVRenderEvent {
 }
 
 // Valid from the first presented frame; the pointer is a client-owned
-// presentation texture on Unity's device (Metal: one per plane; D3D11: one
-// NV12 texture, `plane` unused as in-process), stable across frames and
-// replaced (with a one-poll retire grace) on resolution change.
+// presentation texture on the host's device (Metal: one `MTLTexture` per
+// plane; D3D11: one NV12 texture, `plane` unused) or, on Linux, a
+// client-owned tightly packed CPU plane (0 = Y at w x h, 1 = UV at
+// w/2 x h/2) the host uploads. Stable across frames and replaced (with a
+// one-poll retire grace) on resolution change.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn uuav_player_get_video_texture(
     player_id: PlayerId,
@@ -1637,14 +1711,8 @@ pub unsafe extern "C" fn uuav_audio_engine_stats(out_stats: *mut EngineAudioStat
     write_out(
         out_stats,
         Ok(EngineAudioStats {
-            serve_max_iter_us: client
-                .registry
-                .serve_max_iter_us
-                .load(Ordering::Relaxed),
-            audio_pull_clamps: client
-                .registry
-                .audio_pull_clamps
-                .load(Ordering::Relaxed),
+            serve_max_iter_us: client.registry.serve_max_iter_us.load(Ordering::Relaxed),
+            audio_pull_clamps: client.registry.audio_pull_clamps.load(Ordering::Relaxed),
         }),
     )
 }

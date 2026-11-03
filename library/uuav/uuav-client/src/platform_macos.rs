@@ -1,4 +1,4 @@
-//! Unity-device capture from the probe texture (Metal).
+//! The host-device capture from the probe texture (Metal).
 
 use anyhow::{Context as _, Result, ensure};
 use objc2::rc::Retained;
@@ -6,7 +6,7 @@ use objc2::runtime::ProtocolObject;
 use objc2_metal::{MTLCommandQueue, MTLDevice, MTLResource as _, MTLTexture};
 use std::os::raw::c_void;
 
-/// Unity's Metal device, retained past the probe texture's lifetime, plus
+/// The host's Metal device, retained past the probe texture's lifetime, plus
 /// the queue this dylib blits shared frames into presentation textures on.
 pub struct UnityDevice {
     pub device: Retained<ProtocolObject<dyn MTLDevice>>,
@@ -19,8 +19,8 @@ pub struct UnityDevice {
 unsafe impl Send for UnityDevice {}
 unsafe impl Sync for UnityDevice {}
 
-/// Captures the device behind Unity's probe texture (the probe itself is
-/// destroyed by C# right after init).
+/// Captures the device behind the host's probe texture (the probe itself is
+/// destroyed by the host right after init).
 ///
 /// # Safety
 /// `texture` must be null (rejected) or a live `id<MTLTexture>`; there is

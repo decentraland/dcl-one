@@ -1,4 +1,4 @@
-//! Headless audio-pacing soak: consumes audio exactly like Unity's DSP
+//! Headless audio-pacing soak: consumes audio exactly like the host's DSP
 //! thread (1024-frame blocks at the block rate, optionally skewed) and
 //! prints the per-second audio-path counters. A healthy pipeline shows
 //! underruns/wm-drop/drift-drop flat after priming with the jitter fill
@@ -35,7 +35,9 @@ fn to_str(line: *const c_char) -> String {
     if line.is_null() {
         return String::new();
     }
-    unsafe { CStr::from_ptr(line) }.to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(line) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn check(step: &str, result: uuav::ResultFFI) {
@@ -46,7 +48,7 @@ fn check(step: &str, result: uuav::ResultFFI) {
     }
 }
 
-/// Stands in for Unity's probe: any live `id<MTLTexture>` works, `uuav_init`
+/// Stands in for the host's probe: any live `id<MTLTexture>` works, `uuav_init`
 /// only derives the device (and blit queue) from it.
 #[cfg(target_os = "macos")]
 fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
@@ -69,8 +71,15 @@ fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
     init(objc2::rc::Retained::as_ptr(&probe).cast())
 }
 
-/// Stands in for Unity's probe: any live `ID3D11Texture2D*` works,
+/// Stands in for the host's probe: any live `ID3D11Texture2D*` works,
 /// `uuav_init` only derives the device (and its adapter LUID) from it.
+/// Nothing is derived from a probe on Linux: frames arrive as shared
+/// memory the host uploads itself.
+#[cfg(target_os = "linux")]
+fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
+    init(std::ptr::null())
+}
+
 #[cfg(target_os = "windows")]
 fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
     use windows::Win32::Foundation::HMODULE;
@@ -124,9 +133,9 @@ fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
 
 #[allow(clippy::too_many_lines)]
 fn main() {
-    let url = std::env::args().nth(1).unwrap_or_else(|| {
-        "https://media.w3.org/2010/05/sintel/trailer.mp4".to_owned()
-    });
+    let url = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "https://media.w3.org/2010/05/sintel/trailer.mp4".to_owned());
     let skew: f64 = std::env::args()
         .nth(2)
         .and_then(|s| s.parse().ok())
@@ -162,15 +171,17 @@ fn main() {
     // wait for PLAYING
     let started = Instant::now();
     while !matches!(uuav::uuav_player_state(player), UUAVState::UUAV_PLAYING) {
-        assert!(started.elapsed() < Duration::from_secs(20), "never reached PLAYING");
+        assert!(
+            started.elapsed() < Duration::from_secs(20),
+            "never reached PLAYING"
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
     println!("PLAYING; consuming {DSP_BLOCK_FRAMES}-frame blocks, skew x{skew}");
 
     let mut dst = vec![0.0_f32; DSP_BLOCK_FRAMES * AUDIO.channels as usize];
-    let block = Duration::from_secs_f64(
-        DSP_BLOCK_FRAMES as f64 / (f64::from(AUDIO.sample_rate) * skew),
-    );
+    let block =
+        Duration::from_secs_f64(DSP_BLOCK_FRAMES as f64 / (f64::from(AUDIO.sample_rate) * skew));
 
     let soak_start = Instant::now();
     let mut next_block = Instant::now();
@@ -217,7 +228,11 @@ fn main() {
                 stats.core_drift_dropped_samples as f64 * 1000.0 / per_second,
                 stats.core_silence_pulls,
                 stats.core_ring_stalls,
-                if requested == 0 { 0.0 } else { returned as f64 * 100.0 / requested as f64 },
+                if requested == 0 {
+                    0.0
+                } else {
+                    returned as f64 * 100.0 / requested as f64
+                },
             );
         }
     }

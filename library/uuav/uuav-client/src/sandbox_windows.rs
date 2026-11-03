@@ -9,7 +9,7 @@
 //!   higher-integrity processes for anything but query/synchronize;
 //! - a **job object** limiting the helper to a single process (no child
 //!   processes) with kill-on-job-close: the client holds the only job
-//!   handle, so kernel handle cleanup terminates the helper when Unity
+//!   handle, so kernel handle cleanup terminates the helper when the host
 //!   exits for any reason, crash included;
 //! - a **process-creation mitigation policy** enabling DEP, mandatory +
 //!   bottom-up + high-entropy ASLR, control-flow guard, strict handle
@@ -98,8 +98,7 @@ pub fn restricted_low_integrity_token() -> Result<OwnedHandle> {
         OpenProcessToken(
             GetCurrentProcess(),
             TOKEN_ACCESS_MASK(
-                TOKEN_DUPLICATE.0 | TOKEN_QUERY.0 | TOKEN_ASSIGN_PRIMARY.0
-                    | TOKEN_ADJUST_DEFAULT.0,
+                TOKEN_DUPLICATE.0 | TOKEN_QUERY.0 | TOKEN_ASSIGN_PRIMARY.0 | TOKEN_ADJUST_DEFAULT.0,
             ),
             &mut primary,
         )

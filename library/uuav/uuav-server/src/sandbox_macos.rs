@@ -39,7 +39,7 @@ unsafe extern "C" {
 }
 
 /// Applies helper.sb to the current process. `allow_media_file_read` opens
-/// broad file reads for the Editor's `file:` protocol; writes and exec
+/// broad file reads for the development `file:` protocol; writes and exec
 /// stay denied regardless.
 pub fn apply(service: &str, allow_media_file_read: bool) -> Result<()> {
     // Seatbelt path filters match fully resolved paths
@@ -78,9 +78,8 @@ pub fn apply(service: &str, allow_media_file_read: bool) -> Result<()> {
 
     let profile = CString::new(PROFILE).context("profile contains NUL")?;
     let mut error: *mut c_char = std::ptr::null_mut();
-    let rc = unsafe {
-        sandbox_init_with_parameters(profile.as_ptr(), 0, params.as_ptr(), &mut error)
-    };
+    let rc =
+        unsafe { sandbox_init_with_parameters(profile.as_ptr(), 0, params.as_ptr(), &mut error) };
     if rc != 0 {
         let detail = if error.is_null() {
             format!("code {rc}")

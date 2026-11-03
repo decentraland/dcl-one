@@ -7,7 +7,7 @@
 //! device the core presents on). Each slot's NT handle stays open in this
 //! process and its value is announced inline in `TextureSet`; the client
 //! pulls the handles out of this process with `DuplicateHandle` (the
-//! sandboxed helper cannot push them into Unity's). A generation becomes
+//! sandboxed helper cannot push them into the host's). A generation becomes
 //! active on `TextureSetAck`, and until then the previous one keeps
 //! publishing, mirroring the core's own retire-grace on resolution change.
 
@@ -96,8 +96,8 @@ unsafe impl Send for VideoPump {}
 impl VideoPump {
     pub fn new(device: &ProbeDevice) -> Result<Self> {
         let device = device.device().clone();
-        let context = unsafe { device.GetImmediateContext() }
-            .context("device has no immediate context")?;
+        let context =
+            unsafe { device.GetImmediateContext() }.context("device has no immediate context")?;
         Ok(Self {
             device,
             context,
@@ -141,7 +141,7 @@ impl VideoPump {
 
     fn tick_player(&mut self, id: PlayerId, channel: &mut Channel) -> Result<()> {
         // the core presents the due frame into its presentation texture,
-        // exactly as it would for Unity's render thread
+        // exactly as it would for the host's render thread
         (self.render_event)(id as i32);
 
         let Some((core_texture, width, height)) = query_core_texture(id) else {
@@ -151,8 +151,14 @@ impl VideoPump {
 
         let player = self.players.entry(id).or_default();
 
-        if !player.active.as_ref().is_some_and(|g| g.matches(width, height))
-            && !player.pending.as_ref().is_some_and(|g| g.matches(width, height))
+        if !player
+            .active
+            .as_ref()
+            .is_some_and(|g| g.matches(width, height))
+            && !player
+                .pending
+                .as_ref()
+                .is_some_and(|g| g.matches(width, height))
         {
             player.next_generation += 1;
             let generation = player.next_generation;
@@ -217,7 +223,7 @@ impl VideoPump {
 }
 
 /// The core's presentation texture pointer + visible size, or `None` while
-/// unavailable (mirrors what Unity's poll sees). Dimensions are folded to
+/// unavailable (mirrors what the host's poll sees). Dimensions are folded to
 /// even like the core's own NV12 texture, so slot sizes always match it.
 fn query_core_texture(id: PlayerId) -> Option<(*const c_void, u32, u32)> {
     let mut texture: *const c_void = std::ptr::null();
@@ -271,8 +277,8 @@ fn create_slot(device: &ID3D11Device, width: u32, height: u32) -> Result<(Slot, 
         Usage: D3D11_USAGE_DEFAULT,
         BindFlags: D3D11_BIND_SHADER_RESOURCE.0 as u32,
         CPUAccessFlags: 0,
-        MiscFlags: (D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0
-            | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0) as u32,
+        MiscFlags: (D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX.0 | D3D11_RESOURCE_MISC_SHARED_NTHANDLE.0)
+            as u32,
     };
     let mut created: Option<ID3D11Texture2D> = None;
     unsafe { device.CreateTexture2D(&desc, None, Some(&mut created)) }

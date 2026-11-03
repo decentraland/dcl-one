@@ -172,7 +172,11 @@ impl AudioPlayback {
     /// engine audio reconfiguration (`uuav_update_audio_out`). Declines while
     /// a held frame waits for ring space (the caller retries after servicing
     /// the sinks).
-    pub(super) fn try_enqueue(&mut self, packet: &mut OwnedPacket, start_offset: f64) -> Result<bool> {
+    pub(super) fn try_enqueue(
+        &mut self,
+        packet: &mut OwnedPacket,
+        start_offset: f64,
+    ) -> Result<bool> {
         if self.held.is_some() {
             return Ok(false);
         }

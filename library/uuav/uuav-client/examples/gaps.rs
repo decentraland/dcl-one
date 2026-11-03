@@ -1,6 +1,6 @@
 //! Audio-gap probe: plays a url for a fixed span while pulling audio at
-//! real-time pace (like Unity's audio thread) and driving render events
-//! (like Unity's render thread), then reports every silent gap it heard
+//! real-time pace (like the host's audio thread) and driving render events
+//! (like the host's render thread), then reports every silent gap it heard
 //! and the pipeline's own gap counters. Chunk-interleaved files used to
 //! produce one fixed-size gap per interleave chunk; a healthy run reports
 //! zero gaps after the lead-in.
@@ -38,7 +38,9 @@ fn to_str(line: *const c_char) -> String {
     if line.is_null() {
         return String::new();
     }
-    unsafe { CStr::from_ptr(line) }.to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(line) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn check(step: &str, result: ResultFFI) {
@@ -49,7 +51,7 @@ fn check(step: &str, result: ResultFFI) {
     }
 }
 
-/// Stands in for Unity's probe: any live `id<MTLTexture>` works, `uuav_init`
+/// Stands in for the host's probe: any live `id<MTLTexture>` works, `uuav_init`
 /// only derives the device (and blit queue) from it.
 #[cfg(target_os = "macos")]
 fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
@@ -72,8 +74,15 @@ fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
     init(objc2::rc::Retained::as_ptr(&probe).cast())
 }
 
-/// Stands in for Unity's probe: any live `ID3D11Texture2D*` works,
+/// Stands in for the host's probe: any live `ID3D11Texture2D*` works,
 /// `uuav_init` only derives the device (and its adapter LUID) from it.
+/// Nothing is derived from a probe on Linux: frames arrive as shared
+/// memory the host uploads itself.
+#[cfg(target_os = "linux")]
+fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
+    init(std::ptr::null())
+}
+
 #[cfg(target_os = "windows")]
 fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
     use windows::Win32::Foundation::HMODULE;
@@ -126,9 +135,9 @@ fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
 }
 
 fn main() {
-    let url = std::env::args().nth(1).unwrap_or_else(|| {
-        "https://media.w3.org/2010/05/sintel/trailer.mp4".to_owned()
-    });
+    let url = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "https://media.w3.org/2010/05/sintel/trailer.mp4".to_owned());
     let seconds: u64 = std::env::args()
         .nth(2)
         .and_then(|s| s.parse().ok())
@@ -176,7 +185,7 @@ fn main() {
     println!("playing; sampling audio for {seconds}s...");
 
     // pull the exact real-time sample deficit every ~10ms tick, like
-    // Unity's audio thread; track silent spans after the first signal
+    // The host's audio thread; track silent spans after the first signal
     let mut buffer = vec![0.0f32; AUDIO.sample_rate as usize * AUDIO.channels as usize];
     let started = Instant::now();
     let mut pulled_frames: u64 = 0;
@@ -191,12 +200,10 @@ fn main() {
         let due = (started.elapsed().as_secs_f64() * f64::from(AUDIO.sample_rate)) as u64;
         let deficit = (due - pulled_frames).min(AUDIO.sample_rate as u64) as i32;
         if deficit > 0 {
-            let frames = unsafe {
-                uuav::uuav_player_read_audio(player, buffer.as_mut_ptr(), deficit)
-            };
+            let frames =
+                unsafe { uuav::uuav_player_read_audio(player, buffer.as_mut_ptr(), deficit) };
             let span = frames.max(deficit); // unread deficit plays as silence
-            let audible = buffer
-                [..(frames.max(0) as usize) * AUDIO.channels as usize]
+            let audible = buffer[..(frames.max(0) as usize) * AUDIO.channels as usize]
                 .iter()
                 .any(|s| s.abs() > 1e-4);
             let now = started.elapsed().as_secs_f64();
@@ -226,7 +233,11 @@ fn main() {
 
     assert!(heard_first, "no audible samples arrived at all");
 
-    println!("gaps >= {}ms after first signal: {}", MIN_GAP.as_millis(), gaps.len());
+    println!(
+        "gaps >= {}ms after first signal: {}",
+        MIN_GAP.as_millis(),
+        gaps.len()
+    );
     for (at, len) in &gaps {
         println!("  at {at:7.3}s  silent {:6.0}ms", len * 1000.0);
     }

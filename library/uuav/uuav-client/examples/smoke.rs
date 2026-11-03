@@ -1,12 +1,12 @@
-//! Headless end-to-end smoke of the out-of-process pipeline, no Unity
-//! involved: creates a real GPU probe texture (standing in for Unity's),
+//! Headless end-to-end smoke of the out-of-process pipeline, no the host
+//! involved: creates a real GPU probe texture (standing in for the host's),
 //! walks the C ABI exactly like `UUAVRuntime`/`UUAVPlayer` do, and expects
 //! the helper process to take a stream to PLAYING.
 //!
-//! Run: `cargo build --workspace` (add `--target x86_64-pc-windows-gnu` on
-//! Windows), copy `uuav-helper[.exe]` — plus, on Windows, the FFmpeg DLLs
-//! from the deployed plugin folder — next to the example
-//! binary, then `cargo run -p uuav-client --example smoke [media-url]`.
+//! Run: `bash build.sh`, stage `dist/<target>/` next to the example binary
+//! (`tooling/uuav/stage-dist.py <target> .target/debug/examples`), then
+//! `cargo run -p uuav-client --example smoke [media-url]`. Set
+//! `UUAV_FORCE_SW_DECODE=1` to exercise the software decoder.
 
 use std::ffi::CStr;
 use std::os::raw::c_char;
@@ -36,7 +36,9 @@ fn to_str(line: *const c_char) -> String {
     if line.is_null() {
         return String::new();
     }
-    unsafe { CStr::from_ptr(line) }.to_string_lossy().into_owned()
+    unsafe { CStr::from_ptr(line) }
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn check(step: &str, result: ResultFFI) {
@@ -48,7 +50,7 @@ fn check(step: &str, result: ResultFFI) {
     println!("{step}: ok");
 }
 
-/// Stands in for Unity's probe: any live `id<MTLTexture>` works, `uuav_init`
+/// Stands in for the host's probe: any live `id<MTLTexture>` works, `uuav_init`
 /// only derives the device (and blit queue) from it.
 #[cfg(target_os = "macos")]
 fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
@@ -71,8 +73,15 @@ fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
     init(objc2::rc::Retained::as_ptr(&probe).cast())
 }
 
-/// Stands in for Unity's probe: any live `ID3D11Texture2D*` works,
+/// Stands in for the host's probe: any live `ID3D11Texture2D*` works,
 /// `uuav_init` only derives the device (and its adapter LUID) from it.
+/// Nothing is derived from a probe on Linux: frames arrive as shared
+/// memory the host uploads itself.
+#[cfg(target_os = "linux")]
+fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
+    init(std::ptr::null())
+}
+
 #[cfg(target_os = "windows")]
 fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
     use windows::Win32::Foundation::HMODULE;
@@ -125,9 +134,9 @@ fn with_probe<T>(init: impl FnOnce(*const std::ffi::c_void) -> T) -> T {
 }
 
 fn main() {
-    let url = std::env::args().nth(1).unwrap_or_else(|| {
-        "https://media.w3.org/2010/05/sintel/trailer.mp4".to_owned()
-    });
+    let url = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "https://media.w3.org/2010/05/sintel/trailer.mp4".to_owned());
 
     let whitelist = c"https,http,tls,tcp,crypto,data,file";
     check(
@@ -192,7 +201,7 @@ fn main() {
     }
     assert!(reached_playing, "player never reached PLAYING");
 
-    // video: drive the render callback like Unity's render thread would and
+    // video: drive the render callback like the host's render thread would and
     // expect the shared-texture pipeline to surface presentation textures
     let render = uuav::uuav_get_render_callback();
     let mut planes: Option<(*const std::ffi::c_void, *const std::ffi::c_void)> = None;
@@ -228,29 +237,37 @@ fn main() {
     check("get_video_size", unsafe {
         uuav::uuav_player_get_video_size(player, &mut size)
     });
-    println!("video planes ready: {}x{} (y {y:?}, uv {uv:?})", size.width, size.height);
+    println!(
+        "video planes ready: {}x{} (y {y:?}, uv {uv:?})",
+        size.width, size.height
+    );
 
     // pointer stability: the presentation planes must not churn per frame
     std::thread::sleep(Duration::from_millis(300));
     render(player as i32);
     let mut y_again: *const std::ffi::c_void = std::ptr::null();
     let again = unsafe { uuav::uuav_player_get_video_texture(player, 0, &mut y_again) };
-    assert!(again.error_message.is_null() && y_again == y, "plane pointer churned");
+    assert!(
+        again.error_message.is_null() && y_again == y,
+        "plane pointer churned"
+    );
     println!("plane pointers stable across frames");
 
-    // audio: pull like Unity's audio thread would (10ms chunks at the
+    // audio: pull like the host's audio thread would (10ms chunks at the
     // format negotiated at init) and expect real, non-silent samples
     let frames_per_pull = AUDIO.sample_rate / 100;
     let mut buffer = vec![0.0f32; (frames_per_pull * AUDIO.channels) as usize];
     let mut heard_signal = false;
     let audio_deadline = Instant::now();
     while audio_deadline.elapsed() < Duration::from_secs(10) {
-        let frames = unsafe {
-            uuav::uuav_player_read_audio(player, buffer.as_mut_ptr(), frames_per_pull)
-        };
+        let frames =
+            unsafe { uuav::uuav_player_read_audio(player, buffer.as_mut_ptr(), frames_per_pull) };
         if frames > 0 && buffer.iter().any(|s| s.abs() > 1e-4) {
             heard_signal = true;
-            println!("audio flowing: {frames} frames, peak {:.4}", buffer.iter().fold(0.0f32, |a, s| a.max(s.abs())));
+            println!(
+                "audio flowing: {frames} frames, peak {:.4}",
+                buffer.iter().fold(0.0f32, |a, s| a.max(s.abs()))
+            );
             break;
         }
         std::thread::sleep(Duration::from_millis(10));
@@ -301,7 +318,10 @@ fn main() {
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    assert!(recovered, "player never self-recovered after the helper was killed");
+    assert!(
+        recovered,
+        "player never self-recovered after the helper was killed"
+    );
 
     // the presentation texture must have survived the outage (same pointer)
     let mut y_recovered: *const std::ffi::c_void = std::ptr::null();
@@ -323,7 +343,7 @@ fn kill_helper() {
     let status = std::process::Command::new("taskkill")
         .args(["/F", "/IM", "uuav-helper.exe"])
         .status();
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     let status = std::process::Command::new("pkill")
         .args(["-9", "-x", "uuav-helper"])
         .status();

@@ -30,11 +30,17 @@
     clippy::missing_safety_doc,
     clippy::doc_markdown
 )]
+// significant_drop_tightening (nursery): the lock guards it flags are held
+// for exactly the critical section they protect; its suggested rewrites
+// drop them earlier than the invariants allow
+// TODO it's temporal, remove later
+#![allow(clippy::significant_drop_tightening)]
 
 mod audio_decoder;
 mod ffutil;
 mod playback;
 mod player;
+mod video_decoder;
 
 // Per-platform sibling modules: same names, same cross-platform-consumed
 // surface, selected by target. Consumers stay platform-agnostic.
@@ -44,13 +50,9 @@ mod hw_device;
 #[cfg(target_os = "macos")]
 #[path = "hw_device_macos.rs"]
 mod hw_device;
-
-#[cfg(target_os = "windows")]
-#[path = "video_decoder_windows.rs"]
-mod video_decoder;
-#[cfg(target_os = "macos")]
-#[path = "video_decoder_macos.rs"]
-mod video_decoder;
+#[cfg(target_os = "linux")]
+#[path = "hw_device_linux.rs"]
+mod hw_device;
 
 #[cfg(target_os = "windows")]
 #[path = "video_output_windows.rs"]
@@ -58,9 +60,12 @@ mod video_output;
 #[cfg(target_os = "macos")]
 #[path = "video_output_macos.rs"]
 mod video_output;
+#[cfg(target_os = "linux")]
+#[path = "video_output_linux.rs"]
+mod video_output;
 
-#[cfg(not(any(target_os = "windows", target_os = "macos")))]
-compile_error!("uuav supports Windows (D3D11) and macOS (Metal) only");
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+compile_error!("uuav supports Windows (D3D11), macOS (Metal) and Linux (VAAPI/CPU) only");
 
 use anyhow::{Context as _, ensure};
 use arc_swap::{ArcSwap, ArcSwapOption};
@@ -68,7 +73,7 @@ use dashmap::DashMap;
 use ffmpeg_sys_next as ff;
 use ffutil::StreamingProtocol;
 use hw_device::HwDevice;
-use playback::DEFAULT_PLAYBACK_RATE;
+use playback::{DEFAULT_PLAYBACK_RATE, UnitSinks};
 use player::UUAVPlayer;
 use std::{
     convert::AsRef,
@@ -89,7 +94,7 @@ static NEXT_STREAM_ID: AtomicU64 = AtomicU64::new(1);
 static LOG_INIT: Once = Once::new();
 
 // FFmpeg `lavu_log_constants`; local copies avoid depending on binding names.
-// Messages at or below these levels route to the matching Unity sink.
+// Messages at or below these levels route to the matching the host sink.
 const AV_LOG_ERROR: c_int = 16;
 const AV_LOG_WARNING: c_int = 24;
 
@@ -260,6 +265,10 @@ pub struct MediaInfo {
     pub pixel_format: [c_char; MEDIA_INFO_NAME_LEN],
     pub audio_codec: [c_char; MEDIA_INFO_NAME_LEN],
     pub sample_format: [c_char; MEDIA_INFO_NAME_LEN],
+    /// The video decoder in use: the platform hardware decoder
+    /// (`videotoolbox`, `d3d11va`, `vaapi`) or `software`; empty without
+    /// video. Moves to `software` on a mid-stream hardware fallback.
+    pub decoder: [c_char; MEDIA_INFO_NAME_LEN],
     pub has_video: u8,
     pub has_audio: u8,
 }
@@ -281,6 +290,7 @@ impl MediaInfo {
             pixel_format: [0; MEDIA_INFO_NAME_LEN],
             audio_codec: [0; MEDIA_INFO_NAME_LEN],
             sample_format: [0; MEDIA_INFO_NAME_LEN],
+            decoder: [0; MEDIA_INFO_NAME_LEN],
             has_video: 0,
             has_audio: 0,
         }
@@ -421,13 +431,16 @@ pub const extern "C" fn uuav_abi_version() -> *const c_char {
 }
 
 /// This target's `va_list` as it appears in the bindgen signatures of
-/// `av_log_set_callback`/`av_log_format_line2`: a plain `char*` on
-/// `x86_64-pc-windows-gnu` and `aarch64-apple-darwin`, a pointer to the
-/// SysV `__va_list_tag` on `x86_64-apple-darwin`.
-#[cfg(all(target_arch = "x86_64", target_os = "macos"))]
+/// `av_log_set_callback`/`av_log_format_line2`. The bindings alias it per
+/// target: a plain `char*` on `x86_64-pc-windows-gnu` and
+/// `aarch64-apple-darwin`, a struct by value on `aarch64-unknown-linux-gnu`
+/// - the alias itself works there - but the SysV x86_64 ABI spells it as a
+/// one-element array that decays to a pointer in parameter position, so the
+/// alias cannot be used verbatim and the pointer is named instead.
+#[cfg(all(target_arch = "x86_64", not(target_os = "windows")))]
 type FfmpegVaList = *mut ff::__va_list_tag;
-#[cfg(not(all(target_arch = "x86_64", target_os = "macos")))]
-type FfmpegVaList = *mut c_char;
+#[cfg(not(all(target_arch = "x86_64", not(target_os = "windows"))))]
+type FfmpegVaList = ff::va_list;
 
 /// Process-global FFmpeg log callback installed via `av_log_set_callback`.
 ///
@@ -435,7 +448,7 @@ type FfmpegVaList = *mut c_char;
 /// the runtime is torn down, applies the configured verbosity threshold itself
 /// (FFmpeg leaves that to the callback), formats the line — including the
 /// `AVClass`-derived `[component @ 0x..]` prefix — via `av_log_format_line2`,
-/// then routes to the Unity sink matching the severity.
+/// then routes to the the host sink matching the severity.
 unsafe extern "C" fn uuav_ffmpeg_log(
     avcl: *mut c_void,
     level: c_int,
@@ -478,13 +491,17 @@ unsafe extern "C" fn uuav_ffmpeg_log(
 }
 
 /// Sets the FFmpeg verbosity threshold (an `AV_LOG_*` constant). Messages above
-/// this level are dropped before reaching any Unity sink.
+/// this level are dropped before reaching any the host sink.
 #[unsafe(no_mangle)]
 pub extern "C" fn uuav_set_log_level(level: c_int) {
     unsafe { ff::av_log_set_level(level) };
 }
 
 /// Initializes the global runtime.
+///
+/// `texture` is the host's GPU probe (an `id<MTLTexture>` on macOS, an
+/// `ID3D11Texture2D*` on Windows) the decode device is derived from; on
+/// Linux nothing is derived from it and null is accepted.
 ///
 /// `protocol_whitelist` is a NUL-terminated, comma-separated FFmpeg protocol
 /// list; init fails if it is null or empty. Recommended baseline is
@@ -520,6 +537,7 @@ pub unsafe extern "C" fn uuav_init(
         return ResultFFI::error("Log callback is null");
     };
 
+    #[cfg(not(target_os = "linux"))]
     if texture.is_null() {
         return ResultFFI::error("Texture to capture the HwDevice from is not provided");
     }
@@ -595,7 +613,7 @@ pub extern "C" fn uuav_status() -> Status {
             Ok(()) => ptr::null(),
             Err(e) => string_to_c_bytes(e.to_string()),
         };
-        #[cfg(target_os = "macos")]
+        #[cfg(not(target_os = "windows"))]
         let device_remove_reason = ptr::null();
 
         Status {
@@ -621,7 +639,10 @@ pub extern "C" fn uuav_player_new() -> NewPlayerResult {
         next_id,
         s.device.clone(),
         AudioOptionsView(Arc::clone(&s.audio_options)),
-        ErrorCallback::from_raw(Arc::downgrade(&s.error_callback)),
+        UnitSinks {
+            error: ErrorCallback::from_raw(Arc::downgrade(&s.error_callback)),
+            warning: ErrorCallback::from_raw(Arc::downgrade(&s.warning_callback)),
+        },
         Arc::clone(&s.protocol_whitelist),
     ) {
         Ok(player) => {
@@ -652,7 +673,8 @@ pub extern "C" fn uuav_player_play(player_id: PlayerId) -> ResultFFI {
 fn uuav_player_play_internal(player_id: PlayerId) -> anyhow::Result<()> {
     let state = INIT_STATE.load();
     let runtime = state.as_ref().context(ERR_NO_RUNTIME)?;
-    runtime.player_by_id(player_id)?.play()
+    runtime.player_by_id(player_id)?.play();
+    Ok(())
 }
 
 #[unsafe(no_mangle)]
@@ -663,7 +685,8 @@ pub extern "C" fn uuav_player_pause(player_id: PlayerId) -> ResultFFI {
 fn uuav_player_pause_internal(player_id: PlayerId) -> anyhow::Result<()> {
     let state = INIT_STATE.load();
     let runtime = state.as_ref().context(ERR_NO_RUNTIME)?;
-    runtime.player_by_id(player_id)?.pause()
+    runtime.player_by_id(player_id)?.pause();
+    Ok(())
 }
 
 // async! returns immediately
@@ -915,7 +938,7 @@ pub extern "C" fn uuav_player_get_rate(player_id: PlayerId) -> f64 {
 
 // ---- video -----------------------------------------------------------
 
-// Unity's UnityRenderingEvent signature
+// The render-event signature: host-agnostic, one `i32` player id
 pub type UUAVRenderEvent = extern "C" fn(event_id: i32);
 
 // [render] entry point issued via GL.IssuePluginEvent;
@@ -943,7 +966,8 @@ pub extern "C" fn uuav_get_render_callback() -> UUAVRenderEvent {
 
 // Valid from the first presented frame; what the pointer is per platform
 // and when it invalidates is documented on `video_output::VideoTextureView`.
-// `plane` is part of the fixed C ABI; only Metal consumes it.
+// `plane` is part of the fixed C ABI; D3D11 ignores it (one NV12 texture),
+// Metal and Linux return one plane per call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn uuav_player_get_video_texture(
     player_id: PlayerId,
@@ -953,7 +977,7 @@ pub unsafe extern "C" fn uuav_player_get_video_texture(
     unsafe {
         uuav_player_get_video_texture_internal(
             player_id,
-            #[cfg(target_os = "macos")]
+            #[cfg(not(target_os = "windows"))]
             plane,
             out_texture,
         )
@@ -963,7 +987,7 @@ pub unsafe extern "C" fn uuav_player_get_video_texture(
 
 unsafe fn uuav_player_get_video_texture_internal(
     player_id: PlayerId,
-    #[cfg(target_os = "macos")] plane: i32,
+    #[cfg(not(target_os = "windows"))] plane: i32,
     out_texture: *mut *const c_void,
 ) -> anyhow::Result<()> {
     ensure!(!out_texture.is_null(), "out pointer is null");
@@ -972,7 +996,7 @@ unsafe fn uuav_player_get_video_texture_internal(
     let texture = runtime
         .player_by_id(player_id)?
         .video_texture(
-            #[cfg(target_os = "macos")]
+            #[cfg(not(target_os = "windows"))]
             plane,
         )
         .context("video texture is not available yet")?;

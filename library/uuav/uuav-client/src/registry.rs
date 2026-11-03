@@ -2,9 +2,9 @@
 //! which every per-frame getter is served without touching the channel)
 //! plus the *desired* state that makes the helper resurrectable — after a
 //! helper crash the recovery worker rebuilds every player from its mirror,
-//! with no involvement from C#.
+//! with no involvement from the host.
 //!
-//! The public player ids C# holds are allocated here and stay stable across
+//! The public player ids the host holds are allocated here and stay stable across
 //! helper restarts; each mirror tracks the current helper-side id (the core
 //! allocates its own), and inbound messages are translated back through the
 //! helper->public map.
@@ -73,7 +73,7 @@ pub struct PlayerMirror {
     /// Throttles `AudioFeedback` forwarding (the audio thread reports its
     /// jitter-ring consumption on every DSP callback).
     pub last_audio_feedback: Mutex<Option<Instant>>,
-    /// Jitter ring between the helper's audio packets and Unity's audio thread.
+    /// Jitter ring between the helper's audio packets and the host's audio thread.
     pub audio: crate::audio_ring::AudioRing,
     /// Shared-texture state (assembly + presentation).
     pub video: Mutex<crate::present::PlayerVideo>,
@@ -122,7 +122,7 @@ impl PlayerMirror {
 }
 
 pub struct Registry {
-    /// Public id (what C# holds) -> mirror.
+    /// Public id (what the host holds) -> mirror.
     players: dashmap::DashMap<PlayerId, Arc<PlayerMirror>>,
     /// Helper-side id -> public id, rebuilt on every helper (re)start.
     by_helper: dashmap::DashMap<PlayerId, PlayerId>,
@@ -257,8 +257,14 @@ pub fn apply_serve_stats(registry: &Registry, max_iter_us: u64, audio_pull_clamp
         .store(audio_pull_clamps, Ordering::Relaxed);
 }
 
-#[cfg(target_os = "macos")]
-pub fn apply_texture_set(registry: &Registry, id: PlayerId, generation: u32, width: u32, height: u32) {
+#[cfg(not(target_os = "windows"))]
+pub fn apply_texture_set(
+    registry: &Registry,
+    id: PlayerId,
+    generation: u32,
+    width: u32,
+    height: u32,
+) {
     if let Some(mirror) = registry.by_helper(id)
         && let Ok(mut video) = mirror.video.lock()
     {
@@ -293,7 +299,7 @@ pub fn apply_texture_set(
         return;
     }
     // no live mirror to own the pulled handles: close them here or they
-    // leak in Unity's process (the player was freed mid-announcement)
+    // leak in the host's process (the player was freed mid-announcement)
     crate::present::close_handles(&handles);
 }
 
@@ -315,5 +321,18 @@ pub fn apply_surface(
         && let Ok(mut video) = mirror.video.lock()
     {
         video.store_surface(tag, surface);
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn apply_surface(
+    registry: &Registry,
+    tag: &uuav_ipc::fd_channel::SurfaceTag,
+    mapping: crate::present::Mapping,
+) {
+    if let Some(mirror) = registry.by_helper(tag.player)
+        && let Ok(mut video) = mirror.video.lock()
+    {
+        video.store_surface(tag, mapping);
     }
 }

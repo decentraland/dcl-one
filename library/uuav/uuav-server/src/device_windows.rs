@@ -1,16 +1,16 @@
 //! The helper's own D3D11 device plus the 1x1 probe texture handed to the
 //! core's `uuav_init`, which derives its device from a texture pointer —
-//! the exact contract Unity fulfills in-process today.
+//! the exact contract the host fulfills in-process today.
 
 use anyhow::{Context as _, Result, bail};
 use std::os::raw::c_void;
+use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
 use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_UNKNOWN;
 use windows::Win32::Graphics::Direct3D11::{
-    D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION,
-    D3D11_TEXTURE2D_DESC, D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device, ID3D11Texture2D,
+    D3D11_BIND_SHADER_RESOURCE, D3D11_CREATE_DEVICE_FLAG, D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC,
+    D3D11_USAGE_DEFAULT, D3D11CreateDevice, ID3D11Device, ID3D11Texture2D,
 };
-use windows::Win32::Foundation::HMODULE;
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_SAMPLE_DESC};
 use windows::Win32::Graphics::Dxgi::{CreateDXGIFactory1, IDXGIAdapter, IDXGIFactory1};
 use windows::core::Interface as _;
@@ -21,8 +21,8 @@ pub struct ProbeDevice {
 }
 
 impl ProbeDevice {
-    /// `adapter` is the packed LUID of Unity's adapter (0 = default). Decoding
-    /// must happen on the same adapter as Unity or the shared textures cannot
+    /// `adapter` is the packed LUID of the host's adapter (0 = default). Decoding
+    /// must happen on the same adapter as the host or the shared textures cannot
     /// be opened cross-process, so a missing match is an error.
     pub fn new(adapter: u64) -> Result<Self> {
         let device = create_device(adapter)?;

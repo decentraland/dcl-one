@@ -10,7 +10,7 @@
 ;;   PLUGIN_DIR             directory of uuav-helper and its dylibs
 ;;   HOME                   user home, for user-installed root CAs
 ;;   ALLOW_MEDIA_FILE_READ  "1" only when the protocol whitelist contains
-;;                          "file" (Unity Editor local playback), else "0"
+;;                          "file" (the host Editor local playback), else "0"
 
 (version 1)
 (deny default)
@@ -59,13 +59,13 @@
 (allow file-read* (subpath (param "PLUGIN_DIR")))
 
 ;; Editor-only: the protocol whitelist contained "file", so FFmpeg may read
-;; any path the Editor user can. Writes and exec stay denied even here.
+;; any path a development host user can. Writes and exec stay denied even here.
 (if (string=? (param "ALLOW_MEDIA_FILE_READ") "1")
     (allow file-read*))
 
 ;; stdio hygiene: eprintln to a terminal during dev runs; a tty write
 ;; grants nothing durable. Writes to the inherited pipes/sockets of the
-;; normal Unity case are not path-checked at all. ioctl on ttys stays
+;; normal the host case are not path-checked at all. ioctl on ttys stays
 ;; denied: plain writes never need it, and TIOCSTI on a tty injects
 ;; keystrokes into the owning shell, a route around the process-exec
 ;; denial above.

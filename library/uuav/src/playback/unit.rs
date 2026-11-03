@@ -11,8 +11,11 @@ use super::telemetry::SharedAudioTelemetry;
 use super::transport::{AtomicTransport, PlaybackState};
 use super::util::{AtomicSeekSlot, PLAYBACK_POLL, ReadOnlyCancelToken};
 use super::video_playback::{VideoPlayback, VideoQueue, VideoReader};
-use crate::ffutil::{OwnedPacket, Stream, StreamingProtocol, av_err, check, copy_c_name, q2d};
+use crate::ffutil::{
+    OwnedPacket, Stream, StreamingProtocol, av_err, check, copy_c_name, copy_str_name, q2d,
+};
 use crate::hw_device::{HwDevice, HwDeviceContext};
+use crate::video_decoder::{DecoderModeCell, software_forced};
 use crate::video_output::{VideoOutput, VideoTextureView};
 use crate::{AudioOptionsView, ErrorCallback, MediaInfo, UUAVState, VideoSize};
 use std::mem;
@@ -50,6 +53,15 @@ pub(crate) struct UnitControls {
     pub(crate) seek: Arc<AtomicSeekSlot>,
 }
 
+/// The sinks a playback reports through: player-level failures to the
+/// error sink, degradations it recovered from (software fallback) to the
+/// warning sink.
+#[derive(Clone)]
+pub(crate) struct UnitSinks {
+    pub(crate) error: ErrorCallback,
+    pub(crate) warning: ErrorCallback,
+}
+
 /// Playback of a single url: the shared state the engine-facing threads
 /// (control, render, audio) and the playback thread work against.
 ///
@@ -67,8 +79,9 @@ pub(crate) struct PlaybackUnit {
     /// Render-thread half of the presentation queue; the pipeline's
     /// [`VideoPlayback`] feeds it.
     video: VideoReader,
-    /// Windows-Only D3D11VA device context frames decode through; `None` for
-    /// audio-only media.
+    /// Windows-only D3D11VA device context hardware frames decode through
+    /// and the presentation copy runs on; `None` for audio-only or
+    /// software-decoded media.
     #[cfg(target_os = "windows")]
     hw_ctx: Option<HwDeviceContext>,
     /// Total duration in seconds, `None` for realtime streams.
@@ -76,6 +89,8 @@ pub(crate) struct PlaybackUnit {
     video_size: Option<VideoSize>,
     /// Source stream parameters, captured while probing in [`Self::open`].
     media_info: MediaInfo,
+    /// Which decoder the video runs on, for `MediaInfo.decoder`.
+    decoder_mode: Arc<DecoderModeCell>,
     /// Presentation target; created lazily on the render thread.
     output: Mutex<Option<VideoOutput>>,
     /// Engine device the presentation output is created on.
@@ -150,6 +165,31 @@ fn probe_audio_info(info: &mut MediaInfo, stream: Stream) {
     }
 }
 
+/// The platform hardware device context, or `None` (with a warning) when
+/// the machine offers none or software decoding is forced; the decoder
+/// then opens in software.
+fn hardware_context(
+    #[allow(unused_variables)] device: &HwDevice,
+    sinks: &UnitSinks,
+) -> Option<HwDeviceContext> {
+    if software_forced() {
+        return None;
+    }
+    #[cfg(target_os = "windows")]
+    let created = HwDeviceContext::new(device);
+    #[cfg(not(target_os = "windows"))]
+    let created = HwDeviceContext::new();
+    match created {
+        Ok(hw) => Some(hw),
+        Err(e) => {
+            sinks.warning.report(format!(
+                "hardware video decoding unavailable on this machine ({e:#}); decoding in software"
+            ));
+            None
+        }
+    }
+}
+
 impl PlaybackUnit {
     /// [playback thread] Opens the media at `url`, blocking until its
     /// streams are probed and the decoders are built. Aborted through
@@ -160,7 +200,7 @@ impl PlaybackUnit {
         device: HwDevice,
         audio_out: AudioOptionsView,
         cancel: ReadOnlyCancelToken,
-        error_callback: ErrorCallback,
+        sinks: UnitSinks,
         protocol_whitelist: &StreamingProtocol,
         controls: UnitControls,
         telemetry: SharedAudioTelemetry,
@@ -192,15 +232,18 @@ impl PlaybackUnit {
 
         let audio_reader = AudioReader::new(audio_out.clone(), telemetry.clone());
         let (video_queue, video_reader) = VideoQueue::channel();
+        let decoder_mode = Arc::new(DecoderModeCell::new());
 
         let (hw_ctx, video, video_size) = if video_index >= 0 {
-            #[cfg(target_os = "windows")]
-            let hw = HwDeviceContext::new(&device)?;
-            #[cfg(target_os = "macos")]
-            let hw = HwDeviceContext::new()?;
-
-            let playback =
-                VideoPlayback::new(input.stream_at(video_index), video_index, &hw, video_queue)?;
+            let hw = hardware_context(&device, &sinks);
+            let playback = VideoPlayback::new(
+                input.stream_at(video_index),
+                video_index,
+                hw.as_ref(),
+                video_queue,
+                Arc::clone(&decoder_mode),
+                sinks.warning.clone(),
+            )?;
             let par = input.stream_at(video_index).codecpar();
             let (width, height) = unsafe { ((*par).width, (*par).height) };
             let size = VideoSize {
@@ -208,7 +251,7 @@ impl PlaybackUnit {
                 height: u32::try_from(height)
                     .map_err(|_| anyhow!("invalid video height: {height}"))?,
             };
-            (Some(hw), Some(playback), Some(size))
+            (hw, Some(playback), Some(size))
         } else {
             (None, None, None)
         };
@@ -225,13 +268,16 @@ impl PlaybackUnit {
             None
         };
 
-        #[cfg(target_os = "macos")]
+        // only D3D11 presents through the decode context; the decoder holds
+        // its own reference everywhere else
+        #[cfg(not(target_os = "windows"))]
         drop(hw_ctx);
 
         let unit = Self {
             duration: input.duration(),
             video_size,
             media_info,
+            decoder_mode,
             cancel,
             controls,
             transport: AtomicTransport::new(),
@@ -241,7 +287,7 @@ impl PlaybackUnit {
             hw_ctx,
             output: Mutex::new(None),
             device,
-            error_callback,
+            error_callback: sinks.error,
             url,
         };
         let pipeline = Pipeline {
@@ -517,17 +563,21 @@ impl PlaybackUnit {
         self.video_size.clone()
     }
 
-    pub(crate) const fn media_info(&self) -> MediaInfo {
-        self.media_info
+    /// The probed stream parameters plus the decoder currently in use
+    /// (read live: it moves on a hardware-to-software fallback).
+    pub(crate) fn media_info(&self) -> MediaInfo {
+        let mut info = self.media_info;
+        copy_str_name(&mut info.decoder, self.decoder_mode.name());
+        info
     }
 
     pub(crate) fn video_texture(
         &self,
-        #[cfg(target_os = "macos")] plane: i32,
+        #[cfg(not(target_os = "windows"))] plane: i32,
     ) -> Option<VideoTextureView> {
         #[cfg(target_os = "windows")]
         let texture = self.output.lock().as_ref().and_then(VideoOutput::texture);
-        #[cfg(target_os = "macos")]
+        #[cfg(not(target_os = "windows"))]
         let texture = self
             .output
             .lock()
@@ -550,14 +600,12 @@ impl PlaybackUnit {
         let out = output.get_or_insert_with(|| VideoOutput::new(&self.device));
 
         // D3D11 copies through the decode context (the immediate context
-        // under the FFmpeg device lock); Metal blits on the plugin's own
-        // queue and takes nothing from the decode context
+        // under the FFmpeg device lock) when there is one; Metal blits on
+        // the plugin's own queue and Linux copies on the CPU, taking
+        // nothing from the decode context
         #[cfg(target_os = "windows")]
-        let presented = match self.hw_ctx.as_ref() {
-            Some(hw) => out.present(hw, &frame),
-            None => return,
-        };
-        #[cfg(target_os = "macos")]
+        let presented = out.present(self.hw_ctx.as_ref(), &frame);
+        #[cfg(not(target_os = "windows"))]
         let presented = out.present(&frame);
 
         if let Err(e) = presented {

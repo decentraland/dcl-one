@@ -6,9 +6,10 @@ use std::os::raw::c_int;
 use std::ptr;
 use std::sync::Arc;
 
+use crate::ErrorCallback;
 use crate::ffutil::{Decoded, OwnedPacket, Stream};
 use crate::hw_device::HwDeviceContext;
-use crate::video_decoder::{VideoDecoder, VideoFrame};
+use crate::video_decoder::{DecoderModeCell, VideoDecoder, VideoFrame};
 
 /// Decoded frames buffered ahead of the clock. Each entry pins a decoder
 /// surface, so it must stay below [`VideoDecoder::EXTRA_HW_FRAMES`].
@@ -22,6 +23,12 @@ const VIDEO_QUEUE_CAP: usize = 4;
 /// backstops: in steady state the buffer holds at most one interleave chunk.
 const MAX_PENDING_PACKETS: usize = 256;
 const MAX_PENDING_BYTES: usize = 16 * 1024 * 1024;
+
+/// Packets retained for a software replay while a hardware decoder has not
+/// produced its first frame. A hardware rejection surfaces on the first
+/// packets (the parameter sets), so a handful suffice; past this the
+/// retention stops and a later hardware failure is a playback error.
+const WARMUP_REPLAY_CAP: usize = 64;
 
 /// The frame the render thread popped but whose time has not come yet.
 type HeldFrame = Arc<Mutex<Option<VideoFrame>>>;
@@ -114,6 +121,7 @@ impl VideoReader {
 /// never stalls behind presentation-paced video while the audio ring runs dry.
 pub(super) struct VideoPlayback {
     decoder: VideoDecoder,
+    stream: Stream,
     queue: VideoQueue,
     stream_index: c_int,
     /// Compressed packets waiting for the decoder, in demux order.
@@ -128,17 +136,29 @@ pub(super) struct VideoPlayback {
     eos_sent: bool,
     /// The decoder returned its last frame after end-of-stream.
     finished: bool,
+    /// References to the packets a hardware decoder was fed before its
+    /// first frame: replayed into a software decoder if the hardware path
+    /// fails in that window. `None` once a frame arrived, the cap was hit,
+    /// or the decoder is software already.
+    warmup: Option<Vec<OwnedPacket>>,
+    mode: Arc<DecoderModeCell>,
+    warnings: ErrorCallback,
 }
 
 impl VideoPlayback {
     pub(super) fn new(
         stream: Stream,
         stream_index: c_int,
-        hw: &HwDeviceContext,
+        hw: Option<&HwDeviceContext>,
         queue: VideoQueue,
+        mode: Arc<DecoderModeCell>,
+        warnings: ErrorCallback,
     ) -> Result<Self> {
+        let decoder = VideoDecoder::open(stream, hw, &mode, &warnings)?;
+        let warmup = decoder.is_hardware().then(Vec::new);
         Ok(Self {
-            decoder: VideoDecoder::new(stream, hw)?,
+            decoder,
+            stream,
             queue,
             stream_index,
             pending: VecDeque::new(),
@@ -146,6 +166,9 @@ impl VideoPlayback {
             held: None,
             eos_sent: false,
             finished: false,
+            warmup,
+            mode,
+            warnings,
         })
     }
 
@@ -185,15 +208,35 @@ impl VideoPlayback {
             if self.finished {
                 return Ok(progress);
             }
-            match self.decoder.receive()? {
+            let received = match self.decoder.receive() {
+                Ok(received) => received,
+                Err(e) if self.can_fall_back() => {
+                    self.fall_back_to_software(&e)?;
+                    progress = true;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
+            match received {
                 Decoded::Frame(mut frame) => {
                     frame.shift_pts(start_offset);
                     self.held = Some(frame);
+                    // the hardware path proved itself; the replay copies go
+                    self.warmup = None;
                 }
                 Decoded::Again => {
                     if let Some(mut packet) = self.pending.pop_front() {
                         self.pending_bytes = self.pending_bytes.saturating_sub(packet.size());
-                        self.decoder.send(packet.as_mut_ptr())?;
+                        self.retain_for_replay(&packet)?;
+                        if let Err(e) = self.decoder.send(packet.as_mut_ptr()) {
+                            if self.can_fall_back() {
+                                // the packet is in the replay set already
+                                self.fall_back_to_software(&e)?;
+                                progress = true;
+                                continue;
+                            }
+                            return Err(e);
+                        }
                         progress = true;
                         continue;
                     }
@@ -211,6 +254,46 @@ impl VideoPlayback {
                 }
             }
         }
+    }
+
+    /// Keeps a reference to a packet fed to a warming-up hardware decoder.
+    fn retain_for_replay(&mut self, packet: &OwnedPacket) -> Result<()> {
+        let Some(warmup) = self.warmup.as_mut() else {
+            return Ok(());
+        };
+        if warmup.len() >= WARMUP_REPLAY_CAP {
+            // a hardware decoder that produced nothing after this many
+            // packets is not failing on its parameter sets; stop retaining
+            self.warmup = None;
+            return Ok(());
+        }
+        warmup.push(OwnedPacket::cloned_from(packet)?);
+        Ok(())
+    }
+
+    const fn can_fall_back(&self) -> bool {
+        self.decoder.is_hardware() && self.warmup.is_some() && self.decoder.produced_frames() == 0
+    }
+
+    /// Replaces the failed hardware decoder with a software one and queues
+    /// the retained packets in front of everything pending, so the stream
+    /// restarts from its parameter sets without a demuxer seek.
+    fn fall_back_to_software(&mut self, cause: &anyhow::Error) -> Result<()> {
+        self.warnings.report(format!(
+            "hardware video decoding failed before the first frame ({cause:#}); decoding in software"
+        ));
+        self.decoder = VideoDecoder::open_software(self.stream)?;
+        self.mode.mark_software();
+        if let Some(replay) = self.warmup.take() {
+            for packet in replay.into_iter().rev() {
+                self.pending_bytes = self.pending_bytes.saturating_add(packet.size());
+                self.pending.push_front(packet);
+            }
+        }
+        // whatever end-of-stream the dead decoder saw must reach the new one
+        self.eos_sent = false;
+        self.finished = false;
+        Ok(())
     }
 
     /// Discards everything belonging to the pre-seek position.

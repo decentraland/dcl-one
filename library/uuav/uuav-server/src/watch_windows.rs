@@ -1,4 +1,4 @@
-//! Orphan prevention: exit as soon as the parent (Unity) process is gone.
+//! Orphan prevention: exit as soon as the parent (the host) process is gone.
 
 use anyhow::Context as _;
 use std::process;

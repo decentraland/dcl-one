@@ -1,4 +1,4 @@
-//! Wire protocol between the `uuav` client dylib (inside Unity) and the
+//! Wire protocol between the `uuav` client dylib (inside the host) and the
 //! `uuav-helper` process. Messages are postcard-serialized enums, one
 //! message per channel frame.
 
@@ -55,6 +55,9 @@ pub struct MediaInfoWire {
     pub pixel_format: String,
     pub audio_codec: String,
     pub sample_format: String,
+    /// The video decoder in use (`videotoolbox`, `d3d11va`, `vaapi`,
+    /// `software`); empty without video. Re-announced when it changes.
+    pub decoder: String,
     pub has_video: bool,
     pub has_audio: bool,
 }
@@ -98,7 +101,7 @@ pub struct StateUpdateWire {
     pub audio: AudioPipelineStatsWire,
 }
 
-/// FFmpeg log severity bucket, matching the three Unity sinks.
+/// FFmpeg log severity bucket, matching the three the host sinks.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub enum LogSink {
     Error,
@@ -112,7 +115,7 @@ pub enum ReplyBody {
     PlayerId(PlayerId),
 }
 
-/// Client (Unity) -> server (helper).
+/// Client (the host) -> server (helper).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ToServer {
     /// Completes the handshake after the client validated `Hello`. The helper
@@ -185,7 +188,7 @@ pub enum ToServer {
     Shutdown,
 }
 
-/// Server (helper) -> client (Unity).
+/// Server (helper) -> client (the host).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ToClient {
     /// First message on the wire; `token` must equal the uuid the client
@@ -200,7 +203,9 @@ pub enum ToClient {
         result: Result<ReplyBody, String>,
     },
     State(StateUpdateWire),
-    /// Sent once per media open when the core first reports media info.
+    /// Sent once per media open when the core first reports media info,
+    /// and again whenever the decoder name moves (hardware -> software
+    /// fallback after the first announcement).
     MediaInfo {
         id: PlayerId,
         info: MediaInfoWire,
@@ -210,7 +215,7 @@ pub enum ToClient {
     /// channel, tagged (id, generation, slot, plane), and `handles` is
     /// empty. On Windows: `handles` carries one NT handle value per slot
     /// (a shared keyed-mutex NV12 texture), valid in the *helper's*
-    /// process — the sandboxed helper cannot duplicate into Unity, so the
+    /// process — the sandboxed helper cannot duplicate into the host, so the
     /// client pulls copies out with `DuplicateHandle`, and the helper
     /// keeps the originals open until an ack proves the announcement was
     /// consumed. The client assembles the set and answers with
@@ -242,7 +247,7 @@ pub enum ToClient {
         id: Option<PlayerId>,
         message: String,
     },
-    /// One pre-formatted FFmpeg diagnostic line for the matching Unity sink.
+    /// One pre-formatted FFmpeg diagnostic line for the matching the host sink.
     Log {
         sink: LogSink,
         line: String,

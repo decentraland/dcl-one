@@ -1,6 +1,6 @@
 //! The helper's own Metal device plus the 1x1 probe texture handed to the
 //! core's `uuav_init`, which derives its device from a texture pointer —
-//! the exact contract Unity fulfills in-process today.
+//! the exact contract the host fulfills in-process today.
 
 use anyhow::{Context as _, Result};
 use objc2::rc::Retained;
@@ -20,7 +20,7 @@ pub struct ProbeDevice {
 }
 
 impl ProbeDevice {
-    /// `adapter` is the Metal `registryID` of Unity's device (0 = system
+    /// `adapter` is the Metal `registryID` of the host's device (0 = system
     /// default). On a mismatch (eGPU unplugged between sessions) this fails
     /// rather than silently decoding on a different GPU.
     pub fn new(adapter: u64) -> Result<Self> {
@@ -51,7 +51,11 @@ impl ProbeDevice {
             .newCommandQueue()
             .context("MTLDevice returned no command queue")?;
 
-        Ok(Self { probe, queue, device })
+        Ok(Self {
+            probe,
+            queue,
+            device,
+        })
     }
 
     /// The `id<MTLTexture>` pointer for the core's `uuav_init`.

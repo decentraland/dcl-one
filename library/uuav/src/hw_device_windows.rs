@@ -79,8 +79,8 @@ struct AVD3D11VADeviceContext {
 }
 
 /// A D3D11VA `AVHWDeviceContext` bound to the externally provided
-/// `ID3D11Device` (Unity's device), so decoded surfaces are directly
-/// usable for GPU copies into textures sampled by Unity.
+/// `ID3D11Device` (the host's device), so decoded surfaces are directly
+/// usable for GPU copies into textures sampled by the host.
 pub(crate) struct HwDeviceContext {
     buf: *mut ff::AVBufferRef,
 }

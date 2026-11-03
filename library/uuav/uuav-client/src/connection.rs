@@ -24,7 +24,7 @@ const IO_POLL_TIMEOUT_MS: u32 = 5;
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Lifecycle {
-    /// Helper alive: commands flow, callbacks reach Unity.
+    /// Helper alive: commands flow, callbacks reach the host.
     Running = 0,
     /// Helper died and the recovery worker is resurrecting it: commands are
     /// absorbed into desired state, players read as OPENING.
@@ -32,7 +32,7 @@ pub enum Lifecycle {
     /// Respawn attempts capped out: commands degrade, players read as
     /// ERROR, until an open/play re-arms the worker.
     Failed = 2,
-    /// `uuav_deinit` ran: nothing may call into Unity anymore; the IO
+    /// `uuav_deinit` ran: nothing may call into the host anymore; the IO
     /// thread flushes the Shutdown frame and exits.
     ShutDown = 3,
 }
@@ -58,9 +58,11 @@ impl LifecycleCell {
 
     /// Moves to `to` unless already shut down.
     pub fn transition(&self, to: Lifecycle) {
-        _ = self.0.fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
-            (current != Lifecycle::ShutDown as u8).then_some(to as u8)
-        });
+        _ = self
+            .0
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current != Lifecycle::ShutDown as u8).then_some(to as u8)
+            });
     }
 }
 
@@ -70,7 +72,7 @@ impl Default for LifecycleCell {
     }
 }
 
-/// Sinks the IO thread routes inbound diagnostics into; they wrap the C#
+/// Sinks the IO thread routes inbound diagnostics into; they wrap the the host
 /// delegates registered at init.
 pub trait EventSinks: Send + Sync + 'static {
     fn on_log(&self, sink: LogSink, line: &str);
@@ -108,7 +110,12 @@ impl Connection {
         let hello: ToClient = channel
             .recv_timeout(HANDSHAKE_TIMEOUT)
             .context("helper did not say Hello")?;
-        let ToClient::Hello { token: got, abi, pid: _ } = hello else {
+        let ToClient::Hello {
+            token: got,
+            abi,
+            pid: _,
+        } = hello
+        else {
             bail!("unexpected first message from helper");
         };
         if got != token {
@@ -149,9 +156,9 @@ impl Connection {
         self.alive.store(false, Ordering::Release);
     }
 
-    /// Handle for platform channel threads (macOS mach receiver) tied to
-    /// this connection generation.
-    #[cfg(target_os = "macos")]
+    /// Handle for platform channel threads (the macOS mach receiver, the
+    /// Linux descriptor receiver) tied to this connection generation.
+    #[cfg(not(target_os = "windows"))]
     pub fn alive_flag(&self) -> Arc<AtomicBool> {
         Arc::clone(&self.alive)
     }
@@ -165,14 +172,13 @@ impl Connection {
         if !self.usable() {
             bail!("uuav helper is not running");
         }
-        self.outbound.send(message).context("uuav IO thread is gone")
+        self.outbound
+            .send(message)
+            .context("uuav IO thread is gone")
     }
 
     /// Round-trip command; blocks up to [`REPLY_TIMEOUT`].
-    pub fn request(
-        &self,
-        build: impl FnOnce(Corr) -> ToServer,
-    ) -> Result<ReplyBody, String> {
+    pub fn request(&self, build: impl FnOnce(Corr) -> ToServer) -> Result<ReplyBody, String> {
         if !self.usable() {
             return Err("uuav helper is not running".to_owned());
         }
@@ -271,13 +277,13 @@ fn route(
         ToClient::State(update) => registry::apply_state(registry, update),
         ToClient::MediaInfo { id, info } => registry::apply_media_info(registry, id, info),
         ToClient::AudioPacket { id, samples } => registry::apply_audio(registry, id, &samples),
-        #[cfg(target_os = "macos")]
+        #[cfg(not(target_os = "windows"))]
         ToClient::TextureSet {
             id,
             generation,
             width,
             height,
-            handles: _, // surfaces arrive as mach ports, not handles
+            handles: _, // surfaces arrive as mach ports / descriptors, not handles
         } => registry::apply_texture_set(registry, id, generation, width, height),
         #[cfg(target_os = "windows")]
         ToClient::TextureSet {
@@ -293,7 +299,7 @@ fn route(
             slot,
         } => registry::apply_frame_published(registry, id, generation, slot),
         ToClient::PlayerError { id, message } => {
-            // the wire carries the helper-side id; report the public one C#
+            // the wire carries the helper-side id; report the public one the host
             // knows (a stale id from a previous helper resolves to None)
             let public = id.and_then(|helper| registry.public_of(helper));
             sinks.on_player_error(public, &message);

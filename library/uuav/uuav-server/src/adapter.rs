@@ -12,6 +12,8 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use uuav_core as core;
 use uuav_ipc::channel::Channel;
+#[cfg(target_os = "linux")]
+use uuav_ipc::fd_channel;
 use uuav_ipc::protocol::{LogSink, PlayerId, ReplyBody, ToClient, ToServer};
 
 /// State-pump cadence; the client extrapolates media time between pushes.
@@ -78,13 +80,18 @@ fn forward(sink: LogSink, line: *const c_char) {
     let Some(tx) = FORWARD.get() else {
         return;
     };
-    let line = unsafe { CStr::from_ptr(line) }.to_string_lossy().into_owned();
+    let line = unsafe { CStr::from_ptr(line) }
+        .to_string_lossy()
+        .into_owned();
     _ = tx.send((sink, line));
 }
 
 #[derive(Default)]
 struct PlayerTracking {
     media_info_sent: bool,
+    /// The decoder name last announced; a change (hardware -> software
+    /// fallback) re-announces the media info.
+    announced_decoder: String,
     /// Frames sent to the client since this helper created the player.
     sent_frames: u64,
     /// Latest consumption report from the client's jitter ring.
@@ -112,11 +119,16 @@ struct Serve {
     /// Reused pull buffer (sized for [`AUDIO_MAX_PULL`]).
     audio_scratch: Vec<f32>,
     video: Option<crate::video::VideoPump>,
+    /// The inherited slot-descriptor channel, handed to the video pump on
+    /// Configure.
+    #[cfg(target_os = "linux")]
+    surfaces: Option<fd_channel::Sender>,
 }
 
 pub fn run(
     channel: &mut Channel,
     #[cfg(target_os = "macos")] service: &str,
+    #[cfg(target_os = "linux")] surfaces: fd_channel::Sender,
 ) -> anyhow::Result<()> {
     let (tx, rx) = unbounded();
     _ = FORWARD.set(tx);
@@ -127,6 +139,8 @@ pub fn run(
         audio: None,
         audio_scratch: Vec::new(),
         video: None,
+        #[cfg(target_os = "linux")]
+        surfaces: Some(surfaces),
     };
     let mut last_pump = Instant::now();
     let mut last_audio = Instant::now();
@@ -211,19 +225,15 @@ fn dispatch(
             log_level,
             adapter,
         } => {
-            let result = configure(&mut serve.probe, audio, &protocol_whitelist, log_level, adapter);
-            if result.is_ok() {
-                serve.audio = Some(audio);
-            }
-            let result = result.and_then(|()| {
-                let probe = serve.probe.as_ref().ok_or("probe device is missing")?;
+            let result = configure_session(
+                serve,
+                audio,
+                &protocol_whitelist,
+                log_level,
+                adapter,
                 #[cfg(target_os = "macos")]
-                let pump = crate::video::VideoPump::new(probe, service);
-                #[cfg(target_os = "windows")]
-                let pump = crate::video::VideoPump::new(probe);
-                serve.video = Some(pump.map_err(|e| e.to_string())?);
-                Ok(())
-            });
+                service,
+            );
             reply(channel, corr, result.map(|()| ReplyBody::Unit))?;
         }
         ToServer::SetLogLevel { level } => core::uuav_set_log_level(level),
@@ -276,8 +286,7 @@ fn dispatch(
             report_command_error(channel, id, "set rate", outcome)?;
         }
         ToServer::AssignMasterClock { id, time } => {
-            let outcome =
-                state::consume_result(core::uuav_player_assign_master_clock(id, time));
+            let outcome = state::consume_result(core::uuav_player_assign_master_clock(id, time));
             report_command_error(channel, id, "assign master clock", outcome)?;
         }
         ToServer::AudioFeedback { id, removed_frames } => {
@@ -295,6 +304,41 @@ fn dispatch(
         ToServer::Shutdown => return Ok(true),
     }
     Ok(false)
+}
+
+/// Configure: the core init against the helper's own device, then the
+/// video pump on top of it.
+fn configure_session(
+    serve: &mut Serve,
+    audio: uuav_ipc::protocol::AudioOptionsWire,
+    protocol_whitelist: &str,
+    log_level: i32,
+    adapter: u64,
+    #[cfg(target_os = "macos")] service: &str,
+) -> Result<(), String> {
+    configure(
+        &mut serve.probe,
+        audio,
+        protocol_whitelist,
+        log_level,
+        adapter,
+    )?;
+    serve.audio = Some(audio);
+    let probe = serve.probe.as_ref().ok_or("probe device is missing")?;
+    #[cfg(target_os = "macos")]
+    let pump = crate::video::VideoPump::new(probe, service);
+    #[cfg(target_os = "windows")]
+    let pump = crate::video::VideoPump::new(probe);
+    #[cfg(target_os = "linux")]
+    let pump = crate::video::VideoPump::new(
+        probe,
+        serve
+            .surfaces
+            .take()
+            .ok_or("surface channel already consumed by a previous Configure")?,
+    );
+    serve.video = Some(pump.map_err(|e| e.to_string())?);
+    Ok(())
 }
 
 fn configure(
@@ -367,7 +411,7 @@ fn open_media(id: PlayerId, url: &str) -> Result<(), String> {
 }
 
 /// Fire-and-forget commands report failures through the player error event
-/// (the client routes it into the same C# error callback as today).
+/// (the client routes it into the same the host error callback as today).
 fn report_command_error(
     channel: &mut Channel,
     id: PlayerId,
@@ -419,11 +463,7 @@ fn forward_logs(channel: &mut Channel, rx: &Receiver<(LogSink, String)>) -> anyh
 /// (`head_pts` minus the frames still in flight), so content release and
 /// consumption cannot drift apart — the core's ±150 ms drift correction
 /// becomes a dead band in steady state.
-fn pump_audio(
-    channel: &mut Channel,
-    serve: &mut Serve,
-    elapsed: Duration,
-) -> anyhow::Result<()> {
+fn pump_audio(channel: &mut Channel, serve: &mut Serve, elapsed: Duration) -> anyhow::Result<()> {
     let Serve {
         players,
         audio,
@@ -492,10 +532,8 @@ fn pump_audio(
             if in_sanity {
                 // sub-threshold corrections are ignored by the core (snap
                 // hysteresis); a failure is already surfaced elsewhere
-                let _ = state::consume_result(core::uuav_player_assign_master_clock(
-                    id,
-                    speaker_time,
-                ));
+                let _ =
+                    state::consume_result(core::uuav_player_assign_master_clock(id, speaker_time));
             }
         }
 
@@ -521,10 +559,11 @@ fn pump_states(
             .send(&ToClient::State(state::snapshot(id)))
             .context("send State")?;
 
-        if !tracking.media_info_sent
-            && let Some(info) = state::media_info(id)
+        if let Some(info) = state::media_info(id)
+            && (!tracking.media_info_sent || info.decoder != tracking.announced_decoder)
         {
             tracking.media_info_sent = true;
+            tracking.announced_decoder.clone_from(&info.decoder);
             channel
                 .send(&ToClient::MediaInfo { id, info })
                 .context("send MediaInfo")?;

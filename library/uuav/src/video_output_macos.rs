@@ -6,13 +6,14 @@ use objc2_core_video::{CVPixelBuffer, CVPixelBufferGetIOSurface};
 use objc2_io_surface::IOSurfaceRef;
 use objc2_metal::{
     MTLBlitCommandEncoder, MTLCommandBuffer, MTLCommandEncoder, MTLCommandQueue, MTLDevice,
-    MTLOrigin, MTLPixelFormat, MTLSize, MTLStorageMode, MTLTexture, MTLTextureDescriptor,
-    MTLTextureUsage,
+    MTLOrigin, MTLPixelFormat, MTLRegion, MTLSize, MTLStorageMode, MTLTexture,
+    MTLTextureDescriptor, MTLTextureUsage,
 };
 use std::os::raw::c_void;
+use std::ptr::NonNull;
 
 use crate::hw_device::HwDevice;
-use crate::video_decoder::VideoFrame;
+use crate::video_decoder::{CpuPlanes, VideoFrame};
 
 type Texture = Retained<ProtocolObject<dyn MTLTexture>>;
 
@@ -37,6 +38,10 @@ impl VideoTextureView {
 /// into on the render thread. The engine consumes the raw `id<MTLTexture>`
 /// pointers directly - unlike D3D11 there is no multi-plane resource to
 /// create views over, so each plane is its own texture.
+///
+/// Hardware frames blit straight from their IOSurface planes. CPU frames
+/// (software decoding) go through a pair of `Shared` staging textures the
+/// CPU writes with `replaceRegion`, then the same blit.
 pub(crate) struct VideoOutput {
     device: Retained<ProtocolObject<dyn MTLDevice>>,
     queue: Retained<ProtocolObject<dyn MTLCommandQueue>>,
@@ -51,6 +56,9 @@ pub(crate) struct VideoOutput {
 struct SizedPlanes {
     y: Texture,
     uv: Texture,
+    /// CPU-writable copies of the planes for software-decoded frames;
+    /// allocated on the first such frame, never for hardware playback.
+    staging: Option<(Texture, Texture)>,
     width: u32,
     height: u32,
 }
@@ -99,12 +107,18 @@ impl VideoOutput {
             return Err(anyhow!("frame has no presentable size"));
         }
         self.ensure_planes(width, height)?;
-        let planes = self
-            .planes
-            .as_ref()
-            .ok_or_else(|| anyhow!("presentation planes are missing"))?;
 
-        let pixel_buffer = frame.pixel_buffer();
+        match frame.cpu_planes() {
+            None => self.present_surface(frame, width, height),
+            Some(cpu) => self.present_cpu(cpu, width, height),
+        }
+    }
+
+    /// Zero-copy path: blit from the decoded CVPixelBuffer's IOSurface.
+    fn present_surface(&self, frame: &VideoFrame, width: u32, height: u32) -> Result<()> {
+        let pixel_buffer = frame
+            .pixel_buffer()
+            .ok_or_else(|| anyhow!("decoded frame has no CVPixelBuffer"))?;
         if pixel_buffer.is_null() {
             return Err(anyhow!("decoded frame has no CVPixelBuffer"));
         }
@@ -119,7 +133,103 @@ impl VideoOutput {
         // (coded-size) dimensions the IOSurface actually has
         let src_y = self.wrap_surface_plane(&surface, 0, MTLPixelFormat::R8Unorm)?;
         let src_uv = self.wrap_surface_plane(&surface, 1, MTLPixelFormat::RG8Unorm)?;
+        let planes = self
+            .planes
+            .as_ref()
+            .ok_or_else(|| anyhow!("presentation planes are missing"))?;
+        self.blit(&src_y, &src_uv, planes, width, height)
+    }
 
+    /// Upload path: the CPU writes the NV12 planes into the staging pair,
+    /// which is then blitted like a decoder surface.
+    fn present_cpu(&mut self, cpu: CpuPlanes, width: u32, height: u32) -> Result<()> {
+        if cpu.y.is_null() || cpu.uv.is_null() {
+            return Err(anyhow!("decoded frame has no plane data"));
+        }
+        let planes = self
+            .planes
+            .as_mut()
+            .ok_or_else(|| anyhow!("presentation planes are missing"))?;
+        if planes.staging.is_none() {
+            let y = Self::new_texture(
+                &self.device,
+                MTLPixelFormat::R8Unorm,
+                width,
+                height,
+                MTLStorageMode::Shared,
+            )?;
+            let uv = Self::new_texture(
+                &self.device,
+                MTLPixelFormat::RG8Unorm,
+                width / 2,
+                height / 2,
+                MTLStorageMode::Shared,
+            )?;
+            planes.staging = Some((y, uv));
+        }
+        let (staging_y, staging_uv) = planes
+            .staging
+            .as_ref()
+            .ok_or_else(|| anyhow!("staging planes are missing"))?;
+
+        let y_bytes = NonNull::new(cpu.y.cast_mut().cast::<c_void>())
+            .ok_or_else(|| anyhow!("Y plane is null"))?;
+        let uv_bytes = NonNull::new(cpu.uv.cast_mut().cast::<c_void>())
+            .ok_or_else(|| anyhow!("UV plane is null"))?;
+        let origin = MTLOrigin { x: 0, y: 0, z: 0 };
+        // SAFETY: the decoder allocated `height` rows of `y_stride` bytes
+        // (and height/2 rows of `uv_stride`) behind the pointers, and the
+        // frame outlives this call; replaceRegion copies synchronously
+        unsafe {
+            staging_y.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                MTLRegion {
+                    origin,
+                    size: MTLSize {
+                        width: width as usize,
+                        height: height as usize,
+                        depth: 1,
+                    },
+                },
+                0,
+                y_bytes,
+                cpu.y_stride,
+            );
+            staging_uv.replaceRegion_mipmapLevel_withBytes_bytesPerRow(
+                MTLRegion {
+                    origin,
+                    size: MTLSize {
+                        width: (width / 2) as usize,
+                        height: (height / 2) as usize,
+                        depth: 1,
+                    },
+                },
+                0,
+                uv_bytes,
+                cpu.uv_stride,
+            );
+        }
+
+        let src_y = staging_y.clone();
+        let src_uv = staging_uv.clone();
+        let planes = self
+            .planes
+            .as_ref()
+            .ok_or_else(|| anyhow!("presentation planes are missing"))?;
+        self.blit(&src_y, &src_uv, planes, width, height)
+    }
+
+    /// Copies the visible box of both source planes into the presentation
+    /// planes, synchronously: orders the copy against the engine's own
+    /// queue and proves the borrowed source outlives the GPU reads.
+    /// Optimization headroom (MTLSharedEvent) is deliberately deferred.
+    fn blit(
+        &self,
+        src_y: &ProtocolObject<dyn MTLTexture>,
+        src_uv: &ProtocolObject<dyn MTLTexture>,
+        planes: &SizedPlanes,
+        width: u32,
+        height: u32,
+    ) -> Result<()> {
         let buffer = self
             .queue
             .commandBuffer()
@@ -133,7 +243,7 @@ impl VideoOutput {
         let origin = MTLOrigin { x: 0, y: 0, z: 0 };
         unsafe {
             encoder.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
-                &src_y,
+                src_y,
                 0,
                 0,
                 origin,
@@ -148,7 +258,7 @@ impl VideoOutput {
                 origin,
             );
             encoder.copyFromTexture_sourceSlice_sourceLevel_sourceOrigin_sourceSize_toTexture_destinationSlice_destinationLevel_destinationOrigin(
-                &src_uv,
+                src_uv,
                 0,
                 0,
                 origin,
@@ -165,10 +275,6 @@ impl VideoOutput {
         }
         encoder.endEncoding();
         buffer.commit();
-        // synchronous on purpose: orders the copy against Unity's own queue
-        // and proves the borrowed frame/IOSurface outlives the GPU reads.
-        // Optimization headroom (MTLSharedEvent, IUnityGraphicsMetal) is
-        // deliberately deferred.
         buffer.waitUntilCompleted();
         Ok(())
     }
@@ -184,8 +290,20 @@ impl VideoOutput {
             return Ok(());
         }
 
-        let y = self.new_plane(MTLPixelFormat::R8Unorm, width, height)?;
-        let uv = self.new_plane(MTLPixelFormat::RG8Unorm, width / 2, height / 2)?;
+        let y = Self::new_texture(
+            &self.device,
+            MTLPixelFormat::R8Unorm,
+            width,
+            height,
+            MTLStorageMode::Private,
+        )?;
+        let uv = Self::new_texture(
+            &self.device,
+            MTLPixelFormat::RG8Unorm,
+            width / 2,
+            height / 2,
+            MTLStorageMode::Private,
+        )?;
         // the generation before last dies here; the engine has had a full
         // poll cycle to stop wrapping it
         let _previous = self.retired.take();
@@ -193,14 +311,22 @@ impl VideoOutput {
         self.planes = Some(SizedPlanes {
             y,
             uv,
+            staging: None,
             width,
             height,
         });
         Ok(())
     }
 
-    /// One owned destination plane the engine samples from.
-    fn new_plane(&self, format: MTLPixelFormat, width: u32, height: u32) -> Result<Texture> {
+    /// One owned plane texture: `Private` for the presentation planes the
+    /// engine samples, `Shared` for the CPU-written staging planes.
+    fn new_texture(
+        device: &ProtocolObject<dyn MTLDevice>,
+        format: MTLPixelFormat,
+        width: u32,
+        height: u32,
+        storage: MTLStorageMode,
+    ) -> Result<Texture> {
         let descriptor = unsafe {
             MTLTextureDescriptor::texture2DDescriptorWithPixelFormat_width_height_mipmapped(
                 format,
@@ -210,8 +336,8 @@ impl VideoOutput {
             )
         };
         descriptor.setUsage(MTLTextureUsage::ShaderRead);
-        descriptor.setStorageMode(MTLStorageMode::Private);
-        self.device
+        descriptor.setStorageMode(storage);
+        device
             .newTextureWithDescriptor(&descriptor)
             .ok_or_else(|| anyhow!("newTexture({format:?} {width}x{height}) returned no texture"))
     }

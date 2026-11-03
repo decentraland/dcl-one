@@ -1,28 +1,30 @@
-//! Locates and spawns the `uuav-helper` executable that ships next to this
-//! dylib (same directory: that is also how the FFmpeg libraries resolve for
-//! the helper, via `@loader_path` rpath on macOS / DLL search on Windows).
+//! Locates and spawns the `uuav-helper` executable that ships next to the
+//! host executable this library is linked into (same directory: that is
+//! also how the FFmpeg libraries resolve for the helper, via `@loader_path`
+//! rpath on macOS, `$ORIGIN` on Linux, DLL search on Windows).
 //!
 //! The helper's channel end travels by inheritance: on Windows a raw
 //! `CreateProcessAsUserW` with a `PROC_THREAD_ATTRIBUTE_HANDLE_LIST`
 //! restricts inheritance to exactly the pipe handle plus a wait-only
-//! parent handle; on macOS the socketpair fd is simply left non-cloexec.
+//! parent handle; on macOS and Linux the socketpair fds are simply left
+//! non-cloexec.
 //! Either way the parent's copy closes right after the spawn (the
 //! [`ChildHandoff`] drop), so helper death is observable as EOF on the
 //! channel.
 //!
 //! On Windows the helper is sandboxed at spawn — restricted low-integrity
 //! token, single-process kill-on-close job object, process mitigation
-//! policy — see [`crate::sandbox`]. On macOS the helper locks itself down
-//! under a deny-by-default Seatbelt profile as the first act of its main
-//! (the server's `sandbox` module); `allow_file_read` is the only
-//! sandbox-relevant spawn input, opening broad file reads for the
-//! Editor's `file:` protocol.
+//! policy — see [`crate::sandbox`]. On macOS and Linux the helper locks
+//! itself down as the first act of its main (the server's `sandbox`
+//! module: Seatbelt, or Landlock + seccomp); `allow_file_read` is the only
+//! sandbox-relevant spawn input, opening broad file reads for the `file:`
+//! protocol during development.
 
 use anyhow::{Context as _, Result};
 use std::path::PathBuf;
 use uuav_ipc::channel::ChildHandoff;
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "windows"))]
 const HELPER_FILE: &str = "uuav-helper";
 #[cfg(target_os = "windows")]
 const HELPER_FILE: &str = "uuav-helper.exe";
@@ -56,16 +58,49 @@ pub fn spawn_helper(
     Ok(HelperChild(child))
 }
 
+#[cfg(target_os = "linux")]
+pub fn spawn_helper(
+    handoff: ChildHandoff,
+    token: &str,
+    surfaces: uuav_ipc::fd_channel::ChildHandoff,
+    allow_file_read: bool,
+) -> Result<HelperChild> {
+    let path = helper_path()?;
+    let mut command = std::process::Command::new(&path);
+    command
+        .arg("--channel")
+        .arg(handoff.arg())
+        .arg("--token")
+        .arg(token)
+        .arg("--parent-pid")
+        .arg(std::process::id().to_string())
+        // the socketpair end the helper sends slot memfds over
+        .arg("--surfaces")
+        .arg(surfaces.arg());
+    if allow_file_read {
+        command.arg("--allow-file-read");
+    }
+    let child = command
+        .spawn()
+        .with_context(|| format!("failed to spawn {}", path.display()))?;
+    // the parent's copies of both child ends close here: helper death is
+    // observable as EOF on the channel
+    drop(handoff);
+    drop(surfaces);
+    Ok(HelperChild(child))
+}
+
 /// The spawned helper process. Same trio the recovery worker and deinit
 /// used on `std::process::Child`; on Windows it wraps the raw process
 /// handle because the spawn itself is a raw `CreateProcessW`.
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "windows"))]
 pub struct HelperChild(std::process::Child);
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "windows"))]
 impl HelperChild {
-    /// Kernel-truth pid of the spawned helper; the mach surface receiver
-    /// authenticates senders against it.
+    /// Kernel-truth pid of the spawned helper; the surface receiver
+    /// (mach ports on macOS, descriptors on Linux) authenticates senders
+    /// against it.
     pub fn id(&self) -> u32 {
         self.0.id()
     }
@@ -87,10 +122,10 @@ impl HelperChild {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "windows"))]
 pub struct HelperExitStatus(std::process::ExitStatus);
 
-#[cfg(target_os = "macos")]
+#[cfg(not(target_os = "windows"))]
 impl std::fmt::Display for HelperExitStatus {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.0.fmt(f)
@@ -101,11 +136,11 @@ impl std::fmt::Display for HelperExitStatus {
 pub fn spawn_helper(handoff: ChildHandoff, token: &str) -> Result<HelperChild> {
     use crate::sandbox;
     use windows::Win32::System::Threading::{
-        CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessAsUserW,
-        DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT,
-        InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
-        PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY,
-        PROCESS_INFORMATION, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute,
+        CREATE_NO_WINDOW, CREATE_SUSPENDED, CreateProcessAsUserW, DeleteProcThreadAttributeList,
+        EXTENDED_STARTUPINFO_PRESENT, InitializeProcThreadAttributeList,
+        LPPROC_THREAD_ATTRIBUTE_LIST, PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+        PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY, PROCESS_INFORMATION, STARTUPINFOEXW,
+        TerminateProcess, UpdateProcThreadAttribute,
     };
     use windows::core::{PCWSTR, PWSTR};
 
@@ -336,8 +371,9 @@ fn helper_path() -> Result<PathBuf> {
     Ok(dir.join(HELPER_FILE))
 }
 
-/// Path of this loaded dylib, resolved from one of its own symbols.
-#[cfg(target_os = "macos")]
+/// Path of the module this code is loaded in (the host executable when
+/// linked statically), resolved from one of its own symbols.
+#[cfg(not(target_os = "windows"))]
 fn own_dylib_path() -> Result<PathBuf> {
     use std::ffi::CStr;
     use std::os::raw::c_void;
@@ -346,7 +382,7 @@ fn own_dylib_path() -> Result<PathBuf> {
     let symbol = own_dylib_path as *const c_void;
     anyhow::ensure!(
         unsafe { libc::dladdr(symbol, &mut info) } != 0 && !info.dli_fname.is_null(),
-        "dladdr failed to resolve the uuav dylib path"
+        "dladdr failed to resolve the uuav module path"
     );
     let path = unsafe { CStr::from_ptr(info.dli_fname) };
     Ok(PathBuf::from(path.to_string_lossy().into_owned()))

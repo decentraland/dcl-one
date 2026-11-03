@@ -208,7 +208,9 @@ impl Channel {
                         .context("message length overflow")?;
                     self.read_done = 0;
                     self.read_pending = false;
-                    return Ok(Some(self.read_buf.get(..total).context("read bookkeeping")?));
+                    return Ok(Some(
+                        self.read_buf.get(..total).context("read bookkeeping")?,
+                    ));
                 }
                 Err(e) if is(&e, ERROR_IO_INCOMPLETE) => return Ok(None),
                 Err(e) if is(&e, ERROR_MORE_DATA) => {

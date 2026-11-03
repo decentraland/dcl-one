@@ -71,6 +71,19 @@ pub(crate) fn copy_c_name<const N: usize>(dst: &mut [c_char; N], src: *const c_c
     }
 }
 
+/// Copies a Rust string into a fixed name buffer, truncating to leave room
+/// for the terminator.
+pub(crate) fn copy_str_name<const N: usize>(dst: &mut [c_char; N], src: &str) {
+    let bytes = src.as_bytes();
+    let len = bytes.len().min(N.saturating_sub(1));
+    for (d, &s) in dst.iter_mut().zip(bytes.iter().take(len)) {
+        *d = c_char::from_ne_bytes([s]);
+    }
+    if let Some(terminator) = dst.get_mut(len) {
+        *terminator = 0;
+    }
+}
+
 pub(crate) struct StreamingProtocol(CString);
 
 impl StreamingProtocol {
@@ -265,6 +278,7 @@ impl OwnedFrame {
 
     /// Hardware frames context of a frame holding hardware surfaces; fails
     /// on software frames, which carry none.
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn hw_frames_ctx(&self) -> Result<&ff::AVHWFramesContext> {
         unsafe {
             let buffer = (*self.0).hw_frames_ctx;
@@ -424,5 +438,145 @@ impl OwnedPacket {
 impl Drop for OwnedPacket {
     fn drop(&mut self) {
         unsafe { ff::av_packet_free(&mut self.0) };
+    }
+}
+
+impl OwnedFrame {
+    /// Row stride in bytes of one plane; 0 for planes past
+    /// `AV_NUM_DATA_POINTERS`.
+    pub(crate) fn linesize(&self, plane: usize) -> c_int {
+        match unsafe { (*self.0).linesize.get(plane) } {
+            Some(&stride) => stride,
+            None => 0,
+        }
+    }
+
+    /// The plane pointer array in the shape `sws_scale` reads from.
+    pub(crate) fn data_ptrs(&self) -> *const *const u8 {
+        unsafe { (*self.0).data.as_ptr().cast::<*const u8>() }
+    }
+
+    /// The plane pointer array in the shape `sws_scale` writes to.
+    pub(crate) fn data_ptrs_mut(&mut self) -> *const *mut u8 {
+        unsafe { (*self.0).data.as_ptr() }
+    }
+
+    pub(crate) fn linesizes(&self) -> *const c_int {
+        unsafe { (*self.0).linesize.as_ptr() }
+    }
+
+    /// Allocates a writable NV12 frame of the given size
+    /// (`av_frame_get_buffer`, 32-byte row alignment).
+    pub(crate) fn new_nv12(width: c_int, height: c_int) -> Result<Self> {
+        ensure!(width > 0 && height > 0, "NV12 frame needs a positive size");
+        let mut frame = Self::new()?;
+        unsafe {
+            (*frame.0).format = ff::AVPixelFormat::AV_PIX_FMT_NV12 as c_int;
+            (*frame.0).width = width;
+            (*frame.0).height = height;
+        }
+        check("av_frame_get_buffer(NV12)", unsafe {
+            ff::av_frame_get_buffer(frame.as_mut_ptr(), 32)
+        })?;
+        Ok(frame)
+    }
+
+    /// Copies the non-pixel properties (timestamps, color metadata) of
+    /// `src` into this frame.
+    pub(crate) fn copy_props_from(&mut self, src: &Self) -> Result<()> {
+        check("av_frame_copy_props", unsafe {
+            ff::av_frame_copy_props(self.0, src.0)
+        })?;
+        Ok(())
+    }
+
+    /// Downloads a hardware frame into a new software frame in the
+    /// hardware context's `sw_format`, carrying the timestamps along.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn transfer_from_hw(src: &Self) -> Result<Self> {
+        let mut dst = Self::new()?;
+        check("av_hwframe_transfer_data", unsafe {
+            ff::av_hwframe_transfer_data(dst.as_mut_ptr(), src.0, 0)
+        })?;
+        dst.copy_props_from(src)?;
+        Ok(dst)
+    }
+}
+
+impl OwnedPacket {
+    /// A new reference to `src`'s payload (`av_packet_ref`); both packets
+    /// stay usable.
+    pub(crate) fn cloned_from(src: &Self) -> Result<Self> {
+        let dst = Self::new()?;
+        check("av_packet_ref", unsafe { ff::av_packet_ref(dst.0, src.0) })?;
+        Ok(dst)
+    }
+}
+
+/// `SWS_BILINEAR` from `libswscale/swscale.h`; the bindings expose the
+/// flags as an enum whose discriminants the C API takes as a plain int.
+const SWS_BILINEAR: c_int = 2;
+
+/// Owning wrapper around a cached `SwsContext`: converts software frames of
+/// any pixel format into NV12 at the same size (the presentation format of
+/// every platform output), rebuilding the context when the source geometry
+/// or format changes.
+pub(crate) struct OwnedSws(*mut ff::SwsContext);
+
+// only ever used on the playback thread that owns the decoder
+unsafe impl Send for OwnedSws {}
+
+impl OwnedSws {
+    pub(crate) const fn new() -> Self {
+        Self(std::ptr::null_mut())
+    }
+
+    pub(crate) fn scale_to_nv12(&mut self, src: &OwnedFrame) -> Result<OwnedFrame> {
+        let (width, height) = (src.width(), src.height());
+        ensure!(width > 0 && height > 0, "frame has no size");
+        // SAFETY: the value was produced by FFmpeg itself, so it is a valid
+        // AVPixelFormat
+        let src_format = unsafe { std::mem::transmute::<c_int, ff::AVPixelFormat>(src.format()) };
+        let ctx = unsafe {
+            ff::sws_getCachedContext(
+                self.0,
+                width,
+                height,
+                src_format,
+                width,
+                height,
+                ff::AVPixelFormat::AV_PIX_FMT_NV12,
+                SWS_BILINEAR,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null(),
+            )
+        };
+        ensure!(
+            !ctx.is_null(),
+            "sws_getCachedContext({src_format:?} -> NV12, {width}x{height}) failed"
+        );
+        self.0 = ctx;
+
+        let mut dst = OwnedFrame::new_nv12(width, height)?;
+        check("sws_scale", unsafe {
+            ff::sws_scale(
+                ctx,
+                src.data_ptrs(),
+                src.linesizes(),
+                0,
+                height,
+                dst.data_ptrs_mut(),
+                dst.linesizes(),
+            )
+        })?;
+        dst.copy_props_from(src)?;
+        Ok(dst)
+    }
+}
+
+impl Drop for OwnedSws {
+    fn drop(&mut self) {
+        unsafe { ff::sws_freeContext(self.0) };
     }
 }

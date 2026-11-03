@@ -1,4 +1,4 @@
-//! Unity-device capture from the probe texture (D3D11).
+//! The host-device capture from the probe texture (D3D11).
 
 use anyhow::{Context as _, Result, ensure};
 use std::os::raw::c_void;
@@ -8,14 +8,14 @@ use windows::Win32::Graphics::Direct3D11::{
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::core::{IUnknown, Interface as _};
 
-/// Unity's D3D11 device, retained past the probe texture's lifetime, plus
+/// The host's D3D11 device, retained past the probe texture's lifetime, plus
 /// the interfaces presentation copies run on.
 pub struct UnityDevice {
-    /// The `ID3D11Device1` face of Unity's device; `OpenSharedResource1`
+    /// The `ID3D11Device1` face of the host's device; `OpenSharedResource1`
     /// (NT-handle sharing) lives here, plane textures are created on it.
     pub device: ID3D11Device1,
-    /// Unity's immediate context. Only touched inside the render-event
-    /// callback — Unity's own submission thread.
+    /// The host's immediate context. Only touched inside the render-event
+    /// callback — the host's own submission thread.
     pub context: ID3D11DeviceContext,
     /// Packed LUID of the adapter, sent to the helper so it decodes on the
     /// same GPU (shared textures cannot cross adapters).
@@ -27,8 +27,8 @@ pub struct UnityDevice {
 unsafe impl Send for UnityDevice {}
 unsafe impl Sync for UnityDevice {}
 
-/// Captures the device behind Unity's probe texture (the probe itself is
-/// destroyed by C# right after init).
+/// Captures the device behind the host's probe texture (the probe itself is
+/// destroyed by the host right after init).
 ///
 /// # Safety
 /// `texture` must be null (rejected) or a live COM pointer; anything that is
@@ -47,8 +47,8 @@ pub unsafe fn capture_probe(texture: *const c_void) -> Result<UnityDevice> {
     let device1: ID3D11Device1 = device
         .cast()
         .context("device is not an ID3D11Device1 (NT-handle sharing needs WDDM 1.2+)")?;
-    let context = unsafe { device.GetImmediateContext() }
-        .context("device has no immediate context")?;
+    let context =
+        unsafe { device.GetImmediateContext() }.context("device has no immediate context")?;
 
     let dxgi: IDXGIDevice = device.cast().context("device is not an IDXGIDevice")?;
     let adapter = unsafe { dxgi.GetAdapter() }.context("GetAdapter failed")?;
