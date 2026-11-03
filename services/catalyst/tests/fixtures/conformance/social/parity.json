@@ -610,8 +610,8 @@
     {
       "id": "api_http:GET:/v1/communities/:id",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Single-owner resolution now uses the shared strict registry API: historical alias names retain authenticated/stored ownerAddress; missing/invalid profiles return source 500{message} and failed creates write no community.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -636,11 +636,14 @@
           "path": "services/catalyst/social/src/communities/tests/voice_parity.rs",
           "test": "active_handler_preserves_empty_error_and_all_settled_source_contracts",
           "scope": "Eight executed source cases and real-schema faults cover active empty/error/allSettled/image behavior and v1/v2 core detail SQL message-only 500. Other provider failures remain separately scoped."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/owner_parity.rs",
+          "test": "detail_and_create_use_strict_owner_profiles_without_changing_the_actor",
+          "scope": "Eight actual registry/owners/community/HTTP source results across regular/alias/missing/invalid profiles; complete local JSON and failed-create row-count checks."
         }
       ],
-      "gaps": [
-        "Single owner lookup still uses batch-cache semantics at this route; historical aliases and missing/invalid profiles differ from source registry.single. Strict caller wiring is pending."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -990,8 +993,8 @@
     {
       "id": "api_http:GET:/v1/referral-progress",
       "owner": "friends-settings-blocks-referrals",
-      "status": "known_gap",
-      "result": "Source-reviewed accepted/viewed counts and reward snapshots; GET marks the current count viewed through the existing write gate.",
+      "status": "reviewed",
+      "result": "Source-reviewed accepted/viewed counts and reward snapshots; GET marks the current count viewed through the existing write gate. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/referral.rs",
@@ -1017,11 +1020,14 @@
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
           "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
           "scope": "Five actual pinned source handlers raise a real PostgreSQL server exception through node-pg. The local SQLx routes raise the same server message in an owned database and compare status plus the exact handler-specific error/message JSON envelope. Other driver/OS error text is outside this scope."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
+          "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
+          "scope": "Five executed source handlers with real PostgreSQL errors, replayed through isolated candidate SQLx HTTP routes; native client connection-failure wording remains unverified."
         }
       ],
-      "gaps": [
-        "Referral SQL failures still use the shared generic500 envelope; the source returns a message-only500 with its dependency error."
-      ],
+      "gaps": [],
       "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. SDK tests use local stubs, so real AWS credentials,subscriptions,cutover state and delivery remain unverified."
     },
     {
@@ -1568,8 +1574,8 @@
     {
       "id": "api_http:PATCH:/v1/referral-progress",
       "owner": "friends-settings-blocks-referrals",
-      "status": "known_gap",
-      "result": "Source-reviewed pending-only signup and denylist order; preserves signed_up_at and the original fetched-status/unconditional-write sequence.",
+      "status": "reviewed",
+      "result": "Source-reviewed pending-only signup and denylist order; preserves signed_up_at and the original fetched-status/unconditional-write sequence. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/referral.rs",
@@ -1595,11 +1601,14 @@
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
           "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
           "scope": "Five actual pinned source handlers raise a real PostgreSQL server exception through node-pg. The local SQLx routes raise the same server message in an owned database and compare status plus the exact handler-specific error/message JSON envelope. Other driver/OS error text is outside this scope."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
+          "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
+          "scope": "Five executed source handlers with real PostgreSQL errors, replayed through isolated candidate SQLx HTTP routes; native client connection-failure wording remains unverified."
         }
       ],
-      "gaps": [
-        "Referral SQL failures still use the shared generic500 envelope; the source returns a message-only500 with its dependency error."
-      ],
+      "gaps": [],
       "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. SDK tests use local stubs, so real AWS credentials,subscriptions,cutover state and delivery remain unverified."
     },
     {
@@ -1664,7 +1673,7 @@
       "id": "api_http:POST:/v1/communities",
       "owner": "community-http",
       "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit.",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Configured AI compliance now reproduces 20 executed-source SDK/validator cases, including provider payloads, strict schema, positive/negative two-hour cache, retries, feature/environment gates and unchanged-text suppression. Slow valid provider responses survive the ordinary 25-second reader limit. Single-owner resolution now uses the shared strict registry API: historical alias names retain authenticated/stored ownerAddress; missing/invalid profiles return source 500{message} and failed creates write no community.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/communities.rs",
@@ -1703,6 +1712,11 @@
           "path": "services/catalyst/social/src/communities/tests/compliance_parity.rs",
           "test": "enabled_compliance_rejects_before_community_or_thumbnail_writes_and_skips_unchanged_text",
           "scope": "Real handler rejects noncompliance before writes and avoids validation for source-equivalent unchanged text."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/owner_parity.rs",
+          "test": "detail_and_create_use_strict_owner_profiles_without_changing_the_actor",
+          "scope": "Eight actual registry/owners/community/HTTP source results across regular/alias/missing/invalid profiles; complete local JSON and failed-create row-count checks."
         }
       ],
       "gaps": [
@@ -2087,8 +2101,8 @@
     {
       "id": "api_http:POST:/v1/referral-email",
       "owner": "friends-settings-blocks-referrals",
-      "status": "known_gap",
-      "result": "Source-reviewed AJV email format plus the distinct domain Email.validate pattern,100-invite threshold,24-hour limit,normalization and best-effort marketing mail after commit.",
+      "status": "reviewed",
+      "result": "Source-reviewed AJV email format plus the distinct domain Email.validate pattern,100-invite threshold,24-hour limit,normalization and best-effort marketing mail after commit. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/referral.rs",
@@ -2114,18 +2128,21 @@
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
           "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
           "scope": "Five actual pinned source handlers raise a real PostgreSQL server exception through node-pg. The local SQLx routes raise the same server message in an owned database and compare status plus the exact handler-specific error/message JSON envelope. Other driver/OS error text is outside this scope."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
+          "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
+          "scope": "Five executed source handlers with real PostgreSQL errors, replayed through isolated candidate SQLx HTTP routes; native client connection-failure wording remains unverified."
         }
       ],
-      "gaps": [
-        "Referral SQL failures still use the shared generic500 envelope; the source returns a message-only500 with its dependency error."
-      ],
+      "gaps": [],
       "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. SDK tests use local stubs, so real AWS credentials,subscriptions,cutover state and delivery remain unverified."
     },
     {
       "id": "api_http:POST:/v1/referral-progress",
       "owner": "friends-settings-blocks-referrals",
       "status": "known_gap",
-      "result": "Source-reviewed schema/auth/IP priority, first-wins retries, direct/one-hop denylist and persisted rejected-IP responses; registration kill flag uses the shared DAPPS snapshot.",
+      "result": "Source-reviewed schema/auth/IP priority, first-wins retries, direct/one-hop denylist and persisted rejected-IP responses; registration kill flag uses the shared DAPPS snapshot. Unexpected referral SQL failures now preserve the source message-only 500 boundary; five actual Node/PostgreSQL handler cases replay through corresponding real SQLx HTTP routes, including privacy.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/referral.rs",
@@ -2151,10 +2168,14 @@
           "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
           "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
           "scope": "Five actual pinned source handlers raise a real PostgreSQL server exception through node-pg. The local SQLx routes raise the same server message in an owned database and compare status plus the exact handler-specific error/message JSON envelope. Other driver/OS error text is outside this scope."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/referral_errors.rs",
+          "test": "referral_and_privacy_errors_match_executed_source_handler_boundaries",
+          "scope": "Five executed source handlers with real PostgreSQL errors, replayed through isolated candidate SQLx HTTP routes; native client connection-failure wording remains unverified."
         }
       ],
       "gaps": [
-        "Referral SQL failures still use the shared generic500 envelope; the source returns a message-only500 with its dependency error.",
         "Source suspicious-timing/IP-rejection/100-invite Slack alert payloads are not yet emitted."
       ],
       "remaining_verification": "Align failure envelopes and execute controlled database/outbound failures. The source capture contains7 lifecycle scenarios;6 are replayed against local SQL, while email is covered by separate HTTP/domain regressions. SDK tests use local stubs, so real AWS credentials,subscriptions,cutover state and delivery remain unverified."
@@ -3487,7 +3508,7 @@
       "id": "websocket:UPGRADE:/",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Separate source millisecond authentication deadline and signature expiry,300s idle default with0disabled and Ping/Pong activity tracking. Both socket protocol checks passed; fresh shared/config unit execution and fullsuite pending.",
+      "result": "Source numeric conversions are now replayed: 13 auth settings, 16 native idle inputs and 100 actual signed-timestamp decisions. Independent f64 signature window and Node timer buckets preserve prefix/fraction/overflow behavior; native ushort conversion preserves idle admission. Package config 51, handshake 21 and socket 18 tests pass; root all-targets passes.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
@@ -3498,6 +3519,10 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "both_socket_protocols_probe_idle_connections_with_ping",
           "scope": "Actual local socket regression for independent handshake deadline/signature age and automatic Ping/Pong idle handling."
+        },
+        {
+          "path": "services/catalyst/shared/src/rpc/handshake.rs",
+          "scope": "Executed-source timestamp decisions and cryptographically signed alternate literal regressions; native timer scheduling and kernel-buffer behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -3507,7 +3532,7 @@
       "id": "websocket:UPGRADE:/v1/stream",
       "owner": "realtime-voice-and-streams",
       "status": "reviewed",
-      "result": "Separate source millisecond authentication deadline and signature expiry,300s idle default with0disabled and Ping/Pong activity tracking. Both socket protocol checks passed; fresh shared/config unit execution and fullsuite pending.",
+      "result": "Source numeric conversions are now replayed: 13 auth settings, 16 native idle inputs and 100 actual signed-timestamp decisions. Independent f64 signature window and Node timer buckets preserve prefix/fraction/overflow behavior; native ushort conversion preserves idle admission. Package config 51, handshake 21 and socket 18 tests pass; root all-targets passes.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
@@ -3518,6 +3543,10 @@
           "path": "services/catalyst/social/src/rpc/tests/socket.rs",
           "test": "both_socket_protocols_probe_idle_connections_with_ping",
           "scope": "Actual local socket regression for independent handshake deadline/signature age and automatic Ping/Pong idle handling."
+        },
+        {
+          "path": "services/catalyst/shared/src/rpc/handshake.rs",
+          "scope": "Executed-source timestamp decisions and cryptographically signed alternate literal regressions; native timer scheduling and kernel-buffer behavior remain outside this proof."
         }
       ],
       "gaps": [],
@@ -5585,7 +5614,7 @@
     {
       "id": "referral-lifecycle",
       "status": "known_gap",
-      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork and email now have source-paired/local regressions and optional real SQS/SNS SDK transport. Source-specific database error envelopes and Slack alert side effects remain gaps; stateful cutover is unverified.",
+      "description": "Attribution/IP rejection, signup, UTC login days, guarded grants, artwork and email have source-paired/local regressions and optional official SQS/SNS transport. Referral/privacy PostgreSQL handler error envelopes are now source-replayed. Slack alert payloads/delivery and fractional numeric settings remain under correction; stateful cutover is unverified.",
       "operations": [
         "api_http:GET:/v1/referral-progress",
         "api_http:PATCH:/v1/referral-progress",
@@ -5725,7 +5754,7 @@
         "api_http:GET:/v1/communities/:id",
         "api_http:POST:/v1/communities"
       ],
-      "description": "RPC and community adapters now share one source registry reader and600-second SQL cache facts over the existing pool, preserving single/batch keys across independent replicas and content updates. Core alias/TTL/error/upgrade/cleanup regressions pass. Community single owner route callsites still need the strict API wiring; import or drain of existing Redis cache values and remaining TTL is unverified at cutover."
+      "description": "RPC and community adapters now share source 600-second SQL cache facts over the existing pool; independent-reader key/TTL/content-update/order/rawColor/error/upgrade/cleanup tests and 29 source steps pass. Strict single owner callsites are wired and 8 source handler cases pass. Exact mixed-case requested cache keys and case-sensitive source deduplication remain under correction. Existing Redis cache values and remaining TTL have not been imported or drained for cutover."
     },
     {
       "id": "community-dependency-error-boundaries",
@@ -5789,6 +5818,17 @@
         "api_http:GET:/v2/members/:address/requests"
       ],
       "description": "Pinned decentraland/comms-gatekeeper@be6a4b97a2189157884503485892ff46d0ac68da voice.ts catches single/bulk status database errors and returns idle status objects. Candidate community status currently participates in the main SQL statement, so a status-only SQL fault can abort that request instead of degrading. Normal liveness/count proofs and core community SQL error tests do not close this separate dependency-failure boundary."
+    },
+    {
+      "id": "referral-numeric-configuration",
+      "status": "known_gap",
+      "operations": [
+        "api_http:GET:/v1/referral-progress",
+        "api_http:PATCH:/v1/referral-progress",
+        "api_http:POST:/v1/referral-email",
+        "api_http:POST:/v1/referral-progress"
+      ],
+      "description": "Source configuration uses numeric-prefix/floating parsing for referral maximum-IP and minimum-day settings. Candidate strict integer settings reject fractional values at startup; source accepts them and may produce request-time PostgreSQL comparison errors or fractional day thresholds. Executed-source edge cases and matching conversion are in progress."
     }
   ]
 }
