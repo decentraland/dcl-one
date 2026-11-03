@@ -1142,7 +1142,7 @@ fn lost_connection(session: &mut PulseSession, retry: bool, now: f64) {
     session._driver = None; // dropping joins the already-exited driver thread
 
     // Whatever the next connection announces is the whole truth; nothing held from this one is.
-    session.decoder.reset();
+    let _ = session.decoder.reset();
     session.state = if retry {
         info!("pulse: transport dropped — reinitialising after cooldown");
         Connection::Down {

@@ -132,8 +132,9 @@ pub enum PulseEvent {
         error: Option<String>,
     },
     /// Reconstructed full movement state for a subject, ready to push through the rfc4 pipeline.
-    /// `teleport` marks state from a `TeleportPerformed` — foreign dynamics snaps to it instead of
-    /// interpolating, since it represents a discontinuous reposition, not travel.
+    /// `teleport` marks a discontinuous reposition, not travel — a `TeleportPerformed`, a replay,
+    /// or another subject taking the wallet's avatar over — so foreign dynamics snaps to it instead
+    /// of interpolating.
     Movement {
         address: Address,
         movement: Box<rfc4::Movement>,
@@ -159,7 +160,8 @@ pub enum PulseEvent {
         parcel: IVec2,
         realm: Arc<str>,
     },
-    /// Subject left the interest set (or disconnected). Drop the alias / foreign player.
+    /// Subject left the interest set (or disconnected). Drop the alias / foreign player. Only for
+    /// a wallet's last subject: while another survives, that one takes the avatar over instead.
     Left { address: Address },
     /// Subject announced a new profile version. `realm` is where the server last placed them, as on
     /// every per-subject event.
@@ -201,6 +203,9 @@ pub struct PulseCtx<'a> {
 /// keep the last reconstructed full state and overlay deltas onto it.
 struct Subject {
     wallet: Address,
+    /// Its place in the order of all joins: of a wallet's subjects, the last to join is selected
+    /// (`PulseDecoder::selected`).
+    join_order: u64,
     /// The realm the server last placed them in — from `PlayerJoined`, updated by a
     /// `TeleportPerformed` (the only thing that can move a peer between realms). Deltas carry
     /// none and don't need to: a realm change is always a teleport. A listener observing several
@@ -244,7 +249,8 @@ impl EmoteTrack {
     }
 
     /// Take in a stop; `false` if it is behind the last emote event. At that event's own sequence
-    /// it still lands, since that is the sequence of the emote it ends.
+    /// it still lands, ending the emote that started there or repeating the stop already taken in:
+    /// only an older sequence is stale, as in unity-explorer.
     fn stop(&mut self, seq: u32) -> bool {
         if self.seq.is_some_and(|held| seq < held) {
             return false;
@@ -386,6 +392,14 @@ enum FullKind {
 pub struct PulseDecoder {
     grid: PulseParcelGrid,
     subjects: HashMap<u32, Subject>,
+    /// The subject that drives each held wallet's avatar: of the wallet's subjects, the one that
+    /// joined last. A peer that reconnects is announced under its new id before the old one leaves,
+    /// so a wallet can hold several. Only the selected one reaches the engine; the others are
+    /// shadows, kept current in silence so that the newest can take over when the selected one
+    /// leaves (unity-explorer's `PeerIdCache`).
+    selected: HashMap<Address, u32>,
+    /// Joins so far, which number each subject's `join_order`.
+    joins: u64,
     /// Subjects with a `Resync` sent that nothing has answered yet. A gap in a subject's deltas
     /// shows in every one after it, so without this each would ask again. A full state, a delta
     /// that applies, a join, a leave and `reset` each end the wait.
@@ -402,6 +416,8 @@ impl PulseDecoder {
         Self {
             grid,
             subjects: HashMap::new(),
+            selected: HashMap::new(),
+            joins: 0,
             pending_resync: HashSet::new(),
             newest_tick: None,
             tick_epoch_ms: 0,
@@ -477,6 +493,21 @@ impl PulseDecoder {
             return Vec::new();
         };
 
+        // The server has handed the id to another wallet: the subject that held it is gone.
+        let mut events = match self.subjects.get(&full.subject_id) {
+            Some(held) if held.wallet != address => self.on_left(full.subject_id),
+            _ => Vec::new(),
+        };
+        // Announced again, a subject keeps its place, so a shadow does not take over by it
+        // (`PeerIdCache.Set`). A new one is selected, and the one it replaces becomes a shadow.
+        let (join_order, replaced) = match self.subjects.get(&full.subject_id) {
+            Some(held) => (held.join_order, None),
+            None => {
+                self.joins += 1;
+                (self.joins, self.selected.insert(address, full.subject_id))
+            }
+        };
+
         let baseline = SubjectState::from_player_state(&state);
         let movement = self.to_movement(&baseline);
         let realm: Arc<str> = Arc::from(joined.realm.as_str());
@@ -484,6 +515,7 @@ impl PulseDecoder {
             full.subject_id,
             Subject {
                 wallet: address,
+                join_order,
                 realm: realm.clone(),
                 profile_version: joined.profile_version,
                 last_seq: full.sequence,
@@ -493,8 +525,11 @@ impl PulseDecoder {
             },
         );
         self.pending_resync.remove(&full.subject_id);
+        if !self.is_selected(full.subject_id) {
+            return events;
+        }
 
-        vec![
+        events.extend([
             PulseEvent::Joined {
                 subject_id: full.subject_id,
                 address,
@@ -509,30 +544,106 @@ impl PulseDecoder {
             PulseEvent::Movement {
                 address,
                 movement: Box::new(movement),
-                realm,
-                teleport: false,
+                realm: realm.clone(),
+                // the avatar jumps from wherever the subject it replaces left it
+                teleport: replaced.is_some(),
                 timestamp: self.tick_secs(full.server_tick),
             },
-        ]
+        ]);
+        // The avatar may be playing the replaced subject's emote, and this one has none yet.
+        if replaced
+            .and_then(|id| self.subjects.get(&id))
+            .is_some_and(|previous| previous.emote.active.is_some())
+        {
+            events.push(PulseEvent::EmoteStop {
+                address,
+                completed: false,
+                realm,
+            });
+        }
+        events
     }
 
+    /// A shadow leaves in silence. The selected subject takes the avatar with it, unless another
+    /// subject of the wallet survives it: then the newest of those takes over
+    /// (`PeerIdCache.RemovePeer`, `PulseMultiplayerBus.RemovePeerRegistration`).
     fn on_left(&mut self, subject_id: u32) -> Vec<PulseEvent> {
         self.pending_resync.remove(&subject_id);
-        match self.subjects.remove(&subject_id) {
-            Some(subject) => vec![PulseEvent::Left {
-                address: subject.wallet,
-            }],
-            None => Vec::new(),
+        let selected = self.is_selected(subject_id);
+        let Some(leaver) = self.subjects.remove(&subject_id) else {
+            return Vec::new();
+        };
+        if !selected {
+            return Vec::new();
         }
+        let survivor = self
+            .subjects
+            .iter()
+            .filter(|(_, subject)| subject.wallet == leaver.wallet)
+            .max_by_key(|(_, subject)| subject.join_order)
+            .map(|(id, _)| *id);
+        let Some(survivor) = survivor else {
+            self.selected.remove(&leaver.wallet);
+            return vec![PulseEvent::Left {
+                address: leaver.wallet,
+            }];
+        };
+        self.selected.insert(leaver.wallet, survivor);
+        self.promote(survivor, leaver.emote.active.is_some())
+    }
+
+    /// Hand its wallet's avatar to `subject_id`, a shadow until the selected subject left
+    /// (`PulseMultiplayerBus.RestorePromotedPeer`). Its baseline snaps in, then its emote, or a
+    /// stop if it has none and the leaver had one (`leaver_emoting`). Last comes a resync: a
+    /// shadow's gaps went unasked, so its baseline may lag.
+    fn promote(&mut self, subject_id: u32, leaver_emoting: bool) -> Vec<PulseEvent> {
+        let subject = &self.subjects[&subject_id];
+        let address = subject.wallet;
+        let realm = subject.realm.clone();
+        let (last_seq, last_tick) = (subject.last_seq, subject.last_tick);
+        let emote = subject.emote.active.clone();
+        let movement = self.to_movement(&subject.baseline);
+        let mut events = vec![PulseEvent::Movement {
+            address,
+            movement: Box::new(movement),
+            realm: realm.clone(),
+            teleport: true,
+            timestamp: self.tick_secs(last_tick),
+        }];
+        match emote {
+            Some((urn, mask)) => events.push(PulseEvent::EmoteStart {
+                address,
+                urn,
+                tick: last_tick,
+                realm,
+                mask,
+            }),
+            None if leaver_emoting => events.push(PulseEvent::EmoteStop {
+                address,
+                completed: false,
+                realm,
+            }),
+            None => {}
+        }
+        events.extend(self.request_resync(subject_id, last_seq));
+        events
+    }
+
+    /// Whether `subject_id` is held and drives its wallet's avatar, rather than shadowing it.
+    fn is_selected(&self, subject_id: u32) -> bool {
+        self.subjects
+            .get(&subject_id)
+            .is_some_and(|subject| self.selected.get(&subject.wallet) == Some(&subject_id))
     }
 
     /// Replace a known subject's baseline from a server-supplied full state, if it is newer than the
     /// one held: a higher sequence, or for an emote event an equal one too ([`FullKind`]). An older
-    /// state changes nothing and announces nothing, the realm of an older teleport included. Any
-    /// full state ends the wait for a resync, as in unity-explorer's
-    /// `TryUpdateLastMovementAndCompleteResync` (`PulseMultiplayerBus.PlayerState.cs`). Unknown
-    /// subjects are dropped: full state carries no wallet, so without a prior `PlayerJoined` we
-    /// can't address it.
+    /// state leaves the baseline as it is, an older teleport's realm included, and announces
+    /// nothing. Any state for a known subject ends the wait for its resync, an older one too, as
+    /// in unity-explorer's `TryUpdateLastMovementAndCompleteResync`
+    /// (`PulseMultiplayerBus.PlayerState.cs`); one for an unknown subject, or a message without a
+    /// state, does not. Unknown subjects are dropped: full state carries no wallet, so without a
+    /// prior `PlayerJoined` we can't address it. A shadow takes a state in the same way, silently.
     fn on_full(
         &mut self,
         subject_id: u32,
@@ -544,6 +655,7 @@ impl PulseDecoder {
         let Some(state) = state else {
             return Vec::new();
         };
+        let selected = self.is_selected(subject_id);
         let Some(subject) = self.subjects.get_mut(&subject_id) else {
             return Vec::new();
         };
@@ -569,6 +681,9 @@ impl PulseDecoder {
             }
             _ => false,
         };
+        if !selected {
+            return Vec::new();
+        }
         let address = subject.wallet;
         let realm = subject.realm.clone();
         let movement = self.to_movement_for(subject_id);
@@ -600,8 +715,10 @@ impl PulseDecoder {
             e.player_state,
             FullKind::Emote,
         );
+        let selected = self.is_selected(e.subject_id);
         if let Some(subject) = self.subjects.get_mut(&e.subject_id) {
-            if subject.emote.start(e.sequence, &e.emote_id, e.mask) {
+            // A shadow's track keeps up too: the emote is what it brings if it takes over.
+            if subject.emote.start(e.sequence, &e.emote_id, e.mask) && selected {
                 events.push(PulseEvent::EmoteStart {
                     address: subject.wallet,
                     urn: e.emote_id,
@@ -622,8 +739,9 @@ impl PulseDecoder {
             e.player_state,
             FullKind::Emote,
         );
+        let selected = self.is_selected(e.subject_id);
         if let Some(subject) = self.subjects.get_mut(&e.subject_id) {
-            if subject.emote.stop(e.sequence) {
+            if subject.emote.stop(e.sequence) && selected {
                 events.push(PulseEvent::EmoteStop {
                     address: subject.wallet,
                     completed: e.reason == pulse::EmoteStopReason::Completed as i32,
@@ -635,6 +753,7 @@ impl PulseDecoder {
     }
 
     fn on_delta(&mut self, delta: pulse::PlayerStateDeltaTier0) -> Vec<PulseEvent> {
+        let selected = self.is_selected(delta.subject_id);
         let Some(subject) = self.subjects.get_mut(&delta.subject_id) else {
             // No baseline yet — ask the server for full state (known_seq 0 = "I have nothing").
             return self.request_resync(delta.subject_id, 0);
@@ -656,6 +775,10 @@ impl PulseDecoder {
         // the next successful apply (delta or full) instead of dropping it — still send the resync,
         // since the gap may be genuine loss.
         if delta.baseline_seq > subject.last_seq {
+            // A shadow asks for nothing: the resync that comes with a takeover covers its gaps.
+            if !selected {
+                return Vec::new();
+            }
             let known_seq = subject.last_seq;
             return self.request_resync(delta.subject_id, known_seq);
         }
@@ -670,6 +793,9 @@ impl PulseDecoder {
         subject.baseline.apply_delta(&delta);
         subject.last_seq = delta.new_seq;
         subject.last_tick = delta.server_tick;
+        if !selected {
+            return Vec::new();
+        }
         let address = subject.wallet;
         let realm = subject.realm.clone();
         let mut movement = self.to_movement_for(delta.subject_id);
@@ -703,9 +829,14 @@ impl PulseDecoder {
     }
 
     fn on_profile(&mut self, subject_id: u32, version: i32) -> Vec<PulseEvent> {
+        let selected = self.is_selected(subject_id);
         match self.subjects.get_mut(&subject_id) {
             Some(subject) => {
+                // a shadow keeps it for the joins it announces once it takes over (`joined_event`)
                 subject.profile_version = version;
+                if !selected {
+                    return Vec::new();
+                }
                 vec![PulseEvent::ProfileVersion {
                     address: subject.wallet,
                     version,
@@ -716,14 +847,18 @@ impl PulseDecoder {
         }
     }
 
-    /// Forget every subject. For a new connection: the server starts it with an empty view set and
-    /// re-announces everyone, and the ids it hands out are its own, so nothing from the previous
-    /// connection can be trusted — least of all the promise that a `PlayerLeft` would have arrived
-    /// for anyone who left while the link was down. Nor is any resync still waiting on its answer:
-    /// that request went to the connection that is gone, and the new one has to be able to ask again.
-    pub fn reset(&mut self) {
+    /// Forget every subject and return each wallet that was held, once. For a new connection: the
+    /// server starts it with an empty view set and re-announces everyone, and the ids it hands out
+    /// are its own, so nothing from the previous connection can be trusted — least of all the
+    /// promise that a `PlayerLeft` would have arrived for anyone who left while the link was down.
+    /// Nor is any resync still waiting on its answer: that request went to the connection that is
+    /// gone, and the new one has to be able to ask again.
+    pub fn reset(&mut self) -> Vec<Address> {
         self.subjects.clear();
         self.pending_resync.clear();
+        let mut wallets: Vec<Address> = self.selected.drain().map(|(wallet, _)| wallet).collect();
+        wallets.sort_unstable();
+        wallets
     }
 
     /// Re-emit the join + last known state of every subject the server placed in `realm`, as if
@@ -734,12 +869,13 @@ impl PulseDecoder {
     /// subject still held here is still held there. The baselines match too — deltas are diffed
     /// from the last state the server sent us — so the first delta after the return corrects a
     /// replayed position rather than fighting it. Flagged as a teleport: the state is a snapshot,
-    /// not travel. Subjects tagged with other realms stay as they are, untouched.
+    /// not travel. Subjects tagged with other realms stay as they are, untouched. A shadow is never
+    /// replayed: only a wallet's selected subject reaches the engine.
     pub fn replay(&mut self, realm: &str) -> Vec<PulseEvent> {
         let mut ids: Vec<u32> = self
             .subjects
             .iter()
-            .filter(|(_, subject)| &*subject.realm == realm)
+            .filter(|(id, subject)| &*subject.realm == realm && self.is_selected(**id))
             .map(|(id, _)| *id)
             .collect();
         ids.sort_unstable();

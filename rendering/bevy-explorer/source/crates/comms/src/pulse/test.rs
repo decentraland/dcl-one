@@ -495,7 +495,7 @@ fn reset_forgets_every_subject() {
         "home",
         (1.0, 2.0, 3.0),
     )));
-    decoder.reset();
+    assert_eq!(decoder.reset(), [wallet()]);
     assert!(decoder.replay("home").is_empty());
     // and a delta for it is now a stranger's: full state is requested rather than applied
     let events = decoder.handle(delta(SUBJECT, 1, 2, 1500, 5.0));
@@ -882,4 +882,319 @@ fn only_an_emote_event_replaces_the_state_at_the_held_sequence() {
         panic!("expected Movement then EmoteStart, got {events:?}");
     };
     approx(movement.position_x, 161.0); // 10*16 + 1 from the emote event, not 165 from the delta
+}
+
+const OTHER: &str = "0x0000000000000000000000000000000000000002";
+
+fn other() -> Address {
+    OTHER.parse().unwrap()
+}
+
+/// `wallet` joining as `subject_id`, in "home".
+fn joined_home(subject_id: u32, wallet: &str) -> pulse::ServerMessage {
+    server_msg(joined_in_realm(subject_id, wallet, "home", (1.0, 2.0, 3.0)))
+}
+
+fn left(subject_id: u32) -> pulse::ServerMessage {
+    server_msg(pulse::server_message::Message::PlayerLeft(
+        pulse::PlayerLeft { subject_id },
+    ))
+}
+
+/// A peer that reconnects is announced under its new id first; the old id leaves seconds later.
+#[test]
+fn a_newer_session_keeps_the_avatar_when_the_older_one_leaves() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+
+    let events = decoder.handle(joined_home(SUBJECT + 1, WALLET));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                PulseEvent::Joined { .. },
+                PulseEvent::Movement { teleport: true, .. }
+            ]
+        ),
+        "{events:?}"
+    );
+
+    let events = decoder.handle(left(SUBJECT));
+    assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn a_shadow_sends_nothing_to_the_engine() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(joined_home(SUBJECT + 1, WALLET));
+
+    for message in [
+        delta(SUBJECT, 1, 2, 1500, 5.0),
+        emote_started(3, 1600, "wave", 5.0),
+        server_msg(
+            pulse::server_message::Message::PlayerProfileVersionAnnounced(
+                pulse::PlayerProfileVersionsAnnounced {
+                    subject_id: SUBJECT,
+                    version: 9,
+                },
+            ),
+        ),
+    ] {
+        let events = decoder.handle(message);
+        assert!(events.is_empty(), "{events:?}");
+    }
+}
+
+#[test]
+fn the_newest_survivor_takes_over_when_the_selected_one_leaves() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(joined_home(SUBJECT + 1, WALLET));
+    let events = decoder.handle(delta(SUBJECT, 1, 2, 1500, 5.0));
+    assert!(events.is_empty(), "{events:?}");
+
+    let events = decoder.handle(left(SUBJECT + 1));
+    let [PulseEvent::Movement {
+        movement, teleport, ..
+    }, PulseEvent::Resync(request)] = events.as_slice()
+    else {
+        panic!("expected Movement then Resync, got {events:?}");
+    };
+    assert!(*teleport);
+    approx(movement.position_x, 165.0); // 10*16 + 5 from the delta it took in as a shadow
+    assert_eq!((request.subject_id, request.known_seq), (SUBJECT, 2));
+}
+
+#[test]
+fn the_last_session_of_a_wallet_leaving_removes_the_avatar() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(joined_home(SUBJECT + 1, WALLET));
+    decoder.handle(left(SUBJECT + 1));
+
+    let events = decoder.handle(left(SUBJECT));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Left { address }] if *address == wallet()),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_reused_id_retires_the_previous_wallet() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+
+    let events = decoder.handle(joined_home(SUBJECT, OTHER));
+    let [PulseEvent::Left { address: gone }, PulseEvent::Joined {
+        address: arrived, ..
+    }, PulseEvent::Movement { .. }] = events.as_slice()
+    else {
+        panic!("expected Left, Joined then Movement, got {events:?}");
+    };
+    assert_eq!((*gone, *arrived), (wallet(), other()));
+}
+
+#[test]
+fn a_left_for_an_unknown_subject_is_ignored() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+
+    let events = decoder.handle(left(99));
+    assert!(events.is_empty(), "{events:?}");
+}
+
+#[test]
+fn reset_returns_each_held_wallet_once() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(joined_home(SUBJECT + 1, WALLET));
+    decoder.handle(joined_home(SUBJECT + 2, OTHER));
+
+    let wallets = decoder.reset();
+    assert_eq!(wallets.len(), 2, "{wallets:?}");
+    assert_eq!(
+        wallets.into_iter().collect::<HashSet<_>>(),
+        HashSet::from([wallet(), other()])
+    );
+}
+
+#[test]
+fn replay_emits_only_the_selected_session() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(joined_home(SUBJECT + 1, WALLET));
+
+    let events = decoder.replay("home");
+    assert!(
+        matches!(
+            events.as_slice(),
+            [PulseEvent::Joined { subject_id, .. }, PulseEvent::Movement { .. }]
+                if *subject_id == SUBJECT + 1
+        ),
+        "{events:?}"
+    );
+}
+
+/// The avatar may be playing the replaced session's emote, and the newcomer has none yet.
+#[test]
+fn a_newcomer_stops_the_emote_of_the_session_it_replaces() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(emote_started(2, 1500, "wave", 1.0));
+
+    let events = decoder.handle(joined_home(SUBJECT + 1, WALLET));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                PulseEvent::Joined { .. },
+                PulseEvent::Movement { teleport: true, .. },
+                PulseEvent::EmoteStop {
+                    completed: false,
+                    ..
+                }
+            ]
+        ),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_promoted_shadow_brings_its_own_emote() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(joined_home(SUBJECT + 1, WALLET));
+    let events = decoder.handle(emote_started(2, 1500, "wave", 1.0));
+    assert!(events.is_empty(), "{events:?}");
+
+    let events = decoder.handle(left(SUBJECT + 1));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                PulseEvent::Movement { teleport: true, .. },
+                PulseEvent::EmoteStart { urn, tick: 1500, .. },
+                PulseEvent::Resync(request)
+            ] if urn == "wave" && (request.subject_id, request.known_seq) == (SUBJECT, 2)
+        ),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_promoted_shadow_stops_the_emote_of_the_session_that_left() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT - 1, WALLET));
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(emote_started(2, 1500, "wave", 1.0));
+
+    let events = decoder.handle(left(SUBJECT));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                PulseEvent::Movement { teleport: true, .. },
+                PulseEvent::EmoteStop {
+                    completed: false,
+                    ..
+                },
+                PulseEvent::Resync(_)
+            ]
+        ),
+        "{events:?}"
+    );
+}
+
+/// A shadow's state keeps up in silence, and a takeover brings it, in the shadow's own realm. A gap
+/// asks for nothing: the takeover's resync covers it.
+#[test]
+fn a_shadow_keeps_up_in_silence() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(joined_home(SUBJECT + 1, WALLET));
+
+    for message in [
+        player_state_full(2, 1500, 1.0),
+        teleported(3, 1600, "away"),
+        emote_stopped(4, 1700, 5.0),
+        delta(SUBJECT, 9, 10, 1800, 1.0),
+    ] {
+        let events = decoder.handle(message);
+        assert!(events.is_empty(), "{events:?}");
+    }
+
+    let events = decoder.handle(left(SUBJECT + 1));
+    let [PulseEvent::Movement {
+        movement, realm, ..
+    }, PulseEvent::Resync(request)] = events.as_slice()
+    else {
+        panic!("expected Movement then Resync, got {events:?}");
+    };
+    assert_eq!(&**realm, "away");
+    approx(movement.position_x, 165.0); // 10*16 + 5 from the emote stop's state
+    assert_eq!((request.subject_id, request.known_seq), (SUBJECT, 4));
+}
+
+/// A resync still waiting on its answer from before the subject was a shadow covers the takeover.
+#[test]
+fn a_takeover_asks_for_no_second_resync() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    let events = decoder.handle(delta(SUBJECT, 5, 6, 1500, 5.0));
+    assert!(is_one_resync(&events, SUBJECT, 1), "{events:?}");
+    decoder.handle(joined_home(SUBJECT + 1, WALLET));
+
+    let events = decoder.handle(left(SUBJECT + 1));
+    assert!(
+        matches!(events.as_slice(), [PulseEvent::Movement { .. }]),
+        "{events:?}"
+    );
+}
+
+/// Announced again, a subject keeps its place among the wallet's joins (`PeerIdCache.Set`): it does
+/// not take over by it, and when the selected one leaves, the newest of the others does.
+#[test]
+fn a_shadow_announced_again_keeps_its_place() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT - 1, WALLET));
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(joined_home(SUBJECT + 1, WALLET));
+
+    let events = decoder.handle(joined_home(SUBJECT - 1, WALLET));
+    assert!(events.is_empty(), "{events:?}");
+
+    let events = decoder.handle(left(SUBJECT + 1));
+    assert!(
+        matches!(events.last(), Some(PulseEvent::Resync(request)) if request.subject_id == SUBJECT),
+        "{events:?}"
+    );
+}
+
+/// Once its last subject has left, a wallet is no longer held: it comes back as a first sighting,
+/// and a reset does not report it.
+#[test]
+fn a_wallet_that_left_is_no_longer_held() {
+    let mut decoder = PulseDecoder::new(PulseParcelGrid::default());
+    decoder.handle(joined_home(SUBJECT, WALLET));
+    decoder.handle(joined_home(SUBJECT + 1, OTHER));
+    decoder.handle(left(SUBJECT));
+
+    let events = decoder.handle(joined_home(SUBJECT + 2, WALLET));
+    assert!(
+        matches!(
+            events.as_slice(),
+            [
+                PulseEvent::Joined { .. },
+                PulseEvent::Movement {
+                    teleport: false,
+                    ..
+                }
+            ]
+        ),
+        "{events:?}"
+    );
+    decoder.handle(left(SUBJECT + 2));
+    assert_eq!(decoder.reset(), [other()]);
+    // nor, after the reset, is any other
+    assert!(decoder.reset().is_empty());
 }
