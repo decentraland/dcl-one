@@ -19,6 +19,8 @@
 //!   naming one collections-v1 asset by address and by name count as one.
 //! - a timestamp more than `REQUEST_TTL_FORWARDS_MS` ahead of this node's
 //!   clock is undecided until the clock catches up.
+//! - one deadline bounds the whole validation of an entity, its contract
+//!   wallet included; past it the entity is undecided.
 //! - access: every check asks the chain at the entity timestamp's block, then
 //!   five minutes before it ([`super::onchain`]), as for a local deploy; item
 //!   ownership leaves out the escrow lease overlay, which knows only the
@@ -28,11 +30,12 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
+use std::time::Duration;
 
 use async_trait::async_trait;
 
 use super::checker::{BlockchainChecker, BlockchainLayer};
-use super::error::{PermissionResult, ValidationError, ValidatorError};
+use super::error::{PermissionResult, ValidationError, ValidationResponse, ValidatorError};
 use super::rules::{ContentValidator, ExternalCalls};
 use super::types::{Deployment, Entity, EntityType, Timestamp};
 use super::{Sources, entity_parser};
@@ -254,10 +257,35 @@ fn not_fetched_hashes(entity: &Entity) -> HashSet<String> {
         .collect()
 }
 
+/// The longest one synced entity's validation (signature and access) takes
+/// before it is undecided.
+const SYNCED_DEADLINE: Duration = Duration::from_secs(60);
+
 /// Validates the entity file `entity_bytes` (already proven to hash to
 /// `entity_id`) under `auth_chain`. `Ok` carries the expirations kept on the
 /// peer's word; `Err` the errors with their kind, as [`super::validate`].
 pub async fn validate_synced(
+    sources: &Sources,
+    entity_bytes: &[u8],
+    entity_id: &str,
+    auth_chain: &AuthChain,
+    content: SyncedContent,
+    access_passed: bool,
+) -> Result<ChainVerdict, Vec<ValidationError>> {
+    validate_synced_within(
+        SYNCED_DEADLINE,
+        sources,
+        entity_bytes,
+        entity_id,
+        auth_chain,
+        content,
+        access_passed,
+    )
+    .await
+}
+
+async fn validate_synced_within(
+    deadline: Duration,
     sources: &Sources,
     entity_bytes: &[u8],
     entity_id: &str,
@@ -283,20 +311,28 @@ pub async fn validate_synced(
         content,
         trusted_expirations: Mutex::new(Vec::new()),
     };
-    ContentValidator {
+    let validation = ContentValidator {
         external_calls: &synced,
         blockchain_checker: &synced,
         ignore_blockchain_access: sources.ignore_blockchain_access,
         synced: true,
         access_passed,
-    }
-    .validate(&Deployment {
+    };
+    let deployment = Deployment {
         entity: &entity,
         files: &files,
         auth_chain,
-    })
-    .await
-    .into_result()?;
+    };
+    let checks = validation.validate(&deployment);
+    tokio::time::timeout(deadline, checks)
+        .await
+        .unwrap_or_else(|_| {
+            ValidationResponse::unavailable(format!(
+                "The validation did not finish within {} s",
+                deadline.as_secs_f32()
+            ))
+        })
+        .into_result()?;
     Ok(ChainVerdict {
         trusted_expirations: synced.trusted_expirations.into_inner().unwrap_or_default(),
     })
@@ -477,6 +513,74 @@ mod tests {
             "no block yet: a refusal"
         );
         assert_eq!(asks.0.lock().unwrap().len(), 1);
+        let _ = std::fs::remove_dir_all(tmp);
+    }
+
+    /// A contract wallet whose RPC never answers.
+    struct Stalled;
+
+    #[async_trait]
+    impl Eip1654Validator for Stalled {
+        async fn validate_signature(&self, _: &str, _: &[u8], _: &[u8]) -> Result<bool, AuthError> {
+            std::future::pending().await
+        }
+
+        async fn validate_signature_at_block(
+            &self,
+            _: &str,
+            _: &[u8],
+            _: &[u8],
+            _: u64,
+        ) -> Result<bool, AuthError> {
+            std::future::pending().await
+        }
+    }
+
+    #[tokio::test]
+    async fn a_synced_validation_past_its_deadline_is_undecided() {
+        use super::super::fake_chain;
+        const CONTRACT: &str = "0x0000000000000000000000000000000000000002";
+        let chain = fake_chain::serve(|q, _| panic!("unexpected question {q:?}")).await;
+        let (storage, tmp) = crate::sync_test_support::temp_storage("synced-deadline").await;
+        let sources = Sources::new(
+            sqlx::PgPool::connect_lazy("postgres://nobody@127.0.0.1:1/none").unwrap(),
+            storage,
+            crate::http::Outbound::for_tests(),
+            Some(std::sync::Arc::new(Stalled)),
+            super::super::Settings {
+                eth_network: "mainnet".into(),
+                l1_rpc_url: Some(chain.url.clone()),
+                ..Default::default()
+            },
+        );
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "version": "v3", "type": "outfits", "pointers": [format!("{CONTRACT}:outfits")],
+            "timestamp": 1_700_000_000_000i64, "content": [],
+            "metadata": {"outfits": [], "namesForExtraSlots": []}
+        }))
+        .unwrap();
+        let id = crate::auth::hash_bytes_v1(&bytes);
+        let auth =
+            crate::sync_test_support::signed_chain_behind_contract(&id, "2099-01-01T00:00:00.000Z")
+                .await;
+
+        let validation = validate_synced_within(
+            Duration::from_millis(200),
+            &sources,
+            &bytes,
+            &id,
+            &auth,
+            SyncedContent::Fetched,
+            false,
+        );
+        let errors = tokio::time::timeout(Duration::from_secs(10), validation)
+            .await
+            .expect("bounded by the entity deadline")
+            .unwrap_err();
+        assert!(
+            matches!(&errors[..], [ValidationError::Unavailable(m)] if m.contains("did not finish")),
+            "{errors:?}"
+        );
         let _ = std::fs::remove_dir_all(tmp);
     }
 
