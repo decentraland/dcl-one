@@ -269,21 +269,6 @@ impl Profiles {
             .collect())
     }
 
-    /// A strict bounded initial replay batch; read failure retires this stream rather
-    /// than certifying initialization. Missing profiles retain the established representation.
-    pub async fn connectivity_profiles(
-        &self,
-        addresses: &[String],
-    ) -> Result<Vec<FriendProfile>, sqlx::Error> {
-        let map = self.get_profiles_result(addresses).await?;
-        Ok(addresses
-            .iter()
-            .map(|address| {
-                connectivity_profile(friend_profile(address, map.get(&address.to_lowercase())))
-            })
-            .collect())
-    }
-
     pub async fn blocked_profile(
         &self,
         address: &str,
@@ -294,18 +279,6 @@ impl Profiles {
             self.get_profile(address).await.as_ref(),
             blocked_at_ms,
         )
-    }
-}
-
-/// Reuse the existing enrichment-unavailable profile when optional display metadata
-/// cannot fit connectivity's item budget. Identity/status/authorization are never trimmed.
-pub(crate) fn connectivity_profile(profile: FriendProfile) -> FriendProfile {
-    use prost::Message as _;
-    if profile.encoded_len() > crate::rpc::drpc::transport::MAX_GUARDED_MESSAGE_BYTES - 512 {
-        tracing::warn!(address = %profile.address, "connectivity enrichment exceeds item budget; using existing unavailable-profile representation");
-        friend_profile(&profile.address, None)
-    } else {
-        profile
     }
 }
 

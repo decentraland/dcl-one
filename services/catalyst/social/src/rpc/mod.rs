@@ -36,6 +36,7 @@
 pub mod admin;
 pub mod context;
 pub mod db;
+mod fanout;
 pub mod http;
 pub use crate::shared::rpc::{drpc, handshake};
 pub mod limits;
@@ -81,12 +82,20 @@ pub struct Settings {
     /// `AUTH_WINDOW_SECS`: how long the first frame may take to arrive and how
     /// far its timestamp may sit from the server clock.
     pub auth_window_secs: i64,
+    /// WS_AUTH_TIMEOUT_IN_MS; unset keeps the legacy AUTH_WINDOW_SECS fallback.
+    pub ws_auth_timeout_ms: Option<u64>,
+    /// WS_AUTH_SIGNATURE_EXPIRATION_IN_MS, independent from the first-frame timer.
+    pub ws_auth_signature_expiration_ms: Option<i64>,
+    /// WS_IDLE_TIMEOUT_IN_SECONDS; zero disables automatic ping/idle expiry.
+    pub ws_idle_timeout_secs: u64,
     /// `PRIVATE_VOICE_CHAT_EXPIRATION_TIME` (ms): a call not accepted within it expires.
     pub private_voice_chat_expiration_ms: i64,
     /// `PRIVATE_VOICE_CHAT_JOB_INTERVAL` (ms): the expiry sweep's tick.
     pub private_voice_chat_job_interval_ms: u64,
     /// `PRIVATE_VOICE_CHAT_EXPIRATION_BATCH_SIZE`: expired calls reclaimed per DELETE.
     pub private_voice_chat_expiration_batch_size: i64,
+    /// COMMUNITY_VOICE_CHAT_POLLING_JOB_INTERVAL in milliseconds.
+    pub community_voice_chat_polling_job_interval_ms: u64,
     /// `WS_MAX_CONCURRENT_CONNECTIONS`: unset = unlimited.
     pub ws_max_concurrent_connections: Option<usize>,
     /// `WS_MAX_PAYLOAD_LENGTH`: the largest inbound frame.
@@ -114,9 +123,13 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             auth_window_secs: 300,
+            ws_auth_timeout_ms: None,
+            ws_auth_signature_expiration_ms: None,
+            ws_idle_timeout_secs: 300,
             private_voice_chat_expiration_ms: 60_000,
             private_voice_chat_job_interval_ms: 1_000,
             private_voice_chat_expiration_batch_size: 20,
+            community_voice_chat_polling_job_interval_ms: 45_000,
             ws_max_concurrent_connections: None,
             ws_max_payload_bytes: 1024 * 1024,
             ws_max_backpressure_bytes: 128 * 1024,
@@ -127,6 +140,19 @@ impl Default for Settings {
             writes_enabled: true,
             commit_hash: None,
         }
+    }
+}
+
+impl Settings {
+    pub(crate) fn auth_timeout(&self) -> Duration {
+        Duration::from_millis(
+            self.ws_auth_timeout_ms
+                .unwrap_or_else(|| self.auth_window_secs.max(0).saturating_mul(1000) as u64),
+        )
+    }
+    pub(crate) fn auth_signature_expiration_ms(&self) -> i64 {
+        self.ws_auth_signature_expiration_ms
+            .unwrap_or_else(|| self.auth_window_secs.saturating_mul(1000))
     }
 }
 
@@ -223,6 +249,22 @@ impl State {
         let batch_size = self.settings.private_voice_chat_expiration_batch_size;
         let interval =
             Duration::from_millis(self.settings.private_voice_chat_job_interval_ms.max(1));
+        let community_context = self.ctx.clone();
+        jobs.spawn_periodic_leased(
+            "community-voice-chat-notifications",
+            PeriodicCfg::every(Duration::from_millis(
+                self.settings
+                    .community_voice_chat_polling_job_interval_ms
+                    .max(1),
+            )),
+            move |_job| {
+                let ctx = community_context.clone();
+                async move {
+                    ctx.poll_community_voice_notifications().await;
+                    Ok(())
+                }
+            },
+        );
         jobs.spawn_periodic_leased(
             "private-voice-chat-expiry",
             PeriodicCfg::every(interval),

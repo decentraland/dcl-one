@@ -2026,10 +2026,10 @@
       "response": {
         "streamClosed": {
           "reason": 1,
-          "message": "duplicate"
+          "message": "This connection already has an active friendshipUpdate subscription"
         }
       },
-      "expected_hex": "3a0d080112096475706c6963617465"
+      "expected_hex": "3a47080112435468697320636f6e6e656374696f6e20616c72656164792068617320616e2061637469766520667269656e647368697055706461746520737562736372697074696f6e"
     },
     {
       "group": "stream-missing-profile",
@@ -2084,10 +2084,10 @@
         "status": 0,
         "streamClosed": {
           "reason": 1,
-          "message": "duplicate"
+          "message": "This connection already has an active friendConnectivityUpdate subscription"
         }
       },
-      "expected_hex": "1a0d080112096475706c6963617465"
+      "expected_hex": "1a4f0801124b5468697320636f6e6e656374696f6e20616c72656164792068617320616e2061637469766520667269656e64436f6e6e656374697669747955706461746520737562736372697074696f6e"
     },
     {
       "group": "stream",
@@ -2117,10 +2117,10 @@
         "isBlocked": false,
         "streamClosed": {
           "reason": 1,
-          "message": "duplicate"
+          "message": "This connection already has an active blockUpdate subscription"
         }
       },
-      "expected_hex": "1a0d080112096475706c6963617465"
+      "expected_hex": "1a420801123e5468697320636f6e6e656374696f6e20616c72656164792068617320616e2061637469766520626c6f636b55706461746520737562736372697074696f6e"
     },
     {
       "group": "stream",
@@ -2155,10 +2155,10 @@
         "status": 0,
         "streamClosed": {
           "reason": 1,
-          "message": "duplicate"
+          "message": "This connection already has an active privateVoiceChatUpdate subscription"
         }
       },
-      "expected_hex": "320d080112096475706c6963617465"
+      "expected_hex": "324d080112495468697320636f6e6e656374696f6e20616c72656164792068617320616e206163746976652070726976617465566f6963654368617455706461746520737562736372697074696f6e"
     },
     {
       "group": "stream",
@@ -2192,10 +2192,10 @@
         "status": 0,
         "streamClosed": {
           "reason": 1,
-          "message": "duplicate"
+          "message": "This connection already has an active communityMemberConnectivityUpdate subscription"
         }
       },
-      "expected_hex": "220d080112096475706c6963617465"
+      "expected_hex": "2258080112545468697320636f6e6e656374696f6e20616c72656164792068617320616e2061637469766520636f6d6d756e6974794d656d626572436f6e6e656374697669747955706461746520737562736372697074696f6e"
     },
     {
       "group": "stream",
@@ -2259,10 +2259,10 @@
         "worlds": [],
         "streamClosed": {
           "reason": 1,
-          "message": "duplicate"
+          "message": "This connection already has an active communityVoiceChatUpdate subscription"
         }
       },
-      "expected_hex": "520d080112096475706c6963617465"
+      "expected_hex": "524f0801124b5468697320636f6e6e656374696f6e20616c72656164792068617320616e2061637469766520636f6d6d756e697479566f6963654368617455706461746520737562736372697074696f6e"
     }
   ]
 }

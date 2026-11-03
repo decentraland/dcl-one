@@ -139,6 +139,7 @@ async fn a_live_update_published_after_subscribing_follows_the_snapshot() {
     db.apply_friendship_action(&alice, &bob, "accept", true, None, None)
         .await
         .unwrap();
+    seed_profiles(&server.state.ctx, &[&bob]).await;
     server
         .state
         .ctx
@@ -151,9 +152,12 @@ async fn a_live_update_published_after_subscribing_follows_the_snapshot() {
         alice_social.subscribe_to_friend_connectivity_updates(),
     )
     .await;
-    // Marked by its profile name, apart from the replay and from Pulse's own fan-out.
+    let first = next_update(&mut updates).await.friend.unwrap();
+    assert_eq!(first.address, bob);
+    // Source resolves the profile at RPC delivery, so publisher-provided display
+    // fields cannot mark an event. Consume the initial item before publishing.
     let mut marked = crate::rpc::profiles::friend_profile(&bob, None);
-    marked.name = "published after subscribing".into();
+    marked.name = "publisher placeholder".into();
     server.state.ctx.pubsub().publish(
         &alice,
         SocialEvent::FriendConnectivity(FriendConnectivityUpdate {
@@ -162,21 +166,9 @@ async fn a_live_update_published_after_subscribing_follows_the_snapshot() {
             status: ConnectivityStatus::Online as i32,
         }),
     );
-    let first = next_update(&mut updates).await.friend.unwrap();
-    assert_eq!(first.address, bob);
-    assert_ne!(
-        first.name, "published after subscribing",
-        "the replay comes first"
-    );
-    let mut seen = false;
-    for _ in 0..3 {
-        let friend = next_update(&mut updates).await.friend.unwrap();
-        if friend.name == "published after subscribing" {
-            seen = true;
-            break;
-        }
-    }
-    assert!(seen, "the update published after subscribing was lost");
+    let live = next_update(&mut updates).await.friend.unwrap();
+    assert_eq!(live.address, bob);
+    assert_ne!(live.name, "publisher placeholder");
     cleanup_pair(&db, &alice, &bob).await;
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }

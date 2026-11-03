@@ -69,7 +69,9 @@ pub mod fake {
 
     #[async_trait]
     impl VoiceRooms for FakeVoiceRooms {
-        fn presence_config(&self) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig { self.db.config() }
+        fn presence_config(&self) -> crate::comms::gatekeeper::voice::db::VoiceDbConfig {
+            self.db.config()
+        }
         async fn create_pending_private_call(
             &self,
             caller: &str,

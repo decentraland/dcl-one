@@ -957,7 +957,9 @@ async fn runtime_failures_are_internal_errors() {
                 muted: true,
             }
         ),
-        failed("mute/unmute speaker from community voice chat")
+        failed(
+            "mute/unmute speaker from community voice chat: voice runtime failed: test runtime failed"
+        )
     );
     let end = || EndCommunityVoiceChatPayload {
         community_id: cid.clone(),

@@ -911,6 +911,9 @@ pub async fn serve(mut config: Config) -> anyhow::Result<()> {
     social
         .rpc
         .start_topology(&jobs, comms_stage.archipelago.feed.topology.clone());
+    social
+        .rpc
+        .start_fanout(&jobs, comms_stage.gatekeeper.bus.clone());
     // A room the gatekeeper closes reaches the open voice streams as ENDED.
     comms_stage
         .social_directory
@@ -2024,11 +2027,17 @@ fn social_states(
         pool.clone(),
         social_rpc::Settings {
             auth_window_secs: config.social.social_rpc_auth_window_secs,
+            ws_auth_timeout_ms: config.social.ws_auth_timeout_in_ms,
+            ws_auth_signature_expiration_ms: config.social.ws_auth_signature_expiration_in_ms,
+            ws_idle_timeout_secs: config.social.ws_idle_timeout_in_seconds,
             private_voice_chat_expiration_ms: config.social.private_voice_chat_expiration_ms,
             private_voice_chat_job_interval_ms: config.social.private_voice_chat_job_interval_ms,
             private_voice_chat_expiration_batch_size: config
                 .social
                 .private_voice_chat_expiration_batch_size,
+            community_voice_chat_polling_job_interval_ms: config
+                .social
+                .community_voice_chat_polling_job_interval_ms,
             ws_max_concurrent_connections: config.social.ws_max_concurrent_connections,
             ws_max_payload_bytes: config.social.ws_max_payload_length,
             ws_max_backpressure_bytes: config.social.ws_max_backpressure,

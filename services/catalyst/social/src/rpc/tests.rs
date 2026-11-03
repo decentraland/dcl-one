@@ -37,6 +37,7 @@ use crate::jobs::Jobs;
 mod community_voice;
 mod connectivity;
 mod failures;
+mod fanout;
 mod friends;
 mod http;
 mod private_voice;
@@ -49,6 +50,7 @@ mod subscription_lifecycle;
 mod upstream_reads;
 mod voice_bugs;
 mod voice_runtime;
+mod voice_source_cases;
 
 const EXPIRATION_MS: i64 = 60_000;
 
@@ -951,7 +953,7 @@ async fn blocked_pair_cannot_start_call_and_friends_can() {
     // Without settings rows both read `all`; a stranger the callee limited to
     // friends is refused, and friends pass.
     let pre = db
-        .private_voice_preflight(&caller, &callee, 60_000)
+        .private_voice_preflight(&caller, &callee, 60_000, Default::default())
         .await
         .unwrap();
     assert_eq!(

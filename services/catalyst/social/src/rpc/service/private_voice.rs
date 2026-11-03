@@ -31,8 +31,7 @@ pub(crate) fn incoming_not_found(address: &str) -> String {
 /// The gates run in the old precedence, all from one read: self-call,
 /// block, the privacy settings (`all` on both sides or friends), either
 /// party in a community room, busy, either party in a private room; then the
-/// locked insert, and the callee is told REQUESTED. With no voice runtime the
-/// call is refused up front rather than rung with nothing to connect to.
+/// locked insert, and the callee is told REQUESTED. The runtime availability check follows the block and privacy gates.
 /// Shared by the procedure and `POST /v1/private-voice-chats`.
 pub(crate) async fn start_private_voice_chat(
     ctx: &Context,
@@ -45,13 +44,10 @@ pub(crate) async fn start_private_voice_chat(
     if callee == me {
         return Err(Refusal::Forbidden(VOICE_CHAT_NOT_ALLOWED.into()));
     }
-    if !ctx.voice().is_configured() {
-        return Err(Refusal::Internal(VOICE_RUNTIME_UNAVAILABLE.into()));
-    }
     let expiration_ms = ctx.voice_settings().private_voice_chat_expiration_ms;
     let pre = ctx
         .db()
-        .private_voice_preflight(me, callee, expiration_ms)
+        .private_voice_preflight(me, callee, expiration_ms, ctx.voice().presence_config())
         .await?;
     if pre.blocked {
         return Err(Refusal::Forbidden(VOICE_CHAT_NOT_ALLOWED.into()));
@@ -59,6 +55,9 @@ pub(crate) async fn start_private_voice_chat(
     if (pre.callee_privacy != "all" || pre.caller_privacy != "all") && !pre.friends.unwrap_or(false)
     {
         return Err(Refusal::Forbidden(VOICE_CHAT_NOT_ALLOWED.into()));
+    }
+    if !ctx.voice().is_configured() {
+        return Err(Refusal::Internal(VOICE_RUNTIME_UNAVAILABLE.into()));
     }
     // Community-call presence is disclosed only once block and privacy allow the call.
     if pre.caller_in_community_voice {
@@ -242,7 +241,6 @@ impl SocialServiceImpl {
             Err(Refusal::Forbidden(m)) => Ok(start_voice_forbidden(m)),
             Err(Refusal::Conflict(m)) => Ok(start_voice_conflict(m)),
             Err(Refusal::Invalid(m)) => Ok(start_voice_invalid(m)),
-            Err(Refusal::Failed(m)) => Err(SocialError::Internal(m)),
             Err(refusal) => Ok(start_voice_internal(refusal.message())),
         }
     }
@@ -282,7 +280,6 @@ impl SocialServiceImpl {
                     message: Some(m),
                 })
             }
-            Err(Refusal::Failed(m)) => return Err(SocialError::Internal(m)),
             Err(refusal) => accept_private_voice_chat_response::Response::InternalServerError(
                 internal_err(refusal.message()),
             ),

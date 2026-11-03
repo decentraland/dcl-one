@@ -112,6 +112,64 @@ Types, subjects and caps: `comms::protocol::bus`. Record reviewed channel contra
 
 A publish returns after bounded local SDK acceptance: `Submitted` proves neither broker authorization nor delivery. Require per-process NATS credentials and subject permissions matching the producer/consumer table. Verify deployment enforcement through the private release review.
 
+## Social subscription fanout
+
+Each `serve` attaches Social to its existing `CommsState::bus` link and subscribes
+without a queue group to `comms.social.events.v1`. There is no second connection,
+process or pool. Comms owns the subject constant; Social owns the codec, because
+its protobuf types belong above Comms in the module layers.
+
+The version-1 envelope contains a process UUID and a tagged event: a normalized
+recipient plus friendship, block or private-call protobuf; community voice plus
+scope and optional excluded creator; community membership status; community
+deletion; or an immutable payload reference. The decoder checks version, kind,
+UUIDs, normalized wallet identities, status enums and the permitted protobuf arm.
+Private REQUESTED includes only the caller, ACCEPTED alone may carry credentials,
+and neither private parties nor closure notices can be added by another arm.
+The NATS subject and payload together are limited to 64 KiB. The outbound and
+inbound application queues each contain at most 256 messages. A full queue or a
+failed publish drops that event and increments `social_event_delivery_dropped`.
+
+Oversized community voice metadata is stored as one immutable binary protobuf
+snapshot in `social.event_payloads`, with a UUID and a 24-hour expiry, before a
+small reference is published. A subscriber reads that exact snapshot through its
+existing SQL pool, validates it, and delivers it locally. Stored snapshots cannot
+contain references or private-call credentials. Separate START snapshots remain
+separate across END, privacy edits and a later START; metadata is never truncated.
+A payload row is a transport cache, not an outbox, replay log or delivery receipt.
+
+A mutation is delivered locally before its bus hint is queued. The origin drops
+its own loopback; other replicas preserve the order observed from that publisher
+through one worker. Concurrent publishers have no total order. An inbound worker
+allows five seconds per delivery. Community fanout reads subscriber membership in
+pages of 256 and re-reads current privacy for START. Member removal and deletion
+status reach the removed member without requiring it to remain a member. Pulse
+connectivity is already derived locally by every replica and never crosses this
+subject, preventing duplicate global announcements.
+
+Authentication is the configured internal NATS link; the event envelope does not
+supply client authority. Routing checks still run in Social, and the existing
+connectivity delivery guards re-check privacy and shared membership before handing
+an item to a socket. Public client sockets cannot publish this internal subject.
+
+Delivery remains transient and at most once, as Redis pub/sub in
+`decentraland/social-service-ea` at `b6b2cefefdf727b2ed47ddb887e77d226a41eea6`.
+A disconnect may lose hints; the existing broker reconnects and restores its
+subscriptions. There is no per-event retry, forced client closure, sequence ledger,
+or promise to replay missed updates. A new friend-connectivity subscription starts
+with online friends only; community connectivity starts with live events.
+
+Community START notification scope is Social-owned state on the existing community:
+scope, generation UUID and expiry are all present or all absent. The polling job
+runs every `COMMUNITY_VOICE_CHAT_POLLING_JOB_INTERVAL` milliseconds (45,000 by
+default), reads indexed PK pages of 64 and asks the existing configured Comms room
+liveness query. Active entries refresh their 24-hour expiry; inactive fresh entries
+are claimed by generation and announce END once. Expired entries are cleared without
+an event. Explicit END claims the same generation before media teardown and restores
+it on media failure only while no newer generation exists. Generation checks fence
+notification metadata; they do not make an external media END atomic with START.
+The same job removes at most 64 expired spill rows per pass.
+
 ## Room recovery
 
 The canonical contract is `library/protocol/proto/decentraland/pulse/pulse_clusters.proto`.

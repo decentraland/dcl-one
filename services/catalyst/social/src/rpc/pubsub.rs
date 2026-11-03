@@ -1,13 +1,5 @@
-//! Per-address fan-out of the subscription streams. One process, so a
-//! `tokio::sync::broadcast` channel per online address replaces the Redis
-//! pub/sub upstream social-service-ea used between instances: an event
-//! published here reaches only the subscriptions held by THIS process. A
-//! second `catalyst serve` sharing the database would not see its peers'
-//! friendship events. Pulse connectivity is independently derived on each replica;
-//! other multi-instance events require an out-of-process
-//! fan-out (NATS or PostgreSQL `LISTEN/NOTIFY` carrying the same encoded
-//! events), which is the documented multi-instance consequence, not a change
-//! in the per-connection contract.
+//! Local social subscription fanout. Mutation hints cross the existing core-NATS link;
+//! every replica independently derives Pulse connectivity and never republishes it.
 
 use crate::rpc::proto::v2::{
     BlockUpdate, CommunityMemberConnectivityUpdate, CommunityVoiceChatUpdate,
@@ -84,12 +76,7 @@ pub enum SocialEvent {
 #[derive(Clone, Default)]
 pub struct PubSub {
     channels: Arc<DashMap<String, broadcast::Sender<Arc<SocialEvent>>>>,
-    /// The audience each live community voice room was started for, `true`
-    /// for every subscriber (a public, listed community), `false` for its
-    /// members: upstream's `communityVoiceChatCache` `notificationScope`,
-    /// which ENDED reuses so a later privacy change neither widens nor
-    /// narrows it.
-    voice_audiences: Arc<DashMap<Uuid, bool>>,
+    outbound: Arc<std::sync::OnceLock<tokio::sync::mpsc::Sender<super::fanout::Event>>>,
 }
 
 impl PubSub {
@@ -110,6 +97,73 @@ impl PubSub {
     /// address whose last subscriber went away is removed so the map tracks
     /// the online set rather than everyone ever addressed.
     pub fn publish(&self, address: &str, event: SocialEvent) {
+        self.publish_local(address, event.clone());
+        if let Some(event) = super::fanout::Event::target(address, &event) {
+            self.forward(event);
+        }
+    }
+
+    pub(crate) fn attach_outbound(
+        &self,
+        outbound: tokio::sync::mpsc::Sender<super::fanout::Event>,
+    ) {
+        assert!(
+            self.outbound.set(outbound).is_ok(),
+            "social fanout attached once"
+        );
+    }
+
+    pub(crate) fn forward(&self, event: super::fanout::Event) {
+        if let Some(outbound) = self.outbound.get() {
+            if !event.fits_queue() {
+                metrics::counter!("social_event_delivery_dropped", "reason" => "oversized_outbound").increment(1);
+                return;
+            }
+            if outbound.try_send(event).is_err() {
+                metrics::counter!("social_event_delivery_dropped", "reason" => "outbound_queue")
+                    .increment(1);
+            }
+        }
+    }
+
+    pub(crate) async fn forward_community_voice(
+        &self,
+        pool: &sqlx::PgPool,
+        scope: super::fanout::Scope,
+        exclude: Option<&str>,
+        update: &CommunityVoiceChatUpdate,
+    ) {
+        if self.outbound.get().is_none() {
+            return;
+        }
+        let Some(event) = super::fanout::Event::community_voice(scope, exclude, update) else {
+            metrics::counter!("social_event_delivery_dropped", "reason" => "invalid_outbound")
+                .increment(1);
+            return;
+        };
+        if event.fits_queue() {
+            self.forward(event);
+            return;
+        }
+        let Some(bytes) = event.encode_stored() else {
+            metrics::counter!("social_event_delivery_dropped", "reason" => "invalid_outbound")
+                .increment(1);
+            return;
+        };
+        match crate::rpc::db::Db::new(pool.clone())
+            .store_social_event_payload(bytes)
+            .await
+        {
+            Ok(event_id) => self.forward(super::fanout::Event::Reference { event_id }),
+            Err(error) => {
+                tracing::warn!(%error, "social event overflow storage failed");
+                metrics::counter!("social_event_delivery_dropped", "reason" => "payload_storage")
+                    .increment(1);
+            }
+        }
+    }
+
+    pub(crate) fn publish_local(&self, address: &str, event: SocialEvent) {
         let key = address.to_lowercase();
         let Some(sender) = self.channels.get(&key) else {
             return;
@@ -131,11 +185,6 @@ impl PubSub {
             .collect()
     }
 
-    /// A membership change of `member` in `community`: the community's
-    /// members subscribed here but `member`, then `member` itself (upstream
-    /// `communityMemberStatusHandler`, `src/logic/updates.ts`). A join is
-    /// ONLINE; a leave, kick or ban OFFLINE, published once the member row
-    /// is gone, so the departed wallet is told as the affected member.
     pub async fn community_member_status(
         &self,
         pool: &PgPool,
@@ -143,12 +192,22 @@ impl PubSub {
         member: &str,
         status: ConnectivityStatus,
     ) {
+        self.deliver_community_member(pool, community, member, status)
+            .await;
+        self.forward(super::fanout::Event::CommunityMember {
+            community,
+            actor: member.to_lowercase(),
+            status: status as i32,
+        });
+    }
+    pub(crate) async fn deliver_community_member(
+        &self,
+        pool: &PgPool,
+        community: Uuid,
+        member: &str,
+        status: ConnectivityStatus,
+    ) {
         let member = member.to_lowercase();
-        let others: Vec<String> = self
-            .subscribed_addresses()
-            .into_iter()
-            .filter(|address| *address != member)
-            .collect();
         let update = CommunityMemberConnectivityUpdate {
             stream_closed: None,
             community_id: community.to_string(),
@@ -157,122 +216,154 @@ impl PubSub {
             }),
             status: status as i32,
         };
-        match subscribed_members(pool, community, &others).await {
-            Ok(members) => {
-                for recipient in members {
-                    self.publish(
-                        &recipient,
-                        SocialEvent::CommunityMemberStatus(update.clone()),
-                    );
+        let others: Vec<_> = self
+            .subscribed_addresses()
+            .into_iter()
+            .filter(|address| *address != member)
+            .collect();
+        for page in others.chunks(256) {
+            match subscribed_members(pool, community, page).await {
+                Ok(members) => {
+                    for recipient in members {
+                        self.publish_local(
+                            &recipient,
+                            SocialEvent::CommunityMemberStatus(update.clone()),
+                        );
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(%error, %community, "community member status read failed")
                 }
             }
-            Err(error) => {
-                tracing::warn!(%error, %community, "community member status: member read failed");
-            }
         }
-        self.publish(&member, SocialEvent::CommunityMemberStatus(update));
+        self.publish_local(&member, SocialEvent::CommunityMemberStatus(update));
     }
-
-    /// A deleted community: each of its members subscribed here hears
-    /// itself OFFLINE in it (upstream `communityDeletedUpdateHandler`).
     pub async fn community_deleted(&self, pool: &PgPool, community: Uuid) {
-        let subscribed = self.subscribed_addresses();
-        match subscribed_members(pool, community, &subscribed).await {
-            Ok(members) => {
-                for member in members {
-                    let update = CommunityMemberConnectivityUpdate {
-                        stream_closed: None,
-                        community_id: community.to_string(),
-                        member: Some(User {
-                            address: member.clone(),
-                        }),
-                        status: ConnectivityStatus::Offline as i32,
-                    };
-                    self.publish(&member, SocialEvent::CommunityMemberStatus(update));
+        self.deliver_community_deleted(pool, community).await;
+        self.forward(super::fanout::Event::CommunityDeleted { community });
+    }
+    pub(crate) async fn deliver_community_deleted(&self, pool: &PgPool, community: Uuid) {
+        for page in self.subscribed_addresses().chunks(256) {
+            match subscribed_members(pool, community, page).await {
+                Ok(members) => {
+                    for member in members {
+                        self.publish_local(
+                            &member,
+                            SocialEvent::CommunityMemberStatus(CommunityMemberConnectivityUpdate {
+                                stream_closed: None,
+                                community_id: community.to_string(),
+                                member: Some(User {
+                                    address: member.clone(),
+                                }),
+                                status: ConnectivityStatus::Offline as i32,
+                            }),
+                        );
+                    }
                 }
-            }
-            Err(error) => {
-                tracing::warn!(%error, %community, "community deleted update: member read failed");
+                Err(error) => tracing::warn!(%error, %community, "community deleted read failed"),
             }
         }
     }
 
-    /// Records the audience of a community voice room that just started.
-    pub fn record_voice_audience(&self, community: Uuid, everyone: bool) {
-        self.voice_audiences.insert(community, everyone);
-    }
-
-    /// Takes the audience recorded at start; `None` when no start on this
-    /// process recorded one.
-    pub fn take_voice_audience(&self, community: Uuid) -> Option<bool> {
-        self.voice_audiences
-            .remove(&community)
-            .map(|(_, everyone)| everyone)
-    }
-
-    /// A community voice update (upstream `communityVoiceChatUpdateHandler`,
-    /// `src/logic/updates.ts`): `everyone` reaches every subscriber here,
-    /// otherwise the community's members among them; `exclude` (the starter)
-    /// never. `is_member` is set per recipient, except on an ENDED for
-    /// everyone, which reads no membership (every `is_member` false).
     pub async fn community_voice(
         &self,
         pool: &PgPool,
-        community: Uuid,
+        _community: Uuid,
         update: CommunityVoiceChatUpdate,
         everyone: bool,
         exclude: Option<&str>,
     ) {
-        let subscribed: Vec<String> = self
-            .subscribed_addresses()
-            .into_iter()
-            .filter(|address| exclude.is_none_or(|e| !e.eq_ignore_ascii_case(address)))
-            .collect();
-        let ended = update.status == CommunityVoiceChatStatus::CommunityVoiceChatEnded as i32;
-        let members: std::collections::HashSet<String> = if everyone && ended {
-            Default::default()
+        let scope = if everyone {
+            super::fanout::Scope::All
         } else {
-            match subscribed_members(pool, community, &subscribed).await {
-                Ok(members) => members.into_iter().collect(),
-                Err(error) => {
-                    tracing::warn!(%error, %community, "community voice update: member read failed");
-                    // a member-only update cannot be delivered safely without
-                    // the read; a public start is announced as to non-members
-                    if !everyone {
-                        return;
-                    }
-                    Default::default()
-                }
+            super::fanout::Scope::Members
+        };
+        self.deliver_community_voice(pool, scope, exclude, update.clone())
+            .await;
+        self.forward_community_voice(pool, scope, exclude, &update)
+            .await;
+    }
+    pub(crate) async fn deliver_community_voice(
+        &self,
+        pool: &PgPool,
+        scope: super::fanout::Scope,
+        exclude: Option<&str>,
+        update: CommunityVoiceChatUpdate,
+    ) {
+        let Ok(community) = update.community_id.parse() else {
+            return;
+        };
+        let ended = update.status == CommunityVoiceChatStatus::CommunityVoiceChatEnded as i32;
+        let scope = if ended {
+            scope
+        } else {
+            match crate::rpc::db::Db::new(pool.clone())
+                .community_voice_scope(community)
+                .await
+            {
+                Ok(Some(scope)) => scope,
+                _ => return,
             }
         };
-        for recipient in subscribed {
-            let is_member = members.contains(&recipient);
-            if everyone || is_member {
-                self.publish(
-                    &recipient,
-                    SocialEvent::CommunityVoice(CommunityVoiceChatUpdate {
-                        is_member,
-                        ..update.clone()
-                    }),
-                );
+        let everyone = scope == super::fanout::Scope::All;
+        for page in self.subscribed_addresses().chunks(256) {
+            let members: std::collections::HashSet<String> = if everyone && ended {
+                Default::default()
+            } else {
+                match subscribed_members(pool, community, page).await {
+                    Ok(members) => members.into_iter().collect(),
+                    Err(error) => {
+                        tracing::warn!(%error, %community, "community voice member read failed");
+                        if !everyone {
+                            continue;
+                        }
+                        Default::default()
+                    }
+                }
+            };
+            for recipient in page {
+                if exclude.is_some_and(|excluded| excluded.eq_ignore_ascii_case(recipient)) {
+                    continue;
+                }
+                let is_member = members.contains(recipient);
+                if everyone || is_member {
+                    self.publish_local(
+                        recipient,
+                        SocialEvent::CommunityVoice(CommunityVoiceChatUpdate {
+                            is_member,
+                            ..update.clone()
+                        }),
+                    );
+                }
             }
         }
     }
 
-    /// A room that closed (ended, expired or finished in the runtime): the
-    /// audience its start recorded hears ENDED (upstream's community-voice
-    /// polling, `sendEndedNotification`). Nothing when no start recorded
-    /// one, or when the end procedure already took it.
+    /// Runtime closure uses the shared generation, so a different serve or a restart can
+    /// notify the recorded audience. Compare-and-clear prevents duplicate cleanup hints.
     pub async fn community_voice_closed(&self, pool: &PgPool, community: Uuid) {
-        if let Some(everyone) = self.take_voice_audience(community) {
-            self.community_voice(
-                pool,
-                community,
-                community_voice_ended(community),
-                everyone,
-                None,
-            )
-            .await;
+        let db = crate::rpc::db::Db::new(pool.clone());
+        match db.voice_notification(community).await {
+            Ok(Some(entry)) => {
+                if db.clear_voice_notification(&entry).await.unwrap_or(false)
+                    && entry.fresh
+                    && db
+                        .voice_generation_is(community, None)
+                        .await
+                        .unwrap_or(false)
+                {
+                    self.community_voice(
+                        pool,
+                        community,
+                        community_voice_ended(community),
+                        entry.scope == super::fanout::Scope::All,
+                        None,
+                    )
+                    .await;
+                }
+            }
+            Ok(None) => {}
+            Err(error) => tracing::warn!(%error, "community voice close scope read failed"),
         }
     }
 

@@ -955,6 +955,7 @@ async fn a_started_room_carries_the_places_and_the_thumbnail() {
         &ctx,
         owner.address.as_str(),
         &c.to_string(),
+        true,
     )
     .await
     .unwrap();

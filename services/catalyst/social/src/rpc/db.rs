@@ -887,6 +887,7 @@ impl Db {
         caller: &str,
         callee: &str,
         expiration_ms: i64,
+        presence: crate::comms::gatekeeper::voice::db::VoiceDbConfig,
     ) -> Result<PrivateVoicePreflight, DbError> {
         let caller = caller.to_lowercase();
         let callee = callee.to_lowercase();
@@ -902,23 +903,25 @@ impl Db {
                  (SELECT private_messages_privacy FROM social.user_settings WHERE address = $2) AS callee_privacy,
                  (SELECT is_active FROM social.friendships WHERE {PAIR_COND} LIMIT 1) AS friends,
                  EXISTS (
-                   SELECT 1 FROM social.private_voice_chats
+                   SELECT 1 FROM social.private_voice_chats c
                    WHERE created_at >= $3
+                     AND NOT EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.call_id=c.id)
                      AND (caller_address IN ($1, $2) OR callee_address IN ($1, $2))
                  ) AS busy,
                  EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $1 AND {live}) AS caller_in_community_voice,
                  EXISTS (SELECT 1 FROM social.community_voice_chat_users p WHERE p.address = $2 AND {live}) AS callee_in_community_voice,
                  EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $1 AND {live}) AS caller_in_voice,
                  EXISTS (SELECT 1 FROM social.private_voice_chat_participants p WHERE p.address = $2 AND {live}) AS callee_in_voice"#,
-            live = presence_live_cond("$4", "$5", "$6"),
+            live =
+                crate::comms::gatekeeper::voice::db::VoiceDbConfig::connected_sql("p", "$4", "$5"),
         );
+        let (interrupted, initial) = presence.sql_cutoffs();
         let row = sqlx::query(sqlx::AssertSqlSafe(sql))
             .bind(&caller)
             .bind(&callee)
             .bind(expiry_bound(now, expiration_ms))
-            .bind(now)
-            .bind(VOICE_CONNECTION_INTERRUPTED_TTL_MS)
-            .bind(VOICE_INITIAL_CONNECTION_TTL_MS)
+            .bind(interrupted)
+            .bind(initial)
             .fetch_one(&self.pool)
             .await?;
         Ok(PrivateVoicePreflight {
@@ -1402,4 +1405,139 @@ where
         row.get::<Uuid, _>("friendship_id"),
         row.get::<NaiveDateTime, _>("created_at").and_utc(),
     ))
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct VoiceNotification {
+    pub community: Uuid,
+    pub generation: Uuid,
+    pub scope: super::fanout::Scope,
+    pub fresh: bool,
+    pub expires_at: NaiveDateTime,
+}
+
+impl Db {
+    pub(crate) async fn community_voice_scope(
+        &self,
+        community: Uuid,
+    ) -> Result<Option<super::fanout::Scope>, DbError> {
+        let all: Option<bool> = sqlx::query_scalar(
+            "SELECT NOT private AND NOT unlisted FROM social.communities WHERE id=$1 AND active",
+        )
+        .bind(community)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(all.map(|all| {
+            if all {
+                super::fanout::Scope::All
+            } else {
+                super::fanout::Scope::Members
+            }
+        }))
+    }
+
+    pub(crate) async fn record_voice_notification(
+        &self,
+        community: Uuid,
+        scope: super::fanout::Scope,
+    ) -> Result<Uuid, DbError> {
+        let generation = Uuid::new_v4();
+        sqlx::query("UPDATE social.communities SET voice_notification_scope=$2, voice_notification_generation=$3, voice_notification_expires_at=timezone('UTC',now())+interval '24 hours' WHERE id=$1")
+            .bind(community).bind(if scope == super::fanout::Scope::All { "all" } else { "members" }).bind(generation).execute(&self.pool).await?;
+        Ok(generation)
+    }
+    pub(crate) async fn voice_notification(
+        &self,
+        community: Uuid,
+    ) -> Result<Option<VoiceNotification>, DbError> {
+        let row: Option<(Uuid, String, bool, NaiveDateTime)> = sqlx::query_as("SELECT voice_notification_generation, voice_notification_scope, voice_notification_expires_at>timezone('UTC',now()), voice_notification_expires_at FROM social.communities WHERE id=$1 AND voice_notification_generation IS NOT NULL")
+            .bind(community).fetch_optional(&self.pool).await?;
+        Ok(
+            row.map(|(generation, scope, fresh, expires_at)| VoiceNotification {
+                community,
+                generation,
+                fresh,
+                expires_at,
+                scope: if scope == "all" {
+                    super::fanout::Scope::All
+                } else {
+                    super::fanout::Scope::Members
+                },
+            }),
+        )
+    }
+    pub(crate) async fn voice_notifications_page(
+        &self,
+        after: Uuid,
+    ) -> Result<Vec<VoiceNotification>, DbError> {
+        let rows: Vec<(Uuid, Uuid, String, bool, NaiveDateTime)> = sqlx::query_as("SELECT id, voice_notification_generation, voice_notification_scope, voice_notification_expires_at>timezone('UTC',now()), voice_notification_expires_at FROM social.communities WHERE id>$1 AND voice_notification_generation IS NOT NULL ORDER BY id LIMIT 64")
+            .bind(after).fetch_all(&self.pool).await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(community, generation, scope, fresh, expires_at)| VoiceNotification {
+                    community,
+                    generation,
+                    fresh,
+                    expires_at,
+                    scope: if scope == "all" {
+                        super::fanout::Scope::All
+                    } else {
+                        super::fanout::Scope::Members
+                    },
+                },
+            )
+            .collect())
+    }
+    pub(crate) async fn refresh_voice_notification(
+        &self,
+        entry: &VoiceNotification,
+    ) -> Result<bool, DbError> {
+        let changed = sqlx::query("UPDATE social.communities SET voice_notification_expires_at=timezone('UTC',now())+interval '24 hours' WHERE id=$1 AND voice_notification_generation=$2")
+            .bind(entry.community).bind(entry.generation).execute(&self.pool).await?.rows_affected();
+        Ok(changed == 1)
+    }
+    pub(crate) async fn restore_voice_notification(
+        &self,
+        entry: &VoiceNotification,
+    ) -> Result<(), DbError> {
+        sqlx::query("UPDATE social.communities SET voice_notification_scope=$3, voice_notification_generation=$2, voice_notification_expires_at=$4 WHERE id=$1 AND voice_notification_generation IS NULL")
+            .bind(entry.community).bind(entry.generation).bind(if entry.scope == super::fanout::Scope::All { "all" } else { "members" }).bind(entry.expires_at).execute(&self.pool).await?;
+        Ok(())
+    }
+    pub(crate) async fn clear_voice_notification(
+        &self,
+        entry: &VoiceNotification,
+    ) -> Result<bool, DbError> {
+        Ok(sqlx::query("UPDATE social.communities SET voice_notification_scope=NULL, voice_notification_generation=NULL, voice_notification_expires_at=NULL WHERE id=$1 AND voice_notification_generation=$2")
+            .bind(entry.community).bind(entry.generation).execute(&self.pool).await?.rows_affected() == 1)
+    }
+    pub(crate) async fn voice_generation_is(
+        &self,
+        community: Uuid,
+        generation: Option<Uuid>,
+    ) -> Result<bool, DbError> {
+        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM social.communities WHERE id=$1 AND voice_notification_generation IS NOT DISTINCT FROM $2::uuid)")
+            .bind(community).bind(generation).fetch_one(&self.pool).await?)
+    }
+}
+
+impl Db {
+    pub(crate) async fn store_social_event_payload(
+        &self,
+        payload: Vec<u8>,
+    ) -> Result<Uuid, DbError> {
+        let id = Uuid::new_v4();
+        sqlx::query("INSERT INTO social.event_payloads (id,payload,expires_at) VALUES ($1,$2,timezone('UTC',now())+interval '24 hours')")
+            .bind(id).bind(payload).execute(&self.pool).await?;
+        Ok(id)
+    }
+    pub(crate) async fn social_event_payload(&self, id: Uuid) -> Result<Option<Vec<u8>>, DbError> {
+        Ok(sqlx::query_scalar("SELECT payload FROM social.event_payloads WHERE id=$1 AND expires_at>timezone('UTC',now())")
+            .bind(id).fetch_optional(&self.pool).await?)
+    }
+    pub(crate) async fn expire_social_event_payloads(&self) -> Result<u64, DbError> {
+        Ok(sqlx::query("DELETE FROM social.event_payloads WHERE id IN (SELECT id FROM social.event_payloads WHERE expires_at<=timezone('UTC',now()) ORDER BY expires_at,id LIMIT 64 FOR UPDATE SKIP LOCKED)")
+            .execute(&self.pool).await?.rows_affected())
+    }
 }

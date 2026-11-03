@@ -176,27 +176,6 @@ impl Context {
         &self.0.profiles
     }
 
-    /// Publishes `from`'s friendship update to `to`, built from `from`'s
-    /// profile. Upstream's live loop skips an update whose sender's profile
-    /// the registry does not hold (`src/logic/updates.ts`
-    /// `handleSubscriptionUpdates`, `shouldRetrieveProfile`), so with a
-    /// profile source such an update reaches no one.
-    pub(crate) async fn publish_friendship(
-        &self,
-        from: &str,
-        to: &str,
-        update: impl FnOnce(
-            crate::rpc::proto::v2::FriendProfile,
-        ) -> crate::rpc::proto::v2::FriendshipUpdate,
-    ) {
-        match self.0.profiles.existing_friend_profile(from).await {
-            Some(profile) => self
-                .0
-                .pubsub
-                .publish(to, SocialEvent::Friendship(update(profile))),
-            None => tracing::debug!(%from, "friendship update skipped: the sender has no profile"),
-        }
-    }
     pub fn friendship_limiter(&self) -> &FriendshipMutationLimiter {
         &self.0.friendship_limiter
     }
@@ -386,17 +365,6 @@ impl Context {
         self.delivery_guard(recipient, actor, online, generation, None)
     }
 
-    pub(crate) fn community_delivery_guard(
-        &self,
-        recipient: String,
-        actor: String,
-        online: bool,
-        generation: u64,
-        community: uuid::Uuid,
-    ) -> crate::rpc::drpc::stream_protocol::DeliveryGuard {
-        self.delivery_guard(recipient, actor, online, generation, Some(community))
-    }
-
     fn delivery_guard(
         &self,
         recipient: String,
@@ -456,6 +424,68 @@ impl Context {
                 Some(update.community_id.parse().ok()?),
             )),
             _ => None,
+        }
+    }
+
+    /// Shared scope survives restart. Each page is bounded; a generation compare-and-clear
+    /// retires notification metadata only, without claiming atomicity with media teardown.
+    pub async fn poll_community_voice_notifications(&self) {
+        if let Err(error) = self.db().expire_social_event_payloads().await {
+            tracing::warn!(%error, "social event payload expiry failed");
+        }
+        let mut after = uuid::Uuid::nil();
+        loop {
+            let page = match self.db().voice_notifications_page(after).await {
+                Ok(page) => page,
+                Err(error) => {
+                    tracing::warn!(%error, "voice notification poll failed");
+                    return;
+                }
+            };
+            for entry in &page {
+                after = entry.community;
+                if !entry.fresh {
+                    let _ = self.db().clear_voice_notification(entry).await;
+                    continue;
+                }
+                match self
+                    .voice()
+                    .community_voice_chat_active(entry.community)
+                    .await
+                {
+                    Ok(true) => {
+                        let _ = self.db().refresh_voice_notification(entry).await;
+                    }
+                    Ok(false) => {
+                        if self
+                            .db()
+                            .clear_voice_notification(entry)
+                            .await
+                            .unwrap_or(false)
+                            && self
+                                .db()
+                                .voice_generation_is(entry.community, None)
+                                .await
+                                .unwrap_or(false)
+                        {
+                            self.pubsub()
+                                .community_voice(
+                                    self.db().pool(),
+                                    entry.community,
+                                    crate::rpc::pubsub::community_voice_ended(entry.community),
+                                    entry.scope == super::fanout::Scope::All,
+                                    None,
+                                )
+                                .await;
+                        }
+                    }
+                    Err(error) => tracing::warn!(%error, "voice status poll failed"),
+                }
+            }
+            if page.len() < 64 {
+                return;
+            }
+            tokio::task::yield_now().await;
         }
     }
 
@@ -536,7 +566,6 @@ impl Context {
                     cursor.friends_done = true;
                     return Ok((cursor, false));
                 };
-                let profile = crate::rpc::profiles::connectivity_profile(profile);
                 for friend in &friends {
                     if !self
                         .topology()

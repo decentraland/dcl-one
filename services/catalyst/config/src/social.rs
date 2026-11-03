@@ -162,6 +162,16 @@ pub struct SocialConfig {
     #[arg(long, env = "AUTH_WINDOW_SECS", default_value_t = 300)]
     pub social_rpc_auth_window_secs: i64,
 
+    /// First-frame authentication deadline; independent of signature age.
+    #[arg(long, env = "WS_AUTH_TIMEOUT_IN_MS")]
+    pub ws_auth_timeout_in_ms: Option<u64>,
+    /// Maximum absolute signature age in milliseconds.
+    #[arg(long, env = "WS_AUTH_SIGNATURE_EXPIRATION_IN_MS")]
+    pub ws_auth_signature_expiration_in_ms: Option<i64>,
+    /// Seconds without socket traffic; zero disables idle expiry.
+    #[arg(long, env = "WS_IDLE_TIMEOUT_IN_SECONDS", default_value_t = 300)]
+    pub ws_idle_timeout_in_seconds: u64,
+
     /// A private call not accepted within this many ms expires.
     #[arg(
         long,
@@ -173,6 +183,14 @@ pub struct SocialConfig {
     /// Tick of the private-call expiry sweep, ms.
     #[arg(long, env = "PRIVATE_VOICE_CHAT_JOB_INTERVAL", default_value_t = 1_000)]
     pub private_voice_chat_job_interval_ms: u64,
+
+    /// Tick of the shared community voice notification status poll, milliseconds.
+    #[arg(
+        long,
+        env = "COMMUNITY_VOICE_CHAT_POLLING_JOB_INTERVAL",
+        default_value_t = 45_000
+    )]
+    pub community_voice_chat_polling_job_interval_ms: u64,
 
     /// Expired private calls reclaimed per sweep statement.
     #[arg(
@@ -610,6 +628,22 @@ mod tests {
                 "{raw}"
             );
         }
+    }
+
+    #[test]
+    fn socket_deadline_signature_age_and_idle_have_independent_source_variables() {
+        let defaults = social(&[]).unwrap();
+        assert_eq!(defaults.ws_idle_timeout_in_seconds, 300);
+        assert_eq!(defaults.ws_auth_timeout_in_ms, None);
+        let config = social(&[
+            ("WS_AUTH_TIMEOUT_IN_MS", "7"),
+            ("WS_AUTH_SIGNATURE_EXPIRATION_IN_MS", "23"),
+            ("WS_IDLE_TIMEOUT_IN_SECONDS", "0"),
+        ])
+        .unwrap();
+        assert_eq!(config.ws_auth_timeout_in_ms, Some(7));
+        assert_eq!(config.ws_auth_signature_expiration_in_ms, Some(23));
+        assert_eq!(config.ws_idle_timeout_in_seconds, 0);
     }
 
     /// The social sockets' limits are upstream social-service-ea's variables

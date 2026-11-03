@@ -218,12 +218,19 @@ CREATE TABLE social.communities (
     suspended_at timestamp without time zone,
     suspended_by text,
     suspension_reason text,
+    voice_notification_scope text,
+    voice_notification_expires_at timestamp without time zone,
+    voice_notification_generation uuid,
     created_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     updated_at timestamp without time zone NOT NULL DEFAULT timezone('UTC', now()),
     -- 'upstream': copied by the communities mirror (communities/mirror.rs);
     -- 'local': created on this node or federated to it.
     origin text NOT NULL DEFAULT 'local',
     CONSTRAINT communities_pkey PRIMARY KEY (id),
+    CONSTRAINT communities_voice_notification_scope_check CHECK (
+        (voice_notification_scope IS NULL AND voice_notification_expires_at IS NULL AND voice_notification_generation IS NULL)
+        OR (voice_notification_scope IS NOT NULL AND voice_notification_scope IN ('all', 'members') AND voice_notification_expires_at IS NOT NULL AND voice_notification_generation IS NOT NULL)
+    ),
     CONSTRAINT communities_origin_known CHECK (origin IN ('upstream', 'local')),
     CONSTRAINT communities_suspension_check
         CHECK ((suspended AND suspended_at IS NOT NULL AND suspended_by IS NOT NULL)
@@ -1252,3 +1259,17 @@ CREATE TABLE social.island_takeover_receipts (
 CREATE INDEX island_takeover_receipts_due_idx
     ON social.island_takeover_receipts(next_attempt_at, wallet, source_incarnation, takeover_id)
     WHERE NOT acknowledged;
+
+-- Immutable overflow transport payloads for core NATS' bounded social messages.
+-- This is a transient cache, not an outbox: publication may still be lost.
+CREATE TABLE social.event_payloads (
+    id uuid PRIMARY KEY,
+    payload bytea NOT NULL,
+    expires_at timestamp without time zone NOT NULL,
+    CONSTRAINT event_payloads_size_check CHECK (octet_length(payload) > 0 AND octet_length(payload) <= 536870912)
+);
+CREATE INDEX event_payloads_expiry_idx ON social.event_payloads (expires_at, id);
+
+-- The 45 s notification poll walks only currently tracked generations in PK pages.
+CREATE INDEX IF NOT EXISTS communities_voice_notifications_idx ON social.communities(id)
+  WHERE voice_notification_generation IS NOT NULL;

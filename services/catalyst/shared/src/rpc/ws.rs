@@ -1,6 +1,9 @@
 //! A WebSocket as a dRPC [`Transport`]: binary frames in and out, ended by
 //! `close` or by its [`SocketClose`] handle with the close frame asked for.
 
+mod idle;
+pub use idle::{IdleAction, IdleTimer};
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -99,17 +102,29 @@ impl AxumWsTransport {
         address: String,
         close: Arc<SocketClose>,
     ) -> (Self, JoinHandle<()>) {
+        Self::spawn_with_idle(socket, address, close, IdleTimer::new(0))
+    }
+
+    pub fn spawn_with_idle(
+        socket: WebSocket,
+        address: String,
+        close: Arc<SocketClose>,
+        idle: IdleTimer,
+    ) -> (Self, JoinHandle<()>) {
         let (mut sink, mut stream) = socket.split();
         let (inbound_tx, inbound_rx) = unbounded_channel::<TransportMessage>();
         let (outbound_tx, outbound_rx) = unbounded_channel::<TransportMessage>();
         let (guarded_tx, guarded_rx) = channel(GUARDED_CAPACITY);
 
         let reader_close = close.clone();
+        let reader_idle = idle.clone();
         tokio::spawn(async move {
             loop {
                 tokio::select! {
                     _ = reader_close.ended() => break,
-                    msg = stream.next() => match msg {
+                    msg = stream.next() => {
+                        if matches!(&msg, Some(Ok(_))) { reader_idle.activity(); }
+                        match msg {
                         Some(Ok(Message::Binary(b))) => {
                             if inbound_tx.send(b.to_vec()).is_err() {
                                 break;
@@ -120,14 +135,14 @@ impl AxumWsTransport {
                             reader_close.peer_gone();
                             break;
                         }
-                    }
+                    }}
                 }
             }
         });
 
         let writer_close = close.clone();
         let writer = tokio::spawn(async move {
-            run_writer(&mut sink, outbound_rx, guarded_rx, &writer_close).await;
+            run_writer_with_idle(&mut sink, outbound_rx, guarded_rx, &writer_close, idle).await;
         });
 
         let transport = Self {
@@ -220,14 +235,27 @@ struct GuardedOutbound {
     completion: tokio::sync::oneshot::Sender<Result<GuardedSend, TransportError>>,
 }
 enum Outbound {
+    Idle(IdleAction),
     Ordinary(Vec<u8>),
     Guarded(GuardedOutbound),
 }
+#[cfg(test)]
 async fn run_writer<S>(
+    sink: &mut S,
+    ordinary: UnboundedReceiver<Vec<u8>>,
+    guarded: Receiver<GuardedOutbound>,
+    close: &SocketClose,
+) where
+    S: futures::Sink<Message> + Unpin,
+{
+    run_writer_with_idle(sink, ordinary, guarded, close, IdleTimer::new(0)).await
+}
+async fn run_writer_with_idle<S>(
     sink: &mut S,
     mut ordinary: UnboundedReceiver<Vec<u8>>,
     mut guarded: Receiver<GuardedOutbound>,
     close: &SocketClose,
+    idle: IdleTimer,
 ) where
     S: futures::Sink<Message> + Unpin,
 {
@@ -237,12 +265,14 @@ async fn run_writer<S>(
         let next = if prefer_guarded {
             tokio::select! { biased;
                 _ = close.ended() => None,
+                action = idle.next() => Some(Outbound::Idle(action)),
                 item = guarded.recv(), if !guarded.is_closed() || !guarded.is_empty() => item.map(Outbound::Guarded),
                 item = ordinary.recv() => item.map(Outbound::Ordinary),
             }
         } else {
             tokio::select! { biased;
                 _ = close.ended() => None,
+                action = idle.next() => Some(Outbound::Idle(action)),
                 item = ordinary.recv(), if !ordinary.is_closed() || !ordinary.is_empty() => item.map(Outbound::Ordinary),
                 item = guarded.recv() => item.map(Outbound::Guarded),
             }
@@ -252,16 +282,30 @@ async fn run_writer<S>(
         };
         prefer_guarded = !prefer_guarded;
         match next {
+            Outbound::Idle(IdleAction::Ping) => {
+                if tokio::time::timeout(CLOSE_BUDGET, sink.send(Message::Ping(Vec::new().into())))
+                    .await
+                    .map_or(true, |r| r.is_err())
+                {
+                    break;
+                }
+            }
+            Outbound::Idle(IdleAction::Expired) => {
+                close.peer_gone();
+                return;
+            }
             Outbound::Ordinary(bytes) => {
                 let sent = tokio::select! { _ = close.ended() => false, result = sink.send(Message::Binary(bytes.into())) => result.is_ok() };
                 if !sent {
                     break;
                 }
+                idle.activity();
             }
             Outbound::Guarded(envelope) => {
                 if !write_guarded(sink, envelope, close).await {
                     break;
                 }
+                idle.activity();
             }
         }
     }

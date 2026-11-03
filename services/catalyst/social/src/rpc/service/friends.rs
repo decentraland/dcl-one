@@ -107,7 +107,7 @@ async fn announce_accepted_connectivity(ctx: &Context, me: &str, other: &str) {
         let Some(profile) = ctx.profiles().existing_friend_profile(friend).await else {
             continue;
         };
-        let friend = crate::rpc::profiles::connectivity_profile(profile);
+        let friend = profile;
         let address = friend.address.clone();
         ctx.topology()
             .deliver_if_current(snapshot.generation, &address, true, || {

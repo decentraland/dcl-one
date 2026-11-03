@@ -10,7 +10,6 @@
 //! ports the client creates (upstream `src/controllers/handlers/uws/ws-handler.ts`).
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use axum::extract::State as AxumState;
@@ -23,9 +22,11 @@ use crate::rpc::State;
 use crate::rpc::limits::Protocol;
 use crate::shared::identity::Address;
 use crate::shared::rpc::handshake::{
-    HandshakeError, candidate_paths, validator_ref, verify_handshake,
+    HandshakeError, candidate_paths, validator_ref, verify_handshake_ms,
 };
-use crate::shared::rpc::ws::{AxumWsTransport, RPC_TRANSPORT_CLOSED, SocketClose, close_message};
+use crate::shared::rpc::ws::{
+    AxumWsTransport, IdleAction, IdleTimer, RPC_TRANSPORT_CLOSED, SocketClose, close_message,
+};
 
 /// The pool is full (upstream `ws-handler.ts:367`).
 pub const POOL_FULL: (u16, &str) = (1013, "Unable to acquire connection");
@@ -72,7 +73,9 @@ async fn handle_connection(
         let _ = socket.send(close_message(POOL_FULL)).await;
         return Ok(());
     };
-    let Some(address) = auth_handshake(&state, &paths, &mut socket, &slot.close).await else {
+    let idle = IdleTimer::new(state.settings.ws_idle_timeout_secs);
+    let Some(address) = auth_handshake(&state, &paths, &mut socket, &slot.close, &idle).await
+    else {
         return Ok(());
     };
     tracing::info!(address = %address, "social-rpc client authenticated");
@@ -83,7 +86,7 @@ async fn handle_connection(
         ));
     };
     let (transport, writer) =
-        AxumWsTransport::spawn(socket, address.into_string(), slot.close.clone());
+        AxumWsTransport::spawn_with_idle(socket, address.into_string(), slot.close.clone(), idle);
     if let Err(e) = events.send_attach_transport(Arc::new(transport)) {
         let (code, reason) = RPC_TRANSPORT_CLOSED;
         slot.close.end(code, reason);
@@ -101,28 +104,32 @@ async fn auth_handshake(
     paths: &[String],
     socket: &mut WebSocket,
     close: &SocketClose,
+    idle: &IdleTimer,
 ) -> Option<Address> {
-    let window_secs = state.settings.auth_window_secs.max(1);
-    let deadline = tokio::time::sleep(Duration::from_secs(window_secs as u64));
+    let deadline = tokio::time::sleep(state.settings.auth_timeout());
     tokio::pin!(deadline);
     let frame = loop {
         tokio::select! {
             _ = close.ended() => return end(socket, close.frame()).await,
+            action = idle.next() => match action {
+                IdleAction::Ping => { if socket.send(Message::Ping(Vec::new().into())).await.is_err() { return None; } },
+                IdleAction::Expired => { close.peer_gone(); return None; },
+            },
             _ = &mut deadline => return end(socket, Some(AUTH_TIMEOUT)).await,
             message = socket.recv() => match message {
-                Some(Ok(Message::Text(text))) => break text.to_string(),
-                Some(Ok(Message::Binary(bytes))) => break String::from_utf8_lossy(&bytes).into_owned(),
-                Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
+                Some(Ok(Message::Text(text))) => { idle.activity(); break text.to_string(); },
+                Some(Ok(Message::Binary(bytes))) => { idle.activity(); break String::from_utf8_lossy(&bytes).into_owned(); },
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => { idle.activity(); continue; },
                 _ => return None,
             },
         }
     };
-    let verification = verify_handshake(
+    let verification = verify_handshake_ms(
         &frame,
         "get",
         paths,
-        state.settings.auth_window_secs,
-        chrono::Utc::now().timestamp(),
+        state.settings.auth_signature_expiration_ms(),
+        chrono::Utc::now().timestamp_millis(),
         validator_ref(&state.eip1654),
     );
     tokio::pin!(verification);
@@ -133,11 +140,16 @@ async fn auth_handshake(
         tokio::select! {
             biased;
             _ = close.ended() => return end(socket, close.frame()).await,
+            action = idle.next() => match action {
+                IdleAction::Ping => { if socket.send(Message::Ping(Vec::new().into())).await.is_err() { return None; } },
+                IdleAction::Expired => { close.peer_gone(); return None; },
+            },
             message = socket.recv() => match message {
                 Some(Ok(Message::Text(_) | Message::Binary(_))) => {
+                    idle.activity();
                     let _ = socket.send(Message::Text(AUTH_IN_PROGRESS.into())).await;
                 }
-                Some(Ok(Message::Ping(_) | Message::Pong(_))) => {}
+                Some(Ok(Message::Ping(_) | Message::Pong(_))) => { idle.activity(); }
                 _ => {
                     tracing::info!("socket closed during authentication; not attached");
                     return None;

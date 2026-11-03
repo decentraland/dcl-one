@@ -491,3 +491,102 @@ async fn shutdown_ends_every_socket_with_1001() {
     }
     assert_eq!(server.state.ctx.live_connections(), 0);
 }
+
+/// Source ws-session.ts configures a millisecond deadline independently from
+/// its signed-fetch timestamp window for both protocols.
+#[tokio::test]
+async fn both_socket_protocols_separate_auth_deadline_from_signature_age() {
+    let settings = Settings {
+        ws_auth_timeout_ms: Some(100),
+        ws_auth_signature_expiration_ms: Some(10_000),
+        ws_idle_timeout_secs: 0,
+        ..Default::default()
+    };
+    let server = spawn_server_with(None, settings, None).await;
+    for (path, signed_path) in [
+        ("/social-rpc", "/"),
+        ("/social-rpc/v1/stream", "/v1/stream"),
+    ] {
+        let mut socket = connect(&server, path).await;
+        let (_, frame) = crate::rpc::handshake::test_support::frame_for(
+            &PrivateKeySigner::random(),
+            signed_path,
+            chrono::Utc::now().timestamp_millis() - 1000,
+        )
+        .await;
+        socket.send(WsMessage::Text(frame.into())).await.unwrap();
+        let ready = next_message(&mut socket).await;
+        assert!(
+            !matches!(ready, WsMessage::Close(_)),
+            "a long signature window remains independent: {path}"
+        );
+        let mut pending = connect(&server, path).await;
+        let closed = tokio::time::timeout(Duration::from_secs(1), next_message(&mut pending))
+            .await
+            .unwrap();
+        assert_eq!(close_code(&closed), Some(3004), "{path}");
+    }
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+    let settings = Settings {
+        ws_auth_timeout_ms: Some(10_000),
+        ws_auth_signature_expiration_ms: Some(20),
+        ws_idle_timeout_secs: 0,
+        ..Default::default()
+    };
+    let server = spawn_server_with(None, settings, None).await;
+    for (path, signed_path) in [
+        ("/social-rpc", "/"),
+        ("/social-rpc/v1/stream", "/v1/stream"),
+    ] {
+        let mut socket = connect(&server, path).await;
+        let (_, frame) = crate::rpc::handshake::test_support::frame_for(
+            &PrivateKeySigner::random(),
+            signed_path,
+            chrono::Utc::now().timestamp_millis() - 1000,
+        )
+        .await;
+        socket.send(WsMessage::Text(frame.into())).await.unwrap();
+        assert_eq!(
+            close_code(&next_message(&mut socket).await),
+            Some(3003),
+            "{path}"
+        );
+    }
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}
+
+#[tokio::test]
+async fn both_socket_protocols_probe_idle_connections_with_ping() {
+    let settings = Settings {
+        ws_idle_timeout_secs: 2,
+        ..Default::default()
+    };
+    let server = spawn_server_with(None, settings, None).await;
+    for (path, signed_path) in [
+        ("/social-rpc", "/"),
+        ("/social-rpc/v1/stream", "/v1/stream"),
+    ] {
+        let mut socket = connect(&server, path).await;
+        let (_, frame) = crate::rpc::handshake::test_support::frame_for(
+            &PrivateKeySigner::random(),
+            signed_path,
+            chrono::Utc::now().timestamp_millis(),
+        )
+        .await;
+        socket.send(WsMessage::Text(frame.into())).await.unwrap();
+        let _ = next_message(&mut socket).await;
+        assert!(
+            matches!(next_message(&mut socket).await, WsMessage::Ping(_)),
+            "{path}"
+        );
+        socket
+            .send(WsMessage::Pong(Vec::new().into()))
+            .await
+            .unwrap();
+        assert!(
+            matches!(next_message(&mut socket).await, WsMessage::Ping(_)),
+            "Pong refreshed idle state: {path}"
+        );
+    }
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}

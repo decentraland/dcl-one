@@ -134,7 +134,7 @@ async function main() {
     const result = await generator.next()
     const response = proto[responseType].fromPartial(result.value)
     cases.push({ group: 'stream', id, response_type: responseType, update, response, expected_hex: Buffer.from(proto[responseType].encode(response).finish()).toString('hex'), json: toJSON(update) })
-    const closed = options.buildStreamClosedUpdate({ reason: proto.SubscriptionStreamClosedReason.STREAM_CLOSED_DUPLICATE_SUBSCRIPTION, message: 'duplicate' })
+    const closed = options.buildStreamClosedUpdate({ reason: proto.SubscriptionStreamClosedReason.STREAM_CLOSED_DUPLICATE_SUBSCRIPTION, message: `This connection already has an active ${String(options.eventName)} subscription` })
     cases.push({ group: 'stream-closed', id, response_type: responseType, response: closed, expected_hex: Buffer.from(proto[responseType].encode(closed).finish()).toString('hex') })
     if (id === 'friendship') {
       // Execute the real lifecycle: a registry failure skips that queued update;

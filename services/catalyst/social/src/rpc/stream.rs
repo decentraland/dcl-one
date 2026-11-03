@@ -53,9 +53,9 @@ use crate::rpc::proto::v2::{
 use crate::rpc::pubsub::SocialEvent;
 use crate::rpc::ws::{AUTH_TIMEOUT, POOL_FULL, UNAUTHORIZED};
 use crate::shared::rpc::handshake::{
-    HandshakeError, handshake_path, validator_ref, verify_handshake,
+    HandshakeError, handshake_path, validator_ref, verify_handshake_ms,
 };
-use crate::shared::rpc::ws::{SocketClose, close_message};
+use crate::shared::rpc::ws::{IdleAction, IdleTimer, SocketClose, close_message};
 
 /// The route upstream signs and serves (`src/adapters/stream-sessions/constants.ts`).
 pub const STREAM_PATH: &str = "/v1/stream";
@@ -151,7 +151,10 @@ impl Stream {
             ),
             Self::CommunityMemberConnectivity => matches!(
                 event,
-                E::CommunityMember(_) | E::TopologyCommunityMember(..) | E::ConnectivityResync
+                E::CommunityMember(_)
+                    | E::CommunityMemberStatus(_)
+                    | E::TopologyCommunityMember(..)
+                    | E::ConnectivityResync
             ),
         }
     }
@@ -185,12 +188,12 @@ fn header_frame(headers: &HeaderMap) -> Option<String> {
 }
 
 async fn verify(state: &State, paths: &[String], frame: &str) -> Result<String, HandshakeError> {
-    let verdict = verify_handshake(
+    let verdict = verify_handshake_ms(
         frame,
         "get",
         paths,
-        state.settings.auth_window_secs,
-        chrono::Utc::now().timestamp(),
+        state.settings.auth_signature_expiration_ms(),
+        chrono::Utc::now().timestamp_millis(),
         validator_ref(&state.eip1654),
     )
     .await
@@ -318,16 +321,34 @@ struct Outbox {
 }
 
 impl Outbox {
-    fn spawn(mut sink: SplitSink<WebSocket, Message>, max_backpressure: usize) -> Self {
+    fn spawn(
+        mut sink: SplitSink<WebSocket, Message>,
+        max_backpressure: usize,
+        idle: IdleTimer,
+        close: Arc<SocketClose>,
+    ) -> Self {
         let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
         let buffered = Arc::new(watch::Sender::new(0usize));
         let written = buffered.clone();
         let writer = tokio::spawn(async move {
-            while let Some(message) = rx.recv().await {
+            loop {
+                let message = tokio::select! {
+                    action = idle.next() => match action {
+                        IdleAction::Ping => {
+                            if sink.send(Message::Ping(Vec::new().into())).await.is_err() { break; }
+                            continue;
+                        }
+                        IdleAction::Expired => { close.peer_gone(); return; }
+                    },
+                    message=rx.recv()=>match message { Some(message)=>message,None=>break },
+                };
                 let len = message_len(&message);
                 let closing = matches!(message, Message::Close(_));
                 let sent = sink.send(message).await.is_ok();
                 written.send_modify(|b| *b = b.saturating_sub(len));
+                if sent {
+                    idle.activity();
+                }
                 if !sent || closing {
                     break;
                 }
@@ -384,6 +405,7 @@ fn message_len(message: &Message) -> usize {
 struct Session {
     state: Arc<State>,
     incoming: SplitStream<WebSocket>,
+    idle: IdleTimer,
     outbox: Outbox,
     close: Arc<SocketClose>,
     /// The close code the socket ended with, for `stream_ws_close_codes`.
@@ -397,10 +419,17 @@ impl Session {
     fn new(state: Arc<State>, socket: WebSocket, close: Arc<SocketClose>) -> Self {
         let (sink, incoming) = socket.split();
         let limits = state.settings.stream;
-        let outbox = Outbox::spawn(sink, state.settings.ws_max_backpressure_bytes);
+        let idle = IdleTimer::new(state.settings.ws_idle_timeout_secs);
+        let outbox = Outbox::spawn(
+            sink,
+            state.settings.ws_max_backpressure_bytes,
+            idle.clone(),
+            close.clone(),
+        );
         Self {
             state,
             incoming,
+            idle,
             outbox,
             close,
             code: 1006,
@@ -456,7 +485,11 @@ impl Session {
     /// code kept for the metric).
     async fn recv(&mut self) -> Option<Vec<u8>> {
         loop {
-            match self.incoming.next().await {
+            let message = self.incoming.next().await;
+            if matches!(&message, Some(Ok(_))) {
+                self.idle.activity();
+            }
+            match message {
                 Some(Ok(Message::Text(text))) => return Some(text.as_bytes().to_vec()),
                 Some(Ok(Message::Binary(bytes))) => return Some(bytes.to_vec()),
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => continue,
@@ -494,7 +527,7 @@ impl Session {
     /// The fallback handshake: the first application frame is the chain.
     async fn first_frame_handshake(&mut self, paths: &[String]) -> Option<String> {
         let close = self.close.clone();
-        let window = Duration::from_secs(self.state.settings.auth_window_secs.max(1) as u64);
+        let window = self.state.settings.auth_timeout();
         let deadline = tokio::time::sleep(window);
         tokio::pin!(deadline);
         let frame = tokio::select! {
@@ -1127,4 +1160,27 @@ mod tests {
         headers.insert("x-original-path", axum::http::HeaderValue::from_static("/"));
         assert!(!stream_paths(&headers, "/social-rpc/v1/stream").contains(&"/".to_string()));
     }
+}
+
+/// Exercise the production mapper through the captured source channel names.
+#[cfg(test)]
+pub(crate) async fn captured_event_data(
+    ctx: &Context,
+    me: &str,
+    id: &str,
+    event: &SocialEvent,
+) -> Option<Value> {
+    let stream = match id {
+        "friendship" => Stream::Friendships,
+        "friend-connectivity" => Stream::FriendConnectivity,
+        "block" => Stream::Blocks,
+        "private-voice" => Stream::PrivateVoiceChats,
+        "community-member" => Stream::CommunityMemberConnectivity,
+        "community-voice" => Stream::CommunityVoiceChats,
+        _ => return None,
+    };
+    if !stream.carries(event) {
+        return None;
+    }
+    event_data(ctx, me, stream, event).await
 }

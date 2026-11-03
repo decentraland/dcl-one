@@ -387,3 +387,33 @@ catalyst schema migrate
 (`services/catalyst/tests/schema_upgrade_from_closure_base.rs` exercises the upgrade; deployment restore and rollback evidence remains a separate acceptance gate).
 
 Peer sync is not a backup of local state. Keep local write paths disabled until a backup restore of the node's database, blobs and credentials has been demonstrated. Record the restore and rollback evidence in the task report before enabling writes. Development and commit builds sharing a database must agree on its schema; do not reset or silently migrate shared state to fit a working tree.
+
+
+## Social realtime notification workload
+
+Social keeps the notification scope, generation UUID and 24-hour expiry on
+`social.communities`; the all-null/all-present check couples their lifecycle.
+These facts preserve the START audience across process restart and visibility edits.
+Comms still owns media and participant presence. A 45-second default poll reads
+tracked generations in ordered PK pages of 64, using the partial
+`communities_voice_notifications_idx`, and updates or clears a row by PK plus
+its generation. Generation CAS prevents stale metadata cleanup from erasing a new
+START. No SQL lock spans a media or NATS await.
+
+`social.event_payloads` is an optional immutable transport cache for community
+voice metadata whose event exceeds the existing 64 KiB NATS admission limit.
+The writer inserts opaque binary protobuf bytes under a random UUID, capped at
+512 MiB and expiring after 24 hours. Normal events require no insert. Receivers
+perform one fresh-only PK lookup for an oversized event; separate snapshots cannot
+overwrite each other. Private-call credentials never use this relation. The
+`event_payloads_expiry_idx(expires_at,id)` supports ordered deletion of at most 64
+expired rows with `FOR UPDATE SKIP LOCKED` per polling pass. This relation does not
+record delivery, retry, or replay work.
+
+The expected hot set is tracked active voice communities plus oversized events
+published during the preceding day, rather than all communities or subscribers.
+Membership fanout uses set probes of at most 256 subscriber addresses per SQL
+statement. Production active-room counts, oversized-event frequency and a 512 MiB
+payload's memory/latency cost have not been measured; the byte limit is an admission
+bound, not a demonstrated capacity. Operators can observe transport drops through
+`social_event_delivery_dropped` and retain the existing SQL/job instrumentation.

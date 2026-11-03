@@ -99,6 +99,25 @@ async fn duplicate_rpc_streams_send_the_pinned_final_notice() {
             let mut expected = vec![($tag << 3) | 2, payload.len() as u8];
             expected.extend(payload);
             assert_eq!(update.encode_to_vec(), expected);
+            let source: serde_json::Value = serde_json::from_str(include_str!(concat!(
+                env!("DCL_ONE_ROOT"),
+                "/services/catalyst/tests/fixtures/conformance/social/voice-source-cases.json"
+            )))
+            .unwrap();
+            let capture = source["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|case| {
+                    case["group"] == "stream-closed"
+                        && case["response_type"] == stringify!($message)
+                })
+                .unwrap();
+            assert_eq!(
+                hex::encode(update.encode_to_vec()),
+                capture["expected_hex"].as_str().unwrap()
+            );
+
             assert!(
                 tokio::time::timeout(Duration::from_secs(1), updates.next())
                     .await

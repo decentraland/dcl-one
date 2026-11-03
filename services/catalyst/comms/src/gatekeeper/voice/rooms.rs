@@ -174,7 +174,9 @@ pub struct NoVoiceRuntime;
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl VoiceRooms for NoVoiceRuntime {
-    fn presence_config(&self) -> super::db::VoiceDbConfig { Default::default() }
+    fn presence_config(&self) -> super::db::VoiceDbConfig {
+        Default::default()
+    }
     async fn create_pending_private_call(
         &self,
         _: &str,
@@ -327,7 +329,9 @@ fn address(raw: &str) -> Result<Address, VoiceUnavailable> {
 
 #[async_trait]
 impl VoiceRooms for CommsState {
-    fn presence_config(&self) -> super::db::VoiceDbConfig { self.voice_db.config() }
+    fn presence_config(&self) -> super::db::VoiceDbConfig {
+        self.voice_db.config()
+    }
     async fn create_pending_private_call(
         &self,
         caller: &str,

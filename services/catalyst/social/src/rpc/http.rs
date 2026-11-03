@@ -988,7 +988,7 @@ async fn start_community_voice_chat(
     let me = signer(&state, &headers, &original, "post", local).await?;
     let object = body(&bytes, &[("communityId", Kind::Uuid)], &["communityId"], 0)?;
     let community_id = text(&object, "communityId").unwrap_or_default();
-    let connection_url = ops::start_community_voice_chat(&state.ctx, &me, community_id)
+    let connection_url = ops::start_community_voice_chat(&state.ctx, &me, community_id, false)
         .await
         .map_err(refused)?;
     data(
@@ -1021,7 +1021,7 @@ async fn join_community_voice_chat(
     let local = format!("/v1/community-voice-chats/{community_id}/participants");
     let me = signer(&state, &headers, &original, "post", local).await?;
     path_uuid(&community_id, "communityId")?;
-    let connection_url = ops::join_community_voice_chat(&state.ctx, &me, &community_id)
+    let connection_url = ops::join_community_voice_chat(&state.ctx, &me, &community_id, false)
         .await
         .map_err(refused)?;
     data(

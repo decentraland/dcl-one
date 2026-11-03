@@ -25,8 +25,8 @@ use thiserror::Error;
 
 use crate::auth::eip1654::Eip1654Validator;
 use crate::auth::signed_fetch::{
-    ChainShapeError, LegacyPayload, SignatureRefusal, SignedRequest, SkewError, UnsignedLinks,
-    check_symmetric_skew, extract_auth_chain_with, verify_signature,
+    ChainShapeError, LegacyPayload, SignatureRefusal, SignedRequest, UnsignedLinks,
+    extract_auth_chain_with, verify_signature,
 };
 use crate::auth::{AuthChain, AuthError, MAX_AUTH_CHAIN_LINKS};
 use crate::identity::Address;
@@ -225,25 +225,44 @@ pub async fn verify_handshake(
     now_secs: i64,
     validator: Option<&dyn Eip1654Validator>,
 ) -> Result<Address, HandshakeError> {
+    verify_handshake_ms(
+        frame_json,
+        method,
+        paths,
+        expiration_secs.saturating_mul(1000),
+        now_secs.saturating_mul(1000),
+        validator,
+    )
+    .await
+}
+
+/// The source socket settings use independent millisecond signature expiry.
+pub async fn verify_handshake_ms(
+    frame_json: &str,
+    method: &str,
+    paths: &[String],
+    expiration_ms: i64,
+    now_ms: i64,
+    validator: Option<&dyn Eip1654Validator>,
+) -> Result<Address, HandshakeError> {
+    let now_secs = now_ms / 1000;
     let obj = frame_object(frame_json)?;
     let chain = extract_from_object(&obj)?;
     let timestamp = obj_str(&obj, AUTH_TIMESTAMP_HEADER)
         .ok_or(HandshakeError::MissingHeader(AUTH_TIMESTAMP_HEADER))?;
-    check_symmetric_skew(timestamp, now_secs, expiration_secs).map_err(|e| match e {
-        SkewError::InvalidTimestamp(timestamp) => HandshakeError::MalformedChain {
+    let signed_ms = timestamp
+        .parse::<i64>()
+        .map_err(|_| HandshakeError::MalformedChain {
             index: 0,
-            detail: format!("invalid timestamp: {}", truncate_detail(&timestamp)),
-        },
-        SkewError::Expired {
-            signed_at,
-            now,
-            window_secs,
-        } => HandshakeError::Expired {
-            signed_at,
-            now,
-            window_secs,
-        },
-    })?;
+            detail: format!("invalid timestamp: {}", truncate_detail(timestamp)),
+        })?;
+    if expiration_ms < 0 || now_ms.abs_diff(signed_ms) > expiration_ms as u64 {
+        return Err(HandshakeError::Expired {
+            signed_at: signed_ms / 1000,
+            now: now_secs,
+            window_secs: expiration_ms / 1000,
+        });
+    }
     // An absent metadata reads as `{}` and is signed as nothing: `createPayload`
     // joins `undefined` as empty, so the payload ends with `:` (`dist/verify.js:173`, `:218`).
     let metadata_raw = obj_str(&obj, AUTH_METADATA_HEADER);
@@ -400,6 +419,21 @@ pub mod test_support {
 #[cfg(test)]
 mod tests {
     use super::test_support::*;
+    #[tokio::test]
+    async fn millisecond_signature_window_keeps_its_exact_boundary() {
+        let now = 1_800_000_000_555i64;
+        let (_, frame) = frame("/", now - 17).await;
+        let paths = vec!["/".to_string()];
+        assert!(
+            super::verify_handshake_ms(&frame, "get", &paths, 17, now, None)
+                .await
+                .is_ok()
+        );
+        assert!(matches!(
+            super::verify_handshake_ms(&frame, "get", &paths, 16, now, None).await,
+            Err(super::HandshakeError::Expired { .. })
+        ));
+    }
     use super::*;
     use crate::signed_fetch::{FIVE_MINUTES, SCENE_SIGNER, build_payload_v6};
     use axum::http::HeaderValue;
