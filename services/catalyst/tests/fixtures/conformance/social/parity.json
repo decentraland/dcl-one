@@ -2517,6 +2517,11 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2552,6 +2557,11 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2587,6 +2597,11 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2637,6 +2652,11 @@
           "path": "services/catalyst/social/src/rpc/tests/connectivity.rs",
           "test": "rpc_connectivity_enriches_historical_aliases_but_guards_the_requested_actor",
           "scope": "Historical public profile identity does not replace the actor used for friendship/online authorization."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2672,6 +2692,11 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2707,6 +2732,11 @@
           "path": "services/catalyst/social/src/rpc/tests/fanout.rs",
           "test": "real_broker_community_burst_keeps_sql_work_bounded_and_control_delivery_live",
           "scope": "Actual NATS plus PostgreSQL delivers1,000 community updates with bounded SQL concurrency while control traffic remains live."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2731,6 +2761,11 @@
           "path": "services/catalyst/social/src/rpc/tests/private_voice.rs",
           "test": "private_identifier_wire_and_pending_side_effects_match_executed_upstream",
           "scope": "48 actual source PostgreSQL/private-domain/RPC cases across accept/reject/end, with deterministic media HTTP; wire bytes, raw event identifiers and remaining pending rows replayed."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2775,6 +2810,11 @@
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
           "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2794,6 +2834,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2813,6 +2858,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2837,6 +2887,11 @@
           "path": "services/catalyst/social/src/rpc/tests/private_voice.rs",
           "test": "private_identifier_wire_and_pending_side_effects_match_executed_upstream",
           "scope": "48 actual source PostgreSQL/private-domain/RPC cases across accept/reject/end, with deterministic media HTTP; wire bytes, raw event identifiers and remaining pending rows replayed."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2871,6 +2926,11 @@
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
           "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2890,6 +2950,11 @@
           "path": "services/catalyst/social/src/rpc/tests/friends.rs",
           "test": "blocking_status_reads_each_direction_alone",
           "scope": "Local regression coverage for the method/domain; executable golden fixture covers only its listed branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2924,6 +2989,11 @@
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
           "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2948,6 +3018,11 @@
           "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
           "test": "rpc_wire_answers_match_executed_upstream_source_cases",
           "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -2967,6 +3042,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3001,6 +3081,11 @@
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
           "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3030,6 +3115,11 @@
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
           "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3054,6 +3144,11 @@
           "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
           "test": "rpc_wire_answers_match_executed_upstream_source_cases",
           "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3083,6 +3178,11 @@
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
           "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3107,6 +3207,11 @@
           "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
           "test": "rpc_wire_answers_match_executed_upstream_source_cases",
           "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3126,6 +3231,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3145,6 +3255,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3164,6 +3279,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3183,6 +3303,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3207,6 +3332,11 @@
           "path": "services/catalyst/social/src/rpc/tests/private_voice.rs",
           "test": "private_identifier_wire_and_pending_side_effects_match_executed_upstream",
           "scope": "48 actual source PostgreSQL/private-domain/RPC cases across accept/reject/end, with deterministic media HTTP; wire bytes, raw event identifiers and remaining pending rows replayed."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3226,6 +3356,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3245,6 +3380,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3264,6 +3404,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3283,6 +3428,11 @@
           "path": "services/catalyst/social/src/rpc/tests/voice_source_cases.rs",
           "test": "voice_rpc_wire_answers_match_executed_upstream_handlers",
           "scope": "85 source-generated cases across all14 voice methods: normal fields/oneofs, required inputs, adapter validation, refusal/runtime/database error branches."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3327,6 +3477,11 @@
           "path": "services/catalyst/social/src/rpc/tests/profile_source_cases.rs",
           "test": "historical_and_positive_profiles_match_executed_source_rpc_answers",
           "scope": "Six scenarios execute two actual pinned registry instances sharing injected Redis, plus RPC handlers and owner-name components:21 Protobuf responses and8 owner results/errors. Local test uses independent contexts and shared SQL facts, compares captured cache keys, includes historical aliases, cached/fetched order/duplicates, normal profiles, missing/invalid owner errors and per-key cache-write failure; dynamic wallet mutation stays requested actor."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3366,6 +3521,11 @@
           "path": "services/catalyst/social/src/rpc/tests/notification_source_cases.rs",
           "test": "friendship_sns_events_and_retries_match_executed_source",
           "scope": "Four actual source notification creator/retrier captures are compared with real SQL mutations and the official SNS SDK against a local stub, including request/accept payloads, success after two failures and exhausted failures. Dynamic action UUID/time are asserted against committed state/clock bounds then normalized for comparison; no real topic or deployed consumer was contacted."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3390,6 +3550,11 @@
           "path": "services/catalyst/social/src/rpc/tests/source_cases.rs",
           "test": "rpc_wire_answers_match_executed_upstream_source_cases",
           "scope": "Replays the committed golden Protobuf responses captured by executing the real upstream handlers with deterministic injected components; fixture scope is explicit in source-cases.json."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -3541,6 +3706,11 @@
         {
           "path": "services/catalyst/shared/src/rpc/handshake.rs",
           "scope": "Executed-source timestamp decisions and cryptographically signed alternate literal regressions; native timer scheduling and kernel-buffer behavior remain outside this proof."
+        },
+        {
+          "path": "services/catalyst/social/src/rpc/tests/socket.rs",
+          "test": "authenticated_text_and_binary_frames_match_source_drpc_exchange",
+          "scope": "Actual pinned ws-handler, UWebSocketTransport and installed dRPC server capture binary/text CreatePort exchange bytes; a signed local socket replays both. The Social opt-in shared reader forwards UTF-8 text bytes after authentication. This transport check does not execute every method through text frames."
         }
       ],
       "gaps": [],
@@ -5849,7 +6019,7 @@
       "description": "Source configuration uses numeric-prefix/floating parsing for referral maximum-IP and minimum-day settings. Candidate strict integer settings reject fractional values at startup; source accepts them and may produce request-time PostgreSQL comparison errors or fractional day thresholds. Executed-source edge cases and matching conversion are in progress."
     },
     {
-      "id": "rpc-text-frame-forwarding",
+      "id": "rpc-idle-during-stalled-write",
       "status": "known_gap",
       "operations": [
         "rpc_stream:RPC:subscribeToBlockUpdates",
@@ -5887,7 +6057,7 @@
         "rpc_unary:RPC:upsertSocialSettings",
         "websocket:UPGRADE:/"
       ],
-      "description": "Pinned authenticated RPC ws-handler forwards the received bytes for both text and binary WebSocket frames. The shared candidate reader currently discards text after authentication. A Social-only source-executed forwarding capture and actual text dRPC CreatePort regression/fix are in progress; other shared consumers retain their defaults."
+      "description": "The opt-in writer currently polls IdleTimer from its physical send loop. A single accepted response stalled in sink.send with no subsequent queued head can postpone idle retirement, whereas native uWS idle expiry is independent. A passive reader-side observer over the existing timer is under implementation; native timer-wheel scheduling and deployed kernel behavior remain unverified."
     }
   ]
 }
