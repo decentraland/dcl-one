@@ -16,7 +16,7 @@ use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::AuthorityNotEstablished;
 use crate::shared::signed_fetch::SignedFetchError;
@@ -155,6 +155,8 @@ pub enum CommError {
     /// A handler's own `{ message }` body, without `error` (upstream's
     /// moderation refusal, capture `social/moderation-communities-signed-not-moderator`).
     MessageOnly(StatusCode, String),
+    /// A body of the handler's own (the schema validator's `{ ok: false, message, data }`).
+    Body(StatusCode, Value),
     Internal,
 }
 
@@ -198,6 +200,7 @@ impl IntoResponse for CommError {
                 (status, error_body(error, ADR44_MESSAGE))
             }
             CommError::MessageOnly(code, message) => (code, json!({ "message": message })),
+            CommError::Body(code, body) => (code, body),
             // upstream's `errorHandler` (`@dcl/http-commons` 2.0.1, the version
             // fb3dcb8's yarn.lock pins) answers every other error so, without a message
             CommError::Internal => (

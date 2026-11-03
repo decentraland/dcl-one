@@ -49,6 +49,9 @@ pub mod point_at_ik;
 pub mod point_at_marker;
 mod two_bone_ik;
 
+#[cfg(test)]
+mod tests;
+
 use common::{
     asset_cache::{clean_asset_cache, AssetCache},
     sets::SetupSets,
@@ -75,6 +78,7 @@ use ipfs::{
     ipfs_path::{IpfsPath, IpfsType},
     EntityDefinition, IpfsAssetServer,
 };
+use scene_runner::scene_partition::PartitionedDownloads;
 use scene_runner::{
     renderer_context::RendererSceneContext,
     update_world::{animation::Clips, AddCrdtInterfaceExt},
@@ -573,6 +577,7 @@ fn update_render_avatar(
             Option<&AttachPoints>,
             Option<&SceneEntity>,
             Option<&PreviousAvatar>,
+            Option<&PartitionedDownloads>,
         ),
         Or<(Changed<AvatarSelection>, With<RetryRenderAvatar>)>,
     >,
@@ -587,6 +592,8 @@ fn update_render_avatar(
 ) {
     // remove renderable entities when avatar selection is removed
     for entity in removed_selections.read() {
+        // the outfit's hashes leave the request-slot queue with the component
+        commands.entity(entity).try_remove::<PartitionedDownloads>();
         if let Ok((children, attach_points)) = children.get(entity) {
             // reparent attach points
             commands
@@ -601,8 +608,15 @@ fn update_render_avatar(
         }
     }
 
-    for (entity, selection, maybe_children, maybe_attach_points, maybe_scene_ent, maybe_prev) in
-        &query
+    for (
+        entity,
+        selection,
+        maybe_children,
+        maybe_attach_points,
+        maybe_scene_ent,
+        maybe_prev,
+        maybe_downloads,
+    ) in &query
     {
         commands.entity(entity).try_remove::<RetryRenderAvatar>();
 
@@ -616,6 +630,35 @@ fn update_render_avatar(
             .as_ref()
             .and_then(|b| WearableUrn::new(b).ok())
             .unwrap_or(base_wearables::default_bodyshape_urn());
+
+        // the avatar's downloads are filed under its body's and wearables' hashes, so they
+        // take the avatar's partition in the request-slot queue; whatever has resolved so far
+        let worn: Vec<WearableUrn> = std::iter::once(body_urn.clone())
+            .chain(
+                selection
+                    .shape
+                    .0
+                    .wearables
+                    .iter()
+                    .flat_map(|w| WearableUrn::new(w).ok()),
+            )
+            .chain(
+                base_wearables::default_wearables(&body_urn)
+                    .map(|default| default.base().to_owned()),
+            )
+            .collect();
+        let hashes =
+            common::partition::resolved_hashes(worn.iter().map(|urn| urn.as_str()), |urn| {
+                WearableUrn::new(urn)
+                    .ok()
+                    .and_then(|urn| wearable_loader.get_hash(&urn).ok())
+            });
+        // only on change: inserting it re-registers the hashes with the request slots
+        if maybe_downloads.is_none_or(|current| current.0 != hashes) {
+            commands
+                .entity(entity)
+                .try_insert(PartitionedDownloads(hashes));
+        }
 
         let body = match wearable_loader.get_representation(&body_urn, body_urn.as_str()) {
             Ok(body) => body.clone(),

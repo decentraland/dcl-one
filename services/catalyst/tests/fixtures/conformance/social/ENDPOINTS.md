@@ -75,21 +75,21 @@ token or an operator role, is listed as not capturable.
 | GET | `/v2/members/{address}/requests` | signed | shape only | `member-requests-v2-unauth` |
 | GET | `/v2/communities/{id}/posts` | | yes | `community-posts-v2` |
 | OPTIONS | any | CORS preflight | yes | `preflight-communities` |
-| GET | `/v2/friends` | `limit`, `offset`; signed | no capture (#504) | local `social/src/rpc/http.rs:42`, `:259` |
-| DELETE | `/v1/friends/{address}` | signed | no: write | local `social/src/rpc/http.rs:43`, `:452` (the path parameter is named `{peer}`, as the local `/v1/friends/{peer}/messages`) |
-| GET | `/v2/users/{address}/mutual-friends` | `limit`, `offset`; signed | no capture (#504) | local `social/src/rpc/http.rs:44`, `:283` |
-| GET | `/v1/users/{address}/friendship-status` | signed | no capture (#504) | local `social/src/rpc/http.rs:48`, `:310` |
-| GET | `/v2/friendship-requests` | `direction` `received`/`sent`, `limit`, `offset`; signed | no capture (#504) | local `social/src/rpc/http.rs:52`, `:325` |
-| POST | `/v1/friendship-requests` | `{address, message?}`; signed | no: write | local `social/src/rpc/http.rs:53`, `:375` |
-| PATCH | `/v1/friendship-requests/{address}` | `{intention: accepted\|rejected\|cancelled}`; signed | no: write | local `social/src/rpc/http.rs:54`, `:414` |
-| GET | `/v2/blocks` | `limit`, `offset`; signed | no capture (#505) | local `social/src/rpc/http.rs:58`, `:474` |
-| POST | `/v1/blocks`; DELETE `/v1/blocks/{address}` | `{address}`; signed | no: write | local `social/src/rpc/http.rs:59-60`, `:498`, `:517` |
-| GET | `/v1/blocking-status` | signed | no capture (#505) | local `social/src/rpc/http.rs:61`, `:535` |
-| GET, PATCH | `/v1/social-settings` | PATCH body: at least one of the three settings; signed | GET no capture, PATCH no: write (#506) | local `social/src/rpc/http.rs:62`, `:569`, `:586` |
-| GET | `/v1/private-messages-settings` | `addresses` (repeated, at most 50); signed | no capture (#506) | local `social/src/rpc/http.rs:66`, `:624` |
-| POST | `/v1/private-voice-chats`; PATCH/DELETE `/v1/private-voice-chats/{callId}` | `{calleeAddress}`, `{intention: accepted\|rejected}`; signed | no: write | local `social/src/rpc/http.rs:70`, `:75`, `:661`, `:707`, `:739` |
-| GET | `/v1/private-voice-chats/incoming` | signed | no capture (#507) | local `social/src/rpc/http.rs:71`, `:687` |
-| POST | `/v1/community-voice-chats`; DELETE `/v1/community-voice-chats/{communityId}`; POST `.../participants`, DELETE `.../participants/{address}`; PUT/PATCH/DELETE `.../speakers/{address}`; POST `.../speak-requests`, DELETE `.../speak-requests/{address}` | signed | no: write | local `social/src/rpc/http.rs:79-104`, `:757-905` |
+| GET | `/v2/friends` | `limit`, `offset`; signed | no capture (#504) | local `social/src/rpc/http.rs:42`, `:347` |
+| DELETE | `/v1/friends/{address}` | signed | no: write | local `social/src/rpc/http.rs:43`, `:540` (the path parameter is named `{peer}`, as the local `/v1/friends/{peer}/messages`) |
+| GET | `/v2/users/{address}/mutual-friends` | `limit`, `offset`; signed | no capture (#504) | local `social/src/rpc/http.rs:44`, `:371` |
+| GET | `/v1/users/{address}/friendship-status` | signed | no capture (#504) | local `social/src/rpc/http.rs:48`, `:398` |
+| GET | `/v2/friendship-requests` | `direction` `received`/`sent`, `limit`, `offset`; signed | no capture (#504) | local `social/src/rpc/http.rs:52`, `:413` |
+| POST | `/v1/friendship-requests` | `{address, message?}`; signed | no: write | local `social/src/rpc/http.rs:53`, `:463` |
+| PATCH | `/v1/friendship-requests/{address}` | `{intention: accepted\|rejected\|cancelled}`; signed | no: write | local `social/src/rpc/http.rs:54`, `:502` |
+| GET | `/v2/blocks` | `limit`, `offset`; signed | no capture (#505) | local `social/src/rpc/http.rs:58`, `:562` |
+| POST | `/v1/blocks`; DELETE `/v1/blocks/{address}` | `{address}`; signed | no: write | local `social/src/rpc/http.rs:59-60`, `:586`, `:605` |
+| GET | `/v1/blocking-status` | signed | no capture (#505) | local `social/src/rpc/http.rs:61`, `:623` |
+| GET, PATCH | `/v1/social-settings` | PATCH body: at least one of the three settings; signed | GET no capture, PATCH no: write (#506) | local `social/src/rpc/http.rs:62`, `:657`, `:674` |
+| GET | `/v1/private-messages-settings` | `addresses` (repeated, at most 50); signed | no capture (#506) | local `social/src/rpc/http.rs:66`, `:712` |
+| POST | `/v1/private-voice-chats`; PATCH/DELETE `/v1/private-voice-chats/{callId}` | `{calleeAddress}`, `{intention: accepted\|rejected}`; signed | no: write | local `social/src/rpc/http.rs:70`, `:75`, `:749`, `:795`, `:827` |
+| GET | `/v1/private-voice-chats/incoming` | signed | no capture (#507) | local `social/src/rpc/http.rs:71`, `:775` |
+| POST | `/v1/community-voice-chats`; DELETE `/v1/community-voice-chats/{communityId}`; POST `.../participants`, DELETE `.../participants/{address}`; PUT/PATCH/DELETE `.../speakers/{address}`; POST `.../speak-requests`, DELETE `.../speak-requests/{address}` | signed | no: write | local `social/src/rpc/http.rs:79-108`, `:845-1015` |
 | GET | `/health/live`, `/health/ready`, `/health/startup` | `@dcl/http-server` status checks (`src/components.ts`) | yes | `health-live` (200 `alive`, `text/plain`), `health-ready`, `health-startup` (200 `{"details":{"httpServer":{"status":"pass"}},"status":"pass"}`, `application/health+json`) |
 | GET | unknown path | | yes | `unknown-path-404` |
 
@@ -104,18 +104,27 @@ These routes answer from the same operations as their RPC procedures
 (`social/src/rpc/service/mod.rs` `ops`), so they write the same rows and publish
 the same updates; `social/src/rpc/tests/social_api.rs` covers each route, the
 signed-fetch gate, the body and path checks and a route/procedure parity case.
-Refusals render `{ error, message }`: 400 `Bad request` for the path and body
-checks with upstream's messages (`Invalid address`, `You cannot block yourself`,
+Refusals render `{ error, message }`: 400 `Bad request` for the path checks
+and the handlers' own body checks with upstream's messages (`Invalid address`,
+`You cannot block yourself`,
 `direction must be one of: received, sent`, `At most 50 addresses can be
 requested`, `Invalid callId`, ...), 403 `Forbidden`, 404 `Not Found`, 409
 `Conflict` and 429 `Too Many Requests` as upstream's `friends-errors.ts` and
 `voice-chats-errors.ts` map them (local `social/src/rpc/http.rs:130`,
-`social/src/communities/http.rs:193`). Open differences:
+`social/src/communities/http.rs:203`). A body that fails the schema answers 400
+as `@dcl/schema-validator-component` 1.0.1 does: `{ ok: false, message:
+"Invalid JSON body", data: [<the first AJV error, in AJV's evaluation order>] }`,
+and a body that is not JSON `{ ok: false, message }`; a community id is checked
+against upstream's `UUID_PATTERN` (local `social/src/rpc/http.rs:194-240`,
+`:317`; `a_body_failing_the_schema_answers_as_the_schema_validator`). The served
+`/social-api/openapi.json` carries the twins' paths, the schemas they reference
+and the `SignedFetch` scheme from upstream `docs/openapi.yaml`
+(`library/catalyst-api/openapi/communities.openapi.json`;
+`the_served_openapi_documents_every_route`). Open differences:
 
-- A body that fails the schema answers 400 `{ error: "Bad request", message }`
-  with an AJV-style message (local `social/src/rpc/http.rs:198`); the shape
-  `@dcl/schema-validator-component` answers is not in the pinned source and is
-  not verified.
+- A body that is not JSON carries V8's message only when it is empty
+  (`Unexpected end of JSON input`); any other parse error carries serde's
+  wording (local `social/src/rpc/http.rs:241-247`).
 - A friendship request's `createdAt` is the action's time, as the procedure's
   `accepted.created_at` (upstream: the friendship row's `created_at`, upstream
   `src/logic/friends/component.ts:552`).
@@ -123,7 +132,13 @@ requested`, `Invalid callId`, ...), 403 `Forbidden`, 404 `Not Found`, 409
   the same table, so there is no remote privacy sync to order.
 - A non-`DELETE` method on `/v1/community-voice-chats/active` answers 405 from
   the listing route, where upstream would treat `active` as a community id.
-- `docs/openapi.yaml`'s new paths are not in the served `/social-api/openapi.json`.
+- `/v1/stream` (`RPC.md` has its rows): the per-address channel falling
+  behind (256 events of any stream) also closes `Subscription overflow`, and the
+  `Slow consumer` trigger counts the writer task's queue, not uWS's buffered
+  amount, so a very small `WS_MAX_BACKPRESSURE` can trip on scheduling delay
+  (local `social/src/rpc/stream.rs:311-356`, `:846-850`).
+- `WS_IDLE_TIMEOUT_IN_SECONDS` is not read, and one `AUTH_WINDOW_SECS` stands
+  for `WS_AUTH_TIMEOUT_IN_MS` and `WS_AUTH_SIGNATURE_EXPIRATION_IN_MS`.
 
 ### Community writes and notifications (read at `social-service-ea` @ `b6b2cef`)
 

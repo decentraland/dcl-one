@@ -59,10 +59,12 @@
     {
       path = "/places/place";
       probe = "/places/place";
+      exact = true;
     }
     {
       path = "/places/world";
       probe = "/places/world";
+      exact = true;
     }
     {
       path = "/events/api";

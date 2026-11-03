@@ -1994,6 +1994,18 @@ fn social_states(
                 .private_voice_chat_expiration_batch_size,
             ws_max_concurrent_connections: config.social.ws_max_concurrent_connections,
             ws_max_payload_bytes: config.social.ws_max_payload_length,
+            ws_max_backpressure_bytes: config.social.ws_max_backpressure,
+            admission: social_rpc::limits::AdmissionLimits {
+                max_per_address: config.social.ws_max_connections_per_address as usize,
+                subscriptions_per_second: config.social.ws_subscriptions_per_second,
+                subscription_burst: config.social.ws_subscription_burst as usize,
+                idle_budget_capacity: config.social.ws_address_budget_capacity as usize,
+            },
+            stream: social_rpc::stream::StreamLimits {
+                max_payload_bytes: config.social.stream_ws_max_payload_length as usize,
+                messages_per_second: config.social.stream_ws_messages_per_second,
+                message_burst: config.social.stream_ws_message_burst as usize,
+            },
             admin_token: non_empty(&config.social.catalyrst_social_rpc_admin_token),
             faces,
             writes_enabled: config.writes.social_writes_enabled,

@@ -5,17 +5,19 @@
 
 use crate::comms::gatekeeper::voice::rooms::VoiceRooms;
 use crate::rpc::db::Db;
-use crate::rpc::limits::{Admission, FriendshipMutationLimiter};
+use crate::rpc::limits::{Admission, FriendshipMutationLimiter, Protocol};
 use crate::rpc::profiles::Profiles;
 use crate::rpc::proto::v2::{
     CommunityMemberConnectivityUpdate, ConnectivityStatus, FriendConnectivityUpdate,
     PrivateVoiceChatStatus, PrivateVoiceChatUpdate, User,
 };
 use crate::rpc::pubsub::{PubSub, SocialEvent};
+use crate::shared::rpc::ws::SocketClose;
 use dashmap::DashMap;
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use tokio::sync::Notify;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
 pub use crate::rpc::limits::PairScope;
@@ -56,8 +58,11 @@ pub struct ContextInner {
     /// reads its places and thumbnail through it.
     communities: std::sync::OnceLock<crate::communities::SharedState>,
     connectivity_operations: tokio::sync::Semaphore,
-    kill_handles: DashMap<u32, Arc<Notify>>,
-    connections: AtomicUsize,
+    kill_handles: DashMap<u32, Arc<SocketClose>>,
+    /// Every open socket of both protocols, from the moment it opens
+    /// (upstream's `ws-pool`): the pool cap counts them and shutdown ends them.
+    sockets: parking_lot::Mutex<HashMap<u64, Arc<SocketClose>>>,
+    next_socket: AtomicU64,
     /// `SOCIAL_WRITES_ENABLED` (`social::writes`): false refuses every
     /// mutating procedure with `SocialError::WritesDisabled`.
     writes_enabled: AtomicBool,
@@ -98,6 +103,26 @@ impl Drop for SubscriptionGuard {
     }
 }
 
+/// An open socket's place in the pool; dropping it frees the place.
+pub struct OpenSocket {
+    ctx: Context,
+    id: u64,
+    protocol: Protocol,
+    opened: Instant,
+    /// How the server ends this socket.
+    pub close: Arc<SocketClose>,
+}
+
+impl Drop for OpenSocket {
+    fn drop(&mut self) {
+        self.ctx.0.sockets.lock().remove(&self.id);
+        let protocol = self.protocol.label();
+        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol).decrement(1.0);
+        metrics::histogram!("ws_connection_duration_seconds_by_protocol", "protocol" => protocol)
+            .record(self.opened.elapsed().as_secs_f64());
+    }
+}
+
 impl Context {
     pub fn new(
         voice_settings: VoiceSettings,
@@ -120,7 +145,8 @@ impl Context {
             communities: std::sync::OnceLock::new(),
             connectivity_operations: tokio::sync::Semaphore::new(4),
             kill_handles: DashMap::new(),
-            connections: AtomicUsize::new(0),
+            sockets: parking_lot::Mutex::new(HashMap::new()),
+            next_socket: AtomicU64::new(0),
             writes_enabled: AtomicBool::new(true),
         }))
     }
@@ -186,19 +212,47 @@ impl Context {
             .insert(transport_id, address.to_lowercase());
     }
 
-    pub fn connection_opened(&self) {
-        self.0.connections.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn connection_closed(&self) {
-        self.0.connections.fetch_sub(1, Ordering::Relaxed);
+    /// Counts a socket that just opened, before its handshake (upstream
+    /// `ws-handler.ts:323`, `wsPool.registerConnection` in `open`); `None`
+    /// when `max` sockets are already open, checked and counted at once so
+    /// concurrent opens cannot pass a full pool.
+    pub fn open_socket(&self, protocol: Protocol, max: Option<usize>) -> Option<OpenSocket> {
+        let close = Arc::new(SocketClose::default());
+        let mut sockets = self.0.sockets.lock();
+        if max.is_some_and(|max| sockets.len() >= max) {
+            return None;
+        }
+        let id = self.0.next_socket.fetch_add(1, Ordering::Relaxed);
+        sockets.insert(id, close.clone());
+        drop(sockets);
+        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label())
+            .increment(1.0);
+        Some(OpenSocket {
+            ctx: self.clone(),
+            id,
+            protocol,
+            opened: Instant::now(),
+            close,
+        })
     }
 
     pub fn live_connections(&self) -> usize {
-        self.0.connections.load(Ordering::Relaxed)
+        self.0.sockets.lock().len()
     }
 
-    pub fn register_kill_handle(&self, transport_id: u32, kill: Arc<Notify>) {
+    /// Ends every open socket, authenticated or not, with `code` and
+    /// `reason`, and waits up to `budget` for them to close.
+    pub async fn end_sockets(&self, code: u16, reason: &'static str, budget: Duration) {
+        for socket in self.0.sockets.lock().values() {
+            socket.end(code, reason);
+        }
+        let deadline = Instant::now() + budget;
+        while self.live_connections() > 0 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    pub fn register_kill_handle(&self, transport_id: u32, kill: Arc<SocketClose>) {
         self.0.kill_handles.insert(transport_id, kill);
     }
 
@@ -265,7 +319,7 @@ impl Context {
         let mut kicked = 0;
         for id in ids {
             if let Some(handle) = self.0.kill_handles.get(&id) {
-                handle.notify_waiters();
+                handle.end(1000, "Disconnected by the operator");
                 kicked += 1;
             }
         }
@@ -722,9 +776,10 @@ mod tests {
 
         ctx.register_identity(7, "0xAbC".into());
         assert_eq!(ctx.identity(7).as_deref(), Some("0xabc"));
-        let kill = Arc::new(Notify::new());
-        ctx.register_kill_handle(7, kill);
+        let kill = Arc::new(SocketClose::default());
+        ctx.register_kill_handle(7, kill.clone());
         assert_eq!(ctx.disconnect_address("0xABC"), 1);
+        assert_eq!(kill.frame(), Some((1000, "Disconnected by the operator")));
         ctx.forget_identity(7);
         assert_eq!(ctx.disconnect_address("0xabc"), 0);
         assert!(ctx.identity(7).is_none());
