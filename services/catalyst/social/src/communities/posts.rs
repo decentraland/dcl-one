@@ -17,7 +17,7 @@ use crate::{Address, CommunityId, CommunityPermission, CommunityStanding};
 
 use super::http::{CommError, get_pagination_params, handler_error as err_json};
 use super::profiles::enrich_posts_with_authors;
-use super::standing::load_standing;
+use super::standing::load_standing_from_database as load_standing;
 use super::write_support::{
     ClientCommunityWriteAuthority, load_client_standing, map_db, parse_community_id,
     validate_like_unlike_access,
@@ -46,10 +46,15 @@ pub(crate) async fn require_membership_of_a_private_community(
     let Some(addr) = signer else {
         return Ok(());
     };
-    if !queries::is_private(&state.pool, id).await? {
+    if !queries::is_private(&state.pool, id)
+        .await
+        .map_err(super::http::database_error)?
+    {
         return Ok(());
     }
-    let standing = load_standing(&state.pool, id, addr).await?;
+    let standing = load_standing(&state.pool, id, addr)
+        .await
+        .map_err(super::http::database_error)?;
     if standing.row_exists() {
         return Ok(());
     }
@@ -73,12 +78,19 @@ async fn posts_page(
             &signed_path(original, format!("/{version}/communities/{id_str}/posts")),
         )
         .await;
-    if !queries::community_exists(&state.pool, id, false).await? {
+    if !queries::community_exists(&state.pool, id, false)
+        .await
+        .map_err(super::http::database_error)?
+    {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
         )));
     }
-    if signer.is_none() && queries::is_private(&state.pool, id).await? {
+    if signer.is_none()
+        && queries::is_private(&state.pool, id)
+            .await
+            .map_err(super::http::database_error)?
+    {
         return Err(CommError::not_authorized(format!(
             "undefined is not a member of private community {id}. You need to be a member to get posts in this community."
         )));
@@ -88,7 +100,9 @@ async fn posts_page(
     })
     .await?;
     let pagination = get_pagination_params(pairs);
-    let (posts, total) = queries::list_posts(&state.pool, id, &pagination, signer.as_ref()).await?;
+    let (posts, total) = queries::list_posts(&state.pool, id, &pagination, signer.as_ref())
+        .await
+        .map_err(super::http::database_error)?;
     Ok((
         posts
             .into_iter()

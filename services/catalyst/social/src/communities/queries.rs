@@ -137,6 +137,17 @@ pub async fn is_private(pool: &PgPool, id: CommunityId) -> sqlx::Result<bool> {
     Ok(row.unwrap_or(false))
 }
 
+pub(crate) async fn banned(pool: &PgPool, id: CommunityId, wallet: &Address) -> sqlx::Result<bool> {
+    let active: Option<bool> = sqlx::query_scalar(
+        "SELECT active FROM social.community_bans WHERE community_id = $1 AND banned_address = $2",
+    )
+    .bind(id)
+    .bind(wallet)
+    .fetch_optional(pool)
+    .await?;
+    Ok(active.unwrap_or(false))
+}
+
 pub async fn thumbnail_hash(pool: &PgPool, id: CommunityId) -> sqlx::Result<Option<String>> {
     sqlx::query_scalar(
         "SELECT thumbnail_hash FROM social.community_thumbnails WHERE community_id = $1",

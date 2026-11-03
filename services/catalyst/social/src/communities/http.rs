@@ -40,6 +40,12 @@ pub(crate) fn database_message(error: &sqlx::Error) -> String {
         .unwrap_or_else(|| error.to_string())
 }
 
+/// The community handlers catch unexpected database failures themselves.
+/// Keep this mapping local: other handlers use the global middleware envelope.
+pub(crate) fn database_error(error: sqlx::Error) -> CommError {
+    CommError::MessageOnly(StatusCode::INTERNAL_SERVER_ERROR, database_message(&error))
+}
+
 #[derive(Clone)]
 pub(crate) struct SocialApiNotFound;
 
@@ -47,6 +53,10 @@ pub(crate) struct SocialApiNotFound;
 struct BodyLimit {
     bytes: usize,
     exceeded: std::sync::Arc<std::sync::atomic::AtomicBool>,
+}
+
+pub(crate) fn is_social_api(request: &axum::extract::Request) -> bool {
+    request.extensions().get::<BodyLimit>().is_some()
 }
 
 /// Declared size is checked before route, CORS and authentication. A body

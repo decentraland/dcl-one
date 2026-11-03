@@ -19,10 +19,8 @@ use super::http::{
     CommError, Paginated, get_first, get_pagination_params, handler_error as err_json,
 };
 use super::profiles::enrich_with_profiles;
-use super::standing::load_standing;
-use super::write_support::{
-    Refusal, load_client_standing, map_db, parse_community_id, refusal_response,
-};
+use super::standing::load_standing_from_database as load_standing;
+use super::write_support::{Refusal, load_client_standing, map_db, parse_community_id};
 use super::{SharedState, queries, signed_path};
 use crate::notifications::community::Audience;
 
@@ -72,7 +70,9 @@ async fn community_requests_page(
     let id = CommunityId::parse(id_str)
         .map_err(|_| CommError::bad_request(super::http::INVALID_IDENTIFIER))?;
 
-    let standing = load_standing(&state.pool, id, &signer).await?;
+    let standing = load_standing(&state.pool, id, &signer)
+        .await
+        .map_err(super::http::database_error)?;
     if !standing.has(CommunityPermission::ViewRequests) {
         return Err(CommError::not_authorized(format!(
             "The user {signer} doesn't have permission to view requests"
@@ -81,7 +81,9 @@ async fn community_requests_page(
     let pagination = get_pagination_params(pairs);
     let type_filter = parse_type(get_first(pairs, "type").as_deref());
     let (rows, total) =
-        queries::list_requests_by_community(&state.pool, id, type_filter, &pagination).await?;
+        queries::list_requests_by_community(&state.pool, id, type_filter, &pagination)
+            .await
+            .map_err(super::http::database_error)?;
     let json_rows = rows
         .into_iter()
         .map(|r| serde_json::to_value(r).unwrap_or(serde_json::Value::Null))
@@ -149,7 +151,8 @@ async fn member_requests_page(
         &pagination,
         state.voice_presence_config(),
     )
-    .await?;
+    .await
+    .map_err(super::http::database_error)?;
     let ids: Vec<CommunityId> = rows
         .iter()
         .filter_map(|row| {
@@ -246,7 +249,9 @@ pub async fn get_invites(
     if inviter == invitee {
         return Err(CommError::bad_request("Users cannot invite themselves"));
     }
-    let invites = queries::list_invites(&state.pool, &inviter, &invitee).await?;
+    let invites = queries::list_invites(&state.pool, &inviter, &invitee)
+        .await
+        .map_err(super::http::database_error)?;
     Ok(Json(json!({ "data": invites })))
 }
 
@@ -351,14 +356,7 @@ pub async fn create_request(
     };
 
     if kind == "invite" {
-        let caller = match load_standing(&state.pool, community_id, &signer).await {
-            Ok(s) => s,
-            Err(refusal) => {
-                return refusal_response(&refusal, StatusCode::FORBIDDEN, || {
-                    "Forbidden: authority could not be established".to_string()
-                });
-            }
-        };
+        let caller = try_resp!(load_client_standing(&state, community_id, &signer).await);
         if !caller.has(CommunityPermission::InviteUsers) {
             return err_json(
                 StatusCode::UNAUTHORIZED,

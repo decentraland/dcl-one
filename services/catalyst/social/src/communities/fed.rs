@@ -51,7 +51,7 @@ use super::http::err_json;
 use super::standing::{
     CommunityBanAuthority, CommunityUnbanAuthority, load_standing, load_standing_pair,
 };
-use super::write_support::{ClientCommunityWriteAuthority, is_banned, refusal_response};
+use super::write_support::refusal_response;
 use super::{SharedState, State as CommunitiesState, validate};
 use crate::comms::limits::{RateLimitDecision, RateLimiter};
 use crate::fed::{FedError, Signed, TypedMessage};
@@ -470,11 +470,20 @@ async fn require_permission(
     permission: CommunityPermission,
     action: &str,
 ) -> Reply<()> {
-    ClientCommunityWriteAuthority::resolve_requiring_capability(
-        state, community, signer, permission, action,
-    )
-    .await
-    .map(|_| ())
+    if !authority_database(super::queries::community_exists(&state.pool, community, false).await)? {
+        return Err(Box::new(
+            super::http::CommError::not_found(format!("Community not found: {community}"))
+                .into_response(),
+        ));
+    }
+    let standing = authority_standing(state, community, signer).await?;
+    if !standing.has(permission) {
+        return Err(Box::new(super::http::handler_error(
+            StatusCode::UNAUTHORIZED,
+            format!("The user {signer} doesn't have permission to {action}"),
+        )));
+    }
+    Ok(())
 }
 
 async fn require_at_least(
@@ -483,9 +492,58 @@ async fn require_at_least(
     signer: &Address,
     minimum: CommunityStanding,
 ) -> Reply<()> {
-    ClientCommunityWriteAuthority::resolve_requiring_at_least(state, community, signer, minimum)
+    if is_banned(state, community, signer).await? {
+        return Err(Box::new(super::http::err_json(
+            StatusCode::FORBIDDEN,
+            "Forbidden: banned from this community",
+        )));
+    }
+    let standing = authority_standing(state, community, signer).await?;
+    if !standing.is_at_least(minimum) {
+        return Err(Box::new(super::http::err_json(
+            StatusCode::FORBIDDEN,
+            format!(
+                "Forbidden: signer role {} below required {}",
+                standing.tier().as_wire_text(),
+                minimum.as_wire_text()
+            ),
+        )));
+    }
+    Ok(())
+}
+
+// Federation retains its historical authority-failure envelopes. HTTP handlers
+// catch database failures as {message}; the SQL facts and standing stay shared.
+fn authority_database<T>(result: sqlx::Result<T>) -> Reply<T> {
+    result.map_err(|error| {
+        tracing::error!(%error, "communities federation authority database error");
+        Box::new(super::http::err_json(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "database error",
+        ))
+    })
+}
+
+async fn authority_standing(
+    state: &CommunitiesState,
+    community: CommunityId,
+    signer: &Address,
+) -> Reply<super::standing::Standing> {
+    load_standing(&state.pool, community, signer)
         .await
-        .map(|_| ())
+        .map_err(|refusal| {
+            Box::new(refusal_response(&refusal, StatusCode::FORBIDDEN, || {
+                "Forbidden: authority could not be established".into()
+            }))
+        })
+}
+
+async fn is_banned(
+    state: &CommunitiesState,
+    community: CommunityId,
+    signer: &Address,
+) -> Reply<bool> {
+    authority_database(super::queries::banned(&state.pool, community, signer).await)
 }
 
 #[derive(Default)]
@@ -1749,6 +1807,19 @@ mod tests {
     use crate::shared::signed_fetch::test_support::signed_headers_by;
 
     const ADMIN: &str = "fed-admin";
+
+    #[tokio::test]
+    async fn authority_database_failure_keeps_the_federation_error_envelope() {
+        let response = *authority_database::<()>(Err(sqlx::Error::PoolClosed)).unwrap_err();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<Value>(&bytes).unwrap(),
+            json!({"error":"database error","message":"database error"})
+        );
+    }
 
     fn now() -> i64 {
         chrono::Utc::now().timestamp()

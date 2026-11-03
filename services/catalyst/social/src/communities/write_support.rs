@@ -14,7 +14,7 @@ use crate::{
 
 use super::State;
 use super::http::{err_json, status_and_message_for_refusal};
-use super::standing::{Standing, load_standing, load_standing_pair};
+use super::standing::{Standing, load_standing_from_database, load_standing_pair_from_database};
 
 pub type Refusal = Box<Response>;
 
@@ -33,7 +33,7 @@ pub fn parse_community_id(s: &str) -> Result<CommunityId, Refusal> {
 pub fn map_db<T>(r: Result<T, sqlx::Error>) -> Result<T, Refusal> {
     r.map_err(|e| {
         tracing::error!(error = %e, "communities client-write database error");
-        refuse(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+        Box::new(super::http::database_error(e).into_response())
     })
 }
 
@@ -194,14 +194,7 @@ pub async fn load_client_standing(
     community_id: CommunityId,
     wallet: &Address,
 ) -> Result<Standing, Refusal> {
-    load_standing(&state.pool, community_id, wallet)
-        .await
-        .map_err(|refusal| {
-            refusal_response(&refusal, StatusCode::FORBIDDEN, || {
-                "Forbidden: authority could not be established".to_string()
-            })
-            .into()
-        })
+    map_db(load_standing_from_database(&state.pool, community_id, wallet).await)
 }
 
 pub async fn load_client_standing_pair(
@@ -210,14 +203,7 @@ pub async fn load_client_standing_pair(
     first: &Address,
     second: &Address,
 ) -> Result<(Standing, Standing), Refusal> {
-    load_standing_pair(&state.pool, community_id, first, second)
-        .await
-        .map_err(|refusal| {
-            refusal_response(&refusal, StatusCode::FORBIDDEN, || {
-                "Forbidden: authority could not be established".to_string()
-            })
-            .into()
-        })
+    map_db(load_standing_pair_from_database(&state.pool, community_id, first, second).await)
 }
 
 /// A SQL fault is a 500 rather than "not banned", so an outage denies the
@@ -227,14 +213,7 @@ pub async fn is_banned(
     community_id: CommunityId,
     wallet: &Address,
 ) -> Result<bool, Refusal> {
-    let banned: Option<bool> = map_db(
-        sqlx::query_scalar("SELECT active FROM social.community_bans WHERE community_id = $1 AND banned_address = $2")
-            .bind(community_id)
-            .bind(wallet)
-            .fetch_optional(&state.pool)
-            .await,
-    )?;
-    Ok(banned.unwrap_or(false))
+    map_db(super::queries::banned(&state.pool, community_id, wallet).await)
 }
 
 /// Proven against `community_members` plus `community_bans`.
@@ -242,34 +221,6 @@ pub async fn is_banned(
 pub struct ClientCommunityWriteAuthority(());
 
 impl ClientCommunityWriteAuthority {
-    /// `community_bans` pre-check first, then the tier test; both refuse
-    /// with a 403.
-    pub async fn resolve_requiring_at_least(
-        state: &State,
-        community_id: CommunityId,
-        signer: &Address,
-        minimum: CommunityStanding,
-    ) -> Result<Self, Refusal> {
-        if is_banned(state, community_id, signer).await? {
-            return Err(refuse(
-                StatusCode::FORBIDDEN,
-                "Forbidden: banned from this community",
-            ));
-        }
-        let standing = load_client_standing(state, community_id, signer).await?;
-        if !standing.is_at_least(minimum) {
-            return Err(refuse(
-                StatusCode::FORBIDDEN,
-                format!(
-                    "Forbidden: signer role {} below required {}",
-                    standing.tier().as_wire_text(),
-                    minimum.as_wire_text()
-                ),
-            ));
-        }
-        Ok(Self(()))
-    }
-
     /// `community_bans` pre-check refuses with a 403; a missing capability
     /// with a 401.
     pub async fn resolve_requiring_capability(
@@ -307,7 +258,7 @@ pub async fn validate_like_unlike_access(
         .await
         .map_err(|e| {
             tracing::error!(error = %e, %community_id, "community privacy lookup failed");
-            refuse(StatusCode::INTERNAL_SERVER_ERROR, "database error")
+            Box::new(super::http::database_error(e).into_response())
         })?;
     let standing = load_client_standing(state, community_id, signer).await?;
     if private && standing.tier() == CommunityStanding::NotAMember {

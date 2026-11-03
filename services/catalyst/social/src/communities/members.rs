@@ -24,7 +24,9 @@ use super::http::{
     CommError, Paginated, get_first, get_pagination_params, handler_error as err_json,
 };
 use super::profiles::enrich_with_profiles;
-use super::standing::{CommunityBanAuthority, CommunityUnbanAuthority, load_standing};
+use super::standing::{
+    CommunityBanAuthority, CommunityUnbanAuthority, load_standing_from_database as load_standing,
+};
 use super::write_support::{
     load_client_standing, load_client_standing_pair, map_db, parse_community_id, refusal_response,
 };
@@ -52,7 +54,8 @@ async fn gate_member_listing(
 ) -> Result<(), CommError> {
     let only_public = signer.is_none() && !bypass_privacy;
     let (private, viewer_has_row) = queries::members_gate(&state.pool, id, signer)
-        .await?
+        .await
+        .map_err(super::http::database_error)?
         .filter(|(private, _)| !(only_public && *private))
         .ok_or_else(|| CommError::not_found(format!("Community not found: {id_str}")))?;
     if !bypass_privacy && signer.is_some() && private && !viewer_has_row {
@@ -191,9 +194,13 @@ async fn members_page(
         .unwrap_or(false);
     let (members, total) = if only_online {
         let online = state.presence.connected_peers().await;
-        queries::list_online_members(&state.pool, id, &online, &pagination).await?
+        queries::list_online_members(&state.pool, id, &online, &pagination)
+            .await
+            .map_err(super::http::database_error)?
     } else {
-        queries::list_members(&state.pool, id, &pagination).await?
+        queries::list_members(&state.pool, id, &pagination)
+            .await
+            .map_err(super::http::database_error)?
     };
     Ok((members, total, pagination))
 }
@@ -286,19 +293,26 @@ async fn bans_listing(
     let id = CommunityId::parse(id_str)
         .map_err(|_| CommError::bad_request(super::http::INVALID_IDENTIFIER))?;
 
-    if !queries::community_exists(&state.pool, id, false).await? {
+    if !queries::community_exists(&state.pool, id, false)
+        .await
+        .map_err(super::http::database_error)?
+    {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
         )));
     }
-    let standing = load_standing(&state.pool, id, &signer).await?;
+    let standing = load_standing(&state.pool, id, &signer)
+        .await
+        .map_err(super::http::database_error)?;
     if !standing.has(CommunityPermission::BanPlayers) {
         return Err(CommError::not_authorized(format!(
             "The user {signer} doesn't have permission to get banned members from the community"
         )));
     }
     let pagination = get_pagination_params(pairs);
-    let (bans, total) = queries::list_bans(&state.pool, id, &pagination).await?;
+    let (bans, total) = queries::list_bans(&state.pool, id, &pagination)
+        .await
+        .map_err(super::http::database_error)?;
     let rows = bans
         .into_iter()
         .map(|b| serde_json::to_value(b).unwrap_or(serde_json::Value::Null))
@@ -366,7 +380,8 @@ pub async fn get_member_communities(
     let only_public_visible = signer.as_ref().is_none_or(|s| *s != member);
     let (rows, total) =
         queries::member_communities(&state.pool, &member, &pagination, None, only_public_visible)
-            .await?;
+            .await
+            .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -424,7 +439,8 @@ pub async fn get_managed_communities(
         Some(&["owner", "moderator"]),
         false,
     )
-    .await?;
+    .await
+    .map_err(super::http::database_error)?;
     Ok(Json(
         json!({ "data": Paginated::new(rows, total, &pagination) }),
     ))
@@ -949,8 +965,9 @@ pub async fn ban_member(
             return CommError::bad_request("Invalid member address".to_string()).into_response();
         }
     };
-    if let Err(refusal) = CommunityBanAuthority::resolve(&state.pool, &signer, uuid, &target).await
-    {
+    let (actor_standing, target_standing) =
+        try_resp!(load_client_standing_pair(&state, uuid, &signer, &target).await);
+    if let Err(refusal) = CommunityBanAuthority::from_standings(actor_standing, target_standing) {
         return refusal_response(&refusal, StatusCode::UNAUTHORIZED, || {
             format!(
                 "The user {signer} doesn't have permission to ban {target} from community {uuid}"
@@ -1065,9 +1082,9 @@ pub async fn unban_member(
             return CommError::bad_request("Invalid member address".to_string()).into_response();
         }
     };
-    if let Err(refusal) =
-        CommunityUnbanAuthority::resolve(&state.pool, &signer, uuid, &target).await
-    {
+    let (actor_standing, target_standing) =
+        try_resp!(load_client_standing_pair(&state, uuid, &signer, &target).await);
+    if let Err(refusal) = CommunityUnbanAuthority::from_standings(actor_standing, target_standing) {
         return refusal_response(&refusal, StatusCode::UNAUTHORIZED, || {
             format!(
                 "The user {signer} doesn't have permission to unban {target} from community {uuid}"

@@ -302,7 +302,8 @@ pub async fn get_communities(
         community_id,
         state.voice_presence_config(),
     )
-    .await?;
+    .await
+    .map_err(super::http::database_error)?;
 
     let owners = owner_addresses(&results);
     let (owner_names, by_community) =
@@ -338,7 +339,9 @@ async fn minimal_search(
     })?;
     let viewer = signer.expect("plan_minimal_search refused the anonymous caller");
     let (results, total) =
-        queries::search_communities(&state.pool, term, viewer, limit, pagination.offset).await?;
+        queries::search_communities(&state.pool, term, viewer, limit, pagination.offset)
+            .await
+            .map_err(super::http::database_error)?;
     let capped = Pagination {
         limit,
         offset: pagination.offset,
@@ -432,7 +435,8 @@ pub async fn get_communities_v2(
         community_id,
         state.voice_presence_config(),
     )
-    .await?;
+    .await
+    .map_err(super::http::database_error)?;
     for item in results.iter_mut() {
         set_thumbnail_list(&state.settings.cdn_url, item);
     }

@@ -46,7 +46,10 @@ pub async fn get_places(
             &signed_path(&original, format!("/v1/communities/{id_str}/places")),
         )
         .await;
-    if !queries::community_exists(&state.pool, id, signer.is_none()).await? {
+    if !queries::community_exists(&state.pool, id, signer.is_none())
+        .await
+        .map_err(super::http::database_error)?
+    {
         return Err(CommError::not_found(format!(
             "Community not found: {id_str}"
         )));
@@ -56,7 +59,9 @@ pub async fn get_places(
     })
     .await?;
     let pagination = get_pagination_params(&pairs);
-    let (places, total) = queries::list_places(&state.pool, id, &pagination).await?;
+    let (places, total) = queries::list_places(&state.pool, id, &pagination)
+        .await
+        .map_err(super::http::database_error)?;
     let places = with_destinations(&state, id, places).await;
     Ok(Json(
         json!({ "data": Paginated::new(places, total, &pagination) }),
