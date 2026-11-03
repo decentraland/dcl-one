@@ -43,6 +43,9 @@ def plan(event, base, head):
     if event not in ('pull_request', 'local'):
         return True, f'{event} event runs every platform'
     try:
+        if event == 'local':
+            base = subprocess.check_output(['git', 'merge-base', base, head], cwd=ROOT, text=True,
+                                           stderr=subprocess.PIPE, timeout=60).strip()
         changed = subprocess.check_output(['git', 'diff', '--name-only', '--no-renames', '-z', base, head],
                                           cwd=ROOT, text=True, stderr=subprocess.PIPE, timeout=60).split('\0')
         return needs_macos([path for path in changed if path], load_ci_local())
@@ -59,10 +62,7 @@ def main():
     event = os.environ.get('GITHUB_EVENT_NAME', 'local')
     if args.base is None and event == 'local':
         parser.error('--base is required outside GitHub Actions')
-    base = args.base or 'HEAD^1'
-    if event == 'local':
-        base = subprocess.check_output(['git', 'merge-base', base, args.head], cwd=ROOT, text=True).strip()
-    macos, reason = plan(event, base, args.head)
+    macos, reason = plan(event, args.base or 'HEAD^1', args.head)
     print(f'macos={str(macos).lower()}: {reason}')
     if os.environ.get('GITHUB_STEP_SUMMARY'):
         with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:

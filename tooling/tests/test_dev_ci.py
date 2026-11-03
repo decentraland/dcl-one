@@ -71,6 +71,7 @@ class DevCiTest(unittest.TestCase):
         self.assertTrue(dev.plan('push', 'HEAD^1', 'HEAD')[0])
         self.assertFalse(dev.plan('local', 'HEAD', 'HEAD')[0])
         self.assertTrue(dev.plan('pull_request', 'not-a-revision', 'HEAD')[0])
+        self.assertTrue(dev.plan('local', 'not-a-revision', 'HEAD')[0])
         with patch.object(dev, 'load_ci_local', side_effect=FileNotFoundError('ci-local.py')):
             self.assertTrue(dev.plan('pull_request', 'HEAD', 'HEAD')[0])
 

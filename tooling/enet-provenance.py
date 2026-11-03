@@ -107,6 +107,10 @@ def validate_workflow(workflow):
     needs = re.search(r"^    needs:", jobs[0], re.M)
     require(conditions == (["    if: ${{ !cancelled() }}"] if needs else []),
             "online provenance Rust job missing/conditional")
+    matrix = re.findall(r"^        os:(.*?)(?=^ {0,8}\S|\Z)", jobs[0], re.M | re.S)
+    platforms = re.findall(r"\[[^\]]*\]", matrix[0]) if len(matrix) == 1 else []
+    require(platforms and all("ubuntu-26.04" in p for p in platforms),
+            "online provenance Rust job can drop its Linux leg")
     steps = re.findall(r"^      - name: Verify the exact public ENet source pin\n(.*?)(?=^      - |\Z)",
                        jobs[0], re.M | re.S)
     require(steps == ["        run: nix develop --command python3 tooling/enet-provenance.py\n"],
