@@ -75,9 +75,5 @@ pub async fn social_api_cors(req: Request, next: Next) -> Response {
             HeaderValue::from_static("*"),
         );
     }
-    h.insert(
-        header::X_CONTENT_TYPE_OPTIONS,
-        HeaderValue::from_static("nosniff"),
-    );
     resp
 }

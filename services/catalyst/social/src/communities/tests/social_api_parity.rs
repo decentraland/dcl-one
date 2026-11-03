@@ -41,13 +41,38 @@ async fn send(
     (status, headers, body.to_vec())
 }
 
-/// The headers the CORS layer owns; `allow` (the route's methods) and
-/// `content-length` are axum's, added after the layer as before it.
+/// Compare every application header, including unexpected extras. Only the
+/// date and transport framing/hop headers differ between the two HTTP servers.
+fn transport_header(name: &str) -> bool {
+    matches!(
+        name,
+        "date" | "content-length" | "transfer-encoding" | "connection" | "keep-alive"
+    )
+}
+
+fn application_headers(headers: &HeaderMap) -> std::collections::BTreeMap<String, String> {
+    headers
+        .iter()
+        .filter(|(name, _)| !transport_header(name.as_str()))
+        .map(|(name, value)| (name.as_str().to_owned(), value.to_str().unwrap().to_owned()))
+        .collect()
+}
+
+fn source_application_headers(headers: &Value) -> std::collections::BTreeMap<String, String> {
+    headers
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(name, _)| !transport_header(name))
+        .map(|(name, value)| (name.clone(), value.as_str().unwrap().to_owned()))
+        .collect()
+}
+
 fn names(headers: &HeaderMap) -> Vec<&str> {
     let mut names: Vec<&str> = headers
         .keys()
         .map(|k| k.as_str())
-        .filter(|k| !matches!(*k, "allow" | "content-length"))
+        .filter(|k| !transport_header(k))
         .collect();
     names.sort();
     names
@@ -84,7 +109,6 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
             "access-control-allow-origin",
             "access-control-max-age",
             "vary",
-            "x-content-type-options",
         ]
     );
     for (name, value) in [
@@ -99,7 +123,6 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
         ("access-control-allow-origin", "*"),
         ("access-control-max-age", "86400"),
         ("vary", "Access-Control-Request-Headers"),
-        ("x-content-type-options", "nosniff"),
     ] {
         assert_eq!(headers[name], value, "{name}");
     }
@@ -136,7 +159,7 @@ async fn the_preflight_and_an_origin_get_answer_as_production() {
     let (_, headers, _) = send(&rig.app, Method::GET, "/v1/communities?limit=1", &[]).await;
     assert!(headers.get("access-control-allow-origin").is_none());
     assert!(headers.get("vary").is_none());
-    assert_eq!(headers["x-content-type-options"], "nosniff");
+    assert!(!headers.contains_key("x-content-type-options"));
     rig.finish();
 }
 
@@ -170,25 +193,12 @@ async fn social_api_gateway_cors_and_unknown_paths_match_executed_source() {
             String::from_utf8(body).unwrap(),
             case["body"].as_str().unwrap()
         );
-        for (key, value) in case["responseHeaders"].as_object().unwrap() {
-            assert_eq!(
-                headers[key].to_str().unwrap(),
-                value.as_str().unwrap(),
-                "{} {key}",
-                case["name"]
-            );
-        }
-        for key in [
-            "access-control-allow-origin",
-            "access-control-allow-methods",
-            "access-control-allow-headers",
-            "access-control-max-age",
-            "vary",
-        ] {
-            if case["responseHeaders"].get(key).is_none() {
-                assert!(!headers.contains_key(key), "{} {key}", case["name"]);
-            }
-        }
+        assert_eq!(
+            application_headers(&headers),
+            source_application_headers(&case["responseHeaders"]),
+            "{} complete application headers",
+            case["name"]
+        );
     }
     let (status, _, body) = send(&rig.app, Method::GET, "/unknown-root-path", &[ORIGIN]).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
@@ -232,24 +242,11 @@ async fn social_api_methods_match_the_executed_source_server() {
             case["body"].as_str().unwrap(),
             "{method} {path}"
         );
-        for (key, value) in case["headers"].as_object().unwrap() {
-            assert_eq!(
-                headers.get(key).and_then(|v| v.to_str().ok()),
-                value.as_str(),
-                "{method} {path} {key}"
-            );
-        }
-        for key in [
-            "allow",
-            "content-type",
-            "access-control-allow-origin",
-            "access-control-allow-methods",
-            "vary",
-        ] {
-            if case["headers"].get(key).is_none() {
-                assert!(!headers.contains_key(key), "{method} {path} {key}");
-            }
-        }
+        assert_eq!(
+            application_headers(&headers),
+            source_application_headers(&case["headers"]),
+            "{method} {path} complete application headers"
+        );
     }
     rig.finish();
 }
