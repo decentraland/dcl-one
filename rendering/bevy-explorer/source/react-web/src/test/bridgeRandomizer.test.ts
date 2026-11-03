@@ -20,10 +20,11 @@ vi.mock('../../bridge-scene/src/domains/avatarDraft', () => ({
 
 type Page = { items: Wearable[]; total: number; failed: boolean }
 const fetchPage = vi.fn<(address: string, p: CatalogPageParams) => Promise<Page>>()
+const sendEquipped = vi.fn<() => Promise<void>>()
 vi.mock('../../bridge-scene/src/domains/wearables', () => ({
   fetchWearablesPage: (address: string, p: CatalogPageParams) => fetchPage(address, p),
   deployableUrn: (urn: string) => urn,
-  sendEquipped: async () => {}
+  sendEquipped: () => sendEquipped()
 }))
 
 const wearable = (urn: string, category: string): Wearable =>
@@ -99,6 +100,8 @@ beforeEach(() => {
   player = { userId: '0xa' }
   look = { ...START }
   fetchPage.mockReset()
+  sendEquipped.mockReset()
+  sendEquipped.mockResolvedValue(undefined)
 })
 
 afterEach(() => {
@@ -123,6 +126,42 @@ describe('bridge randomizer', () => {
     await req('redoOutfit')
     expect(look?.wearables).toEqual(rolled)
     expect(history()).toEqual({ kind: 'outfitHistory', canUndo: true, canRedo: false, rolling: false })
+  })
+
+  it('updates the bar after an undo whose re-send failed', async () => {
+    catalyst({ upper_body: owned('upper_body', 2) })
+    const { req, history } = await setup(0)
+    await req('randomizeOutfit')
+
+    sendEquipped.mockRejectedValueOnce(new Error('catalyst down'))
+    await req('undoOutfit').catch(() => {})
+
+    expect(history()).toEqual({ kind: 'outfitHistory', canUndo: false, canRedo: true, rolling: false })
+  })
+
+  it('neither caches nor rolls a base set that arrived after the body shape changed', async () => {
+    const baseSet = deferred<Page>()
+    let baseRequests = 0
+    fetchPage.mockImplementation(async (_address, p) => {
+      if (p.collectionTypes?.includes('base-wearable') === true) {
+        baseRequests += 1
+        if (baseRequests === 1) return await baseSet.promise
+        return { items: BASE, total: BASE.length, failed: false }
+      }
+      return { items: [], total: 0, failed: false }
+    })
+    const { req } = await setup(0)
+
+    const roll = req('randomizeOutfit')
+    await flush()
+    look = { ...START, bodyShape: FEMALE }
+    baseSet.resolve({ items: BASE, total: BASE.length, failed: false })
+    await roll
+    expect(look.wearables).toEqual(START.wearables)
+
+    look = { ...START }
+    await req('randomizeOutfit')
+    expect(baseRequests).toBe(2)
   })
 
   it('fetches the page holding the random owned index, one page for the optional categories together', async () => {

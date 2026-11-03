@@ -11,7 +11,7 @@ export interface HideData {
 const SKIN_HIDES = ['head', 'hair', 'facial_hair', 'mouth', 'eyebrows', 'eyes', 'upper_body', 'lower_body', 'feet', 'hands_wear', 'body_shape']
 
 // Earlier categories win: a hidden item's own hides don't apply.
-const HIDES_ORDER = [
+export const HIDES_ORDER = [
   'skin', 'upper_body', 'hands_wear', 'lower_body', 'feet', 'helmet', 'hat', 'top_head', 'mask', 'eyewear',
   'earring', 'tiara', 'hair', 'eyebrows', 'eyes', 'mouth', 'facial_hair', 'body_shape'
 ]

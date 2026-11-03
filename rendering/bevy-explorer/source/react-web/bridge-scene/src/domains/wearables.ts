@@ -61,7 +61,7 @@ export type CatalogPageParams = {
   collectionTypes?: string[]
   /** Several categories at once; `category` narrows to one. */
   categories?: string[]
-  /** False when only the total is read: the items then carry no thumbnail, representations or hides. */
+  /** False when only the total is read. A hint: dcl-one's catalyst ignores it and still sends entities. */
   includeEntities?: boolean
 }
 

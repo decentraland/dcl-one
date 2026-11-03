@@ -122,8 +122,11 @@ export function registerRandomizer(ctx: Ctx): void {
     rolling = true
     emit()
     try {
-      const base = baseItems != null && baseBodyShape === start.bodyShape ? baseItems : await loadBaseItems(me.userId)
+      const cached = baseItems != null && baseBodyShape === start.bodyShape ? baseItems : null
+      const base = cached ?? (await loadBaseItems(me.userId))
       if (mine !== session) return
+      // A fresh set carries the hides of the body shape the look had when it arrived
+      if (cached == null && currentLook()?.bodyShape !== start.bodyShape) return
       if (base.length === 0) {
         console.log('[randomize] base wearables failed to load, the outfit is kept')
         return
@@ -171,8 +174,12 @@ export function registerRandomizer(ctx: Ctx): void {
     const target = from.pop()
     if (target == null) return
     to.push(current)
-    await restore(target)
-    emit()
+    try {
+      await restore(target)
+    } finally {
+      // The stacks already moved, so the bar follows them even when the re-send fails
+      emit()
+    }
   }
 
   ctx.on('undoOutfit', async () => {

@@ -3,6 +3,7 @@
 // Shared with the bridge scene (like avatarHides.ts); pure, with the random source passed in, so
 // vitest covers it. Mirrors Unity's OutfitRandomizer.
 
+import { HIDES_ORDER } from './avatarHides'
 import { isCompatible } from './bodyShape'
 
 /** What a roll needs to know about a wearable (a catalog `Wearable` fits). */
@@ -27,11 +28,8 @@ export const CUSTOM_PRIORITY_CHANCE = 0.8
 /** How many times a roll retries the core categories a conflict left bare before giving up on them. */
 export const MAX_REPICK_ROUNDS = 3
 
-/** Every category a roll can fill, in hiding priority order: an earlier category wins a conflict. */
-export const OUTFIT_CATEGORIES = [
-  'skin', 'upper_body', 'hands_wear', 'lower_body', 'feet', 'helmet', 'hat', 'top_head', 'mask', 'eyewear',
-  'earring', 'tiara', 'hair', 'eyebrows', 'eyes', 'mouth', 'facial_hair'
-]
+/** Every category a roll can fill, in the renderer's hiding order: an earlier category wins a conflict. */
+export const OUTFIT_CATEGORIES = HIDES_ORDER.filter((category) => category !== 'body_shape')
 
 const OPTIONAL_CATEGORIES = new Set(['facial_hair', 'hat', 'mask', 'tiara', 'helmet', 'earring', 'eyewear', 'top_head', 'hands_wear'])
 const FEMALE_EXCLUDED_CATEGORIES = new Set(['facial_hair'])
