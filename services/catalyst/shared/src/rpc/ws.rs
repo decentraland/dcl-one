@@ -137,6 +137,8 @@ impl AxumWsTransport {
     }
 
     /// Opt-in source ordinary queue, sharing the existing writer and byte budget.
+    /// The source Social handler also forwards authenticated text frames as
+    /// their UTF-8 bytes; the legacy constructors keep dropping text frames.
     pub fn spawn_with_ordinary_queue(
         socket: WebSocket,
         address: String,
@@ -182,6 +184,7 @@ impl AxumWsTransport {
         let (guarded_tx, guarded_rx) = channel(GUARDED_CAPACITY);
 
         let reader_close = close.clone();
+        let forward_text = ordinary_config.is_some();
         let reader_idle = idle.clone();
         tokio::spawn(async move {
             loop {
@@ -194,6 +197,9 @@ impl AxumWsTransport {
                             if inbound_tx.send(b.to_vec()).is_err() {
                                 break;
                             }
+                        }
+                        Some(Ok(Message::Text(text))) if forward_text => {
+                            if inbound_tx.send(text.as_bytes().to_vec()).is_err() { break; }
                         }
                         Some(Ok(Message::Text(_))) | Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
                         Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {

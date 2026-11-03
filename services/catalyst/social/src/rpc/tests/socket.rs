@@ -738,3 +738,51 @@ async fn ordinary_large_unary_response_is_preserved_and_a_stopped_reader_closes(
     cleanup_pair(server.state.ctx.db(), &me, &friend).await;
     server.jobs.shutdown(Duration::from_secs(2)).await;
 }
+
+#[tokio::test]
+async fn authenticated_text_and_binary_frames_match_source_drpc_exchange() {
+    let source: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../tests/fixtures/conformance/social/ws-frames-source-cases.json"
+    ))
+    .unwrap();
+    assert_eq!(
+        source["baseline"]["revision"],
+        "b6b2cefefdf727b2ed47ddb887e77d226a41eea6"
+    );
+    let server = spawn_server(None, 5).await;
+    let mut socket = connect(&server, "/social-rpc").await;
+    let (_, auth) = frame("/", chrono::Utc::now().timestamp_millis()).await;
+    socket.send(WsMessage::Text(auth.into())).await.unwrap();
+    let ready = next_message(&mut socket).await;
+    let WsMessage::Binary(ready) = ready else {
+        panic!("server ready must be binary");
+    };
+    assert_eq!(
+        hex::encode(&ready),
+        source["ready"][0]["hex"].as_str().unwrap()
+    );
+    for case in source["cases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|case| case.get("binary").is_some())
+    {
+        let input = hex::decode(case["input_hex"].as_str().unwrap()).unwrap();
+        let message = if case["binary"] == true {
+            WsMessage::Binary(input.into())
+        } else {
+            WsMessage::Text(String::from_utf8(input).unwrap().into())
+        };
+        socket.send(message).await.unwrap();
+        let response = next_message(&mut socket).await;
+        let WsMessage::Binary(response) = response else {
+            panic!("dRPC response must be binary");
+        };
+        assert_eq!(
+            hex::encode(&response),
+            case["responses"][0]["hex"].as_str().unwrap()
+        );
+    }
+    socket.close(None).await.unwrap();
+    server.jobs.shutdown(Duration::from_secs(2)).await;
+}

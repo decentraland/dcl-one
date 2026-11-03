@@ -159,6 +159,10 @@ backoff across new sends; a writer drain advances the retry. Accepted frames are
 removed once and retain their byte charge through physical flush. Admission
 checks bytes already pending with a strict `>` threshold, so one frame can cross
 the configured budget. Ordinary unary responses have no guarded-frame size cap.
+After authentication, binary and text frames both feed their bytes into dRPC,
+matching the source handler's ignored `isBinary` callback argument. Responses
+remain binary. The source handler/transport/server fixture and a real socket test
+cover the same binary and text CreatePort exchange.
 
 Tokio writer admission and flush supply these acceptance and drain signals;
 they do not measure uWS's kernel buffer. Source callback traces cover the queue
