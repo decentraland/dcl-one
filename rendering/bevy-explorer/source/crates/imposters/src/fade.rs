@@ -1,8 +1,7 @@
 use bevy::prelude::*;
 use boimp::render::Imposter;
 
-/// unity: LODGroup.crossFadeAnimationDuration default (not set in the repo); confirm 0.5 s
-/// against the Unity manual before changing.
+/// unity: LODGroup.crossFadeAnimationDuration, which defaults to 0.5 s (the repo does not set it).
 pub const CROSS_FADE_SECONDS: f32 = 0.5;
 
 /// A running or finished alpha fade on an imposter tile entity. The tile's `Imposter` material

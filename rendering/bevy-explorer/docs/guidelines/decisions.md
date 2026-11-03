@@ -17,6 +17,34 @@ ends in "we don't do that", so the next person doesn't have to rediscover it.
 - **Emissive strength.** Unity never parses `KHR_materials_emissive_strength`; bevy honours
   it, spec-correctly. Content authored against Unity can glow (the Nekko cat at 65x). Dropping
   the extension is not the fix; the long-term answer is still open.
+- **Always HDR.** Unity's Low and Medium render without HDR. bevy keeps HDR on every preset
+  (bloom, the flare and the glow composite run in HDR), and Medium's bloom, which Unity cannot
+  show without HDR, maps to Off.
+- **Lens flare before depth of field.** bevy blooms before DoF, so the flare runs straight after
+  the main pass to stay ahead of bloom, as in URP, and DoF blurs it when DoF is on. Also:
+  - the ring elements are procedural (Unity's ring textures were not carried) with no radial
+    distortion;
+  - random copies use a hash, not `UnityEngine.Random`;
+  - occlusion uses the directional light's radius;
+  - the flare follows the directional light, so at night it rides the moon;
+  - only the player's camera flares, and there is no swap dip.
+- **Jump marker is a quad.** A ground-aligned quad, not a decal projector, because bevy's forward
+  decal needs the depth prepass, which is optional here (on only with the avatar outline or
+  SSAO). It is the blob variant (`BlobShadow.mat`) and its ramps follow the shadergraph.
+- **Ocean.** Water depth comes from the coast profile, not the depth buffer; the foam is
+  procedural surface foam with no intersection term; the waves fade out by 500 m and a flat plane
+  1 m below takes over; the ripple normals are ours; lighting stays bevy PBR although
+  `Ocean.mat` is `_UNLIT`; refraction has no depth test; the refracted scene is fogged twice.
+- **Imposter cross-fade blends.** Imposters fade with alpha blending over 0.5 s, not blue-noise
+  dithering; the live scene is not dithered; the floor quad and bigger-mip replacements pop.
+- **Presets on the web and vSync.** The web has no MSAA, so web Medium and High use FXAA (High);
+  vSync has no HUD setting and defaults on; loading and population settings are outside the
+  presets; DoF and SSAO stay available but are Off in every preset because Unity has neither.
+- **Render scale compositor.** The world always renders to an image that a 2D camera composites
+  onto the window: a plain copy at scale 1, FSR EASU below it; bevy's CAS at 0.92 stands in for
+  RCAS; the UI rides the compositor at full resolution; `/screenshot` captures the window.
+- **Sky preset curves are linear.** The fog and flare keys are interpolated linearly; Unity's
+  curve tangents are not carried.
 
 ## Deliberate choices that look like mistakes
 

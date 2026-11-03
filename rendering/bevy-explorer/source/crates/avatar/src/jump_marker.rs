@@ -5,8 +5,8 @@
 //! material the distance to the ground; `BlobShadow.mat` selects the black blob variant of
 //! `unity:Explorer/Assets/DCL/JumpIndicator/Jump Indicator.shadergraph`, whose ramps are in
 //! jump_marker.wgsl. Divergence: a ground-aligned quad instead of a decal projector, because
-//! bevy's forward decal needs the depth prepass the default camera no longer has. Only the
-//! primary player gets one.
+//! bevy's forward decal needs the depth prepass, which is optional here (on only with the avatar
+//! outline or SSAO). Only the primary player gets one.
 
 use bevy::{
     pbr::{MaterialPipeline, MaterialPipelineKey, NotShadowCaster, NotShadowReceiver},

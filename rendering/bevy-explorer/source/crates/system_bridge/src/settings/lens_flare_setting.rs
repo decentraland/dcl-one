@@ -59,7 +59,7 @@ impl AppSetting for LensFlareSetting {
         mut commands: Commands,
         camera_entity: Entity,
     ) {
-        // only the player's camera flares: scene texture cameras are not known to in Unity
+        // only the player's camera flares: scene texture cameras do not flare in Unity
         if camera_entity != primary.0 {
             return;
         }

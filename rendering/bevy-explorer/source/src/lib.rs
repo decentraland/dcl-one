@@ -227,7 +227,7 @@ pub struct DecentralandArguments {
     /// `/allowed/failures`
     #[arg(long = "test_scenes", value_name = "x,y;x,y", help_heading = DEBUG)]
     pub test_scenes: Option<TestScenes>,
-    /// Vsync (default off)
+    /// Vsync (default on)
     #[arg(long, value_name = "true|false", help_heading = SETTINGS)]
     pub vsync: Option<bool>,
     /// Scene load distance in meters (default 100). Also `/scene_distance`
