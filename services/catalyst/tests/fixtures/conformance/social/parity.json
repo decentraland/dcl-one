@@ -834,7 +834,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
-          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request pages remain a separately identified gap under review; this fixture does not cover that combination."
+          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
         }
       ],
       "gaps": [],
@@ -936,7 +936,7 @@
     {
       "id": "api_http:GET:/v1/communities/:id/bans",
       "owner": "community-http",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows.",
       "evidence": [
         {
@@ -971,7 +971,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
-          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request pages remain a separately identified gap under review; this fixture does not cover that combination."
+          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
@@ -979,13 +979,15 @@
           "scope": "Six paired V1/V2 missing-profile cases in the same 43-case source fixture: V1 omits unresolved profiles while preserving source totals and pagination; V2 retains raw-address rows. Local providers establish this response behavior, not deployed profile-cache continuity."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "The source V1 profile mapper preserves raw lastFriendshipAction and actingUser SQL aliases; candidate responses omit them. Signed relationship/null and V2 controls need complete-body source PostgreSQL comparison and correction; source43 field-scoped tests do not close this wire gap."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
       "id": "api_http:GET:/v1/communities/:id/members",
       "owner": "community-http",
-      "status": "reviewed",
+      "status": "known_gap",
       "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Signed relationship reads propagate their SQL errors; anonymous reads retain source fallbacks. V1 omits unresolved profile rows without changing totals or pagination; V2 retains those raw-address rows.",
       "evidence": [
         {
@@ -1020,7 +1022,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
-          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request pages remain a separately identified gap under review; this fixture does not cover that combination."
+          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
@@ -1028,7 +1030,9 @@
           "scope": "Six paired V1/V2 missing-profile cases in the same 43-case source fixture: V1 omits unresolved profiles while preserving source totals and pagination; V2 retains raw-address rows. Local providers establish this response behavior, not deployed profile-cache continuity."
         }
       ],
-      "gaps": [],
+      "gaps": [
+        "The source V1 profile mapper preserves raw lastFriendshipAction and actingUser SQL aliases; candidate responses omit them. Signed relationship/null and V2 controls need complete-body source PostgreSQL comparison and correction; source43 field-scoped tests do not close this wire gap."
+      ],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -1146,7 +1150,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
-          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request pages remain a separately identified gap under review; this fixture does not cover that combination."
+          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
         },
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
@@ -1276,8 +1280,8 @@
     {
       "id": "api_http:GET:/v1/members/:address/requests",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. The source registry read/write boundary is paired in 18 scenarios: six V1 read failures propagate500, six cache-write failures retain successful reads, and six V2 no-profile controls stay independent. Raw pending page/count precede community summaries; empty raw pages skip community and relationship reads, while nonempty raw pages retain relationship errors even if all summaries are filtered. Mapping preserves saved raw request order, totals and pagination.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1325,12 +1329,15 @@
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
-          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request pages remain a separately identified gap under review; this fixture does not cover that combination."
+          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/member_request_pages.rs",
+          "test": "raw_request_pages_keep_source_visibility_order_totals_and_friendship_failure_boundary",
+          "scope": "All36 source cases independently regenerate byte-exact through actual pinned handlers/components/SQL adapter and disposable minimal PostgreSQL tables:12 healthy full bodies,12 friendship-permission faults and12 community-permission faults. Candidate test compares all36 status/full normalized JSON bodies using real PostgreSQL role ACLs; package passes. Covers all-filtered and mixed pages, source raw order versus community rank, offsets0/1/2/4 and limit2/3. Registry/owner/voice providers remain controlled; concurrency and deployment state are not proved."
         }
       ],
-      "gaps": [
-        "Member-request query phases differ under table-permission faults: a nonempty raw page filtered to zero communities skips the source relationship error; a truly empty raw page unnecessarily reads community tables. Healthy pagination controls agree; paired fault regressions and correction are pending."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
@@ -1638,7 +1645,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
-          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request pages remain a separately identified gap under review; this fixture does not cover that combination."
+          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
         }
       ],
       "gaps": [],
@@ -1726,7 +1733,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
-          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request pages remain a separately identified gap under review; this fixture does not cover that combination."
+          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
         }
       ],
       "gaps": [],
@@ -1765,7 +1772,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
-          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request pages remain a separately identified gap under review; this fixture does not cover that combination."
+          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
         }
       ],
       "gaps": [],
@@ -1842,7 +1849,7 @@
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
-          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request pages remain a separately identified gap under review; this fixture does not cover that combination."
+          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
         }
       ],
       "gaps": [],
@@ -1909,8 +1916,8 @@
     {
       "id": "api_http:GET:/v2/members/:address/requests",
       "owner": "community-http",
-      "status": "known_gap",
-      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary.",
+      "status": "reviewed",
+      "result": "Compared pinned source auth, status, DTO, pagination, validation, persistence and emitted events; focused behavioral tests cited, not exhaustive input equivalence. Community status/count queries now use the configured Comms liveness predicate and cutoffs, including initial/interrupted grace and moderator presence. Visible inactive details preserve the source idle object; private nonmembers retain null. Thirty-seven community handlers now replay the executed-source unexpected SQL message-only 500 boundary. Raw pending page/count precede community summaries; empty raw pages skip community and relationship reads, while nonempty raw pages retain relationship errors even if all summaries are filtered. Mapping preserves saved raw request order, totals and pagination.",
       "evidence": [
         {
           "path": "services/catalyst/social/src/communities/requests.rs",
@@ -1953,12 +1960,15 @@
         {
           "path": "services/catalyst/social/src/communities/tests/friendship_parity.rs",
           "test": "friendship_sql_errors_empty_pages_anonymous_and_request_status_match_source",
-          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request pages remain a separately identified gap under review; this fixture does not cover that combination."
+          "scope": "Forty-three actual pinned-source handler/component/SQL-builder cases regenerate exactly; source friendship faults use a controlled SQL provider, candidate uses real PostgreSQL permissions. Covers eight signed list/member/ban/member-request reads, truly empty raw request pages, anonymous controls, two community-request lists that skip friendship reads and report NONE, and dependency error priority. Filtered-only raw member-request combinations are covered separately by the36-case actual-PostgreSQL fixture."
+        },
+        {
+          "path": "services/catalyst/social/src/communities/tests/member_request_pages.rs",
+          "test": "raw_request_pages_keep_source_visibility_order_totals_and_friendship_failure_boundary",
+          "scope": "All36 source cases independently regenerate byte-exact through actual pinned handlers/components/SQL adapter and disposable minimal PostgreSQL tables:12 healthy full bodies,12 friendship-permission faults and12 community-permission faults. Candidate test compares all36 status/full normalized JSON bodies using real PostgreSQL role ACLs; package passes. Covers all-filtered and mixed pages, source raw order versus community rank, offsets0/1/2/4 and limit2/3. Registry/owner/voice providers remain controlled; concurrency and deployment state are not proved."
         }
       ],
-      "gaps": [
-        "Member-request query phases differ under table-permission faults: a nonempty raw page filtered to zero communities skips the source relationship error; a truly empty raw page unnecessarily reads community tables. Healthy pagination controls agree; paired fault regressions and correction are pending."
-      ],
+      "gaps": [],
       "remaining_verification": "Execute deployed consumer and nonempty-data comparisons, including provider/configuration branches. Focused source comparison and local regressions are not exhaustive equivalence."
     },
     {
