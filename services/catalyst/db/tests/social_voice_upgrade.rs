@@ -7,6 +7,10 @@ use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
 };
 const STEP: &str = "0020_social_voice_notifications";
+const MAIN_EVENT_HOOK_STEPS: [&str; 2] = [
+    "0018_event_hook_compatibility",
+    "0019_event_hook_admin_priority",
+];
 const PREPARED_V2: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
     "/services/catalyst/tests/fixtures/schema/v2-prepared-c1fab3991.sql"
@@ -158,9 +162,9 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     let done = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
         .await
         .unwrap();
-    assert!(
-        done.steps.is_empty(),
-        "recorded historical steps are never replayed"
+    assert_eq!(
+        done.steps, MAIN_EVENT_HOOK_STEPS,
+        "only newly merged main event-hook steps run; recorded historical steps never replay"
     );
     let after: String = sqlx::query_scalar(facts_sql).fetch_one(pool).await.unwrap();
     assert_eq!(after, facts);
@@ -184,7 +188,33 @@ async fn populated_voice_notification_upgrade_preserves_facts_and_replays_its_le
     );
     let ledger: Vec<(String, String, bool, chrono::NaiveDateTime)> =
         sqlx::query_as(ledger_sql).fetch_all(pool).await.unwrap();
-    assert_eq!(ledger, before, "retain every historical ledger value");
+    assert_eq!(ledger.len(), before.len() + MAIN_EVENT_HOOK_STEPS.len());
+    for row in &before {
+        assert!(
+            ledger.contains(row),
+            "every historical hash, origin and timestamp survives: {row:?}"
+        );
+    }
+    let added: Vec<_> = ledger.iter().filter(|row| !before.contains(row)).collect();
+    assert_eq!(
+        added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
+        MAIN_EVENT_HOOK_STEPS
+    );
+    let embedded = schema_migrate::parse_steps(MIGRATIONS_SQL);
+    for row in added {
+        assert_eq!(
+            row.1,
+            embedded
+                .iter()
+                .find(|step| step.name == row.0)
+                .unwrap()
+                .sha256
+        );
+        assert!(
+            !row.2,
+            "the actual executor records each new step as migrated"
+        );
+    }
     let replay = schema_migrate::migrate(pool, SCHEMA_SQL, MIGRATIONS_SQL)
         .await
         .unwrap();

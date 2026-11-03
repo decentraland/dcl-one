@@ -167,7 +167,7 @@ impl Config {
         Ok(())
     }
 
-    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 73] {
+    pub(crate) fn secret_slots(&mut self) -> [(&'static str, &mut Option<String>); 74] {
         [
             (
                 "CATALYRST_CONTENT_ADMIN_TOKEN",
@@ -210,6 +210,7 @@ impl Config {
                 &mut self.social.catalyrst_badges_admin_token,
             ),
             ("SENDGRID_API_KEY", &mut self.social.sendgrid_api_key),
+            ("SLACK_WEBHOOK", &mut self.explore.events_slack_webhook),
             (
                 "REWARDS_API_KEY_BY_REFERRAL_INVITED_USERS_5",
                 &mut self.social.rewards_api_key_by_referral_invited_users_5,

@@ -10,6 +10,45 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 
 use catalyst::schema_migrate::{self, MigrateError};
 
+const MAIN_EVENT_HOOK_STEPS: [&str; 2] = [
+    "0018_event_hook_compatibility",
+    "0019_event_hook_admin_priority",
+];
+type LedgerRow = (String, String, bool, chrono::NaiveDateTime);
+
+async fn step_ledger(pool: &PgPool) -> Vec<LedgerRow> {
+    sqlx::query_as(
+        "SELECT step,sha256,created_fresh,applied_at FROM meta.schema_steps ORDER BY step",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+fn assert_only_event_hook_steps_added(before: &[LedgerRow], after: &[LedgerRow]) {
+    assert_eq!(after.len(), before.len() + MAIN_EVENT_HOOK_STEPS.len());
+    for row in before {
+        assert!(
+            after.contains(row),
+            "every historical hash, origin and timestamp survives: {row:?}"
+        );
+    }
+    let added: Vec<_> = after.iter().filter(|row| !before.contains(row)).collect();
+    assert_eq!(
+        added.iter().map(|row| row.0.as_str()).collect::<Vec<_>>(),
+        MAIN_EVENT_HOOK_STEPS
+    );
+    let steps = schema_migrate::parse_steps(catalyst::db::MIGRATIONS_SQL);
+    for row in added {
+        let embedded = steps.iter().find(|step| step.name == row.0).unwrap();
+        assert_eq!(row.1, embedded.sha256);
+        assert!(
+            !row.2,
+            "the actual executor records each new step as migrated"
+        );
+    }
+}
+
 const CLOSURE_BASE: &str = include_str!("fixtures/schema/closure-base-c96370f21.sql");
 const RELEASE_V3: &str = include_str!(concat!(
     env!("DCL_ONE_ROOT"),
@@ -259,6 +298,7 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         return;
     };
     let pool = &old.pool;
+    let historical_ledger = step_ledger(pool).await;
     release_result(pool, &release_v3()).await.unwrap();
     assert_eq!(
         sqlx::query_scalar::<_, i32>("SELECT version FROM meta.schema WHERE id=1")
@@ -278,10 +318,11 @@ async fn a_database_stamped_with_the_closure_base_upgrades_to_head_with_its_rows
         schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
             .await
             .unwrap();
-    assert!(
-        done.steps.is_empty(),
-        "prepared historical steps are not replayed"
+    assert_eq!(
+        done.steps, MAIN_EVENT_HOOK_STEPS,
+        "only the newly merged main event-hook steps run; historical steps never replay"
     );
+    assert_only_event_hook_steps_added(&historical_ledger, &step_ledger(pool).await);
     assert!(
         !done.created.iter().any(|object| matches!(object,
         schema_migrate::Object::Index(name) if name == "social.private_voice_chats_caller_idx"
@@ -790,11 +831,7 @@ async fn composed_voice_release_rolls_back_connection_loss_at_each_boundary_then
         };
         let pool = &old.pool;
         let original = seed_notification_facts(pool).await;
-        let ledger_before: Vec<(String, String, bool)> =
-            sqlx::query_as("SELECT step,sha256,created_fresh FROM meta.schema_steps ORDER BY step")
-                .fetch_all(pool)
-                .await
-                .unwrap();
+        let ledger_before = step_ledger(pool).await;
         let end = release.find(boundary).unwrap();
         let mut interrupted = pool.acquire().await.unwrap();
         sqlx::raw_sql(sqlx::AssertSqlSafe(release[..end].to_owned()))
@@ -831,9 +868,9 @@ async fn composed_voice_release_rolls_back_connection_loss_at_each_boundary_then
             schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
                 .await
                 .unwrap();
-        assert!(
-            applied.steps.is_empty(),
-            "historical0020 cannot re-add retired columns"
+        assert_eq!(
+            applied.steps, MAIN_EVENT_HOOK_STEPS,
+            "only new main event-hook steps apply; historical 0020 never re-adds retired columns"
         );
         catalyst::db::bootstrap(pool).await.unwrap();
         assert!(
@@ -842,12 +879,7 @@ async fn composed_voice_release_rolls_back_connection_loss_at_each_boundary_then
                 .unwrap()
                 .is_empty()
         );
-        let ledger_after: Vec<(String, String, bool)> =
-            sqlx::query_as("SELECT step,sha256,created_fresh FROM meta.schema_steps ORDER BY step")
-                .fetch_all(pool)
-                .await
-                .unwrap();
-        assert_eq!(ledger_after, ledger_before);
+        assert_only_event_hook_steps_added(&ledger_before, &step_ledger(pool).await);
         // New aliases are additional facts, never an overwrite of the canonical backfill.
         sqlx::query("INSERT INTO social.community_voice_notifications(raw_community_id,community_id,notification_scope,generation,expires_at) SELECT upper(raw_community_id),community_id,'members',gen_random_uuid(),expires_at+interval '1 hour' FROM social.community_voice_notifications").execute(pool).await.unwrap();
         assert_eq!(
@@ -938,4 +970,59 @@ fn shipped_main_v2_capture_matches_its_pinned_executor_provenance() {
         hex::encode(Sha256::digest(MAIN_V2.as_bytes()))
     );
     assert!(!MAIN_V2.contains("0020_social_voice_notifications"));
+}
+
+#[tokio::test]
+async fn earlier_event_hook_layouts_upgrade_without_losing_intents() {
+    let Some(old) = prepared_v2(None).await else {
+        return;
+    };
+    let pool = &old.pool;
+    release_result(pool, &release_v3()).await.unwrap();
+    schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+        .await
+        .unwrap();
+    // Model the actual earlier development layout: buckets already existed,
+    // but creator throttling and prioritized claim ordering did not.
+    sqlx::raw_sql("ALTER TABLE explore.event_moderation_hooks DROP COLUMN creator_address CASCADE;
+        DROP INDEX explore.event_moderation_hooks_due_idx;
+        CREATE INDEX event_moderation_hooks_due_idx ON explore.event_moderation_hooks(next_attempt_at,id) WHERE completed_at IS NULL AND attempts<6;
+        DELETE FROM meta.schema_steps WHERE step IN ('0018_event_hook_compatibility','0019_event_hook_admin_priority');
+        INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event) VALUES(gen_random_uuid(),'retained-submission','submitted','{\"name\":\"Retained intent\"}')")
+        .execute(pool).await.unwrap();
+    let result =
+        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+            .await
+            .unwrap();
+    assert!(
+        result
+            .steps
+            .iter()
+            .any(|step| step == "0018_event_hook_compatibility")
+    );
+    assert!(has_column(pool, "explore.event_moderation_hooks", "creator_address").await);
+    assert!(has_column(pool, "explore.event_moderation_hooks", "edit_bucket").await);
+    assert_eq!(sqlx::query_scalar::<_,i64>("SELECT count(*) FROM explore.event_moderation_hooks WHERE event_id='retained-submission' AND event->>'name'='Retained intent'")
+        .fetch_one(pool).await.unwrap(),1);
+    let due:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='explore' AND indexname='event_moderation_hooks_due_idx'")
+        .fetch_one(pool).await.unwrap();
+    assert!(
+        due.contains("CASE") && due.contains("THEN 1") && due.contains("ELSE 2"),
+        "the object pass replaces the old due ordering: {due}"
+    );
+    let creator:String=sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='explore' AND indexname='event_moderation_hooks_creator_idx'")
+        .fetch_one(pool).await.unwrap();
+    assert!(
+        creator.contains("kind = 'edited'"),
+        "the creator index covers only throttled edits: {creator}"
+    );
+    sqlx::query("INSERT INTO explore.event_moderation_hooks(id,event_id,kind,event,creator_address,edit_bucket) VALUES(gen_random_uuid(),'new-edit','edited','{}','creator',timezone('UTC',now()))")
+        .execute(pool).await.unwrap();
+    assert!(
+        schema_migrate::migrate(pool, catalyst::db::SCHEMA_SQL, catalyst::db::MIGRATIONS_SQL)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    old.drop().await;
 }
