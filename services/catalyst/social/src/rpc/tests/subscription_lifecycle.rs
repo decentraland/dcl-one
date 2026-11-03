@@ -31,7 +31,12 @@ impl ServiceClient<MemoryTransport> for MemoryClient {
 /// Every registered stream must encode its own final notice and then cleanly end;
 /// rejected duplicates must not allocate another pubsub receiver.
 #[tokio::test]
-async fn duplicate_rpc_streams_send_the_pinned_final_notice() {
+async fn duplicate_rpc_streams_send_the_pinned_final_notice_and_source_metrics() {
+    let recorder = crate::comms::metrics::prometheus_builder()
+        .unwrap()
+        .build_recorder();
+    let handle = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
     let ctx = context_without_database();
     let me = addr("dup");
     ctx.register_identity(1, me.clone());
@@ -161,6 +166,28 @@ async fn duplicate_rpc_streams_send_the_pinned_final_notice() {
         "communityVoiceChatUpdate",
         10
     );
+    let rendered = handle.render();
+    for event in [
+        "friendshipUpdate",
+        "friendConnectivityUpdate",
+        "blockUpdate",
+        "communityMemberConnectivityUpdate",
+        "privateVoiceChatUpdate",
+        "communityVoiceChatUpdate",
+    ] {
+        assert!(
+            rendered.contains(&format!(
+                "subscription_duplicates_total{{event=\"{event}\"}} 1"
+            )),
+            "{event}\n{rendered}"
+        );
+        assert!(
+            rendered.contains(&format!(
+                "rpc_updates_sent_on_subscription{{event=\"{event}\"}} 1"
+            )),
+            "{event}"
+        );
+    }
     assert_eq!(ctx.pubsub().subscriber_count(&me), 0);
     drop(active.remove(2));
     let mut original: Generator<BlockUpdate> = remote
@@ -188,6 +215,11 @@ async fn duplicate_rpc_streams_send_the_pinned_final_notice() {
             .unwrap(),
         Some(update)
     );
+    let calls = "rpc_procedure_call_total{code=\"OK\",procedure=\"subscribeToBlockUpdates\"}";
+    assert!(
+        handle.render().contains(&format!("{calls} 2")),
+        "two duplicate streams completed; original remains open"
+    );
     ctx.forget_identity(1);
     receivers(&ctx, &me, 0).await;
     assert!(
@@ -195,6 +227,10 @@ async fn duplicate_rpc_streams_send_the_pinned_final_notice() {
             .await
             .unwrap()
             .is_none()
+    );
+    assert!(
+        handle.render().contains(&format!("{calls} 3")),
+        "original completion is recorded on client cancellation"
     );
     drop(client);
     server_task.abort();

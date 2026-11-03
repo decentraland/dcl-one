@@ -71,6 +71,8 @@ async fn handle_connection(
     let max = state.settings.ws_max_concurrent_connections;
     let Some(slot) = state.ctx.open_socket(Protocol::Rpc, max) else {
         tracing::warn!(max, "rejecting ws connection: pool is full");
+        super::metrics::log("ws-handler", "warn");
+        metrics::counter!("ws_close_codes", "code" => "1013").increment(1);
         let _ = socket.send(close_message(POOL_FULL)).await;
         return Ok(());
     };
@@ -117,17 +119,18 @@ async fn auth_handshake(
     tokio::pin!(deadline);
     let frame = loop {
         tokio::select! {
-            _ = close.ended() => return end(socket, close.frame()).await,
+            _ = close.ended() => return end(socket, close, close.frame()).await,
             action = idle.next() => match action {
                 IdleAction::Ping => { if socket.send(Message::Ping(Vec::new().into())).await.is_err() { return None; } },
                 IdleAction::Expired => { close.peer_gone(); return None; },
             },
-            _ = &mut deadline => return end(socket, Some(AUTH_TIMEOUT)).await,
+            _ = &mut deadline => return end(socket, close, Some(AUTH_TIMEOUT)).await,
             message = socket.recv() => match message {
-                Some(Ok(Message::Text(text))) => { idle.activity(); break text.to_string(); },
-                Some(Ok(Message::Binary(bytes))) => { idle.activity(); break String::from_utf8_lossy(&bytes).into_owned(); },
+                Some(Ok(Message::Text(text))) => { metrics::counter!("ws_messages_received").increment(1); idle.activity(); break text.to_string(); },
+                Some(Ok(Message::Binary(bytes))) => { metrics::counter!("ws_messages_received").increment(1); idle.activity(); break String::from_utf8_lossy(&bytes).into_owned(); },
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => { idle.activity(); continue; },
-                _ => return None,
+                Some(Ok(Message::Close(frame))) => { close.peer_closed(frame.map_or(1005, |frame| frame.code)); return None; },
+                _ => { close.peer_gone(); return None; },
             },
         }
     };
@@ -146,7 +149,7 @@ async fn auth_handshake(
     let verdict = loop {
         tokio::select! {
             biased;
-            _ = close.ended() => return end(socket, close.frame()).await,
+            _ = close.ended() => return end(socket, close, close.frame()).await,
             action = idle.next() => match action {
                 IdleAction::Ping => { if socket.send(Message::Ping(Vec::new().into())).await.is_err() { return None; } },
                 IdleAction::Expired => { close.peer_gone(); return None; },
@@ -154,15 +157,18 @@ async fn auth_handshake(
             message = socket.recv() => match message {
                 Some(Ok(Message::Text(_) | Message::Binary(_))) => {
                     idle.activity();
+                    super::metrics::log("ws-handler", "warn");
                     let _ = socket.send(Message::Text(AUTH_IN_PROGRESS.into())).await;
                 }
                 Some(Ok(Message::Ping(_) | Message::Pong(_))) => { idle.activity(); }
+                Some(Ok(Message::Close(frame))) => { close.peer_closed(frame.map_or(1005, |frame| frame.code)); return None; },
                 _ => {
+                    close.peer_gone();
                     tracing::info!("socket closed during authentication; not attached");
                     return None;
                 }
             },
-            _ = &mut deadline => return end(socket, Some(AUTH_TIMEOUT)).await,
+            _ = &mut deadline => return end(socket, close, Some(AUTH_TIMEOUT)).await,
             verdict = &mut verification => break verdict,
         }
     };
@@ -179,14 +185,28 @@ async fn auth_handshake(
                 "type" => kind
             )
             .increment(1);
+            metrics::counter!("ws_auth_errors", "type" => kind).increment(1);
+            super::metrics::log(
+                "ws-handler",
+                if kind == "server_error" {
+                    "error"
+                } else {
+                    "warn"
+                },
+            );
             tracing::info!(%err, "auth handshake failed");
-            end(socket, Some(UNAUTHORIZED)).await
+            end(socket, close, Some(UNAUTHORIZED)).await
         }
     }
 }
 
-async fn end(socket: &mut WebSocket, frame: Option<(u16, &'static str)>) -> Option<Address> {
+async fn end(
+    socket: &mut WebSocket,
+    close: &SocketClose,
+    frame: Option<(u16, &'static str)>,
+) -> Option<Address> {
     if let Some(frame) = frame {
+        close.end(frame.0, frame.1);
         let _ = socket.send(close_message(frame)).await;
     }
     None

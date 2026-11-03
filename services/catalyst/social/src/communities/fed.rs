@@ -302,6 +302,11 @@ pub(super) fn requires_gateway_signer(method: &Method, path: &str) -> bool {
             ))
 }
 
+/// Internal provenance for a response selected by the native envelope classifier.
+/// The source HTTP metrics view must not count native federation operations.
+#[derive(Clone)]
+pub(crate) struct NativeEnvelopeResponse;
+
 /// The old write handlers' first step: an envelope body takes the federated
 /// branch, anything else the client handler, untouched.
 pub async fn envelopes(State(state): State<SharedState>, request: Request, next: Next) -> Response {
@@ -348,7 +353,9 @@ pub async fn envelopes(State(state): State<SharedState>, request: Request, next:
             .await;
     }
     if gateway && bytes.len() > BODY_LIMIT {
-        return (StatusCode::PAYLOAD_TOO_LARGE, "length limit exceeded").into_response();
+        let mut response = (StatusCode::PAYLOAD_TOO_LARGE, "length limit exceeded").into_response();
+        response.extensions_mut().insert(NativeEnvelopeResponse);
+        return response;
     }
     let method = parts.method.as_str().to_ascii_lowercase();
     let request_path = parts
@@ -365,7 +372,7 @@ pub async fn envelopes(State(state): State<SharedState>, request: Request, next:
         body: &bytes,
         caller: super::auth::Caller::from_extensions(&parts.extensions),
     };
-    match route {
+    let mut response = match route {
         FedRoute::Create => create(&ctx).await,
         FedRoute::Update(id) => update(&ctx, &id).await,
         FedRoute::Delete(id) => delete(&ctx, &id).await,
@@ -381,7 +388,9 @@ pub async fn envelopes(State(state): State<SharedState>, request: Request, next:
         FedRoute::Like(id, post) => like(&ctx, &id, &post, true).await,
         FedRoute::Unlike(id, post) => like(&ctx, &id, &post, false).await,
         FedRoute::RequestStatus(id, request) => request_status(&ctx, &id, &request).await,
-    }
+    };
+    response.extensions_mut().insert(NativeEnvelopeResponse);
+    response
 }
 
 struct Ctx<'a> {

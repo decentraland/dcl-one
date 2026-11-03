@@ -36,9 +36,10 @@ fn poll_futures(futures: &mut BTreeMap<u64, (oneshot::Receiver<Result<(), String
 
 #[test]
 fn source_transport_timer_drain_errors_and_capacity_traces() {
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../../../../tests/fixtures/conformance/social/ws-transport-source-cases.json"
-    ))
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/ws-transport-source-cases.json"
+    )))
     .unwrap();
     assert_eq!(
         fixture["baseline"]["revision"],
@@ -342,9 +343,10 @@ fn source_declared_metric_kinds_match_actual_queue_registration() {
             metrics::Histogram::noop()
         }
     }
-    let fixture: Value = serde_json::from_str(include_str!(
-        "../../../../../tests/fixtures/conformance/social/ws-transport-source-cases.json"
-    ))
+    let fixture: Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/ws-transport-source-cases.json"
+    )))
     .unwrap();
     let recorder = Kinds::default();
     metrics::with_local_recorder(&recorder, || {

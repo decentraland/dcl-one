@@ -762,9 +762,10 @@ async fn ordinary_large_reader_case(idle_only: bool) {
 
 #[tokio::test]
 async fn authenticated_text_and_binary_frames_match_source_drpc_exchange() {
-    let source: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../tests/fixtures/conformance/social/ws-frames-source-cases.json"
-    ))
+    let source: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/ws-frames-source-cases.json"
+    )))
     .unwrap();
     assert_eq!(
         source["baseline"]["revision"],
@@ -811,9 +812,10 @@ async fn authenticated_text_and_binary_frames_match_source_drpc_exchange() {
 #[tokio::test]
 async fn mounted_socket_paths_and_proxy_headers_match_actual_source_verifiers() {
     use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-    let source: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../tests/fixtures/conformance/social/ws-paths-source-cases.json"
-    ))
+    let source: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/ws-paths-source-cases.json"
+    )))
     .unwrap();
     assert_eq!(
         source["baseline"]["revision"],

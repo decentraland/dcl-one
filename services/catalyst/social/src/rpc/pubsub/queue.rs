@@ -40,6 +40,17 @@ impl StreamKind {
             Self::All
         }
     }
+    fn event(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Friendship => "friendshipUpdate",
+            Self::FriendConnectivity => "friendConnectivityUpdate",
+            Self::Block => "blockUpdate",
+            Self::PrivateVoice => "privateVoiceChatUpdate",
+            Self::CommunityVoice => "communityVoiceChatUpdate",
+            Self::CommunityMember => "communityMemberConnectivityUpdate",
+        }
+    }
     fn matches(self, event: &SocialEvent) -> bool {
         match self {
             Self::All => true,
@@ -97,6 +108,7 @@ impl Queue {
             metrics::counter!("social_subscription_queue_overflow").increment(1);
             match &self.policy {
                 OverflowPolicy::DropOldest => {
+                    metrics::counter!("subscription_updates_dropped_total", "event" => self.kind.event()).increment(1);
                     pending.values.pop_front();
                 }
                 OverflowPolicy::Close {
@@ -165,6 +177,19 @@ impl Drop for StreamReceiver {
     }
 }
 impl PubSub {
+    pub(crate) fn active_generators(&self) -> usize {
+        self.streams
+            .iter()
+            .map(|entry| {
+                entry
+                    .value()
+                    .lock()
+                    .iter()
+                    .filter(|queue| queue.strong_count() > 0)
+                    .count()
+            })
+            .sum()
+    }
     pub(crate) fn subscribe_updates<T: 'static>(&self, address: &str) -> StreamReceiver {
         self.subscribe_stream(
             address,
@@ -211,13 +236,30 @@ mod tests {
         })
     }
     #[tokio::test]
-    async fn rpc_retains_exact_latest_thousand_and_drops_its_registration() {
+    async fn rpc_queue_metrics_match_source_latest_thousand_drop_observations() {
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
         let bus = PubSub::new();
         let mut rx = bus.subscribe_updates::<BlockUpdate>("me");
         for n in 0..1100 {
             bus.publish_local("me", event(n));
         }
         assert_eq!(rx.len(), CAPACITY);
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
+        let dropped: u64 = fixture["subscriptionObservations"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|item| item["name"] == "subscription_updates_dropped_total")
+            .map(|item| item["value"].as_u64().unwrap())
+            .sum();
+        assert_eq!(dropped, 100);
+        assert!(handle.render().contains(&format!(
+            "subscription_updates_dropped_total{{event=\"blockUpdate\"}} {dropped}"
+        )));
         for n in 100..1100 {
             assert!(
                 matches!(&*rx.recv().await.unwrap(),SocialEvent::Block(u) if u.address==n.to_string())

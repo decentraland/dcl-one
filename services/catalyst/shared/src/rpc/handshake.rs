@@ -485,8 +485,8 @@ mod tests {
     async fn social_numeric_timestamps_and_expiry_match_executed_source_without_rewriting_signed_bytes()
      {
         let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../tests/fixtures/conformance/social/ws-numbers-source-cases.json"
+            env!("DCL_ONE_ROOT"),
+            "/services/catalyst/tests/fixtures/conformance/social/ws-numbers-source-cases.json"
         )))
         .unwrap();
         let now = fixture["now"].as_i64().unwrap();

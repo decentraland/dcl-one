@@ -38,12 +38,27 @@ const CLOSE_BUDGET: Duration = Duration::from_millis(100);
 pub struct SocketClose {
     ended: CancellationToken,
     frame: OnceLock<Option<(u16, &'static str)>>,
+    observed_code: OnceLock<u16>,
 }
 
 impl SocketClose {
     /// Ends the socket with `code` and `reason`, unless it already ended.
     pub fn end(&self, code: u16, reason: &'static str) {
-        let _ = self.frame.set(Some((code, reason)));
+        if self.frame.set(Some((code, reason))).is_ok() {
+            let _ = self.observed_code.set(code);
+        }
+        self.ended.cancel();
+    }
+
+    /// The received close code, or the local terminal code when no peer code exists.
+    pub fn observed_code(&self) -> Option<u16> {
+        self.observed_code.get().copied()
+    }
+
+    pub fn peer_closed(&self, code: u16) {
+        if self.frame.set(None).is_ok() {
+            let _ = self.observed_code.set(code);
+        }
         self.ended.cancel();
     }
 
@@ -198,15 +213,21 @@ impl AxumWsTransport {
                         if matches!(&msg, Some(Ok(_))) { reader_idle.activity(); }
                         match msg {
                         Some(Ok(Message::Binary(b))) => {
+                            if forward_text { metrics::counter!("ws_messages_received").increment(1); }
                             if inbound_tx.send(b.to_vec()).is_err() {
                                 break;
                             }
                         }
                         Some(Ok(Message::Text(text))) if forward_text => {
+                            metrics::counter!("ws_messages_received").increment(1);
                             if inbound_tx.send(text.as_bytes().to_vec()).is_err() { break; }
                         }
                         Some(Ok(Message::Text(_))) | Some(Ok(Message::Ping(_))) | Some(Ok(Message::Pong(_))) => {}
-                        Some(Ok(Message::Close(_))) | Some(Err(_)) | None => {
+                        Some(Ok(Message::Close(frame))) => {
+                            reader_close.peer_closed(frame.map_or(1005, |frame| frame.code));
+                            break;
+                        }
+                        Some(Err(_)) | None => {
                             reader_close.peer_gone();
                             break;
                         }
@@ -267,6 +288,7 @@ impl Transport for AxumWsTransport {
         }
         self.outbound_tx
             .send(OrdinaryOutbound {
+                social_metrics: false,
                 bytes: message,
                 _permit: None,
             })
@@ -295,6 +317,7 @@ impl Transport for AxumWsTransport {
                 bytes: message,
                 delivery,
                 completion,
+                social_metrics: self.ordinary.is_some(),
             };
             self.guarded_tx
                 .send(envelope)
@@ -324,12 +347,14 @@ impl Transport for AxumWsTransport {
 // Opt-in lane shares the existing writer; ordinary multiplexed procedure behavior stays intact.
 const GUARDED_CAPACITY: usize = 16;
 struct GuardedOutbound {
+    social_metrics: bool,
     _permit: Option<byte_budget::Permit>,
     bytes: Vec<u8>,
     delivery: GuardedDelivery,
     completion: tokio::sync::oneshot::Sender<Result<GuardedSend, TransportError>>,
 }
 struct OrdinaryOutbound {
+    social_metrics: bool,
     bytes: Vec<u8>,
     _permit: Option<byte_budget::Permit>,
 }
@@ -393,8 +418,12 @@ async fn run_writer_with_idle<S>(
                 close.peer_gone();
                 return;
             }
-            Outbound::Ordinary(OrdinaryOutbound { bytes, _permit }) => {
-                let sent = tokio::select! { _ = close.ended() => false, result = sink.send(Message::Binary(bytes.into())) => result.is_ok() };
+            Outbound::Ordinary(OrdinaryOutbound {
+                bytes,
+                _permit,
+                social_metrics,
+            }) => {
+                let sent = tokio::select! { _ = close.ended() => false, result = write_binary(sink, bytes, social_metrics) => result.is_ok() };
                 if !sent {
                     break;
                 }
@@ -420,6 +449,23 @@ async fn run_writer_with_idle<S>(
     let _ = tokio::time::timeout(CLOSE_BUDGET, sink.close()).await;
 }
 
+// Both Social lanes observe a frame only once the actual sink accepts it.
+// SUCCESS here is the Tokio handoff; native uWS buffering/result classification
+// is unavailable in this backend. Flush failure cannot revoke accepted bytes.
+async fn write_binary<S>(sink: &mut S, bytes: Vec<u8>, social_metrics: bool) -> Result<(), S::Error>
+where
+    S: futures::Sink<Message> + Unpin,
+{
+    futures::future::poll_fn(|cx| std::pin::Pin::new(&mut *sink).poll_ready(cx)).await?;
+    let size = bytes.len();
+    std::pin::Pin::new(&mut *sink).start_send(Message::Binary(bytes.into()))?;
+    if social_metrics {
+        metrics::counter!("ws_messages_sent").increment(1);
+        metrics::histogram!("ws_message_size_bytes", "result" => "success").record(size as f64);
+    }
+    futures::future::poll_fn(|cx| std::pin::Pin::new(&mut *sink).poll_flush(cx)).await
+}
+
 async fn write_guarded<S>(sink: &mut S, envelope: GuardedOutbound, close: &SocketClose) -> bool
 where
     S: futures::Sink<Message> + Unpin,
@@ -429,6 +475,7 @@ where
         delivery,
         completion,
         _permit,
+        social_metrics,
     } = envelope;
     if completion.is_closed() || delivery.cancel.is_cancelled() {
         let _ = completion.send(Ok(GuardedSend::Suppressed));
@@ -457,10 +504,11 @@ where
     }
     // This is the irrevocable application handoff. A concurrent change after it cannot
     // revoke bytes already given to the sink/network. Any interrupted write retires it.
+    let write = write_binary(sink, bytes, social_metrics);
     let sent = tokio::select! {
         _ = close.ended() => false,
         _ = delivery.cancel.cancelled() => false,
-        result = tokio::time::timeout_at(delivery.expires_at, sink.send(Message::Binary(bytes.into()))) => matches!(result, Ok(Ok(()))),
+        result = tokio::time::timeout_at(delivery.expires_at, write) => matches!(result, Ok(Ok(()))),
     };
     let _ = completion.send(if sent {
         Ok(GuardedSend::Sent)
@@ -487,6 +535,7 @@ mod guarded_tests {
 
     struct SinkState {
         flush: AtomicBool,
+        reject: AtomicBool,
         frames: std::sync::Mutex<Vec<Vec<u8>>>,
         closes: std::sync::Mutex<Vec<(u16, String)>>,
         wake: AtomicWaker,
@@ -496,6 +545,7 @@ mod guarded_tests {
         fn new(flush: bool) -> Arc<Self> {
             Arc::new(Self {
                 flush: AtomicBool::new(flush),
+                reject: AtomicBool::new(false),
                 frames: std::sync::Mutex::new(Vec::new()),
                 closes: std::sync::Mutex::new(Vec::new()),
                 wake: AtomicWaker::new(),
@@ -514,6 +564,9 @@ mod guarded_tests {
             Poll::Ready(Ok(()))
         }
         fn start_send(self: Pin<&mut Self>, item: Message) -> Result<(), Self::Error> {
+            if self.0.reject.load(Ordering::SeqCst) {
+                return Err(std::io::Error::other("rejected before acceptance"));
+            }
             match item {
                 Message::Binary(bytes) => self.0.frames.lock().unwrap().push(bytes.to_vec()),
                 Message::Close(Some(frame)) => self
@@ -539,6 +592,159 @@ mod guarded_tests {
             Poll::Ready(Ok(()))
         }
     }
+    #[derive(Default)]
+    struct AcceptedMetrics {
+        sent: std::sync::atomic::AtomicU64,
+        bytes: std::sync::atomic::AtomicU64,
+    }
+    impl metrics::CounterFn for AcceptedMetrics {
+        fn increment(&self, value: u64) {
+            self.sent.fetch_add(value, Ordering::Relaxed);
+        }
+        fn absolute(&self, value: u64) {
+            self.sent.store(value, Ordering::Relaxed);
+        }
+    }
+    impl metrics::HistogramFn for AcceptedMetrics {
+        fn record(&self, value: f64) {
+            self.bytes.fetch_add(value as u64, Ordering::Relaxed);
+        }
+    }
+    struct AcceptedRecorder(Arc<AcceptedMetrics>);
+    impl metrics::Recorder for AcceptedRecorder {
+        fn describe_counter(
+            &self,
+            _: metrics::KeyName,
+            _: Option<metrics::Unit>,
+            _: metrics::SharedString,
+        ) {
+        }
+        fn describe_gauge(
+            &self,
+            _: metrics::KeyName,
+            _: Option<metrics::Unit>,
+            _: metrics::SharedString,
+        ) {
+        }
+        fn describe_histogram(
+            &self,
+            _: metrics::KeyName,
+            _: Option<metrics::Unit>,
+            _: metrics::SharedString,
+        ) {
+        }
+        fn register_counter(
+            &self,
+            key: &metrics::Key,
+            _: &metrics::Metadata<'_>,
+        ) -> metrics::Counter {
+            if key.name() == "ws_messages_sent" {
+                metrics::Counter::from_arc(self.0.clone())
+            } else {
+                metrics::Counter::noop()
+            }
+        }
+        fn register_gauge(&self, _: &metrics::Key, _: &metrics::Metadata<'_>) -> metrics::Gauge {
+            metrics::Gauge::noop()
+        }
+        fn register_histogram(
+            &self,
+            key: &metrics::Key,
+            _: &metrics::Metadata<'_>,
+        ) -> metrics::Histogram {
+            if key.name() == "ws_message_size_bytes" {
+                assert_eq!(
+                    key.labels()
+                        .map(|label| (label.key(), label.value()))
+                        .collect::<Vec<_>>(),
+                    [("result", "success")]
+                );
+                metrics::Histogram::from_arc(self.0.clone())
+            } else {
+                metrics::Histogram::noop()
+            }
+        }
+    }
+    #[tokio::test(start_paused = true)]
+    async fn guarded_social_metrics_count_actual_acceptance_before_a_later_flush_timeout() {
+        for (social_metrics, reject, flush, expected_sent) in [
+            (true, false, false, 1),
+            (false, false, true, 0),
+            (true, true, true, 0),
+        ] {
+            let state = SinkState::new(flush);
+            state.reject.store(reject, Ordering::SeqCst);
+            let recorder = AcceptedRecorder(Arc::new(AcceptedMetrics::default()));
+            let _recording = metrics::set_default_local_recorder(&recorder);
+            let (completion, receiver) = tokio::sync::oneshot::channel();
+            let envelope = GuardedOutbound {
+                social_metrics,
+                _permit: None,
+                bytes: vec![1; 257],
+                completion,
+                delivery: GuardedDelivery {
+                    max_frame_bytes: 1024,
+                    guard: Arc::new(|| Box::pin(async { Ok(true) })),
+                    expires_at: tokio::time::Instant::now() + Duration::from_secs(1),
+                    cancel: CancellationToken::new(),
+                },
+            };
+            let written = write_guarded(
+                &mut TestSink(state.clone()),
+                envelope,
+                &SocketClose::default(),
+            )
+            .await;
+            assert_eq!(written, !reject && flush);
+            assert_eq!(receiver.await.unwrap().is_ok(), written);
+            assert_eq!(recorder.0.sent.load(Ordering::Relaxed), expected_sent);
+            assert_eq!(
+                recorder.0.bytes.load(Ordering::Relaxed),
+                expected_sent * 257
+            );
+            assert_eq!(state.frames.lock().unwrap().len(), usize::from(!reject));
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ordinary_social_metrics_defer_admission_and_count_physical_acceptance_once() {
+        let recorder = AcceptedRecorder(Arc::new(AcceptedMetrics::default()));
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        let (output, mut frames) = unbounded_channel();
+        let close = Arc::new(SocketClose::default());
+        let lane = ordinary::OrdinaryLane::new(
+            OrdinaryQueueConfig::default(),
+            output,
+            ByteBudget::new(1024),
+            close,
+            1024.0,
+        );
+        lane.send(vec![1; 257]).await.unwrap().unwrap();
+        assert_eq!(
+            recorder.0.sent.load(Ordering::Relaxed),
+            0,
+            "admission is not physical acceptance"
+        );
+        let OrdinaryOutbound {
+            bytes,
+            social_metrics,
+            _permit,
+        } = frames.recv().await.unwrap();
+        let mut sink = TestSink(SinkState::new(false));
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(1),
+                write_binary(&mut sink, bytes, social_metrics)
+            )
+            .await
+            .is_err()
+        );
+        assert_eq!(recorder.0.sent.load(Ordering::Relaxed), 1);
+        assert_eq!(recorder.0.bytes.load(Ordering::Relaxed), 257);
+        drop(_permit);
+        assert_eq!(recorder.0.sent.load(Ordering::Relaxed), 1);
+    }
+
     fn transport(state: Arc<SinkState>) -> Arc<AxumWsTransport> {
         let (_, inbound_rx) = unbounded_channel();
         let (outbound_tx, ordinary) = unbounded_channel();
@@ -786,6 +992,7 @@ mod guarded_tests {
             let mut sink = TestSink(state.clone());
             let (completion, receiver) = tokio::sync::oneshot::channel();
             let envelope = GuardedOutbound {
+                social_metrics: false,
                 _permit: None,
                 bytes: vec![1],
                 delivery: GuardedDelivery {

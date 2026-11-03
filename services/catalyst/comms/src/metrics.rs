@@ -16,14 +16,38 @@ const SOCIAL_MESSAGE_SIZE_BUCKETS: [f64; 9] = [
 
 /// Preserve aggregatable Pulse and social histograms in every recorder, including tests.
 pub fn prometheus_builder() -> Result<PrometheusBuilder, BuildError> {
-    PrometheusBuilder::new()
+    let mut builder = PrometheusBuilder::new();
+    for name in [
+        "ws_connection_duration_seconds_by_protocol",
+        "ws_connection_duration_seconds",
+    ] {
+        builder = builder
+            .set_buckets_for_metric(Matcher::Full(name.into()), &SOCIAL_SOCKET_DURATION_BUCKETS)?;
+    }
+    for name in [
+        "ws_message_size_bytes",
+        "rpc_in_procedure_call_size_bytes",
+        "rpc_out_procedure_call_size_bytes",
+    ] {
+        builder = builder
+            .set_buckets_for_metric(Matcher::Full(name.into()), &SOCIAL_MESSAGE_SIZE_BUCKETS)?;
+    }
+    for name in ["http_request_duration_seconds", "http_request_size_bytes"] {
+        builder = builder.set_buckets_for_metric(
+            Matcher::Full(name.into()),
+            &[
+                0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0,
+            ],
+        )?;
+    }
+    builder
         .set_buckets_for_metric(
-            Matcher::Full("ws_connection_duration_seconds_by_protocol".into()),
-            &SOCIAL_SOCKET_DURATION_BUCKETS,
+            Matcher::Full("rpc_procedure_call_duration_seconds".into()),
+            &[0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
         )?
         .set_buckets_for_metric(
-            Matcher::Full("ws_message_size_bytes".into()),
-            &SOCIAL_MESSAGE_SIZE_BUCKETS,
+            Matcher::Full("ai_compliance_validation_duration_seconds".into()),
+            &[0.01, 0.05, 0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
         )?
         .set_buckets_for_metric(
             Matcher::Full("pulse_resync_seq_gap".into()),
@@ -126,6 +150,46 @@ mod tests {
         let expected = parse(capture["prometheus"].as_str().unwrap());
         assert_eq!(expected.0, "histogram");
         assert_eq!(parse(&handle.render()), expected);
+    }
+
+    #[test]
+    fn all_nine_social_histograms_export_the_source_bucket_vectors() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
+        assert_eq!(fixture["histograms"].as_array().unwrap().len(), 9);
+        let recorder = prometheus_builder().unwrap().build_recorder();
+        let handle = recorder.handle();
+        metrics::with_local_recorder(&recorder, || {
+            for item in fixture["histograms"].as_array().unwrap() {
+                metrics::histogram!(item["name"].as_str().unwrap().to_owned()).record(1.0);
+            }
+        });
+        let rendered = handle.render();
+        for item in fixture["histograms"].as_array().unwrap() {
+            let name = item["name"].as_str().unwrap();
+            assert!(
+                rendered.contains(&format!("# TYPE {name} histogram")),
+                "{name}"
+            );
+            let prefix = format!("{name}_bucket{{le=\"");
+            let actual = rendered
+                .lines()
+                .filter_map(|line| line.strip_prefix(&prefix))
+                .map(|line| line.split('"').next().unwrap().to_owned())
+                .collect::<Vec<_>>();
+            let expected = item["buckets"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|value| {
+                    if value == "+Inf" {
+                        "+Inf".to_owned()
+                    } else {
+                        value.as_f64().unwrap().to_string()
+                    }
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected, "{name}");
+        }
     }
 
     #[test]

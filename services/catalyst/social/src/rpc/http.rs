@@ -35,6 +35,183 @@ type Answer = Result<Response, CommError>;
 
 const ADDRESS_PATTERN: &str = "^0x[a-fA-F0-9]{40}$";
 
+// Source router registration order, including HEAD inherited from GET. Native
+// federation/admin extensions are deliberately absent from this application view.
+const SOURCE_HTTP_ROUTES: &[(&str, &[&str])] = &[
+    ("/v1/communities/:address/managed", &["HEAD", "GET"]),
+    ("/v1/communities/:id", &["HEAD", "GET"]),
+    ("/v1/communities", &["HEAD", "GET"]),
+    ("/v1/communities/:id/members", &["HEAD", "GET"]),
+    ("/v1/communities/:id/members", &["POST"]),
+    ("/v1/communities/:id/members/:memberAddress", &["DELETE"]),
+    ("/v1/communities/:id/members/:address", &["PATCH"]),
+    ("/v1/communities/:id/bans", &["HEAD", "GET"]),
+    ("/v1/communities/:id/members/:memberAddress/bans", &["POST"]),
+    (
+        "/v1/communities/:id/members/:memberAddress/bans",
+        &["DELETE"],
+    ),
+    ("/v1/members/:address/communities", &["HEAD", "GET"]),
+    ("/v1/members/:address/communities", &["POST"]),
+    ("/v1/members/:address/requests", &["HEAD", "GET"]),
+    ("/v1/communities/:id/requests", &["HEAD", "GET"]),
+    ("/v1/members/:address/invites", &["HEAD", "GET"]),
+    ("/v1/communities", &["POST"]),
+    ("/v1/communities/:id", &["PUT"]),
+    ("/v1/communities/:id", &["PATCH"]),
+    ("/v1/communities/:id", &["DELETE"]),
+    ("/v1/communities/:id/places", &["HEAD", "GET"]),
+    ("/v1/communities/:id/places", &["POST"]),
+    ("/v1/communities/:id/places/:placeId", &["DELETE"]),
+    ("/v1/communities/:id/posts", &["HEAD", "GET"]),
+    ("/v1/communities/:id/posts", &["POST"]),
+    ("/v1/communities/:id/posts/:postId", &["DELETE"]),
+    ("/v1/communities/:id/posts/:postId/like", &["POST"]),
+    ("/v1/communities/:id/posts/:postId/like", &["DELETE"]),
+    ("/v1/referral-progress", &["POST"]),
+    ("/v1/referral-progress", &["PATCH"]),
+    ("/v1/referral-progress", &["HEAD", "GET"]),
+    ("/v1/referral-email", &["POST"]),
+    ("/v1/communities/:id/requests", &["POST"]),
+    ("/v1/communities/:id/requests/:requestId", &["PATCH"]),
+    ("/v1/social-settings", &["HEAD", "GET"]),
+    ("/v1/social-settings", &["PATCH"]),
+    ("/v1/private-messages-settings", &["HEAD", "GET"]),
+    ("/v1/mutes", &["HEAD", "GET"]),
+    ("/v1/mutes", &["POST"]),
+    ("/v1/mutes", &["DELETE"]),
+    ("/v1/friends/:address", &["DELETE"]),
+    ("/v1/users/:address/friendship-status", &["HEAD", "GET"]),
+    ("/v1/friendship-requests", &["POST"]),
+    ("/v1/friendship-requests/:address", &["PATCH"]),
+    ("/v1/blocks", &["POST"]),
+    ("/v1/blocks/:address", &["DELETE"]),
+    ("/v1/blocking-status", &["HEAD", "GET"]),
+    ("/v1/community-voice-chats/active", &["HEAD", "GET"]),
+    ("/v1/private-voice-chats", &["POST"]),
+    ("/v1/private-voice-chats/incoming", &["HEAD", "GET"]),
+    ("/v1/private-voice-chats/:callId", &["PATCH"]),
+    ("/v1/private-voice-chats/:callId", &["DELETE"]),
+    ("/v1/community-voice-chats", &["POST"]),
+    ("/v1/community-voice-chats/:communityId", &["DELETE"]),
+    (
+        "/v1/community-voice-chats/:communityId/participants",
+        &["POST"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/participants/:address",
+        &["DELETE"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/speakers/:address",
+        &["PUT"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/speakers/:address",
+        &["PATCH"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/speakers/:address",
+        &["DELETE"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/speak-requests",
+        &["POST"],
+    ),
+    (
+        "/v1/community-voice-chats/:communityId/speak-requests/:address",
+        &["DELETE"],
+    ),
+    ("/v1/moderation/communities", &["HEAD", "GET"]),
+    ("/v2/communities/:id", &["HEAD", "GET"]),
+    ("/v2/communities", &["HEAD", "GET"]),
+    ("/v2/communities/:id/members", &["HEAD", "GET"]),
+    ("/v2/communities/:id/bans", &["HEAD", "GET"]),
+    ("/v2/members/:address/requests", &["HEAD", "GET"]),
+    ("/v2/communities/:id/requests", &["HEAD", "GET"]),
+    ("/v2/communities/:id/posts", &["HEAD", "GET"]),
+    ("/v2/friends", &["HEAD", "GET"]),
+    ("/v2/users/:address/mutual-friends", &["HEAD", "GET"]),
+    ("/v2/friendship-requests", &["HEAD", "GET"]),
+    ("/v2/blocks", &["HEAD", "GET"]),
+];
+
+fn source_http_route(path: &str, method: &str) -> Option<&'static str> {
+    let parts = path.trim_end_matches('/').split('/').collect::<Vec<_>>();
+    SOURCE_HTTP_ROUTES
+        .iter()
+        .rev()
+        .find_map(|(pattern, methods)| {
+            let pattern_parts = pattern.split('/').collect::<Vec<_>>();
+            (methods.contains(&method)
+                && parts.len() == pattern_parts.len()
+                && parts.iter().zip(pattern_parts).all(|(part, expected)| {
+                    expected.starts_with(':') || part.eq_ignore_ascii_case(expected)
+                }))
+            .then_some(*pattern)
+        })
+}
+
+/// Source ordinary HTTP middleware, scoped to the Social API composition.
+/// CORS and declared-size rejection run outside this observer. uWS has its own
+/// lower-case method labels and never observes the request-size family.
+pub(crate) async fn instrument_metrics(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    let method = request.method().as_str().to_owned();
+    let path = request
+        .uri()
+        .path()
+        .strip_prefix("/social-api")
+        .unwrap_or(request.uri().path());
+    if matches!(method.as_str(), "OPTIONS" | "TRACE" | "TRACK") || path.starts_with("/federation/")
+    {
+        return next.run(request).await;
+    }
+    let handler = source_http_route(path, &method);
+    let size = request
+        .headers()
+        .get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.parse::<f64>().ok())
+        .filter(|value| !value.is_nan())
+        .unwrap_or(0.0);
+    let started = std::time::Instant::now();
+    let response = next.run(request).await;
+    if response
+        .extensions()
+        .get::<crate::communities::fed::NativeEnvelopeResponse>()
+        .is_some()
+    {
+        return response;
+    }
+    let code = response.status();
+    let fallback = response
+        .extensions()
+        .get::<crate::communities::http::SocialApiNotFound>()
+        .is_some();
+    if handler.is_some()
+        || fallback
+        || matches!(
+            code,
+            StatusCode::METHOD_NOT_ALLOWED | StatusCode::NOT_IMPLEMENTED
+        )
+    {
+        let handler = if matches!(
+            code,
+            StatusCode::METHOD_NOT_ALLOWED | StatusCode::NOT_IMPLEMENTED
+        ) {
+            ""
+        } else {
+            handler.unwrap_or("")
+        };
+        metrics::histogram!("http_request_size_bytes", "method" => method.clone(), "handler" => handler, "code" => code.as_u16().to_string()).record(size);
+        super::metrics::http_finished(method, handler, code.as_u16(), started);
+    }
+    response
+}
+
 /// The routes, with the social-api CORS answer; `social::router` mounts them
 /// at the root and under `/social-api`, behind the writes switch.
 pub fn router(state: Shared) -> Router {
@@ -1200,6 +1377,16 @@ async fn remove_speak_request(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metrics_handler_catalog_matches_actual_pinned_source_router() {
+        let fixture: Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
+        let actual = SOURCE_HTTP_ROUTES
+            .iter()
+            .map(|(path, methods)| json!({ "path": path, "methods": methods }))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, fixture["httpRoutes"].as_array().unwrap().to_owned());
+    }
 
     #[test]
     fn uuids_are_upstreams_hyphenated_form() {

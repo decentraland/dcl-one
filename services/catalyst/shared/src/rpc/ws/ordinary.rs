@@ -100,6 +100,9 @@ struct Queue {
     retry: Option<Instant>,
     active: bool,
     errors: Vec<String>,
+    // The production adapter observes physical acceptance in the shared writer.
+    // Callback fixtures still exercise source native send results directly.
+    defer_socket_metrics: bool,
     #[cfg(test)]
     metrics: Vec<serde_json::Value>,
 }
@@ -114,11 +117,18 @@ impl Queue {
             retry: None,
             active: true,
             errors: Vec::new(),
+            defer_socket_metrics: false,
             #[cfg(test)]
             metrics: Vec::new(),
         }
     }
     fn counter(&mut self, name: &'static str, result: Option<&'static str>) {
+        if self.defer_socket_metrics
+            && (name == "ws_messages_sent"
+                || (name == "ws_backpressure_events" && result != Some("max_retries")))
+        {
+            return;
+        }
         if let Some(result) = result {
             metrics::counter!(name,"result"=>result).increment(1);
         } else {
@@ -135,6 +145,9 @@ impl Queue {
         }
     }
     fn fail(&mut self, error: &str) {
+        if self.defer_socket_metrics {
+            metrics::counter!("ws_transport_errors").increment(1);
+        }
         self.errors.push(error.into());
         self.close();
     }
@@ -181,7 +194,7 @@ impl Queue {
             let outcome = send(&mut item.bytes);
             if matches!(outcome, SendOutcome::Code(_)) {
                 let pending_bytes = buffered();
-                if pending_bytes > 0 {
+                if pending_bytes > 0 && !self.defer_socket_metrics {
                     metrics::gauge!("ws_queue_vs_backpressure_ratio").set(
                         queued as f64 / (pending_bytes as f64 / self.config.estimated_message_size),
                     );
@@ -193,7 +206,10 @@ impl Queue {
                     1 => "success",
                     _ => "dropped",
                 };
-                metrics::histogram!("ws_message_size_bytes","result"=>result).record(size as f64);
+                if !self.defer_socket_metrics {
+                    metrics::histogram!("ws_message_size_bytes","result"=>result)
+                        .record(size as f64);
+                }
             }
             let attempts = match outcome {
                 SendOutcome::Code(1) => {
@@ -256,8 +272,10 @@ impl OrdinaryLane {
         close: Arc<SocketClose>,
         max_backpressure: f64,
     ) -> Arc<Self> {
+        let mut queue = Queue::new(config, max_backpressure);
+        queue.defer_socket_metrics = true;
         let lane = Arc::new(Self {
-            queue: Mutex::new(Queue::new(config, max_backpressure)),
+            queue: Mutex::new(queue),
             changed: Arc::new(Notify::new()),
             output,
             budget,
@@ -292,6 +310,7 @@ impl OrdinaryLane {
                     return SendOutcome::Code(2);
                 };
                 let envelope = OrdinaryOutbound {
+                    social_metrics: true,
                     bytes: std::mem::take(bytes),
                     _permit: Some(permit),
                 };
@@ -349,7 +368,8 @@ impl OrdinaryLane {
                 _ = close.ended() => { if let Some(lane) = weak.upgrade() { lane.close(); } return; },
                 _ = changed.notified() => {},
                 _ = &mut drained => {
-                    metrics::counter!("ws_drain_events").increment(1);
+                    // Physical writer-budget release wakes retries. It is not a
+                    // native uWS drain callback and must not count as one.
                     if let Some(lane) = weak.upgrade() { lane.queue.lock().unwrap().retry = None; }
                 },
                 _ = async { if let Some(deadline) = deadline { tokio::time::sleep_until(deadline).await; } else { std::future::pending::<()>().await; } } => {},

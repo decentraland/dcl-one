@@ -224,6 +224,7 @@ impl State {
         ctx: Context,
         eip1654: Option<Arc<dyn Eip1654Validator>>,
     ) -> Self {
+        metrics::register();
         if settings.metrics_reset_at_night {
             tracing::warn!(
                 "WKC_METRICS_RESET_AT_NIGHT is configured; social-view reset remains unsupported; the shared recorder is preserved"
@@ -269,6 +270,11 @@ impl State {
                 tokio::select! {
                     _ = ctx.cancel.cancelled() => {}
                     _ = server.run() => {}
+                    _ = async {
+                        let period = Duration::from_secs(30);
+                        let mut tick = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+                        loop { tick.tick().await; sockets.report_subscriber_metrics(); }
+                    } => {}
                 }
                 let (code, reason) = SHUTTING_DOWN;
                 sockets.end_sockets(code, reason, SHUTDOWN_BUDGET).await;
@@ -438,6 +444,7 @@ async fn privacy_settings(
     AxumState(state): AxumState<Arc<State>>,
     Path(address): Path<String>,
 ) -> Response {
+    metrics::log("privacy-handler", "info");
     let Ok(address) = crate::shared::identity::Address::parse_untrimmed(&address) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -451,6 +458,7 @@ async fn privacy_settings(
         }))
         .into_response(),
         Err(db::DbError::Sqlx(e)) => {
+            metrics::log("privacy-handler", "error");
             tracing::warn!(error = %e, "privacy-settings read failed");
             (
                 StatusCode::INTERNAL_SERVER_ERROR,

@@ -61,7 +61,7 @@ pub struct ContextInner {
     kill_handles: DashMap<u32, Arc<SocketClose>>,
     /// Every open socket of both protocols, from the moment it opens
     /// (upstream's `ws-pool`): the pool cap counts them and shutdown ends them.
-    sockets: parking_lot::Mutex<HashMap<u64, Arc<SocketClose>>>,
+    sockets: parking_lot::Mutex<HashMap<u64, (Protocol, Arc<SocketClose>)>>,
     next_socket: AtomicU64,
     /// `SOCIAL_WRITES_ENABLED` (`social::writes`): false refuses every
     /// mutating procedure with `SocialError::WritesDisabled`.
@@ -115,9 +115,25 @@ pub struct OpenSocket {
 
 impl Drop for OpenSocket {
     fn drop(&mut self) {
-        self.ctx.0.sockets.lock().remove(&self.id);
+        let mut sockets = self.ctx.0.sockets.lock();
+        sockets.remove(&self.id);
+        metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
+        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => self.protocol.label())
+            .set(
+                sockets
+                    .values()
+                    .filter(|(protocol, _)| *protocol == self.protocol)
+                    .count() as f64,
+            );
+        drop(sockets);
         let protocol = self.protocol.label();
-        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol).decrement(1.0);
+        if matches!(self.protocol, Protocol::Rpc) {
+            let code = self.close.observed_code().unwrap_or(1006).to_string();
+            metrics::counter!("ws_close_codes", "code" => code).increment(1);
+        }
+        metrics::histogram!("ws_connection_duration_seconds")
+            .record(self.opened.elapsed().as_secs_f64());
+        super::metrics::log("ws-pool", "debug");
         metrics::histogram!("ws_connection_duration_seconds_by_protocol", "protocol" => protocol)
             .record(self.opened.elapsed().as_secs_f64());
     }
@@ -200,13 +216,20 @@ impl Context {
         let close = Arc::new(SocketClose::default());
         let mut sockets = self.0.sockets.lock();
         if max.is_some_and(|max| sockets.len() >= max) {
+            metrics::counter!("ws_connections_rejected").increment(1);
             return None;
         }
         let id = self.0.next_socket.fetch_add(1, Ordering::Relaxed);
-        sockets.insert(id, close.clone());
+        sockets.insert(id, (protocol, close.clone()));
+        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label()).set(
+            sockets
+                .values()
+                .filter(|(active, _)| *active == protocol)
+                .count() as f64,
+        );
+        metrics::gauge!("ws_active_connections").set(sockets.len() as f64);
         drop(sockets);
-        metrics::gauge!("ws_active_connections_by_protocol", "protocol" => protocol.label())
-            .increment(1.0);
+        super::metrics::log("ws-pool", "debug");
         Some(OpenSocket {
             ctx: self.clone(),
             id,
@@ -223,7 +246,7 @@ impl Context {
     /// Ends every open socket, authenticated or not, with `code` and
     /// `reason`, and waits up to `budget` for them to close.
     pub async fn end_sockets(&self, code: u16, reason: &'static str, budget: Duration) {
-        for socket in self.0.sockets.lock().values() {
+        for (_, socket) in self.0.sockets.lock().values() {
             socket.end(code, reason);
         }
         let deadline = Instant::now() + budget;
@@ -280,6 +303,12 @@ impl Context {
             .iter()
             .map(|e| (e.key().clone(), *e.value()))
             .collect()
+    }
+
+    pub(crate) fn report_subscriber_metrics(&self) {
+        metrics::gauge!("subscribers_local_count").set(self.0.presence.len() as f64);
+        metrics::gauge!("subscribers_generators_count")
+            .set(self.0.pubsub.active_generators() as f64);
     }
 
     pub fn online_count(&self) -> usize {
@@ -806,5 +835,67 @@ mod tests {
         ctx.forget_identity(7);
         assert_eq!(ctx.disconnect_address("0xabc"), 0);
         assert!(ctx.identity(7).is_none());
+    }
+    #[tokio::test]
+    async fn socket_and_subscriber_metrics_follow_source_owned_lifecycle_counts() {
+        let recorder = crate::comms::metrics::prometheus_builder()
+            .unwrap()
+            .build_recorder();
+        let handle = recorder.handle();
+        let _recording = metrics::set_default_local_recorder(&recorder);
+        let ctx = Context::new(
+            VoiceSettings::default(),
+            Db::new(
+                sqlx::postgres::PgPoolOptions::new()
+                    .connect_lazy("postgres://localhost/unused")
+                    .unwrap(),
+            ),
+            Profiles::new(None),
+            Arc::new(crate::comms::gatekeeper::voice::rooms::NoVoiceRuntime),
+        );
+        let rpc = ctx.open_socket(Protocol::Rpc, Some(2)).unwrap();
+        let stream = ctx.open_socket(Protocol::Stream, Some(2)).unwrap();
+        assert!(ctx.open_socket(Protocol::Rpc, Some(2)).is_none());
+        let rendered = handle.render();
+        assert!(rendered.contains("ws_active_connections 2"));
+        assert!(rendered.contains("ws_connections_rejected 1"));
+        rpc.close.peer_closed(1000);
+        drop(rpc);
+        drop(stream);
+        let rendered = handle.render();
+        assert!(rendered.contains("ws_active_connections 0"));
+        assert!(rendered.contains("ws_connection_duration_seconds_count 2"));
+        assert!(rendered.contains("ws_close_codes{code=\"1000\"} 1"));
+        ctx.mark_online("fixture");
+        ctx.mark_online("fixture");
+        ctx.mark_online("other");
+        let receiver = ctx
+            .pubsub()
+            .subscribe_updates::<crate::rpc::proto::v2::BlockUpdate>("fixture");
+        assert!(
+            !handle.render().contains("subscribers_generators_count"),
+            "reporting waits for its callback"
+        );
+        ctx.report_subscriber_metrics();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(env!("DCL_ONE_ROOT"), "/services/catalyst/tests/fixtures/conformance/social/application-metrics-source-cases.json"))).unwrap();
+        for observation in &fixture["subscriberObservations"].as_array().unwrap()[..2] {
+            assert!(handle.render().contains(&format!(
+                "{} {}",
+                observation["name"].as_str().unwrap(),
+                observation["value"]
+            )));
+        }
+        drop(receiver);
+        ctx.mark_offline("fixture");
+        ctx.mark_offline("fixture");
+        ctx.mark_offline("other");
+        ctx.report_subscriber_metrics();
+        for observation in &fixture["subscriberObservations"].as_array().unwrap()[2..] {
+            assert!(handle.render().contains(&format!(
+                "{} {}",
+                observation["name"].as_str().unwrap(),
+                observation["value"]
+            )));
+        }
     }
 }

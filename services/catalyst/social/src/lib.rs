@@ -94,6 +94,7 @@ pub fn social_api_gateway_with_limit(router: Router, max_body_bytes: usize) -> R
         .layer(axum::middleware::from_fn(
             communities::http::social_api_methods,
         ))
+        .layer(axum::middleware::from_fn(rpc::http::instrument_metrics))
         .layer(axum::middleware::from_fn(
             communities::cors::social_api_cors,
         ))
@@ -134,7 +135,7 @@ pub fn router(states: &States, writes_enabled: bool) -> Router {
             .merge(guard(rpc::http::router(states.rpc.clone())))
     };
     Router::new()
-        .merge(social_api())
+        .merge(social_api().layer(axum::middleware::from_fn(rpc::http::instrument_metrics)))
         .nest(
             "/social-api",
             social_api_gateway_with_limit(

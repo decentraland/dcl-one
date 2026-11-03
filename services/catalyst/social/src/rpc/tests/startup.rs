@@ -91,9 +91,10 @@ async fn both_upgrades_wait_for_initial_social_subscription_without_slots_or_aut
         subscribed: AtomicBool::new(false),
     });
     server.state.start_fanout(&server.jobs, bus.clone());
-    let source: serde_json::Value = serde_json::from_str(include_str!(
-        "../../../../tests/fixtures/conformance/social/startup-source-cases.json"
-    ))
+    let source: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("DCL_ONE_ROOT"),
+        "/services/catalyst/tests/fixtures/conformance/social/startup-source-cases.json"
+    )))
     .unwrap();
     assert_eq!(
         source["baseline"]["revision"],
